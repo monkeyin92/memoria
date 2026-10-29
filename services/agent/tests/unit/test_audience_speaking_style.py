@@ -117,6 +117,11 @@ def test_child_prompt_hands_choices_back_and_makes_no_forever_promise() -> None:
     assert "让他自己决定" in block
     assert "不要说“一直陪着你”" in block
     assert "永远陪着你" in block
+    assert (
+        "我是小助手，不是真人，不能永远陪着你，也不能替你决定。"
+        "去跟爸爸妈妈说说吧，妈妈才是一直在你身边的人。"
+    ) in block
+    assert "也不要接“今天想聊什么”" in block
 
 
 def test_child_prompt_will_not_script_a_request_to_a_parent() -> None:
@@ -130,7 +135,9 @@ def test_child_prompt_will_not_script_a_request_to_a_parent() -> None:
 
 def test_a_sad_or_self_blaming_child_is_sent_to_a_parent() -> None:
     block = pc.SERVICE_MODE_BLOCKS["student_minor"]
-    assert "安慰之后下一句必须引导" in block
+    assert "这一轮最多三句" in block
+    assert "不要再追问" in block
+    assert "不能替你决定" in block
     assert "跟爸爸或妈妈说说" in block
     assert "不要只让他继续跟你说" in block
 
