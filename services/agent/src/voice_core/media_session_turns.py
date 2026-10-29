@@ -178,6 +178,10 @@ class MediaTurnEndpointMixin:
             endpoint_sample: int | None = None,
         ) -> None: ...
 
+        def _reopen_listening_capture_after_empty_retire(
+            self, context: _MediaVoiceSession, *, cause: str
+        ) -> None: ...
+
         async def _dispatch_reply(
             self,
             session_id: str,
@@ -1085,13 +1089,17 @@ class MediaTurnEndpointMixin:
             and not context.runtime.formal_speaker_enrollment_active
         ):
             self._clear_evidence_less_floor_hold(context)
-            context.runtime.open_assistant_floor(cause=floor_cause)
             resume_owned_output = owned_delegation_holds_turn(
                 context.output.delegation_output_claims, input_fence
             ) or any(
                 self._output_work_is_active(context, work)
                 for work in tuple(context.output.output_work.values())
             )
+            if not resume_owned_output:
+                self._reopen_listening_capture_after_empty_retire(
+                    context, cause=floor_cause
+                )
+            context.runtime.open_assistant_floor(cause=floor_cause)
             self._schedule_output_retry(context)
             logger.info(
                 "media empty input retired session=%s fence=%s resume_output=%s cause=%s",
