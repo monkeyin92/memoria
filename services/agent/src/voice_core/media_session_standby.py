@@ -282,12 +282,14 @@ class MediaSessionStandbyMixin:
         context.listening_capture_resume_sample = None
         context.listening_capture_deadline = time.monotonic() + self.listening_capture_window_s
 
-    def _reopen_listening_capture_after_empty_retire(
+    def _settle_listening_capture_after_empty_retire(
         self,
         context: _MediaVoiceSession,
         *,
         cause: str,
     ) -> None:
+        if self._restore_listening_capture_after_empty_turn(context):
+            return
         if not self._listening_capture_armed(context):
             return
         held = context.listening_capture_hold

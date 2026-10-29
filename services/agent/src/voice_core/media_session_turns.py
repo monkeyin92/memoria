@@ -176,9 +176,7 @@ class MediaTurnEndpointMixin:
             endpoint_sample: int | None = None,
         ) -> None: ...
 
-        def _reopen_listening_capture_after_empty_retire(self, context: _MediaVoiceSession, *, cause: str) -> None: ...
-
-        def _restore_listening_capture_after_empty_turn(self, context: _MediaVoiceSession) -> bool: ...
+        def _settle_listening_capture_after_empty_retire(self, context: _MediaVoiceSession, *, cause: str) -> None: ...
 
         async def _dispatch_reply(
             self,
@@ -1056,11 +1054,9 @@ class MediaTurnEndpointMixin:
         endpoint_sample: int,
         floor_cause: str,
     ) -> tuple[ProjectionPatch | None, bool]:
-        """Discard the pending turn; hand the floor back if it held no text.
+        """Discard the pending turn; the caller holds ``turn_commit_lock``.
 
-        Caller holds ``turn_commit_lock``.  Returns the projection discard
-        patch and whether queued same-turn output was resumed.
-        """
+        Returns the projection discard patch and whether queued same-turn output was resumed."""
 
         input_fence = context.pending.turn_input_fence
         empty_input = not self._pending_turn_has_fresh_text_evidence(context)
@@ -1095,8 +1091,7 @@ class MediaTurnEndpointMixin:
                 for work in tuple(context.output.output_work.values())
             )
             if not resume_owned_output:
-                if not self._restore_listening_capture_after_empty_turn(context):
-                    self._reopen_listening_capture_after_empty_retire(context, cause=floor_cause)
+                self._settle_listening_capture_after_empty_retire(context, cause=floor_cause)
             context.runtime.open_assistant_floor(cause=floor_cause)
             self._schedule_output_retry(context)
             logger.info(
