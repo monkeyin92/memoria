@@ -740,3 +740,48 @@ async def test_listening_closes_within_sixty_seconds_of_a_silent_room_after_the_
         ]
     finally:
         await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_noise_after_listening_closed_leaves_the_device_on_standby(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _clock()
+    registry, context, _provider, identity = await _open(monkeypatch, clock)
+    try:
+        published = _spy_states(monkeypatch, context.runtime)
+        clock["now"] = 1_031.0
+        await registry._audio_ingress.accept(context, _frame(identity, 1, 32_000))
+        assert published[-1] == "listening_closed"
+
+        session = registry.bridge._connections[identity.session_id].session
+        clock["now"] = 1_040.0
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=48_000, segment_id="noise"),
+                capture_end_sample=49_280,
+            ),
+        )
+        assert published[-1] != "listening_closed"
+        clock["now"] += 1.0
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=64_000, segment_id="noise-end"),
+                final=True,
+                voiced_end_sample=64_000,
+            ),
+        )
+        endpoint = context.pending.turn_endpoint_sample
+        assert endpoint == 64_000
+        clock["now"] += 6.0
+        await registry._expire_endpoint_tail(identity.session_id, identity.stream_epoch, endpoint)
+        for _ in range(10):
+            await asyncio.sleep(0)
+
+        assert context.pending.turn_start_sample is None
+        assert published[-1] == "listening_closed"
+        assert context.listening_capture_hold is True
+    finally:
+        await registry.finalize_session(identity.session_id)

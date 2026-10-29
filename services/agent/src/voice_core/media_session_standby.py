@@ -282,27 +282,41 @@ class MediaSessionStandbyMixin:
         context.listening_capture_resume_sample = None
         context.listening_capture_deadline = time.monotonic() + self.listening_capture_window_s
 
-    def _reopen_listening_capture_after_empty_retire(
+    def _settle_listening_capture_after_empty_retire(
         self,
         context: _MediaVoiceSession,
         *,
         cause: str,
     ) -> None:
+        if self._restore_listening_capture_after_empty_turn(context):
+            return
         if not self._listening_capture_armed(context):
             return
         held = context.listening_capture_hold
         context.listening_capture_hold = False
         context.listening_capture_resume_sample = None
+        context.listening_capture_vad_rewake_pending = False
         if held and context.runtime.interaction_phase is InteractionPhase.CONNECTING:
             context.runtime.set_interaction_phase(
                 InteractionPhase.LISTENING,
                 cause=cause,
             )
 
+    def _restore_listening_capture_after_empty_turn(self, context: _MediaVoiceSession) -> bool:
+        """A VAD rewake that produced no words was noise, not a child."""
+
+        if not context.listening_capture_vad_rewake_pending:
+            return False
+        context.listening_capture_vad_rewake_pending = False
+        context.listening_capture_resume_sample = None
+        self._latch_listening_capture(context)
+        return True
+
     def _latch_listening_capture(self, context: _MediaVoiceSession) -> None:
         if context.listening_capture_hold or not self._listening_capture_armed(context):
             return
         context.listening_capture_hold = True
+        context.listening_capture_vad_rewake_pending = False
         context.listening_capture_deadline = None
         self._audio_ingress.discard_queued(context)
         if context.runtime.interaction_phase in (
