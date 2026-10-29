@@ -1243,6 +1243,22 @@ class MediaSessionCommitMixin:
         if speaker_patch is not None:
             await self._emit_projection_patch(context, speaker_patch)
         elapsed_ms = (end_sample - start_sample) * 1_000 // 16_000
+        if not was_assistant_speaking:
+            # The plan request runs beside the close verdict and the rest of the commit instead of after
+            # them. Not under a reply: an utterance there may still turn out to be a backchannel or echo.
+            start_plan = getattr(context.provider, "start_committed_turn_plan", None)
+            try:
+                if callable(start_plan) and bool(
+                    getattr(context.provider, "supports_turn_preparation", True)
+                ):
+                    start_plan(context.identity, text)
+            except Exception:  # the commit sends its own request then
+                logger.warning(
+                    "media commit plan head start failed session=%s text_len=%s",
+                    context.identity.session_id,
+                    len(text),
+                    exc_info=True,
+                )
         stage_started = time.monotonic()
         await context.runtime.resolve_conversation_close_needed(text)
         _mark_stage(timing, "close_ms", stage_started)

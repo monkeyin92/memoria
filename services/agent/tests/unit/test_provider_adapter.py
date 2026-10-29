@@ -212,6 +212,24 @@ def test_provider_tells_the_shared_agent_which_turn_is_about_to_commit() -> None
     assert warmed == ["后天呢"]
 
 
+def test_provider_tells_the_shared_agent_to_send_the_plan_request_of_the_turn() -> None:
+    planned: list[str] = []
+
+    class PlanningLLM(FakeLLM):
+        def start_committed_turn_plan(self, text: str) -> None:
+            planned.append(text)
+
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=FakeASR,  # type: ignore[arg-type]
+        language_model=PlanningLLM(),
+        speech_synthesis=FakeTTS(),
+    )
+    adapter.start_committed_turn_plan(SessionIdentity("planning-provider"), "后天呢")
+    adapter.start_committed_turn_plan(SessionIdentity("planning-provider"), "后天呢")
+
+    assert planned == ["后天呢", "后天呢"]  # the agent decides whether a second call sends anything
+
+
 def test_a_language_model_without_the_warm_up_seam_prepares_as_before() -> None:
     adapter = ExistingVoiceProviderAdapter(
         asr_session_factory=FakeASR,  # type: ignore[arg-type]
@@ -220,6 +238,7 @@ def test_a_language_model_without_the_warm_up_seam_prepares_as_before() -> None:
     )
 
     adapter.warm_committed_turn(SessionIdentity("not-warmed-provider"), "后天呢")
+    adapter.start_committed_turn_plan(SessionIdentity("not-warmed-provider"), "后天呢")
 
 
 class SizedTTS:

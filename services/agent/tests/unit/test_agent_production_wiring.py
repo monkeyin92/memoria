@@ -427,9 +427,14 @@ async def test_response_plan_capsules_are_frozen_for_the_current_generation() ->
     runtime._speaker_class = "owner"
 
     class Planner:
+        task_names: list[str] = []
+
         async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
             fence = kwargs["fence"]
             assert isinstance(fence, GenerationFence)
+            current = asyncio.current_task()
+            assert current is not None
+            self.task_names.append(current.get_name())
             return ResponsePlanFetch(
                 plan=_plan_for_fence(
                     fence,
@@ -476,7 +481,8 @@ async def test_response_plan_capsules_are_frozen_for_the_current_generation() ->
     assert snapshot.persona_capsule.prompt_fragment == "日常表达偏好短句。"
     assert snapshot.tool_permission is True
     assert runtime.orchestrator.task_manager.tasks == {}
-    assert runtime.orchestrator.task_manager.accepted_broadcast_count == 1
+    # The plan was asked for once, ahead of the commit, and the commit took that answer.
+    assert Planner.task_names == [pipeline_mod.EARLY_RESPONSE_PLAN_TASK_NAME]
     await runtime.close()
 
 
@@ -1350,9 +1356,11 @@ async def test_agent_fetches_response_plan_once_per_committed_turn(
     class ResponsePlannerStub:
         async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
             fetch_calls.append(dict(kwargs))
+            fence = kwargs["fence"]
+            assert isinstance(fence, GenerationFence)
             return ResponsePlanFetch(
                 plan=_plan_for_fence(
-                    runtime.fence,
+                    fence,
                     instructions="【控制计划】只使用当前已确认上下文。",
                 ),
                 reason="ok",
@@ -1413,10 +1421,12 @@ async def test_companion_voice_turn_reaches_llm_when_guest_filter_is_disabled(
         )
 
     class ResponsePlannerStub:
-        async def fetch(self, **_kwargs: object) -> ResponsePlanFetch:
+        async def fetch(self, **kwargs: object) -> ResponsePlanFetch:
+            fence = kwargs["fence"]
+            assert isinstance(fence, GenerationFence)
             return ResponsePlanFetch(
                 plan=_plan_for_fence(
-                    runtime.fence,
+                    fence,
                     instructions="只回答当前问题。",
                     speaker_class="uncertain",
                 ),
@@ -1497,7 +1507,9 @@ async def test_agent_drops_response_plan_when_fence_changes_during_fetch() -> No
     with pytest.raises(StopResponse):
         await commit_media_turn(agent, Message())
 
-    assert fetch_calls == 1
+    # The request sent ahead of the commit saw the epoch move and was not used; the commit's own one is
+    # dropped as well, and neither is asked again.
+    assert fetch_calls == 2
     assert len(agent.response_plans) == 0
 
 
@@ -1872,6 +1884,7 @@ async def test_live_lookup_starts_on_the_bound_generation() -> None:
         speaker=SimpleNamespace(classification="owner"),
         input_modality="audio",
     )
+    await asyncio.sleep(0)  # the commit spawned the starter
     assert started == [fence]
     assert runtime.generation_voice_for(fence) is not None
     await runtime.close()

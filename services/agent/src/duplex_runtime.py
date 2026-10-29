@@ -91,6 +91,7 @@ from services.agent.src.output_provenance import (
     speaker_persona_provenance,
 )
 from services.agent.src.runtime_classifiers import DuplexRuntimeClassifierMixin
+from services.agent.src.runtime_context_activation import DuplexRuntimeContextActivationMixin
 from services.agent.src.runtime_emotion import DuplexRuntimeEmotionMixin
 from services.agent.src.runtime_profile import VerifiedRuntimeProfile
 from services.agent.src.runtime_provenance import DuplexRuntimeProvenanceMixin
@@ -150,6 +151,7 @@ class LiveKitTTSPoolAdapter(TTSPoolHandle):
 @dataclass
 class DuplexRuntime(
     DuplexRuntimeClassifierMixin,
+    DuplexRuntimeContextActivationMixin,
     DuplexRuntimeShutdownMixin,
     DuplexSpeakerMixin,
     DuplexRuntimeProvenanceMixin,
@@ -515,29 +517,6 @@ class DuplexRuntime(
         if snapshot.version != version:
             raise RuntimeError("frozen context snapshot is no longer retained")
         return snapshot
-
-    def _activate_pending_context_snapshot(self) -> None:
-        pending = self._pending_context_snapshot
-        if (
-            pending is None
-            or self._pending_context_snapshot_epoch != self._context_snapshot_prepare_epoch
-        ):
-            return
-        if pending.candidate.speaker_class != self.current_speaker_class:
-            self._pending_context_snapshot = None
-            self._pending_context_snapshot_epoch = None
-            return
-        activated = self.orchestrator.context_snapshots.activate(
-            pending,
-            expected_current_version=pending.base_version,
-        )
-        self._pending_context_snapshot = None
-        self._pending_context_snapshot_epoch = None
-        if isinstance(activated, ContextSnapshot):
-            self.orchestrator.delegation.activate_context_version(
-                self.session_id,
-                activated.version,
-            )
 
     def _context_snapshot_draft(self) -> ContextSnapshotDraft:
         current = self.orchestrator.context_snapshots.current(self.session_id)

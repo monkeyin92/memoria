@@ -96,6 +96,9 @@ class _SessionLanguageModel:
     def warm_committed_turn(self, text: str) -> None:
         self.pipeline.warm_committed_turn(text)
 
+    def start_committed_turn_plan(self, text: str) -> None:
+        self.pipeline.start_committed_turn_plan(text)
+
     @property
     def supports_delegation(self) -> bool:
         return self.delegation_enabled
