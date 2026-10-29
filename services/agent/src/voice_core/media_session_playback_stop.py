@@ -478,6 +478,9 @@ class MediaPlaybackStopMixin:
             return
         if self._reply_in_flight(context):
             return
+        vad_start = context.pending.active_vad_start_sample
+        if vad_start is not None and vad_start >= playback_end:
+            return  # A VAD that opened after playback sends its own end.
         if context.pending.turn_endpoint_sample is not None:
             # Only an endpoint this path pinned may be extended while the
             # utterance keeps producing post-boundary finals; a VAD end or a
