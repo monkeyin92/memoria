@@ -10,9 +10,9 @@
 +    default n
 +    help
 +        Park in wifi hold instead of calling esp_deep_sleep_start, so USB serial stays
-+        enumerated on a remote test device. The microphone stays closed until a screen
-+        tap or the USB `wake` line. Product and bench images leave this off. Enable it
-+        only with build.sh --keep-awake (config.keep-awake.json). The firmware publisher
++        enumerated on a remote test device. Screen-off and idle entry do not enter
++        wifi hold. Product and bench images leave this off. Enable it only with
++        build.sh --keep-awake (config.keep-awake.json). The firmware publisher
 +        refuses the image.
 +
  endmenu
