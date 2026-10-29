@@ -83,11 +83,12 @@ class MediaSessionConnectionMixin:
 
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
 
-        def resume_listening_from_screen_tap(
+        def resume_listening_capture(
             self,
             context: _MediaVoiceSession,
             *,
             wake_sample: int,
+            cause: str,
         ) -> None: ...
 
     async def on_client_event(
@@ -107,7 +108,7 @@ class MediaSessionConnectionMixin:
             wake_sample = event.payload.get("wake_sample")
             if isinstance(wake_sample, bool) or not isinstance(wake_sample, int) or wake_sample < 0:
                 return
-            self.resume_listening_from_screen_tap(current, wake_sample=wake_sample)
+            self.resume_listening_capture(current, wake_sample=wake_sample, cause="screen_tap")
             return
         context = await self.open_session(session.identity)
         if context.closed or context.standby_requested or not session.accepts_input():

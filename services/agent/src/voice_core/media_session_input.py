@@ -101,6 +101,14 @@ class MediaSessionInputMixin:
 
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
 
+        def resume_listening_capture(
+            self,
+            context: _MediaVoiceSession,
+            *,
+            wake_sample: int,
+            cause: str,
+        ) -> None: ...
+
         async def _retire_prepare_retry_before_new_vad(
             self, context: _MediaVoiceSession
         ) -> None: ...
@@ -438,14 +446,18 @@ class MediaSessionInputMixin:
         if context.closed or context.standby_requested or not session.accepts_uplink():
             return
         if segment.kind is SegmentKind.VAD and context.listening_capture_hold:
-            logger.info(
-                "media vad ignored during listening capture hold session=%s "
-                "sample=%s final=%s",
-                context.identity.session_id,
-                segment.capture_start_sample,
-                segment.final,
+            if segment.final:
+                logger.info(
+                    "media vad end ignored during listening capture hold session=%s sample=%s",
+                    context.identity.session_id,
+                    segment.capture_start_sample,
+                )
+                return
+            self.resume_listening_capture(
+                context,
+                wake_sample=segment.capture_start_sample,
+                cause="vad_rewake",
             )
-            return
         if _is_spurious_connect_vad(segment, context):
             logger.info(
                 "media empty vad ignored session=%s sample=%s rms=%s final=%s pending_wake_ack=%s",

@@ -330,11 +330,12 @@ class MediaSessionStandbyMixin:
         if already_held:
             context.runtime.publish_assistant_state("listening_closed")
 
-    def resume_listening_from_screen_tap(
+    def resume_listening_capture(
         self,
         context: _MediaVoiceSession,
         *,
         wake_sample: int,
+        cause: str,
     ) -> None:
         if context.closed or context.standby_requested or wake_sample < 0:
             return
@@ -346,7 +347,7 @@ class MediaSessionStandbyMixin:
         if context.runtime.interaction_phase is not InteractionPhase.LISTENING:
             context.runtime.set_interaction_phase(
                 InteractionPhase.LISTENING,
-                cause="screen_tap",
+                cause=cause,
                 publish=True,
             )
         else:
