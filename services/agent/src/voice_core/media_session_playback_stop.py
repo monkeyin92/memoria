@@ -8,6 +8,10 @@ only flipped the runtime floor to listening while the reply kept streaming.
 This mixin pins the endpoint of a lexical stop heard during playback and then
 carries out the Router's INTERRUPT_COMMAND the way a keyword stop does.
 
+It also endpoints a question heard over the reply (content barge-in): the commit
+then stops the reply and answers the question, so a new question replaces the
+story instead of waiting for it to finish (soak 2026-10-29 t017).
+
 It also owns which other finals around the playback window may endpoint a
 turn: while the reply plays, any other early endpoint blocks this stop and
 swallows later finals, so only a farewell that is not the reply's own echo may
@@ -33,7 +37,10 @@ from services.agent.src.conversation_close_router import (
     lexical_playback_control_only,
     rule_conversation_close_only,
 )
-from services.agent.src.orchestration.interruption_guard import is_stop_command_only
+from services.agent.src.orchestration.interruption_guard import (
+    count_cjk_chars,
+    is_stop_command_only,
+)
 from services.agent.src.voice_core.media_protocol import should_pause_asr_for_playback
 from services.agent.src.voice_core.media_session_pending_turn import EndpointPinSource
 from services.agent.src.voice_core.speech_timeline import ASRResult
@@ -50,6 +57,81 @@ logger = logging.getLogger(__name__)
 # reason when ``accept_user_turn`` suppresses the control turn.
 PLAYBACK_STOP_ROUTE_REASON = "interrupt_command_only"
 _PLAYBACK_STOP_CAUSE = "media_voice_stop"
+# Field 2026-10-29 soak (t017/t018): the owner asked a whole new question and said 「嗯。」
+# while a story played.  Only a lexical stop was accepted, so both played through and the
+# question was dropped.  Content endpoints the reply when it is not a backchannel, not the
+# reply's own echo, and either four characters long or carrying a question/command word.
+CONTENT_BARGE_IN_CAUSE = "media_content_barge_in"
+_CONTENT_MIN_CJK = 4
+_BACKCHANNEL_FILLERS = tuple(
+    sorted(
+        (
+            "嗯", "啊", "哦", "噢", "喔", "对", "好", "行",
+            "嗯嗯", "对对", "好的", "对啊", "对呀", "好啊", "行的",
+        ),
+        key=len,
+        reverse=True,
+    )
+)
+_CONTENT_MARKERS = (
+    "等一下",
+    "等等",
+    "我想问",
+    "我想知道",
+    "我问你",
+    "问你",
+    "问一下",
+    "为什么",
+    "怎么回事",
+    "怎么",
+    "什么",
+    "哪儿",
+    "哪里",
+    "谁",
+    "多少",
+    "能不能",
+    "可不可以",
+    "不要",
+    "别说了",
+    "别看",
+    "别动",
+    "别讲",
+    "别吵",
+    "帮我",
+    "告诉我",
+)
+_SPEECH_MARKUP = str.maketrans("", "", "，。！？、,.!?;；:：…~～\"'“”‘’（）() \t\r\n　")
+# A request to keep talking is the opposite of a barge-in; 「不要停」 must never stop the reply.
+_KEEP_PLAYING = ("不要停", "别停", "不用停", "继续", "接着讲", "接着说")
+
+
+def content_barge_in_wanted(text: str) -> bool:
+    """True when words heard over playback are the owner's next question.
+
+    A backchannel alone (「嗯」「对」「好」) is agreement, never a stop.  What is left after
+    the backchannel needs four characters or a question/command word to endpoint the reply.
+    """
+
+    if any(phrase in text for phrase in _KEEP_PLAYING):
+        return False
+    remainder = text.translate(_SPEECH_MARKUP)
+    stripping = True
+    while stripping and remainder:
+        stripping = False
+        for filler in _BACKCHANNEL_FILLERS:
+            if remainder.startswith(filler):
+                remainder = remainder[len(filler) :]
+                stripping = True
+            elif remainder.endswith(filler):
+                remainder = remainder[: -len(filler)]
+                stripping = True
+    if not remainder:
+        return False
+    if count_cjk_chars(remainder) >= _CONTENT_MIN_CJK:
+        return True
+    return any(marker in remainder for marker in _CONTENT_MARKERS)
+
+
 # The assistant text announced most recently is what the uplink can still be
 # echoing: the phrase being played plus the one queued behind it (phrases are
 # at most ~28 characters) and the ASR finalization lag.  A stop phrase found
@@ -267,11 +349,28 @@ class MediaPlaybackStopMixin:
         return context.output.assistant_text[-_PLAYBACK_STOP_ECHO_TAIL_CHARS:]
 
     @staticmethod
+    def _reply_task_is_live(context: _MediaVoiceSession) -> bool:
+        """True while a reply the server can still speak is running.
+
+        A dead reply task with ``assistant_speaking`` still set is the speaking
+        watchdog's stuck window (compliance #345): speech heard there must stay
+        provisional, never become the turn that stops the reply and answers it.
+        """
+
+        if not hasattr(context.output, "reply_task"):
+            # A partial double: nothing to prove the reply died.
+            return True
+        task = context.output.reply_task
+        return task is not None and not task.done()
+
+    @staticmethod
     def _playback_text_is_echo(context: _MediaVoiceSession, text: str) -> bool:
         """True when ``text`` repeats what the reply announced most recently."""
 
         heard = _compact(text)
-        spoken = _compact(context.output.assistant_text)[-_PLAYBACK_STOP_ECHO_TAIL_CHARS:]
+        spoken = _compact(getattr(context.output, "assistant_text", ""))[
+            -_PLAYBACK_STOP_ECHO_TAIL_CHARS:
+        ]
         return bool(heard) and heard in spoken
 
     @staticmethod
@@ -308,6 +407,7 @@ class MediaPlaybackStopMixin:
             start = result.capture_start_sample
             return (
                 f"stop_word={lexical_playback_control_only(text)} "
+                f"content_barge_in={content_barge_in_wanted(text)} "
                 f"echo={self._playback_echo_for_guard(context, text)} "
                 f"in_flight={self._reply_in_flight(context)} "
                 f"speaking={context.runtime.assistant_speaking} "
@@ -1043,7 +1143,7 @@ class MediaPlaybackStopMixin:
         *,
         source: str,
     ) -> None:
-        """Endpoint a device stop phrase heard while a reply holds the floor.
+        """Endpoint a device stop phrase or question heard while a reply holds the floor.
 
         Only the stop phrase's own interval is committed
         (``_scope_pending_turn_to``): earlier playback-window candidates would
@@ -1053,7 +1153,8 @@ class MediaPlaybackStopMixin:
 
         The committed turn is marked (``pending.playback_stop_text``) so its
         route cannot depend on the same text peeling twice: a stop stays the
-        control turn even after it already muted the reply.
+        control turn even after it already muted the reply.  A question instead
+        sets ``pending.content_barge_in``: its commit stops the reply and answers it.
         """
 
         if context.identity.client_type != "device":
@@ -1061,6 +1162,13 @@ class MediaPlaybackStopMixin:
         self._log_asr_text_debug(context, result, source=source)
         text = result.text.strip()
         stop_word = bool(text) and lexical_playback_control_only(text)
+        content_barge_in = (
+            not stop_word
+            and not result.rescue_synthesized
+            and self._reply_task_is_live(context)
+            and content_barge_in_wanted(text)
+            and not self._playback_text_is_echo(context, text)
+        )
         in_flight = self._reply_in_flight(context)
         diagnosis = self._playback_stop_diagnosis(context, result)
         replaced_endpoint = context.pending.turn_endpoint_sample
@@ -1072,7 +1180,7 @@ class MediaPlaybackStopMixin:
             stop_word and self._pinned_turn_holds_no_words(context, result)
         ):
             reason = "endpoint_already_pinned"
-        elif not stop_word:
+        elif not stop_word and not content_barge_in:
             reason = "not_stop_word"
         elif not in_flight:
             reason = "no_reply_in_flight"
@@ -1100,7 +1208,8 @@ class MediaPlaybackStopMixin:
         pending.turn_endpoint_sample = endpoint
         pending.turn_retire_sample = endpoint
         self._mark_empty_turn_endpoint_pin(context, source="vad_end")
-        pending.playback_stop_text = text
+        pending.playback_stop_text = text if stop_word else None
+        pending.content_barge_in = content_barge_in
         # Also drops the replaced pin's tail bound: its timer belongs to the old endpoint.
         pending.restart_endpoint_bounds(0.0)
         logger.info(
@@ -1116,7 +1225,9 @@ class MediaPlaybackStopMixin:
         )
         self._schedule_turn_commit(context)
 
-    async def _stop_reply_for_voice_command(self, context: _MediaVoiceSession, text: str) -> bool:
+    async def _stop_reply_for_voice_command(
+        self, context: _MediaVoiceSession, text: str, *, cause: str = _PLAYBACK_STOP_CAUSE
+    ) -> bool:
         """Carry out a Router-accepted spoken stop like a keyword stop.
 
         ``accept_user_turn`` only suppresses the control turn; the reply task,
@@ -1148,7 +1259,7 @@ class MediaPlaybackStopMixin:
         await self._record_interrupted_timed_spans(context, previous_fence)
         heard = context.output.playback.actual_heard_text(previous_fence)
         cancelled = await context.runtime.on_real_interrupt(
-            cause=_PLAYBACK_STOP_CAUSE,
+            cause=cause,
             create_user_turn=False,
             synchronized_transcript=heard,
             force_generation_bump=True,
@@ -1171,7 +1282,7 @@ class MediaPlaybackStopMixin:
         await self._cancel_reply_task(
             context,
             previous_fence,
-            reason=_PLAYBACK_STOP_CAUSE,
+            reason=cause,
             finalize_audible=False,
         )
         flushed = await self._emit_cancel_generation(
@@ -1197,15 +1308,21 @@ class MediaPlaybackStopMixin:
         )
         logger.info(
             "media spoken stop interrupted reply session=%s turn=%s generation=%s "
-            "replacement_generation=%s flush=%s",
+            "replacement_generation=%s flush=%s cause=%s",
             context.identity.session_id,
             previous_fence.turn_id,
             previous_fence.generation_id,
             cancelled.generation_id,
             flush_required,
+            cause,
         )
-        self._schedule_aigc_round_closing(context, close_reason=_PLAYBACK_STOP_CAUSE)
+        self._schedule_aigc_round_closing(context, close_reason=cause)
         return True
 
 
-__all__ = ["PLAYBACK_STOP_ROUTE_REASON", "MediaPlaybackStopMixin"]
+__all__ = [
+    "CONTENT_BARGE_IN_CAUSE",
+    "PLAYBACK_STOP_ROUTE_REASON",
+    "MediaPlaybackStopMixin",
+    "content_barge_in_wanted",
+]

@@ -356,7 +356,7 @@ async def test_device_stop_word_commits_without_earlier_playback_candidates() ->
         story = await harness.start_story()
         # Uplink speech during the story that no endpoint may ever pick up:
         # without owner proof it is a held candidate, not a user turn.
-        await harness.audio_frames(20, final_text="小猫咪去哪儿了")
+        await harness.audio_frames(20, final_text="嗯")
         await harness.audio_frames(15, final_text="停")
         await harness.wait_for(lambda: bool(harness.cancel_effects()))
         harness.assert_story_stopped_session_open(story)
@@ -392,14 +392,19 @@ async def test_device_repeated_stop_word_stops_the_story() -> None:
 
 
 @pytest.mark.asyncio
-async def test_device_wait_that_grows_into_a_question_does_not_stop() -> None:
+async def test_device_wait_partial_does_not_stop_but_its_question_final_does() -> None:
+    """A partial 「等一下」 may still grow into a question; the final stops and is answered."""
+
     async def script(harness: _StoryHarness) -> None:
         story = await harness.start_story()
         harness.story.partials[harness._audio_sequence + 9] = ("等一下", harness.sample)
         await harness.audio_frames(10)
-        await harness.audio_frames(10, final_text="等一下我想问下周三")
         await harness.assert_story_still_playing(story)
-        assert not harness.cancel_effects()
+        await harness.audio_frames(10, final_text="等一下我想问下周三")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert len(harness.cancel_effects()) == 1
+        assert _user_turn_texts(harness.context) == ["给我讲个故事", "等一下我想问下周三"]
+        assert not harness.closed()
 
     await _run_story(_device_identity("stop-word-grows"), script)
 
@@ -439,21 +444,66 @@ async def test_device_story_saying_stop_does_not_interrupt_itself() -> None:
 
 
 @pytest.mark.asyncio
-async def test_device_ordinary_speech_during_story_stays_held() -> None:
-    """Only a lexical stop gets an early endpoint; other speech is not widened."""
+async def test_device_plain_question_during_story_stops_and_is_answered() -> None:
+    """Four or more spoken characters are a question even with no stop marker."""
 
     async def script(harness: _StoryHarness) -> None:
         story = await harness.start_story()
         await harness.audio_frames(20, final_text="我们下午几点出发")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        [effect] = harness.cancel_effects()
+        assert effect.turn_id == story.turn_id
+        assert _user_turn_texts(harness.context) == ["给我讲个故事", "我们下午几点出发"]
+        assert not harness.closed()
+
+    await _run_story(_device_identity("plain-question-barge-in"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_question_mid_story_stops_the_reply_and_answers_it() -> None:
+    """Soak 2026-10-29 t017: a whole new question was refused as ``not_stop_word``."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        question = "等一下，我想问另一个问题，云是怎么变出来的？"
+        await harness.audio_frames(30, final_text=question)
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        [effect] = harness.cancel_effects()
+        assert effect.turn_id == story.turn_id
+        assert _user_turn_texts(harness.context) == ["给我讲个故事", question]
+        assert not harness.closed()
+
+    await _run_story(_device_identity("content-barge-in-question"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_backchannel_mid_story_does_not_stop() -> None:
+    """Soak 2026-10-29 t018: 「嗯。」 is agreement, not a new question."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(15, final_text="嗯。")
         await harness.assert_story_still_playing(story)
         assert harness.context.pending.turn_endpoint_sample is None
-        # Even endpointed by VAD, unverified speech during playback is held.
-        await harness.utterance("我们下午几点出发呀", frames=20)
-        await harness.assert_story_still_playing(story)
         assert harness.story.reply_calls == 1
         assert _user_turn_texts(harness.context) == ["给我讲个故事"]
 
-    await _run_story(_device_identity("ordinary-speech-held"), script)
+    await _run_story(_device_identity("content-barge-in-backchannel"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_echo_of_the_playing_line_is_not_a_question() -> None:
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(15, final_text="小兔子跑到河边")
+        await harness.assert_story_still_playing(story)
+        assert harness.context.pending.turn_endpoint_sample is None
+
+    await _run_story(
+        _device_identity("content-barge-in-echo"),
+        script,
+        opening="小兔子跑到河边，大声喊。",
+    )
 
 
 @pytest.mark.asyncio
@@ -473,13 +523,13 @@ async def test_device_misheard_stop_read_as_farewell_cannot_block_the_next_stop(
         merged_verdict = asyncio.Event()
 
         async def close_verdict(text: str) -> bool:
-            if "小猫咪" in text and "行" in text:
+            if "嗯" in text and "行" in text:
                 await merged_verdict.wait()  # classifier latency on merged text
             return "行" in text
 
         harness.runtime.set_conversation_close_semantic_resolver(close_verdict)
         try:
-            await harness.audio_frames(20, final_text="小猫咪去哪儿了")
+            await harness.audio_frames(20, final_text="嗯")
             await harness.audio_frames(15, final_text="行。")
             assert harness.context.pending.turn_endpoint_sample is None
             await harness.audio_frames(15, final_text="停")
@@ -672,14 +722,14 @@ async def test_device_farewell_after_a_held_candidate_still_ends_the_session() -
     """A farewell during playback commits on its own interval, like a stop.
 
     Any playback-window candidate held before it (echo, or speech without
-    owner authority) merged into 「小猫咪去哪儿了 再见」, routed as chat and was
+    owner authority) merged into 「嗯 再见」, routed as chat and was
     held for missing owner authority: the story played on.
     """
 
     async def script(harness: _StoryHarness) -> None:
         await harness.start_story()
         context = harness.context
-        await harness.audio_frames(20, final_text="小猫咪去哪儿了")
+        await harness.audio_frames(20, final_text="嗯")
         await harness.audio_frames(15, final_text="再见")
         await harness.wait_for(harness.closed)
         assert context.standby_requested
@@ -695,7 +745,7 @@ async def test_device_farewell_partial_after_a_held_candidate_still_ends_the_ses
     async def script(harness: _StoryHarness) -> None:
         await harness.start_story()
         context = harness.context
-        await harness.audio_frames(20, final_text="小猫咪去哪儿了")
+        await harness.audio_frames(20, final_text="嗯")
         harness.story.partials[harness._audio_sequence + 9] = ("再见", harness.sample)
         await harness.audio_frames(10)
         await harness.wait_for(harness.closed)
@@ -873,7 +923,7 @@ async def test_device_question_after_a_stop_word_at_the_natural_end_is_answered(
     async def script(harness: _StoryHarness) -> None:
         await harness.utterance("你好", frames=25)
         await harness.wait_for(lambda: harness.count("audio") >= 1)
-        await harness.audio_frames(20, final_text="小兔子说谢谢")  # a playback-window candidate
+        await harness.audio_frames(20, final_text="嗯")  # a playback-window candidate
         await harness.audio_frames(140)
         await harness.playback_ended()
         boundary = harness.context.last_playback_end_sample
@@ -1044,7 +1094,7 @@ async def test_device_stop_reusing_a_held_candidates_sentence_id_still_stops() -
             revision=1,
             capture_start_sample=candidate_start,
             capture_end_sample=candidate_start + 20 * 320,
-            text="小猫咪去哪儿了",
+            text="嗯",
             is_final=True,
             confidence=0.9,
             stream_epoch=epoch,

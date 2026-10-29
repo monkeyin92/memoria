@@ -188,15 +188,23 @@ async def test_a_wordless_vad_edge_does_not_delay_the_prepared_reply() -> None:
 @pytest.mark.asyncio
 async def test_words_that_arrive_before_the_reply_is_ready_supersede_it_as_before() -> None:
     async def script(scene: _Scene) -> None:
-        await scene.committed_question_with_a_prepared_reply()
+        prepared = await scene.committed_question_with_a_prepared_reply()
         await scene.vad_start(scene.sample)
         await scene.audio_frames(10, final_text="我还想问一件事")
 
         scene.gated.gate.set()
         await scene.wait_for(lambda: bool(scene.terminals()), timeout=3.0)
 
-        assert not scene.first_frame_sent()
-        assert scene.terminals() == ["preempted"]
+        # The answer to the new words plays; the prepared reply must never be heard.
+        assert not any(
+            delivery["turn_id"] == prepared.turn_id and delivery["first_frame_sent"]
+            for delivery in scene.deliveries
+        )
+        assert [
+            delivery["terminal_event"]
+            for delivery in scene.deliveries
+            if delivery["turn_id"] == prepared.turn_id and delivery["terminal_event"]
+        ] == ["preempted"]
 
     await _run(script, name="n8-words-first")
 

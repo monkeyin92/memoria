@@ -1043,6 +1043,8 @@ async def _complete_previous_device_playback(
 
     context = window.context
     fence = await context.runtime.on_turn_committed("明天上海天气怎么样")
+    # The reply's text is announced before its own voice can come back on the uplink.
+    context.output.assistant_text = "上海明天晴转多云"
     await _accept_media_asr_final(
         window.registry,
         window.identity,

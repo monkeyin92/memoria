@@ -1,4 +1,4 @@
-"""停止词 40 句（真机测试句 v2 第三节）：正例 20 句立即静音，反例 20 句不静音。
+"""停止词 40 句（真机测试句 v2 第三节）：正例 20 句立即静音，反例 20 句不是停止词。
 
 Field 2026-10-21 bridge bf245ed1 / session 74cdaf88: a single 「停」 heard during a story was
 finalized as ``not_stop_word`` or refused as ``endpoint_already_pinned``.  The forms FunASR
@@ -6,7 +6,8 @@ produces around it -- punctuation, the reply's acknowledgment behind it, the wak
 front, a modal particle at the end -- must still be the stop, while a stop character inside
 content (「停车」「公交车停了」) never is.  These pin the product list at the predicate, then
 drive the device runtime: a positive final under a playing story stops it and leaves the
-session listening, a negative final leaves the story playing.
+session listening; a negative form that is not content keeps the story playing, while one
+that is a question or four characters long stops it by the content barge-in rule.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from services.agent.src.orchestration.interruption_guard import (
     is_interrupt_command_only,
     is_stop_command_only,
 )
+from services.agent.tests.unit.media_session_support import _user_turn_texts
 from services.agent.tests.unit.test_media_session_playback_stop import (
     _device_identity,
     _run_story,
@@ -187,7 +189,7 @@ async def test_a_positive_stop_final_during_the_story_stops_it_at_once(text: str
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "text",
-    [NEGATIVE[sid] for sid in ("N1", "N4", "N9", "N11", "N16", "N20")],
+    [NEGATIVE[sid] for sid in ("N1", "N4")],
 )
 async def test_a_negative_final_during_the_story_keeps_playing(text: str) -> None:
     async def script(harness: _StoryHarness) -> None:
@@ -196,3 +198,21 @@ async def test_a_negative_final_during_the_story_keeps_playing(text: str) -> Non
         await harness.assert_story_still_playing(story)
 
     await _run_story(_device_identity(f"v2-no-stop-{text}"), script)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [NEGATIVE[sid] for sid in ("N9", "N11", "N16", "N20")],
+)
+async def test_a_negative_final_that_is_content_stops_the_story(text: str) -> None:
+    """Not a stop word, but the content barge-in rule endpoints and answers it."""
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        await harness.audio_frames(15, final_text=text)
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert len(harness.cancel_effects()) == 1
+        assert _user_turn_texts(harness.context) == ["给我讲个故事", text]
+
+    await _run_story(_device_identity(f"v2-content-{text}"), script)
