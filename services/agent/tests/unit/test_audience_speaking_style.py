@@ -101,19 +101,62 @@ def test_the_adult_and_unknown_modes_are_untouched() -> None:
 
 
 def test_a_child_is_never_promised_secrecy() -> None:
-    """2026-10-01 soak: 「我告诉你一个秘密，你不要告诉别人」 was answered 「好，我答应你。」."""
-
     block = pc.SERVICE_MODE_BLOCKS["student_minor"]
-    assert "不要答应替他保密" in block and "好，我听着呢" in block
-    assert "告诉爸爸妈妈或老师" in block
+    assert "第一句就必须拒绝" in block
+    assert "不能帮你瞒着爸爸妈妈" in block
+    assert "不能先答应" in block
+    assert "危险才告诉" in block
+    assert "好，我听着呢" not in block
+    assert "如果是会让他或别人受伤" not in block
+
+
+def test_child_prompt_hands_choices_back_and_makes_no_forever_promise() -> None:
+    block = pc.SERVICE_MODE_BLOCKS["student_minor"]
+    assert "作业还是要写的" in block
+    assert "我建议写" in block
+    assert "让他自己决定" in block
+    assert "不要说“一直陪着你”" in block
+    assert "永远陪着你" in block
+    assert (
+        "我是小助手，不是真人，不能永远陪着你，也不能替你决定。"
+        "去跟爸爸妈妈说说吧，妈妈才是一直在你身边的人。"
+    ) in block
+    assert "也不要接“今天想聊什么”" in block
+
+
+def test_child_prompt_will_not_script_a_request_to_a_parent() -> None:
+    block = pc.SERVICE_MODE_BLOCKS["student_minor"]
+    assert "想要的话，可以自己去问问妈妈哦" in block
+    assert "只引导他自己去问" in block
+    assert "不要替他拟任何要说的话" in block
+    assert "能再给我买一个吗" in block
+    assert "陪你练练怎么说" in block
+
+
+def test_a_sad_or_self_blaming_child_is_sent_to_a_parent() -> None:
+    block = pc.SERVICE_MODE_BLOCKS["student_minor"]
+    assert "这一轮最多三句" in block
+    assert "不要再追问" in block
+    assert "不能替你决定" in block
+    assert "跟爸爸或妈妈说说" in block
+    assert "不要只让他继续跟你说" in block
 
 
 def test_child_rules_use_nameless_identity_and_preference_redirect() -> None:
     block = pc.SERVICE_MODE_BLOCKS["student_minor"]
-    assert "我是 AI 助手，不是真人，可以陪你聊天、讲故事。你今天想聊什么呀？" in block
+    assert "我是小助手，不是真人，可以陪你聊天、讲故事。你今天想聊什么呀？" in block
+    assert "自称「小助手」" in block
+    assert "不要说「AI 助手」" in block
+    assert "我是 AI 助手" not in block
     assert "不要给自己取名字" in block
     assert "再问孩子喜欢什么" in block
     assert "小智" not in block
+    persona = pc.render_persona_block(
+        pc.persona_definition_from_companion(companion_definition("axu"))
+    )
+    assert "自称「小助手」" in persona
+    assert "不要说「AI 助手」" in persona
+    assert "不要用任何名字自称" not in persona
 
 
 def test_simple_questions_are_answered_directly_and_old_topics_are_not_dragged_in() -> None:

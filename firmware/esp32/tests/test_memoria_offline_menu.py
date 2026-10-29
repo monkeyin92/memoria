@@ -365,6 +365,16 @@ def _pack_script(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _load_pack_script():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("build_offline_stories", BUILD_SCRIPT)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _ogg_bytes(rel: pathlib.Path) -> dict[str, bytes]:
     return {path.relative_to(rel).as_posix(): path.read_bytes() for path in rel.rglob("*.ogg")}
 
@@ -392,7 +402,7 @@ def test_check_only_passes_without_spoken_intros() -> None:
     completed = _pack_script("--check-only")
     assert completed.returncode == 0, completed.stderr
     fields = dict(line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line)
-    assert fields["production_clips"] == "11"
+    assert fields["production_clips"] == str(len(_load_pack_script().clip_paths()))
     assert fields["placeholder_clips"] == "0"
     assert fields["pending_placeholder_clips"] == "0"
     assert "required_aigc_intros" not in fields
@@ -409,7 +419,7 @@ def test_copied_pack_checks_without_spoken_intros(tmp_path: pathlib.Path) -> Non
     assert completed.returncode == 0, completed.stderr
     fields = dict(line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line)
     assert int(fields["free_margin_bytes"]) >= 512 * 1024
-    assert fields["production_clips"] == "11"
+    assert fields["production_clips"] == str(len(_load_pack_script().clip_paths()))
     assert fields["placeholder_clips"] == "0"
     assert fields["pending_placeholder_clips"] == "0"
     assert "missing required AIGC intro" not in completed.stderr
@@ -530,11 +540,8 @@ def test_manifests_record_production_voice() -> None:
         manifest = json.loads((BOARD_ASSETS / rel).read_text(encoding="utf-8"))
         assert manifest["voice"] == VOICE
         entries = manifest["stories"] if "stories" in manifest else manifest["lines"]
-        if "stories" in manifest:
-            assert entries == []
-        else:
-            assert entries
-            assert all(entry["placeholder"] is False for entry in entries)
+        assert entries
+        assert all(entry["placeholder"] is False for entry in entries)
 
 
 def test_offline_line_manifest_matches_pack() -> None:
@@ -564,7 +571,6 @@ def test_offline_line_manifest_matches_pack() -> None:
 
 
 def test_offline_line_ids_match_header_and_script() -> None:
-    import importlib.util
     import re
 
     header = (MEMORIA_DIR / "memoria_offline_menu.h").read_text(encoding="utf-8")
@@ -578,20 +584,22 @@ def test_offline_line_ids_match_header_and_script() -> None:
     end = header.index("};", start)
     symbols = re.findall(r"\b(k[A-Za-z0-9]+)\b", header[start:end])
     header_ids = [consts[name] for name in symbols if name in consts]
-    spec = importlib.util.spec_from_file_location("build_offline_stories", BUILD_SCRIPT)
-    assert spec is not None and spec.loader is not None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _load_pack_script()
     script_ids = [line_id for line_id, _ in mod.OFFLINE_LINES]
     assert header_ids == script_ids
     manifest = json.loads((BOARD_ASSETS / "offline_lines" / "index.json").read_text(encoding="utf-8"))
     assert [entry["id"] for entry in manifest["lines"]] == script_ids
 
 
-def test_story_clips_are_off_the_board() -> None:
+def test_packed_stories_match_the_catalog() -> None:
+    pack = _load_pack_script()
     manifest = json.loads((BOARD_ASSETS / "stories" / "index.json").read_text(encoding="utf-8"))
-    assert manifest["stories"] == []
-    assert not list((BOARD_ASSETS / "stories").glob("*.ogg"))
+    shipped = [(story["id"], story["title"]) for story in manifest["stories"]]
+    assert shipped == list(pack.STORIES)
+    assert all(story["placeholder"] is False for story in manifest["stories"])
+    assert {story["file"] for story in manifest["stories"]} == {
+        path.name for path in (BOARD_ASSETS / "stories").glob("*.ogg")
+    }
     assert not (BOARD_ASSETS / "night_soothe.ogg").exists()
     assert not (BOARD_ASSETS / "offline_lines" / "offline-mid-drop-v2.ogg").exists()
 
@@ -639,9 +647,12 @@ def _retag_board_ogg(
 
 
 def test_device_ogg_aigc_check_passes_on_board_pack() -> None:
+    expected = len(_load_pack_script().clip_paths())
+    on_disk = [path for path in BOARD_ASSETS.rglob("*.ogg") if path.is_file()]
+    assert len(on_disk) == expected
     completed = _run_device_ogg_aigc_check(BOARD_ASSETS)
     assert completed.returncode == 0, completed.stderr
-    assert "checked_oggs=11" in completed.stdout
+    assert f"checked_oggs={expected}" in completed.stdout
     assert "service_providers=StepFun,Volcengine Doubao" in completed.stdout
     assert completed.stderr == ""
 

@@ -53,6 +53,8 @@ def test_response_plan_instruction_uses_agent_identity_transparency_rule() -> No
     assert "用户问你是谁、叫什么或你由什么模型提供时，只简短说出这个名字" not in joined
     # Crisis support still trumps the generic refusal.
     assert "危机支持，绝不能用“我不知道”拒答" in joined
+    assert "你是陪用户聊天的小助手" in joined
+    assert "你是陪用户聊天的 AI 助手" not in joined
     assert "星澜" not in joined
     assert "小智" not in joined
 
