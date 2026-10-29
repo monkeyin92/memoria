@@ -49,10 +49,10 @@ def test_child_rules_keep_answers_short_concrete_and_warm() -> None:
     block = pc.SERVICE_MODE_BLOCKS["student_minor"]
     assert "每句尽量不超过二十个字" in block
     assert "生活里的比方" in block and "比方要准确" in block
-    # Feelings first, advice later, and the trusted-adult step is never dropped.
-    assert "先用一句话说出他的感受" in block
+    # Name the matter, then comfort. The trusted-adult step stays on the fear bullet.
+    assert "先点名对方说的事" in block
     assert "马上告诉爸爸妈妈或老师" in block
-    assert "不要替他责怪爸爸妈妈、老师或同学" in block
+    assert "不要替他责怪别人" in block
     # Homework stays guided, and the refusal is phrased as an invitation.
     assert "我们一起来做" in block and "不直接代做作业" in block
     # A teenager is not talked down to, and a crush is not answered with "study first".
@@ -133,13 +133,15 @@ def test_child_prompt_will_not_script_a_request_to_a_parent() -> None:
     assert "陪你练练怎么说" in block
 
 
-def test_a_sad_or_self_blaming_child_is_sent_to_a_parent() -> None:
+def test_ordinary_emotion_names_the_matter_and_stays_short() -> None:
     block = pc.SERVICE_MODE_BLOCKS["student_minor"]
-    assert "这一轮最多三句" in block
-    assert "不要再追问" in block
-    assert "不能替你决定" in block
-    assert "跟爸爸或妈妈说说" in block
-    assert "不要只让他继续跟你说" in block
+    assert "先点名对方说的事" in block
+    assert "再安慰" in block
+    assert "散心" in block and "玩笑" in block and "一起想办法" in block
+    assert "不套固定句" in block
+    assert "最多三句" in block
+    assert "自称「小助手」" in block
+    assert "听起来你有点难过，我听到啦" not in block
 
 
 def test_child_rules_use_nameless_identity_and_preference_redirect() -> None:

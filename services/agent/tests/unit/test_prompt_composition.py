@@ -92,6 +92,15 @@ def test_fixed_section_order() -> None:
         assert text == f"{headers[section_id]}\n{prompt.section(section_id)}"
 
 
+def test_ordinary_emotion_round_is_in_the_composed_student_instruction() -> None:
+    text = _full_prompt().system
+    assert "先点名对方说的事" in text
+    assert "再安慰" in text
+    assert "不套固定句" in text
+    assert "最多三句" in text
+    assert "自称「小助手」" in text
+
+
 def test_no_obligation_no_identity_section() -> None:
     prompt = _full_prompt(obligations=())
     assert prompt.section("obligations") is None

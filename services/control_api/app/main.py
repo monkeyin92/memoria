@@ -99,6 +99,7 @@ from services.control_api.app.session_termination import (
 )
 from services.control_api.app.subject_session_recall import wire_subject_session_recall_store
 from services.control_api.app.text_models import (
+    build_crisis_reply_model,
     build_crisis_semantic_classifier,
     build_persona_extractor,
     build_persona_structurer,
@@ -605,6 +606,10 @@ async def _wire_services(w: Wiring) -> None:
     app.state.crisis_semantic_classifier = crisis_semantic_classifier
     if crisis_semantic_classifier is not None:
         w.on_close(crisis_semantic_classifier.aclose)
+    crisis_reply_model = build_crisis_reply_model(settings)
+    app.state.crisis_reply_model = crisis_reply_model
+    if crisis_reply_model is not None:
+        w.on_close(crisis_reply_model.aclose)
     if w.live:
         media_stop_dispatcher = _build_media_stop_dispatcher(settings)
         if media_stop_dispatcher is not None:

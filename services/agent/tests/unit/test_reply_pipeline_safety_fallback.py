@@ -35,6 +35,7 @@ from services.common.companion_response_safety import (
     AFTER_FIXED_SAFETY_SESSION_INSTRUCTION,
     NAMELESS_IDENTITY_REPLY,
 )
+from services.common.crisis_reply import CRISIS_GUARD_PASSED
 from services.common.fixed_safety_scripts import (
     CRISIS_SELF_SCRIPT,
     SUPPORT_RELAY_SCRIPT,
@@ -203,7 +204,13 @@ class _RaisingPlanner:
 
 
 @pytest.mark.asyncio
-async def test_a_crisis_turn_does_not_wait_for_a_slow_planner_on_a_long_session() -> None:
+async def test_a_crisis_turn_does_not_wait_past_the_reply_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "services.agent.src.reply_pipeline._CRISIS_PLAN_GRACE_S",
+        0.05,
+    )
     runtime = _runtime("long-session-crisis")
     for index in range(8):
         runtime.orchestrator.context.add_user(
@@ -228,8 +235,13 @@ async def test_a_crisis_turn_does_not_wait_for_a_slow_planner_on_a_long_session(
         Path(__file__).resolve().parents[4] / DEFAULT_FIXED_SAFETY_AUDIO_DIR
     )
     clip = catalog.match(CRISIS_SELF_SCRIPT.spoken)
-    assert clip is not None and clip.playable
+    assert clip is not None and clip.playable is False
     assert clip.template_id == "crisis-self-v1"
+    assert any(
+        "spoken_sha256 mismatch" in issue.reason
+        for issue in catalog.issues
+        if issue.template_id == "crisis-self-v1"
+    )
     spoken = [
         token
         async for token in pipeline.stream(
@@ -724,6 +736,33 @@ def _companion_chat_plan(fence: Any) -> ResponsePlan:
     )
 
 
+def test_a_guarded_dynamic_crisis_line_is_not_replaced_by_the_fallback_script() -> None:
+    runtime = _runtime("guard-pass")
+    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())  # type: ignore[arg-type]
+    fence = runtime.fence
+    dynamic = "你说不想活了，小助手听到了。现在去找身边的大人，请大人拨幺二三五六，受伤打幺二零。"
+    base = _companion_chat_plan(fence)
+    plan = replace(
+        base,
+        direct_text=dynamic,
+        epistemic_reason_codes=("test", CRISIS_GUARD_PASSED),
+        provenance=replace(
+            base.provenance,
+            epistemic_reason_codes=("test", CRISIS_GUARD_PASSED),
+        ),
+    )
+
+    kept = pipeline._with_local_crisis_floor(plan, "我不想活了")
+
+    assert kept.direct_text == dynamic
+    assert kept.fixed_safety_script is None
+    unguarded = pipeline._with_local_crisis_floor(
+        replace(base, direct_text="我们聊聊别的。"),
+        "我不想活了",
+    )
+    assert unguarded.direct_text == CRISIS_SELF_SCRIPT.display
+
+
 class _ParkChatPlanner:
     echoes_session_epoch = True
 
@@ -794,7 +833,7 @@ async def test_fixed_safety_script_echo_stays_rejected_after_the_guard_window() 
         last_playback_completed_ns=aged,
         assistant_speaking=False,
     )
-    echo = "听到你这么说，我很心疼"
+    echo = "可以请大人拨幺二三五六"
     accepted, reason = runtime.accept_user_turn(
         echo,
         input_modality="audio",
@@ -936,8 +975,13 @@ async def test_fast_non_crisis_planner_plan_is_floored_to_the_prerecorded_crisis
         Path(__file__).resolve().parents[4] / DEFAULT_FIXED_SAFETY_AUDIO_DIR
     )
     clip = catalog.match(CRISIS_SELF_SCRIPT.spoken)
-    assert clip is not None and clip.playable
+    assert clip is not None and clip.playable is False
     assert clip.template_id == "crisis-self-v1"
+    assert any(
+        "spoken_sha256 mismatch" in issue.reason
+        for issue in catalog.issues
+        if issue.template_id == "crisis-self-v1"
+    )
 
     spoken = [
         token

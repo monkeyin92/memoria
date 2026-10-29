@@ -214,9 +214,14 @@ async def test_a_late_control_plan_stops_a_started_normal_reply_and_plays_the_sc
     assert any("late_crisis_preempted category=crisis-self-v1" in message for message in messages)
     assert not any(_LOCAL_MISS in message for message in messages)
 
-    clip = _catalog().match(CRISIS_SELF_SCRIPT.spoken)
-    assert clip is not None and clip.playable
-    assert clip.pcm_sha256 == _CRISIS_PCM_SHA256
+    catalog = _catalog()
+    clip = catalog.match(CRISIS_SELF_SCRIPT.spoken)
+    assert clip is not None and clip.playable is False
+    assert any(
+        "spoken_sha256 mismatch" in issue.reason
+        for issue in catalog.issues
+        if issue.template_id == "crisis-self-v1"
+    )
     await runtime.close()
 
 

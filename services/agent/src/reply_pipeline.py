@@ -82,6 +82,7 @@ from services.common.companion_response_safety import (
     strip_soothing_from_follow_up,
 )
 from services.common.crisis_policy import more_protective_local_script, route_crisis
+from services.common.crisis_reply import CRISIS_GUARD_PASSED, CRISIS_REPLY_BUDGET_S
 from services.common.fixed_safety_scripts import FixedSafetyScript
 from services.common.llm_failover import LLM_UNAVAILABLE_TEXT
 from services.common.realtime_information import (
@@ -101,7 +102,7 @@ from services.common.story_grounding import (
 )
 from services.speaker.domain import DEVICE_BOUND_SUBJECT_REASON
 
-_CRISIS_PLAN_GRACE_S = 0.08
+_CRISIS_PLAN_GRACE_S = CRISIS_REPLY_BUDGET_S + 1.5
 
 media_pb2: Any = _media_pb2
 logger = logging.getLogger(__name__)
@@ -623,12 +624,11 @@ class ReplyPipeline:
         speaker: Any,
         fence: GenerationFence,
     ) -> tuple[ResponsePlan | None, str]:
-        """Give the planner a short head start, then keep the local crisis reply.
+        """Wait out the guarded draft, then keep the local short script.
 
-        The deterministic crisis reply is already decided locally. The planner
-        request still runs, because control-api records the guardian
-        notification, but it may never gate the reply: on a long session that
-        request times out and used to leave only an ordinary fallback.
+        Control API records the guardian notification on the same request.
+        A client that cannot echo the session epoch still must not block the
+        reply, so that path stays on the local script.
         """
 
         client = self._response_planner_client
@@ -637,19 +637,11 @@ class ReplyPipeline:
             fence, capability="memory_recall_private"
         ):
             return None, "crisis_local_route"
-        task = self._runtime._spawn(
-            self._fetch_response_plan(text=text, speaker=speaker, fence=fence),
-            name="crisis-plan-notification",
-            durable=True,
-        )
-        if not response_plan_sidecar.applies(
-            self._response_planner_client, self._runtime, fence
-        ):
-            self._watch_late_crisis_plan(task, text=text, fence=fence)
-        done, _ = await asyncio.wait({task}, timeout=_CRISIS_PLAN_GRACE_S)
-        if done:
+        if response_plan_sidecar.applies(client, self._runtime, fence):
             try:
-                fetched = task.result()
+                fetched = await self._fetch_response_plan(
+                    text=text, speaker=speaker, fence=fence
+                )
             except Exception:
                 logger.warning(
                     "crisis plan request failed; keeping local route session_id=%s turn_id=%s",
@@ -658,6 +650,35 @@ class ReplyPipeline:
                     exc_info=True,
                 )
                 return None, "request_exception"
+            return fetched.plan, fetched.reason
+        async def _fetch_crisis_plan() -> ResponsePlanFetch:
+            try:
+                return await client.fetch(
+                    session_id=self._runtime.session_id,
+                    query=text,
+                    fence=fence,
+                    speaker_decision=speaker,
+                    recall_context=self._recall_context_for_fence(fence, speaker=speaker),
+                    utterance_intent=self._runtime.route_user_turn(text).intent,
+                    timeout_s=_CRISIS_PLAN_GRACE_S,
+                )
+            except Exception:
+                logger.warning(
+                    "crisis plan request failed; keeping local route session_id=%s turn_id=%s",
+                    self._runtime.session_id,
+                    fence.turn_id,
+                    exc_info=True,
+                )
+                return ResponsePlanFetch(None, "request_exception")
+
+        task = self._runtime._spawn(
+            _fetch_crisis_plan(),
+            name="crisis-plan-notification",
+            durable=True,
+        )
+        done, _ = await asyncio.wait({task}, timeout=_CRISIS_PLAN_GRACE_S)
+        if done:
+            fetched = task.result()
             return fetched.plan, fetched.reason
         logger.info(
             "crisis_local_route template_id=%s session_id=%s turn_id=%s",
@@ -714,6 +735,8 @@ class ReplyPipeline:
         task.add_done_callback(_resolved)
 
     def _with_local_crisis_floor(self, plan: ResponsePlan, query: str) -> ResponsePlan:
+        if CRISIS_GUARD_PASSED in plan.epistemic_reason_codes:
+            return plan
         script = more_protective_local_script(query, plan.fixed_safety_script)
         if script is None:
             return plan

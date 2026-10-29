@@ -12,6 +12,7 @@ from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.memory_components import build_memory_extractor
 from services.control_api.app.text_models import (
+    build_crisis_reply_model,
     build_crisis_semantic_classifier,
     build_persona_extractor,
     build_persona_structurer,
@@ -169,6 +170,7 @@ def test_official_deepseek_without_its_key_never_falls_back_to_dashscope() -> No
     settings = _settings("deepseek", deepseek_key="")
 
     assert build_crisis_semantic_classifier(settings) is None
+    assert build_crisis_reply_model(settings) is None
     assert build_persona_structurer(settings) is None
     assert isinstance(build_persona_extractor(settings), RuleBasedPersonaExtractor)
     assert isinstance(build_memory_extractor(settings), RuleBasedMemoryExtractor)
