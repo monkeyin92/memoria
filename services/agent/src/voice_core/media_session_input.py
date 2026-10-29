@@ -101,6 +101,10 @@ class MediaSessionInputMixin:
 
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
 
+        def _restore_listening_capture_after_empty_turn(
+            self, context: _MediaVoiceSession
+        ) -> bool: ...
+
         def resume_listening_capture(
             self,
             context: _MediaVoiceSession,
@@ -453,6 +457,7 @@ class MediaSessionInputMixin:
                     segment.capture_start_sample,
                 )
                 return
+            context.listening_capture_vad_rewake_pending = True
             self.resume_listening_capture(
                 context,
                 wake_sample=segment.capture_start_sample,
@@ -467,6 +472,7 @@ class MediaSessionInputMixin:
                 segment.final,
                 context.device_wake_ack_pending,
             )
+            self._restore_listening_capture_after_empty_turn(context)
             return
         if _vad_precedes_pending_turn(segment, context):
             logger.info(

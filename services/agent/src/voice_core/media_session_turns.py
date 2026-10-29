@@ -178,6 +178,8 @@ class MediaTurnEndpointMixin:
 
         def _reopen_listening_capture_after_empty_retire(self, context: _MediaVoiceSession, *, cause: str) -> None: ...
 
+        def _restore_listening_capture_after_empty_turn(self, context: _MediaVoiceSession) -> bool: ...
+
         async def _dispatch_reply(
             self,
             session_id: str,
@@ -1062,6 +1064,8 @@ class MediaTurnEndpointMixin:
 
         input_fence = context.pending.turn_input_fence
         empty_input = not self._pending_turn_has_fresh_text_evidence(context)
+        if not empty_input:
+            context.listening_capture_vad_rewake_pending = False
         if not await self._retire_pending_turn_input_range(
             context,
             stream_epoch=stream_epoch,
@@ -1091,7 +1095,8 @@ class MediaTurnEndpointMixin:
                 for work in tuple(context.output.output_work.values())
             )
             if not resume_owned_output:
-                self._reopen_listening_capture_after_empty_retire(context, cause=floor_cause)
+                if not self._restore_listening_capture_after_empty_turn(context):
+                    self._reopen_listening_capture_after_empty_retire(context, cause=floor_cause)
             context.runtime.open_assistant_floor(cause=floor_cause)
             self._schedule_output_retry(context)
             logger.info(
