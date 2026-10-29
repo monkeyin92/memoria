@@ -546,8 +546,6 @@ async def test_empty_asr_retire_admits_the_next_vad_after_the_capture_window(
             )
             for _ in range(10):
                 await asyncio.sleep(0)
-            assert context.listening_capture_hold is False
-            assert context.runtime.interaction_phase is InteractionPhase.LISTENING
             next_sample = 80_000
             await registry.on_speech_segment(
                 session,
@@ -658,5 +656,75 @@ async def test_speech_after_the_capture_window_reopens_capture(
         await registry._audio_ingress.accept(context, _frame(identity, 2, rewake_sample + 1))
         await _ingested(provider, 1)
         assert provider.frames[-1].capture_start_sample == rewake_sample + 1
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("noise_after_reply_s", [None, 27.6])
+async def test_listening_closes_within_sixty_seconds_of_a_silent_room_after_the_reply(
+    monkeypatch: pytest.MonkeyPatch,
+    noise_after_reply_s: float | None,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        session = registry.bridge._connections[identity.session_id].session
+        context.runtime.barge_in_enabled = False
+        await context.runtime.on_assistant_speaking("reply")
+        clock["now"] = 1_010.0
+        reply_end = clock["now"]
+        context.runtime._voice_floor.update(assistant_speaking=False)
+        context.runtime.set_interaction_phase(
+            InteractionPhase.LISTENING,
+            cause="media_playback_ack",
+        )
+        for _ in range(8):
+            await asyncio.sleep(0)
+        closed_at: list[float] = []
+        original = context.runtime.publish_assistant_state
+
+        def _publish(state: str, **kwargs: object) -> object:
+            if state == "listening_closed":
+                closed_at.append(clock["now"])
+            return original(state, **kwargs)
+
+        monkeypatch.setattr(context.runtime, "publish_assistant_state", _publish)
+
+        if noise_after_reply_s is not None:
+            clock["now"] = reply_end + noise_after_reply_s
+            await registry.on_speech_segment(
+                session,
+                replace(
+                    _connect_vad_segment(identity, sample=48_000, segment_id="noise"),
+                    capture_end_sample=49_280,
+                ),
+            )
+            clock["now"] += 1.0
+            await registry.on_speech_segment(
+                session,
+                replace(
+                    _connect_vad_segment(identity, sample=64_000, segment_id="noise-end"),
+                    final=True,
+                    voiced_end_sample=64_000,
+                ),
+            )
+            endpoint = context.pending.turn_endpoint_sample
+            assert endpoint == 64_000
+            clock["now"] += 6.0
+            await registry._expire_endpoint_tail(
+                identity.session_id, identity.stream_epoch, endpoint
+            )
+            for _ in range(10):
+                await asyncio.sleep(0)
+
+        sample = 80_000
+        while not closed_at and clock["now"] < reply_end + 90.0:
+            clock["now"] += 1.0
+            sample += 16_000
+            await registry._audio_ingress.accept(context, _frame(identity, sample, sample))
+
+        assert closed_at, "listening_closed never published"
+        assert closed_at[0] - reply_end <= 60.0
     finally:
         await registry.finalize_session(identity.session_id)

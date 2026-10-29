@@ -268,7 +268,11 @@ class MediaSessionStandbyMixin:
         )
 
     def _open_listening_capture(self, context: _MediaVoiceSession) -> None:
-        if context.listening_capture_hold or not self._listening_capture_armed(context):
+        if (
+            context.listening_capture_hold
+            or context.listening_capture_deadline is not None
+            or not self._listening_capture_armed(context)
+        ):
             return
         context.listening_capture_deadline = time.monotonic() + self.listening_capture_window_s
 
@@ -289,7 +293,6 @@ class MediaSessionStandbyMixin:
         held = context.listening_capture_hold
         context.listening_capture_hold = False
         context.listening_capture_resume_sample = None
-        context.listening_capture_deadline = time.monotonic() + self.listening_capture_window_s
         if held and context.runtime.interaction_phase is InteractionPhase.CONNECTING:
             context.runtime.set_interaction_phase(
                 InteractionPhase.LISTENING,
@@ -399,6 +402,8 @@ class MediaSessionStandbyMixin:
             # particular, an open VAD turn must not consume the owner's
             # post-reply window while its endpoint is still pending.
             self._pause_owner_silence_timer(context)
+            if phase == "speaking":
+                context.listening_capture_deadline = None
 
     def _finish_owner_silence_turn(
         self,
