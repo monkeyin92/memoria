@@ -14,6 +14,7 @@
 #include "esp_app_desc.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "sdkconfig.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "display/lcd_display.h"
@@ -30,6 +31,7 @@
 #include "memoria_offline_menu.h"
 #include "memoria_session_close.h"
 #include "memoria_stop_keyword.h"
+#include "memoria_vad_start.h"
 #include "memoria_wake_mode.h"
 #include "memoria_wake_word.h"
 #include "settings.h"
@@ -343,6 +345,10 @@ std::string RenderJson(cJSON* root) {
     return result;
 }
 
+float ConfiguredVadStartRmsFloor() {
+    return VadStartRmsFloorFromMilli(CONFIG_MEMORIA_VAD_START_RMS_FLOOR_MILLI);
+}
+
 }  // namespace
 
 namespace {
@@ -374,6 +380,12 @@ MemoriaProtocol::MemoriaProtocol() {
     event_group_ = xEventGroupCreate();
     server_sample_rate_ = kDownlinkSampleRate24k;
     server_frame_duration_ = kFrameMs;
+    static bool logged_vad_start_floor = false;
+    if (!logged_vad_start_floor) {
+        logged_vad_start_floor = true;
+        ESP_LOGI(kTag, "vad.start rms floor=%.4f",
+                 static_cast<double>(ConfiguredVadStartRmsFloor()));
+    }
 }
 
 MemoriaProtocol::~MemoriaProtocol() {
@@ -2593,7 +2605,13 @@ void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms) {
     uint64_t legacy_sample_position = 0;
     {
         std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
-        if (stream_epoch_ == 0 || speaking == vad_active_) {
+        if (stream_epoch_ == 0) {
+            return;
+        }
+        const float floor = ConfiguredVadStartRmsFloor();
+        const VadEdgeAction vad_edge =
+            ClassifyVadEdge(vad_active_, speaking, near_end_rms, floor);
+        if (vad_edge == VadEdgeAction::kIgnore) {
             return;
         }
         // Edge rejects playback-window vad.start unless the signed settings
@@ -2602,6 +2620,11 @@ void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms) {
         if (speaking && HasActivePlaybackGeneration() && !voice_barge_in_allowed_) {
             ESP_LOGW(kTag,
                        "Suppressing playback-window VAD start: voice barge-in not allowed");
+            return;
+        }
+        if (vad_edge == VadEdgeAction::kSuppressStart) {
+            ESP_LOGW(kTag, "vad.start suppressed rms=%.4f floor=%.4f",
+                     static_cast<double>(near_end_rms), static_cast<double>(floor));
             return;
         }
         if (protocol_version_ == kProtocolVersionV2) {
