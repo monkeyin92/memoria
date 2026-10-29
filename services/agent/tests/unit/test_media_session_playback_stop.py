@@ -492,6 +492,24 @@ async def test_device_backchannel_mid_story_does_not_stop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_device_garbled_echo_of_the_story_is_not_a_question() -> None:
+    """A fuzzy repeat of the announced line (12+ chars) is the reply's own voice."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(15, final_text="从前有一座山，山里有一座庙，庙里有一个小和尚。")
+        await harness.assert_story_still_playing(story)
+        assert harness.context.pending.turn_endpoint_sample is None
+        assert harness.story.reply_calls == 1
+
+    await _run_story(
+        _device_identity("content-barge-in-fuzzy-echo"),
+        script,
+        opening="从前有一座山，山里有一座庙，庙里有一个老和尚。",
+    )
+
+
+@pytest.mark.asyncio
 async def test_device_echo_of_the_playing_line_is_not_a_question() -> None:
     async def script(harness: _StoryHarness) -> None:
         story = await harness.start_story()

@@ -82,6 +82,7 @@ def _context(
             assistant_speaking=True,
             fence=fence,
             speech_timeline=SimpleNamespace(projected_text=lambda **_: words),
+            playback_guarded_reason=lambda _text, *, duration_ms: None,
         ),
     )
 

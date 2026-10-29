@@ -349,19 +349,43 @@ class MediaPlaybackStopMixin:
         return context.output.assistant_text[-_PLAYBACK_STOP_ECHO_TAIL_CHARS:]
 
     @staticmethod
-    def _reply_task_is_live(context: _MediaVoiceSession) -> bool:
-        """True while a reply the server can still speak is running.
+    def _reply_can_still_be_stopped(context: _MediaVoiceSession) -> bool:
+        """True while the reply can still be heard and stopped.
 
-        A dead reply task with ``assistant_speaking`` still set is the speaking
-        watchdog's stuck window (compliance #345): speech heard there must stay
-        provisional, never become the turn that stops the reply and answers it.
+        A running reply task is live.  So is a finished provider whose audio the
+        device is still draining (``provider_complete``): a question there must
+        still stop the tail.  A task that died mid-stream with no completion is
+        the speaking watchdog's stuck window (compliance #345), where speech must
+        stay provisional and never become the turn that answers it.
         """
 
         if not hasattr(context.output, "reply_task"):
             # A partial double: nothing to prove the reply died.
             return True
         task = context.output.reply_task
-        return task is not None and not task.done()
+        if task is not None and not task.done():
+            return True
+        return bool(getattr(context.output, "provider_complete", False))
+
+    @staticmethod
+    def _playback_input_guard_reason(
+        context: _MediaVoiceSession, result: ASRResult
+    ) -> str | None:
+        """The commit's own guard verdict, so a garbled echo never pins an endpoint.
+
+        ``_playback_text_is_echo`` catches an exact repeat; a fuzzy 12+ character
+        echo (``assistant_echo``) also carries a ``low_information_fragment`` or
+        ``non_target_language`` verdict here, and none of them may stop the reply.
+        """
+
+        duration_ms = (
+            max(0, result.capture_end_sample - result.capture_start_sample) * 1_000 // 16_000
+        )
+        guard = getattr(context.runtime, "playback_guarded_reason", None)
+        if not callable(guard):
+            return None
+        reason: str | None = guard(result.text.strip(), duration_ms=duration_ms)
+        return reason
 
     @staticmethod
     def _playback_text_is_echo(context: _MediaVoiceSession, text: str) -> bool:
@@ -408,6 +432,7 @@ class MediaPlaybackStopMixin:
             return (
                 f"stop_word={lexical_playback_control_only(text)} "
                 f"content_barge_in={content_barge_in_wanted(text)} "
+                f"guard={self._playback_input_guard_reason(context, result)} "
                 f"echo={self._playback_echo_for_guard(context, text)} "
                 f"in_flight={self._reply_in_flight(context)} "
                 f"speaking={context.runtime.assistant_speaking} "
@@ -1165,9 +1190,10 @@ class MediaPlaybackStopMixin:
         content_barge_in = (
             not stop_word
             and not result.rescue_synthesized
-            and self._reply_task_is_live(context)
+            and self._reply_can_still_be_stopped(context)
             and content_barge_in_wanted(text)
             and not self._playback_text_is_echo(context, text)
+            and self._playback_input_guard_reason(context, result) is None
         )
         in_flight = self._reply_in_flight(context)
         diagnosis = self._playback_stop_diagnosis(context, result)

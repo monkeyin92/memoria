@@ -1455,9 +1455,16 @@ class MediaSessionCommitMixin:
             await self._discard_projection(context, interaction.reason)
             context.runtime.publish_assistant_audio("restore", gain=1.0)
             return None, interaction.reason
-        content_barge_in = bool(context.pending.content_barge_in) and (
-            context.runtime.assistant_speaking
+        content_barge_in = (
+            bool(context.pending.content_barge_in)
+            and context.runtime.assistant_speaking
+            and guarded_reason is None
+            and context.runtime.floor.interruptible
+            and not context.runtime.floor.fixed_safety_audible
         )
+        # Consume the pin's intent here: a retry must not stop the reply twice, and a
+        # guarded or fixed-safety final must fall back to the old hold.
+        context.pending.content_barge_in = False
         if (
             context.runtime.assistant_speaking
             and not interaction.cancel_generation
