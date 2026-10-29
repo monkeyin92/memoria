@@ -33,6 +33,9 @@ DEPENDENCY_LOCK = (Path(__file__).parents[1] / "overlay" / "files" / "dependenci
 PROTOCOL_HEADER = (
     Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_protocol.h"
 ).read_text(encoding="utf-8")
+VAD_START_HEADER = (
+    Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_vad_start.h"
+).read_text(encoding="utf-8")
 AUDIO_FRAME_SOURCE = (
     Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_audio_frame.cc"
 ).read_text(encoding="utf-8")
@@ -439,8 +442,19 @@ def test_afe_vad_is_fenced_and_sent_on_the_device_media_protocol() -> None:
     assert "legacy_attempt == websocket_attempt_id_.load()" in legacy_commit
     assert "stream_epoch_ == legacy_stream_epoch" in legacy_commit
     assert '"Device VAD %s at sample=%llu rms=%.4f"' in vad
-    assert "speaking == vad_active_" in SOURCE
+    assert "speaking == epoch_open" in VAD_START_HEADER
+    assert "near_end_rms < floor" in VAD_START_HEADER
+    assert "ClassifyVadEdge(vad_active_, speaking, near_end_rms, floor)" in vad
+    assert 'vad.start suppressed rms=%.4f floor=%.4f' in vad
+    assert vad.index("HasActivePlaybackGeneration()") < vad.index("vad.start suppressed")
+    assert vad.index("vad.start suppressed") < vad.index("++control_sequence_")
+    assert vad.index("vad.start suppressed") < vad.index("vad_active_ = speaking")
     assert "vad_active_ = speaking" in SOURCE
+    ctor = SOURCE[SOURCE.index("MemoriaProtocol::MemoriaProtocol()") :]
+    ctor = ctor[: ctor.index("MemoriaProtocol::~MemoriaProtocol")]
+    assert ctor.count('vad.start rms floor=%.4f') == 1
+    assert "static bool logged_vad_start_floor" in ctor
+    assert SOURCE.count('vad.start rms floor=%.4f') == 1
     assert "Schedule([this, speaking, listening]()" in APPLICATION_PATCH
     assert "const bool listening = GetDeviceState() == kDeviceStateListening" in APPLICATION_PATCH
     assert "memoria_protocol->SendVadState(speaking)" in APPLICATION_PATCH

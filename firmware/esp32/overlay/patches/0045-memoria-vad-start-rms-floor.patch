@@ -1,0 +1,18 @@
+--- a/main/Kconfig.projbuild
++++ b/main/Kconfig.projbuild
+@@ -1105,4 +1105,15 @@ config MEMORIA_KEEP_AWAKE
+         build.sh --keep-awake (config.keep-awake.json). The firmware publisher
+         refuses the image.
+ 
++config MEMORIA_VAD_START_RMS_FLOOR_MILLI
++    int "Minimum near_end_rms for a device vad.start, in thousandths"
++    depends on BOARD_TYPE_MEMORIA_ESP_VOCAT
++    range 0 1000
++    default 3
++    help
++        The device drops vad.start when near_end_rms is below this value
++        divided by 1000, and does not send the matching vad.end. 3 is an
++        rms of 0.003. Measured false starts were 0.0005 to 0.0013. Measured
++        test speech was 0.0067.
++
+ endmenu
