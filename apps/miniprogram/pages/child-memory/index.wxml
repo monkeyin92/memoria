@@ -1,17 +1,17 @@
-<view class="cm-page trial-page" style="{{statusBarStyle}}">
+<view class="cm-page page-shell" style="{{statusBarStyle}}">
   <text class="eyebrow">长期记住的事</text>
-  <text class="trial-title">{{headerTitle}}</text>
+  <text class="page-title">{{headerTitle}}</text>
   <text class="page-lede">机器人长期只记住这三件事，用来更自然地和孩子聊天。</text>
 
   <text wx:if="{{error}}" class="cm-error">{{error}}</text>
   <text wx:if="{{statusBanner}}" class="cm-banner">{{statusBanner}}</text>
 
-  <view wx:if="{{!authenticated}}" class="trial-card cm-empty">
+  <view wx:if="{{!authenticated}}" class="card cm-empty">
     <text class="cm-empty-title">请先登录</text>
     <text class="cm-empty-copy">登录后即可打开孩子的记忆档案。</text>
   </view>
 
-  <view wx:elif="{{loadState === 'loading' || loading}}" class="trial-card cm-first">
+  <view wx:elif="{{loadState === 'loading' || loading}}" class="card cm-first">
     <text class="cm-loading">正在读取…</text>
   </view>
 
@@ -24,7 +24,7 @@
       </view>
 
       <block wx:else>
-        <view class="trial-card trial-card-xl cm-archive cm-first">
+        <view class="card card-xl cm-archive cm-first">
           <view wx:for="{{archiveCards}}" wx:key="field" class="cm-field">
             <mp-icon name="{{item.field === 'appellation' ? 'tag' : item.field === 'preference' ? 'heart' : 'paw'}}"></mp-icon>
             <view class="cm-field-body">
@@ -50,7 +50,7 @@
           </view>
         </view>
 
-        <view class="trial-card cm-note">
+        <view class="card cm-note">
           <view class="cm-note-art" aria-hidden="true"><image src="/assets/ui/v4/mascot-curious.jpg" mode="widthFix"></image></view>
           <text class="cm-note-text">除这三项外，不长期保存其他信息。</text>
         </view>
@@ -62,7 +62,7 @@
       <text class="cm-empty-copy">{{emptyArchiveOff}}</text>
     </view>
 
-    <view class="trial-card cm-consent {{archiveConsent.active ? '' : 'cm-first'}}">
+    <view class="card cm-consent {{archiveConsent.active ? '' : 'cm-first'}}">
       <view class="cm-consent-row">
         <view class="cm-consent-copy">
           <text class="cm-consent-title">{{archiveConsent.label}}</text>
@@ -93,7 +93,7 @@
       <view
         wx:for="{{summaries}}"
         wx:key="recordId"
-        class="trial-card cm-row"
+        class="card cm-row"
       >
         <view class="cm-row-body">
           <text class="cm-summary-text">{{item.text}}</text>
@@ -127,8 +127,8 @@
     <view wx:if="{{confirm.quote}}" class="mp-sheet-quote">{{confirm.quote}}</view>
     <text wx:if="{{confirm.body}}" class="cm-sheet-body">{{confirm.body}}</text>
     <view class="mp-sheet-actions">
-      <button class="trial-danger" bindtap="runConfirm" disabled="{{working}}">{{confirm.confirmLabel}}</button>
-      <button class="trial-secondary" bindtap="closeConfirm" disabled="{{working}}">{{deleteKeepLabel}}</button>
+      <button class="danger-button" bindtap="runConfirm" disabled="{{working}}">{{confirm.confirmLabel}}</button>
+      <button class="secondary-button" bindtap="closeConfirm" disabled="{{working}}">{{deleteKeepLabel}}</button>
     </view>
   </view>
 </view>

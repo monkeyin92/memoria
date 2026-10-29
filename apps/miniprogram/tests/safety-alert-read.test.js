@@ -39,7 +39,7 @@ async function homeScreen(store) {
 
 function reviewBanner(harness) {
   const html = renderPage("pages/memory/index", harness.page.data, { tabBar: false });
-  const id = html.match(/class="trial-banner"[^>]*?data-id="([^"]*)"/)?.[1];
+  const id = html.match(/class="alert-banner"[^>]*?data-id="([^"]*)"/)?.[1];
   if (id !== undefined) harness.page.openAttention({ currentTarget: { dataset: { id } } });
   return { text: visibleText(html), opens: openedUrls(harness) };
 }

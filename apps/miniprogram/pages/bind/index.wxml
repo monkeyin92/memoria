@@ -1,4 +1,4 @@
-<view class="page-shell trial-page bind-trial sub-page" style="{{statusBarStyle}}">
+<view class="page-shell bind-trial sub-page" style="{{statusBarStyle}}">
   <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
   <block wx:if="{{step === 'mode'}}"><text class="eyebrow">第 1 步 · 选择绑定方式</text></block>
   <block wx:elif="{{step === 'form'}}"><text class="eyebrow">第 2 步 · 填写使用者信息</text></block>
@@ -83,7 +83,7 @@
         </picker>
         <view class="quiet-hours-block">
           <text class="quiet-hours-label">{{quietHoursLabel}}</text>
-          <text class="trial-caption bind-night-caption">点下方的开始、结束时间可以修改</text>
+          <text class="l2-card-sub bind-night-caption">点下方的开始、结束时间可以修改</text>
           <view class="quiet-hours-row">
             <picker mode="time" value="{{form.quietHoursStart}}" bindchange="onQuietStartChange">
               <view class="picker-row"><text class="picker-label">开始</text><text class="picker-value">{{form.quietHoursStart}}</text></view>
@@ -210,7 +210,7 @@
 
       <view class="button-row bind-nav">
         <button class="secondary-button" bindtap="backToForm">上一步</button>
-        <button class="trial-primary bind-submit" loading="{{submitting}}" bindtap="submitBinding">{{submitLabel}}</button>
+        <button class="primary-button bind-submit" loading="{{submitting}}" bindtap="submitBinding">{{submitLabel}}</button>
       </view>
       <text wx:if="{{error}}" class="error-text">{{error}}</text>
       <button wx:if="{{needsRescan}}" class="secondary-button bind-rescan" bindtap="rescanDevice">轻点机器人屏幕换码后，重新扫码</button>

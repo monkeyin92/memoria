@@ -1,5 +1,3 @@
-@import "../../styles/trial-theme.wxss";
-
 .guardian-consent-chip {
   margin-top: 8px;
 }

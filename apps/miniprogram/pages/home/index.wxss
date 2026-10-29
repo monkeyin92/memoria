@@ -1,5 +1,3 @@
-@import "../../styles/trial-theme.wxss";
-
 .home-login-hero {
   position: relative;
   height: 400px;
@@ -222,7 +220,7 @@
   line-height: 48px;
 }
 
-.home-usage-copy .trial-status-pill {
+.home-usage-copy .pill {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -236,6 +234,7 @@
 
 .home-stat {
   display: flex;
+  margin-top: 0;
   flex: 1;
   flex-direction: column;
   box-sizing: border-box;

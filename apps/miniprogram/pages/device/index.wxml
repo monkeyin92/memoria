@@ -45,13 +45,13 @@
     </view>
 
     <block wx:else>
-      <view class="trial-page device-trial-head">
+      <view>
         <text class="eyebrow">设备 · {{devicePlaceName}}</text>
-        <text class="trial-title">使用时长</text>
+        <text class="page-title">使用时长</text>
         <text class="page-lede">到时间后，机器人会温柔地提醒孩子休息。</text>
 
         <block wx:if="{{trialSettingsVisible}}">
-          <view class="trial-card trial-card-xl device-usage-card">
+          <view class="card card-xl device-usage-card">
             <view class="device-ring" style="{{usageRingStyle}}">
               <view class="device-ring-inner">
                 <block wx:if="{{sessionLimits.dailyChatMinutes && dailyUsage}}">
@@ -71,14 +71,13 @@
             <view class="device-usage-copy">
               <text wx:if="{{sessionLimits.dailyChatMinutes && dailyUsage}}" class="device-usage-title">今天还可以聊 <text class="device-usage-remaining">{{sessionLimits.dailyChatMinutes > dailyUsage.usedMinutes ? sessionLimits.dailyChatMinutes - dailyUsage.usedMinutes : 0}} 分钟</text></text>
               <text wx:else class="device-usage-title">用量暂未统计</text>
-              <view class="trial-status-pill {{online ? '' : 'is-off'}}">
-                <view class="trial-status-dot"></view>
+              <view class="pill pill-online {{online ? '' : 'pill-neutral'}}">
                 <text>{{online ? '在线' : '离线'}}</text>
               </view>
             </view>
           </view>
 
-          <view class="trial-card device-limit-card">
+          <view class="card device-limit-card">
             <view class="device-limit-head">
               <text class="device-limit-label">单次上限</text>
               <view>
@@ -124,20 +123,20 @@
             </block>
           </view>
 
-          <view class="trial-card device-quiet-card" bindtap="openLimitsSheet">
+          <view class="card device-quiet-card" bindtap="openLimitsSheet">
             <mp-icon name="moon" tone="ink"></mp-icon>
             <view class="device-setting-copy">
               <text class="device-quiet-title">安静时段</text>
-              <text class="trial-caption">孩子睡觉的时间，机器人不陪聊</text>
+              <text class="l2-card-sub">孩子睡觉的时间，机器人不陪聊</text>
             </view>
             <text class="device-quiet-chip">{{sessionLimits.quietStart ? sessionLimits.quietStart + '–' + sessionLimits.quietEnd : '未设置'}}</text>
           </view>
 
-          <view wx:if="{{subscriptionPushEnabled}}" class="trial-inset">
-            <view class="trial-inset-row">
+          <view wx:if="{{subscriptionPushEnabled}}" class="inset-group">
+            <view class="inset-row">
               <view class="device-setting-copy">
-                <text class="trial-inset-label">安全提醒</text>
-                <text class="trial-caption">{{safetySubscribeHelper}}</text>
+                <text class="inset-label">安全提醒</text>
+                <text class="l2-card-sub">{{safetySubscribeHelper}}</text>
               </view>
               <switch
                 checked="{{safetySubscribeKnown && safetySubscribeOn}}"
@@ -148,40 +147,40 @@
             </view>
             <text
               wx:if="{{safetySubscribeOffCaption}}"
-              class="trial-caption trial-inset-caption {{safetySubscribeKnown ? '' : 'is-action'}}"
+              class="l2-card-sub inset-caption {{safetySubscribeKnown ? '' : 'is-action'}}"
               bindtap="retrySafetySubscribeState"
             >{{safetySubscribeOffCaption}}</text>
           </view>
         </block>
 
-        <view class="trial-inset device-story-block">
-          <view class="trial-inset-row">
+        <view class="inset-group device-story-block">
+          <view class="inset-row">
             <mp-icon name="book" tone="ink"></mp-icon>
             <view class="device-setting-copy">
-              <text class="trial-inset-label">离线故事</text>
-              <text class="trial-caption">不联网也能听</text>
+              <text class="inset-label">离线故事</text>
+              <text class="l2-card-sub">不联网也能听</text>
             </view>
           </view>
-          <view wx:for="{{offlineStories}}" wx:key="id" class="trial-inset-row">
-            <text class="trial-inset-label">{{item.title}}</text>
+          <view wx:for="{{offlineStories}}" wx:key="id" class="inset-row">
+            <text class="inset-label">{{item.title}}</text>
           </view>
-          <text wx:if="{{!offlineStories.length}}" class="trial-caption trial-inset-caption">暂无可显示的离线故事</text>
+          <text wx:if="{{!offlineStories.length}}" class="l2-card-sub inset-caption">暂无可显示的离线故事</text>
         </view>
 
-        <view class="trial-inset device-privacy-block">
-          <view class="trial-inset-row" bindtap="openPrivacyNote">
+        <view class="inset-group device-privacy-block">
+          <view class="inset-row" bindtap="openPrivacyNote">
             <mp-icon name="shield" tone="ink"></mp-icon>
-            <text class="trial-inset-label">隐私说明</text>
+            <text class="inset-label">隐私说明</text>
             <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
           </view>
-          <view wx:if="{{guardianExportVisible}}" class="trial-inset-row" bindtap="openGuardianExport">
+          <view wx:if="{{guardianExportVisible}}" class="inset-row" bindtap="openGuardianExport">
             <mp-icon name="export" tone="ink"></mp-icon>
-            <text class="trial-inset-label">管理与导出数据</text>
+            <text class="inset-label">管理与导出数据</text>
             <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
           </view>
-          <view class="trial-inset-row" bindtap="openUnbindSheet">
+          <view class="inset-row" bindtap="openUnbindSheet">
             <mp-icon name="dev" tone="ink"></mp-icon>
-            <text class="trial-inset-label">解绑设备</text>
+            <text class="inset-label">解绑设备</text>
             <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
           </view>
         </view>

@@ -1,18 +1,9 @@
-@import "../../styles/trial-theme.wxss";
-
-.device-trial-head {
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-  background: transparent;
-}
-
 .device-setting-copy {
   flex: 1;
   min-width: 0;
 }
 
-.device-setting-copy .trial-caption {
+.device-setting-copy .l2-card-sub {
   margin-top: 4px;
 }
 
@@ -140,7 +131,7 @@
   font-weight: 600;
 }
 
-.device-quiet-card .trial-caption {
+.device-quiet-card .l2-card-sub {
   line-height: normal;
 }
 
@@ -161,7 +152,7 @@
   margin-top: var(--mp-gap-card);
 }
 
-.device-privacy-block .trial-inset-label {
+.device-privacy-block .inset-label {
   flex: 1;
 }
 

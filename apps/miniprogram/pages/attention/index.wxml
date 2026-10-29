@@ -27,5 +27,5 @@
   </view>
 
   <text wx:if="{{ackError}}" class="error-text attention-error">{{ackError}}</text>
-  <button class="trial-primary attention-done" bindtap="acknowledge" disabled="{{acknowledging}}">我知道了</button>
+  <button class="primary-button attention-done" bindtap="acknowledge" disabled="{{acknowledging}}">我知道了</button>
 </view>

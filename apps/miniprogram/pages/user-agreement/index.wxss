@@ -1,5 +1,3 @@
-@import "../../styles/trial-theme.wxss";
-
 .agreement-pending {
   margin-top: 16px;
 }

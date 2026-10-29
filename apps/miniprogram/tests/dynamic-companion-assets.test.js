@@ -81,8 +81,8 @@ test("v4 home keeps the mascot off the dashboard; settings keep none", () => {
   assert.doesNotMatch(device, /<face-badge/);
   assert.doesNotMatch(home, /<device-screen/);
   assert.doesNotMatch(device, /<device-screen/);
-  assert.match(home, /class="trial-card trial-card-xl home-usage-card" bindtap="openDevice"/);
-  assert.match(device, /trialSettingsVisible|trial-inset/);
+  assert.match(home, /class="card card-xl home-usage-card" bindtap="openDevice"/);
+  assert.match(device, /trialSettingsVisible|inset-group/);
   assert.match(memory, /<face-badge/);
   assert.match(memory, /mood="thinking"|mood="happy"/);
 });

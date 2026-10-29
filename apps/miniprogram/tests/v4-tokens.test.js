@@ -14,15 +14,15 @@ function wxssFiles(dir) {
     .map((file) => path.join(dir, file));
 }
 
-test("page and shared stylesheets take every colour from the app.wxss tokens", () => {
-  const offenders = [...wxssFiles("pages"), ...wxssFiles("styles")].flatMap((file) =>
+test("page stylesheets take every colour from the app.wxss tokens", () => {
+  const offenders = wxssFiles("pages").flatMap((file) =>
     (fs.readFileSync(path.join(root, file), "utf8").match(RAW_COLOR) || []).map((hit) => `${file}: ${hit}`),
   );
   assert.deepEqual(offenders, []);
 });
 
 test("type sizes come from the --mp-type scale, so no page drifts to odd or tiny sizes", () => {
-  const offenders = ["app.wxss", ...wxssFiles("pages"), ...wxssFiles("styles")].flatMap((file) =>
+  const offenders = ["app.wxss", ...wxssFiles("pages")].flatMap((file) =>
     (fs.readFileSync(path.join(root, file), "utf8").match(RAW_FONT_SIZE) || []).map((hit) => `${file}: ${hit}`),
   );
   assert.deepEqual(offenders, []);
@@ -35,7 +35,7 @@ test("lengths are px so the 390 pt design frame renders 1:1, never rpx", () => {
       .filter((file) => /\.(wxss|wxml)$/.test(file))
       .map((file) => path.join(dir, file)),
   );
-  const offenders = ["app.wxss", ...templates, ...wxssFiles("styles")].flatMap((file) =>
+  const offenders = ["app.wxss", ...templates].flatMap((file) =>
     (fs.readFileSync(path.join(root, file), "utf8").match(/[\d}]rpx/g) || []).map((hit) => `${file}: ${hit}`),
   );
   assert.deepEqual(offenders, []);

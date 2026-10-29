@@ -11,15 +11,15 @@
   <block wx:else>
     <view
       wx:if="{{safetyBanner}}"
-      class="trial-banner"
+      class="alert-banner"
       data-id="{{safetyBanner.notificationId}}"
       bindtap="openAttention"
     >
-      <view class="trial-banner-icon"><image src="/assets/ui/v4/heart-rust.svg" /></view>
-      <view class="trial-banner-copy">
-        <text class="trial-banner-title">{{safetyBanner.message}}</text>
-        <text class="trial-banner-meta">{{safetyBanner.timeLabel}}</text>
-        <text wx:if="{{safetyBanner.moreLabel}}" class="trial-banner-meta">{{safetyBanner.moreLabel}}</text>
+      <view class="alert-banner-icon"><image src="/assets/ui/v4/heart-rust.svg" /></view>
+      <view class="alert-banner-copy">
+        <text class="alert-banner-title">{{safetyBanner.message}}</text>
+        <text class="alert-banner-meta">{{safetyBanner.timeLabel}}</text>
+        <text wx:if="{{safetyBanner.moreLabel}}" class="alert-banner-meta">{{safetyBanner.moreLabel}}</text>
       </view>
       <image class="memory-chev" src="/assets/ui/v4/chev-rust.svg" />
     </view>

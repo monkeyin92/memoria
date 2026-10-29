@@ -1,5 +1,3 @@
-@import "../../styles/trial-theme.wxss";
-
 .auth-wrap {
   padding-bottom: calc(12px + env(safe-area-inset-bottom));
 }

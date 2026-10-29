@@ -1,5 +1,3 @@
-@import "../../styles/trial-theme.wxss";
-
 .memory-guest .primary-button {
   margin-top: 16px;
 }

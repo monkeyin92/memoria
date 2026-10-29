@@ -1,5 +1,3 @@
-@import "../../styles/trial-theme.wxss";
-
 .bind-trial .picker-row {
   margin-top: 8px;
 }

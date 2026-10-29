@@ -1,5 +1,3 @@
-@import "../../styles/trial-theme.wxss";
-
 .agreement-copy {
   margin-top: 16px;
 }

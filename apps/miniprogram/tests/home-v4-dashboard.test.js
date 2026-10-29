@@ -172,7 +172,7 @@ test("home memory card previews the latest summary and opens child memory", asyn
   const { data } = await loadHome();
   const text = visibleText(renderPage("pages/home/index", data));
   assert.match(text, /孩子的记忆 最近：讲了《大熊和森林里的悄悄话》/);
-  assert.match(renderPage("pages/home/index", data), /class="trial-card home-row-card" data-tap/);
+  assert.match(renderPage("pages/home/index", data), /class="card home-row-card" data-tap/);
 });
 
 test("home never renders battery, story counts or a recommendation card", async () => {

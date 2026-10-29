@@ -13,7 +13,7 @@
   <text wx:if="{{error}}" class="error-text auth-error">{{error}}</text>
   <button
     wx:if="{{accountAgreed}}"
-    class="trial-primary"
+    class="primary-button"
     open-type="getPhoneNumber"
     bindgetphonenumber="onGetPhoneNumber"
     loading="{{loading}}"
@@ -22,7 +22,7 @@
   >登录</button>
   <button
     wx:else
-    class="trial-primary"
+    class="primary-button"
     bindtap="onLoginWithoutConsent"
     disabled="{{loading}}"
     aria-label="登录"

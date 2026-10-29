@@ -26,6 +26,6 @@
   </view>
   <text wx:if="{{agreementHint}}" class="login-note auth-agreement-hint">{{agreementHint}}</text>
 
-  <button class="trial-primary" bindtap="confirmChildConsent" disabled="{{agreementPending || !consented}}">同意并继续</button>
+  <button class="primary-button" bindtap="confirmChildConsent" disabled="{{agreementPending || !consented}}">同意并继续</button>
   <button class="auth-decline" bindtap="decline">暂不同意</button>
 </view>

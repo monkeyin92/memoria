@@ -1,4 +1,4 @@
-<view class="page-shell trial-page tab-page home-v4" style="{{statusBarStyle}}">
+<view class="page-shell tab-page home-v4" style="{{statusBarStyle}}">
   <view wx:if="{{!authenticated}}" class="home-guest">
     <text class="page-title">{{guestHome.productTitle}}</text>
     <text class="page-lede">{{guestHome.productBody}}</text>
@@ -16,7 +16,7 @@
         catchtap="openGuestAgreement"
       >《{{item.title}}》</text>
     </view>
-    <button class="trial-primary" bindtap="openAccountLogin">登录</button>
+    <button class="primary-button" bindtap="openAccountLogin">登录</button>
     <view class="list guest-actions">
       <view
         wx:for="{{loginGatedActions}}"
@@ -34,62 +34,62 @@
     <view class="home-head">
       <view class="home-head-copy">
         <text class="eyebrow">{{pageLede}}</text>
-        <text class="trial-title">今天</text>
+        <text class="page-title">今天</text>
       </view>
       <view class="home-avatar" bindtap="openProfile">{{avatarGlyph}}</view>
     </view>
 
-    <view wx:if="{{loading}}" class="trial-card home-pad">
-      <text class="trial-caption">{{syncingBindings ? '正在同步你的设备…' : '正在读取状态…'}}</text>
+    <view wx:if="{{loading}}" class="card home-pad">
+      <text class="l2-card-sub">{{syncingBindings ? '正在同步你的设备…' : '正在读取状态…'}}</text>
     </view>
 
-    <view wx:elif="{{bindingSyncError && !hasBinding && !needsBindingChoice}}" class="trial-card home-pad">
+    <view wx:elif="{{bindingSyncError && !hasBinding && !needsBindingChoice}}" class="card home-pad">
       <text class="home-card-title">设备信息暂未同步</text>
-      <text class="trial-caption">这不代表未绑定，无需重新配网。{{bindingSyncError}}</text>
-      <button class="trial-primary home-cta-btn" bindtap="retryBindingSync">重新同步</button>
+      <text class="l2-card-sub">这不代表未绑定，无需重新配网。{{bindingSyncError}}</text>
+      <button class="primary-button home-cta-btn" bindtap="retryBindingSync">重新同步</button>
     </view>
 
     <view wx:elif="{{needsBindingChoice}}">
-      <text class="trial-caption home-choice-lede">设备信息已从账号找到。选择你要查看的设备。</text>
+      <text class="l2-card-sub home-choice-lede">设备信息已从账号找到。选择你要查看的设备。</text>
       <view
         wx:for="{{bindingChoices}}"
         wx:key="bindingId"
-        class="trial-card home-choice"
+        class="card home-choice"
         data-binding-id="{{item.bindingId}}"
         bindtap="chooseDeviceBinding"
       >
         <view class="home-choice-copy">
           <text class="home-card-title">{{item.label}}</text>
-          <text class="trial-caption">{{item.modeLabel}}</text>
+          <text class="l2-card-sub">{{item.modeLabel}}</text>
         </view>
         <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>
-      <text class="trial-caption">切换设备不会赋予查看其他成员私密内容的权限。</text>
+      <text class="l2-card-sub">切换设备不会赋予查看其他成员私密内容的权限。</text>
       <text wx:if="{{bindingSyncError}}" class="home-error">{{bindingSyncError}}</text>
     </view>
 
-    <view wx:elif="{{!hasBinding}}" class="trial-card home-pad">
+    <view wx:elif="{{!hasBinding}}" class="card home-pad">
       <text class="home-card-title">还没有绑定设备</text>
-      <text class="trial-caption">已完成账号同步。请接通设备电源，在手机旁完成首次启用。</text>
-      <button class="trial-primary home-cta-btn" bindtap="openOnboarding">{{hasPendingOnboarding ? '继续上次启用' : '添加第一台设备'}}</button>
+      <text class="l2-card-sub">已完成账号同步。请接通设备电源，在手机旁完成首次启用。</text>
+      <button class="primary-button home-cta-btn" bindtap="openOnboarding">{{hasPendingOnboarding ? '继续上次启用' : '添加第一台设备'}}</button>
       <button class="home-text-btn" bindtap="showSyncHelp">其他手机上已经有设备？</button>
     </view>
 
     <block wx:else>
       <view
         wx:if="{{unreadSafetyAlert}}"
-        class="trial-banner home-attention"
+        class="alert-banner home-attention"
         bindtap="openUnreadSafety"
       >
-        <view class="trial-banner-icon"><image src="/assets/ui/v4/heart-rust.svg" /></view>
-        <view class="trial-banner-copy">
-          <text class="trial-banner-title">{{unreadSafetyCopy}}</text>
-          <text class="trial-banner-meta">{{unreadSafetyMeta}}</text>
+        <view class="alert-banner-icon"><image src="/assets/ui/v4/heart-rust.svg" /></view>
+        <view class="alert-banner-copy">
+          <text class="alert-banner-title">{{unreadSafetyCopy}}</text>
+          <text class="alert-banner-meta">{{unreadSafetyMeta}}</text>
         </view>
         <image class="home-chev" src="/assets/ui/v4/chev-rust.svg" />
       </view>
 
-      <view class="trial-card trial-card-xl home-usage-card" bindtap="openDevice">
+      <view class="card card-xl home-usage-card" bindtap="openDevice">
         <view class="home-ring" style="{{usageRingStyle}}">
           <view class="home-ring-inner">
             <text class="home-ring-num">{{usageCenterLabel}}</text>
@@ -103,15 +103,14 @@
             <text class="home-usage-unit"> 分钟</text>
           </view>
           <text wx:else class="home-usage-pending">用量暂未统计</text>
-          <view class="trial-status-pill {{online ? '' : 'is-off'}}">
-            <view class="trial-status-dot"></view>
+          <view class="pill pill-online {{online ? '' : 'pill-neutral'}}">
             <text>{{personaName}}{{online ? '在线' : '离线'}}</text>
           </view>
         </view>
       </view>
 
       <view class="home-stat-grid">
-        <view class="trial-card home-stat" bindtap="openMemory">
+        <view class="card home-stat" bindtap="openMemory">
           <view class="mp-icon-tile"><image src="/assets/ui/v4/book-accent.svg" /></view>
           <text class="home-lbl">今天对话</text>
           <view class="home-stat-line">
@@ -119,7 +118,7 @@
             <text class="home-stat-unit"> 次</text>
           </view>
         </view>
-        <view class="trial-card home-stat" bindtap="openMemory">
+        <view class="card home-stat" bindtap="openMemory">
           <view class="mp-icon-tile"><image src="/assets/ui/v4/note-accent.svg" /></view>
           <text class="home-lbl">近期摘要</text>
           <view class="home-stat-line">
@@ -129,7 +128,7 @@
         </view>
       </view>
 
-      <view wx:if="{{showChildMemory}}" class="trial-card home-row-card" bindtap="openChildMemory">
+      <view wx:if="{{showChildMemory}}" class="card home-row-card" bindtap="openChildMemory">
         <mp-icon name="heart" size="96"></mp-icon>
         <view class="home-row-copy">
           <text class="home-card-title">{{childMemoryName}}的记忆</text>
@@ -138,11 +137,11 @@
         <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>
 
-      <view wx:if="{{showSafetyNightCard && subscriptionPushEnabled}}" class="trial-card home-toggle-card">
+      <view wx:if="{{showSafetyNightCard && subscriptionPushEnabled}}" class="card home-toggle-card">
         <view class="home-toggle-row">
           <view class="home-toggle-copy">
             <text class="home-card-title">安全提醒</text>
-            <text class="trial-caption">{{safetySubscribeHelper}}</text>
+            <text class="l2-card-sub">{{safetySubscribeHelper}}</text>
           </view>
           <switch
             checked="{{safetySubscribeKnown && safetySubscribeOn}}"
@@ -155,7 +154,7 @@
           <view class="mp-icon-tile home-moon"><image src="/assets/ui/v4/moon-ink.svg" /></view>
           <view class="home-toggle-copy">
             <text class="home-card-title">安静时段</text>
-            <text class="trial-caption">{{nightModeOn ? quietHoursLabel : '未设置'}}</text>
+            <text class="l2-card-sub">{{nightModeOn ? quietHoursLabel : '未设置'}}</text>
           </view>
           <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>

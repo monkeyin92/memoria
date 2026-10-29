@@ -49,7 +49,7 @@ test("online status reflects activation readiness", () => {
 test("home page is a status board without rooms or realtime chat", () => {
   const template = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const script = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
-  assert.match(template, /Memoria|trial-title">今天/);
+  assert.match(template, /Memoria|page-title">今天/);
   assert.doesNotMatch(template, /startVoice|startText|sendText|可直接对话/);
   assert.doesNotMatch(template, /先了解怎么用|openHowItWorks|家中的设备/);
   assert.match(template, /wx:if="\{\{!authenticated\}\}"[\s\S]*guestHome\.features/);
@@ -151,7 +151,6 @@ test("parent v4 tokens live in app.wxss and pages avoid third-party art", () => 
     "pages/bind/index.wxss",
     "pages/device/index.wxml",
     "pages/device/index.wxss",
-    "styles/trial-theme.wxss",
   ];
   for (const relative of surfaces) {
     const source = fs.readFileSync(path.join(root, relative), "utf8");

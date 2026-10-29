@@ -42,7 +42,7 @@ test("child-memory opens on its heading like the design's tab page, with no back
   try {
     const html = renderPage("pages/child-memory/index", harness.page.data);
     assert.doesNotMatch(html, /class="nav-back"/);
-    assert.match(html, /class="cm-page trial-page" style="--mp-status-bar: 47px; --mp-capsule-bottom: 83px;"/);
+    assert.match(html, /class="cm-page page-shell" style="--mp-status-bar: 47px; --mp-capsule-bottom: 83px;"/);
   } finally {
     harness.restore();
   }
