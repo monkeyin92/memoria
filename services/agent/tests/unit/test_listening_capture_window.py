@@ -545,3 +545,58 @@ async def test_empty_asr_retire_admits_the_next_vad_after_the_capture_window(
         ]
     finally:
         await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_long_playout_opens_a_fresh_capture_window_for_the_next_vad(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        context.runtime.barge_in_enabled = False
+        clock["now"] = 1_010.0
+        registry._finish_owner_silence_turn(context, accepted=True)
+        await context.runtime.on_assistant_speaking("reply")
+        assert context.runtime.interaction_phase is InteractionPhase.SPEAKING
+        assert context.runtime.playback_overlap_input_blocked() is True
+
+        clock["now"] = 1_050.0
+        session = registry.bridge._connections[identity.session_id].session
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=48_000, segment_id="during-story"),
+                capture_end_sample=49_280,
+            ),
+        )
+        assert context.pending.turn_start_sample is None
+        assert context.runtime.interaction_phase is InteractionPhase.SPEAKING
+        assert context.listening_capture_hold is False
+        assert context.standby_requested is False
+
+        context.runtime._voice_floor.update(assistant_speaking=False)
+        context.runtime.set_interaction_phase(
+            InteractionPhase.LISTENING,
+            cause="media_playback_ack",
+        )
+        for _ in range(8):
+            await asyncio.sleep(0)
+        assert context.listening_capture_hold is False
+        assert context.runtime.interaction_phase is InteractionPhase.LISTENING
+
+        clock["now"] = 1_055.0
+        next_sample = 96_000
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=next_sample, segment_id="after-story"),
+                capture_end_sample=next_sample + 1_280,
+            ),
+        )
+        assert context.pending.turn_start_sample == next_sample
+        await registry._audio_ingress.accept(context, _frame(identity, 1, next_sample + 1))
+        await _ingested(provider, 1)
+        assert context.listening_capture_hold is False
+    finally:
+        await registry.finalize_session(identity.session_id)
