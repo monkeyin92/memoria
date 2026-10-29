@@ -107,9 +107,7 @@ class MediaTurnEndpointMixin:
 
         def _schedule_output_retry(self, context: _MediaVoiceSession) -> None: ...
 
-        def _output_work_is_active(
-            self, context: _MediaVoiceSession, work: OutputWork
-        ) -> bool: ...
+        def _output_work_is_active(self, context: _MediaVoiceSession, work: OutputWork) -> bool: ...
 
         async def _accept_asr_result_decision(
             self,
@@ -177,6 +175,8 @@ class MediaTurnEndpointMixin:
             *,
             endpoint_sample: int | None = None,
         ) -> None: ...
+
+        def _reopen_listening_capture_after_empty_retire(self, context: _MediaVoiceSession, *, cause: str) -> None: ...
 
         async def _dispatch_reply(
             self,
@@ -1074,8 +1074,7 @@ class MediaTurnEndpointMixin:
         )
         self._clear_pending_turn_state(context)
         resume_owned_output = False
-        # A control/identity/generation change retires this placeholder;
-        # only the exact originating fence may restore queued playback.
+        # A control, identity, or generation change retires this placeholder. Only the exact originating fence may restore queued playback.
         if (
             empty_input
             and input_fence is not None
@@ -1085,18 +1084,19 @@ class MediaTurnEndpointMixin:
             and not context.runtime.formal_speaker_enrollment_active
         ):
             self._clear_evidence_less_floor_hold(context)
-            context.runtime.open_assistant_floor(cause=floor_cause)
             resume_owned_output = owned_delegation_holds_turn(
                 context.output.delegation_output_claims, input_fence
             ) or any(
                 self._output_work_is_active(context, work)
                 for work in tuple(context.output.output_work.values())
             )
+            if not resume_owned_output:
+                self._reopen_listening_capture_after_empty_retire(context, cause=floor_cause)
+            context.runtime.open_assistant_floor(cause=floor_cause)
             self._schedule_output_retry(context)
             logger.info(
                 "media empty input retired session=%s fence=%s resume_output=%s cause=%s",
-                context.identity.session_id, input_fence, resume_owned_output, floor_cause,
-            )
+                context.identity.session_id, input_fence, resume_owned_output, floor_cause)
         if context.runtime.assistant_speaking:
             context.runtime.publish_assistant_audio("restore", gain=1.0)
         return discarded, resume_owned_output
