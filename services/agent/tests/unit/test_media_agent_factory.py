@@ -457,3 +457,17 @@ def test_the_session_language_model_forwards_the_warm_up_to_its_pipeline() -> No
     model.warm_committed_turn("后天呢")
 
     assert warmed == ["后天呢"]
+
+
+def test_the_session_language_model_forwards_the_plan_head_start_to_its_pipeline() -> None:
+    from services.agent.src.media_agent_factory import _SessionLanguageModel
+
+    planned: list[str] = []
+    model = _SessionLanguageModel(
+        pipeline=SimpleNamespace(start_committed_turn_plan=planned.append),  # type: ignore[arg-type]
+        closeables=(),
+    )
+
+    model.start_committed_turn_plan("后天呢")
+
+    assert planned == ["后天呢"]

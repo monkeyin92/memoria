@@ -132,6 +132,9 @@ DEVICE_MEMORY_TASK_NAME = "device-memory-prefetch"
 # A fetch started for a sentence whose turn is about to be committed (``warm_committed_turn``) is only ever
 # taken by that commit; one that nobody took within this long belonged to a turn that never committed.
 _WARMED_MEMORY_MAX_AGE_S = 10.0
+# The response-plan request of a turn about to be committed goes out under the fence the commit will make
+# (``start_committed_turn_plan``); the commit takes it only when it would send exactly the same request.
+EARLY_RESPONSE_PLAN_TASK_NAME = "response-plan-head-start"
 
 
 def _compact_sentence(text: str) -> str:
@@ -157,6 +160,48 @@ class _WarmedMemory:
     speaker: Any
     task: asyncio.Task[MemoryCapsule | None]
     started: float
+
+
+@dataclass(frozen=True, slots=True)
+class _PlanRequest:
+    """What one response-plan request asks the control plane; two equal values ask the same thing."""
+
+    text: str
+    speaker: Any
+    fence: GenerationFence
+    recall_context: tuple[str, ...]
+    utterance_intent: str
+
+
+@dataclass(slots=True)
+class _EarlyPlan:
+    """A response-plan request sent before its turn was committed."""
+
+    request: _PlanRequest
+    task: asyncio.Task[ResponsePlanFetch]
+
+
+def _recall_context(snapshot: ContextSnapshot, *, speaker: Any) -> tuple[str, ...]:
+    """Keep only recent owner utterances from a frozen snapshot."""
+
+    if getattr(speaker, "classification", None) != "owner" or snapshot.speaker_class != "owner":
+        return ()
+    selected: list[str] = []
+    total_chars = 0
+    for turn in reversed(snapshot.recent_committed_turns):
+        if turn.role != "user" or turn.speaker_scope != "owner":
+            continue
+        text = turn.content.strip()[:RECALL_CONTEXT_ITEM_MAX_CHARS]
+        if not text:
+            continue
+        if total_chars + len(text) > RECALL_CONTEXT_TOTAL_MAX_CHARS:
+            break
+        selected.append(text)
+        total_chars += len(text)
+        if len(selected) >= RECALL_CONTEXT_MAX_ITEMS:
+            break
+    selected.reverse()
+    return tuple(selected)
 
 
 def _memory_capsule(items: Iterable[ResponseGroundedItem]) -> MemoryCapsule:
@@ -266,6 +311,7 @@ class ReplyPipeline:
         ] = {}
         self._realtime_tool_registered = False
         self._warmed_memory: _WarmedMemory | None = None
+        self._early_plan: _EarlyPlan | None = None
         self._late_crisis: dict[GenerationFence, _LateCrisisPlan] = {}
         self._block_soothing_on_next_reply = False
         if callable(getattr(response_planner_client, "prefetch_context", None)):
@@ -858,9 +904,17 @@ class ReplyPipeline:
         if not self._register_response_planner_tool() or not self._runtime.profile_permits(
             fence, capability="memory_recall_private"
         ):
+            self._drop_early_plan()
             return ResponsePlanFetch(None, "no_verified_runtime_profile")
-        recall_context = self._recall_context_for_fence(fence, speaker=speaker)
+        request = _PlanRequest(
+            text=text,
+            speaker=speaker,
+            fence=fence,
+            recall_context=self._recall_context_for_fence(fence, speaker=speaker),
+            utterance_intent=self._runtime.route_user_turn(text).intent,
+        )
         if response_plan_sidecar.applies(self._response_planner_client, self._runtime, fence):
+            self._drop_early_plan()
             fetch, task = response_plan_sidecar.spawn_task(
                 self._runtime,
                 self._response_planner_client,
@@ -868,13 +922,24 @@ class ReplyPipeline:
                 text=text,
                 fence=fence,
                 speaker=speaker,
-                recall_context=recall_context,
-                utterance_intent=self._runtime.route_user_turn(text).intent,
+                recall_context=request.recall_context,
+                utterance_intent=request.utterance_intent,
             )
             self._watch_late_crisis_plan(task, text=text, fence=fence)
             return fetch
         coordinator = self._runtime.orchestrator.delegation
         context_version = self._runtime.orchestrator.context_version_for_fence(fence)
+        early = self._take_early_plan(request)
+        if early is not None:
+            fetched = await early
+            # What ``accept_control_result`` checks for a delegated request: the turn and the context the
+            # plan was asked for are still the current ones.
+            if (
+                self._runtime.fence.matches(fence)
+                and coordinator.current_context_version(fence.session_id) == context_version
+            ):
+                return fetched
+            return ResponsePlanFetch(None, "delegation_rejected")
         handle = await coordinator.delegate(
             DelegationRequest(
                 tool_name="response_planner",
@@ -883,8 +948,8 @@ class ReplyPipeline:
                     "query": text,
                     "fence": fence,
                     "speaker_decision": speaker,
-                    "recall_context": recall_context,
-                    "utterance_intent": self._runtime.route_user_turn(text).intent,
+                    "recall_context": request.recall_context,
+                    "utterance_intent": request.utterance_intent,
                 },
                 fence=fence,
                 task_epoch=coordinator.next_task_epoch(fence.session_id),
@@ -919,30 +984,100 @@ class ReplyPipeline:
     ) -> tuple[str, ...]:
         """Keep only recent owner utterances from the fence's frozen snapshot."""
 
-        if getattr(speaker, "classification", None) != "owner":
-            return ()
         try:
             snapshot = self._runtime.context_snapshot_for_fence(fence)
         except (RuntimeError, ValueError):
             return ()
-        if snapshot.speaker_class != "owner":
-            return ()
-        selected: list[str] = []
-        total_chars = 0
-        for turn in reversed(snapshot.recent_committed_turns):
-            if turn.role != "user" or turn.speaker_scope != "owner":
-                continue
-            text = turn.content.strip()[:RECALL_CONTEXT_ITEM_MAX_CHARS]
-            if not text:
-                continue
-            if total_chars + len(text) > RECALL_CONTEXT_TOTAL_MAX_CHARS:
-                break
-            selected.append(text)
-            total_chars += len(text)
-            if len(selected) >= RECALL_CONTEXT_MAX_ITEMS:
-                break
-        selected.reverse()
-        return tuple(selected)
+        return _recall_context(snapshot, speaker=speaker)
+
+    def start_committed_turn_plan(self, text: str) -> None:
+        """Send the response-plan request of a turn the media session is about to commit.
+
+        The request used to leave only once the turn was committed, behind both classifier verdicts and two
+        profile refreshes, and then took 0.3-0.8 s of the child's wait on its own (2026-10-28 bench:
+        ``prepare_ms`` p50 983).  This one goes out under the fence the commit will make; ``prepare_turn``
+        takes it only when the request it would send itself is the same, and sends its own otherwise.
+        """
+
+        self._start_early_plan(text, self._runtime.current_speaker_decision)
+
+    def _start_early_plan(self, text: str, speaker: Any) -> None:
+        fence = self._runtime.fence.bump_turn()
+        try:
+            recall_context = _recall_context(
+                self._runtime.prospective_context_snapshot(), speaker=speaker
+            )
+        except (RuntimeError, ValueError):
+            recall_context = ()
+        request = _PlanRequest(
+            text=text,
+            speaker=speaker,
+            fence=fence,
+            recall_context=recall_context,
+            utterance_intent=self._runtime.route_user_turn(text).intent,
+        )
+        early = self._early_plan
+        if early is not None and early.request == request:
+            return
+        self._drop_early_plan()
+        client = self._response_planner_client
+        if (
+            client is None
+            or not text.strip()
+            # A crisis turn asks the control plane its own way (``_crisis_plan_or_local``).
+            or route_crisis(text).script is not None
+            or not self._runtime.profile_permits(fence, capability="memory_recall_private")
+            or response_plan_sidecar.applies(client, self._runtime, fence)
+        ):
+            return
+        task = self._runtime._spawn(
+            client.fetch(
+                session_id=self._runtime.session_id,
+                query=text,
+                fence=fence,
+                speaker_decision=speaker,
+                recall_context=recall_context,
+                utterance_intent=request.utterance_intent,
+            ),
+            name=EARLY_RESPONSE_PLAN_TASK_NAME,
+        )
+        self._early_plan = _EarlyPlan(request, task)
+
+    def _drop_early_plan(self) -> None:
+        early, self._early_plan = self._early_plan, None
+        if early is not None and not early.task.done():
+            early.task.cancel()
+
+    def _take_early_plan(self, request: _PlanRequest) -> asyncio.Task[ResponsePlanFetch] | None:
+        """The request ``_start_early_plan`` sent when it is exactly ``request``, or None."""
+
+        early, self._early_plan = self._early_plan, None
+        if early is None:
+            return None
+        sent = early.request
+        if sent.fence != request.fence:
+            outcome = "other_fence"
+        elif sent.text != request.text:
+            outcome = "other_sentence"
+        elif sent.speaker != request.speaker:
+            outcome = "other_speaker"
+        elif sent != request:
+            outcome = "other_context"
+        elif early.task.cancelled():
+            outcome = "cancelled"
+        else:
+            outcome = "used"
+        logger.info(  # never the text: a robot round reads this line to see whether the head start was used
+            "response plan head start session_id=%s turn_id=%s outcome=%s",
+            self._runtime.session_id,
+            request.fence.turn_id,
+            outcome,
+        )
+        if outcome == "used":
+            return early.task
+        if not early.task.done():
+            early.task.cancel()
+        return None
 
     def _device_memory_in_scope(self, speaker: Any, fence: GenerationFence) -> bool:
         """The bound person speaks and their own signed profile grants long-term memory recall."""
@@ -1074,6 +1209,9 @@ class ReplyPipeline:
         bound; otherwise returns the fence ``stream`` will reply under.
         """
 
+        # The plan request needs nothing the steps up to the commit decide, so it goes out first and runs
+        # beside them; the commit below takes it only if it is still the request it would send.
+        self._start_early_plan(text, speaker)
         # Two independent cloud classifiers: one after the other they cost ~0.6 s of the turn's budget.
         await asyncio.gather(
             self._runtime.resolve_live_lookup_needed(text),
@@ -1154,6 +1292,7 @@ class ReplyPipeline:
             warmed_memory.cancel()
         try:
             if local_crisis is not None:
+                self._drop_early_plan()
                 plan, fetch_reason = await self._crisis_plan_or_local(
                     text=text, speaker=speaker, fence=fence
                 )

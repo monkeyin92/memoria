@@ -274,6 +274,45 @@ async def test_a_late_final_after_the_vad_end_starts_the_verdicts_with_the_commi
 
 
 @pytest.mark.asyncio
+async def test_the_commit_sends_the_plan_request_before_it_waits_for_the_close_verdict(
+    device_media_session: Any,
+) -> None:
+    """2026-10-28 bench, turn 2: the plan request (0.77 s) left after the close verdict (0.26 s), the
+    live-lookup verdict (0.19 s) and two profile refreshes (0.14 s); now it runs beside them."""
+
+    window = await _open(device_media_session, "commit-plan-head-start", grace_s=0.05)
+
+    await _end_the_utterance(window, _final("q-1", 40_000, 58_000, _QUESTION), vad_start=40_000)
+    await _wait_until(lambda: window.provider.planned == [_QUESTION], timeout=3.0)
+
+    assert window.provider.prepared == []  # the commit still waits for the close verdict
+    _release(window)
+    await _wait_until(lambda: window.provider.prepared == [_QUESTION], timeout=3.0)
+    assert window.provider.planned == [_QUESTION]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_plan_head_start_does_not_stop_the_commit(
+    device_media_session: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    window = await _open(device_media_session, "commit-plan-head-start-failure", grace_s=0.05)
+
+    def refuse(_identity: SessionIdentity, _text: str) -> None:
+        raise RuntimeError("planner seam broken")
+
+    window.provider.start_committed_turn_plan = refuse
+    with caplog.at_level(logging.WARNING):
+        await _end_the_utterance(window, _final("q-1", 40_000, 58_000, _QUESTION), vad_start=40_000)
+        _release(window)
+        await _wait_until(lambda: window.provider.prepared == [_QUESTION], timeout=3.0)
+
+    failures = [r for r in caplog.records if "media commit plan head start failed" in r.message]
+    assert len(failures) == 1
+    assert _QUESTION not in failures[0].getMessage()  # the child's words stay out of the log
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("spoken", ["再见", "今天星期几", "今天上海天气怎么样"])
 async def test_a_turn_that_pins_its_own_endpoint_is_not_warmed(
     device_media_session: Any, spoken: str

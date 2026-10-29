@@ -296,6 +296,17 @@ class ExistingVoiceProviderAdapter:
         if callable(warm):
             warm(text)
 
+    def start_committed_turn_plan(self, identity: SessionIdentity, text: str) -> None:
+        """Tell the shared Agent that the commit of ``text`` has begun, before it waits for any verdict.
+
+        The Agent sends the turn's response-plan request now; the later ``prepare_committed_turn`` uses
+        it only if it would send the same request.  A language model without the seam prepares as before.
+        """
+
+        start = getattr(self.language_model, "start_committed_turn_plan", None)
+        if callable(start):
+            start(text)
+
     async def prepare_committed_turn(
         self,
         identity: SessionIdentity,
