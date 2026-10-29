@@ -6,7 +6,7 @@
 // playing the wake word through the Mac's speaker, and the wake word false-triggers (TODOLIST N-1). Product
 // images accept these exact verbs (cable only; no network entry):
 //
-//   wake\n       start a conversation on an idle device, under the same gate as a screen tap
+//   wake\n       start a conversation on an idle device, or resume listening on the standby face
 //   sleep\n      stop speaking/listening and park in wifi hold without entering chip deep sleep
 //   poweroff\n   same stop as sleep, then disconnect station Wi-Fi if the stack allows it
 //   temp\n       log the on-chip temperature sensor reading in Celsius (read-only)
@@ -30,9 +30,9 @@
 // None changes what the robot does. They are compiled in only under that switch: a product image has no
 // such enumerators, no such verbs and no code behind them.
 //
-// This header has no ESP-IDF dependency so the host tests compile the real parser, line assembler and wake
-// policy (in both configurations); the task that reads the port and calls the application lives in the
-// board file.
+// This header has no ESP-IDF dependency so the host tests compile the real parser and line assembler
+// (in both configurations). The wake action lives with the screen tap. The task that reads the port
+// and calls the application lives in the board file.
 
 #include <cstddef>
 #include <cstdint>
@@ -46,8 +46,6 @@
 #ifndef CONFIG_MEMORIA_BENCH_SERIAL
 #define CONFIG_MEMORIA_BENCH_SERIAL 0
 #endif
-
-#include "memoria_wake_mode.h"
 
 namespace memoria {
 
@@ -220,27 +218,5 @@ private:
     std::uint32_t started_ms_ = 0;
     bool overflow_ = false;
 };
-
-// What the wake command does to a device that is not pairing or starting up (the board handles those first,
-// as it does for a tap). Tap-only product: idle starts a conversation; busy is ignored. The command can
-// never stop the robot talking or send it back to standby.
-enum class UsbWakeDecision : unsigned char { kStartConversation, kIgnoreNotIdle };
-
-inline UsbWakeDecision UsbWakeDecisionFor(WakeMode mode, bool device_idle) {
-    if (TapActionFor(mode, device_idle) == TapAction::kStartConversation) {
-        return UsbWakeDecision::kStartConversation;
-    }
-    return UsbWakeDecision::kIgnoreNotIdle;
-}
-
-inline const char* UsbWakeDecisionName(UsbWakeDecision decision) {
-    switch (decision) {
-        case UsbWakeDecision::kStartConversation:
-            return "start";
-        case UsbWakeDecision::kIgnoreNotIdle:
-            return "not_idle";
-    }
-    return "unknown";
-}
 
 }  // namespace memoria

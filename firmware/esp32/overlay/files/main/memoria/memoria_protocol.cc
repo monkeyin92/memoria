@@ -2211,10 +2211,10 @@ bool MemoriaProtocol::HandleServerText(const char* data, size_t size) {
             if (!GetString(root.value, "state", &assistant_state, 64)) {
                 return false;
             }
-            if (assistant_state == "listening_closed") {
-                NotifyListeningClosed(true);
-            } else if (assistant_state == "listening") {
-                NotifyListeningClosed(false);
+            if (assistant_state == "listening_closed" || assistant_state == "listening") {
+                const bool closed = assistant_state == "listening_closed";
+                ESP_LOGI(kTag, "listening_closed closed=%s", closed ? "true" : "false");
+                NotifyListeningClosed(closed);
             }
             return true;
         }

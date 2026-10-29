@@ -2213,8 +2213,9 @@ def test_v2_listening_closed_leaves_the_listening_face_until_a_screen_resume() -
     handler = SOURCE[SOURCE.index('if (type == "assistant.state")') :]
     handler = handler[: handler.index('if (type == "session.close")')]
     assert 'assistant_state == "listening_closed"' in handler
-    assert "NotifyListeningClosed(true)" in handler
     assert 'assistant_state == "listening"' in handler
+    assert 'ESP_LOGI(kTag, "listening_closed closed=%s", closed ? "true" : "false")' in handler
+    assert "NotifyListeningClosed(closed)" in handler
     assert "EmitLegacyTts" not in handler
     resume = SOURCE[SOURCE.index("bool MemoriaProtocol::SendListeningResume()") :]
     resume = resume[: resume.index("void MemoriaProtocol::SendWakeWordDetected")]

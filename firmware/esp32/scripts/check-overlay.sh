@@ -103,9 +103,10 @@ rg -Fq '#include "memoria_pat.h"' "$board_dir/memoria_esp_vocat.cc" || \
     die "board does not use the host-testable pat detector"
 rg -Fq 'TapWakeActionFor' "$board_dir/memoria_esp_vocat.cc" || \
     die "a screen tap must follow the power policy (wake only, never stop or standby)"
-rg -Fq 'memoria::UsbWakeDecisionFor(mode, state == kDeviceStateIdle)' \
-    "$board_dir/memoria_esp_vocat.cc" || \
-    die "the USB wake command must follow the screen tap's gate (wake only, never stop or standby)"
+rg -Fq 'usb wake action=resume_listening' "$board_dir/memoria_esp_vocat.cc" || \
+    die "USB wake on a closed listen must resume and log usb wake action=resume_listening"
+rg -Fq 'UsbWakeDecisionFor' "$board_dir/memoria_esp_vocat.cc" && \
+    die "USB wake must use the tap action, not the idle-bool decision"
 rg -Fq 'MemoriaMic' "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_power_policy.cc" || \
     die "mic open/close must log at the MemoriaMic tag for demos"
 rg -Fq 'esp_deep_sleep_start' "$board_dir/memoria_esp_vocat.cc" || \
