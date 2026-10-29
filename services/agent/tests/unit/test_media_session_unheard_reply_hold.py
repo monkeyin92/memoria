@@ -20,7 +20,7 @@ from typing import Any, cast
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
-from services.agent.src.voice_core import media_session_output_stream, media_session_turns
+from services.agent.src.voice_core import media_session_output_stream
 from services.agent.src.voice_core.media_protocol import (
     DEVICE_POST_PLAYBACK_HOLDOFF_S,
     SessionIdentity,
@@ -46,13 +46,15 @@ class _GatedReplyProvider(_ScriptedProvider):
         super().__init__()
         self.gate = asyncio.Event()
         self.cancelled_fences: list[GenerationFence] = []
+        self.asked: list[str] = []
 
     def generate_reply(
         self,
         _identity: SessionIdentity,
-        _user_text: str,
+        user_text: str,
         _fence: GenerationFence,
     ) -> AsyncIterator[MediaReplyChunk]:
+        self.asked.append(user_text)
         self.reply_calls += 1
 
         async def chunks() -> AsyncIterator[MediaReplyChunk]:
@@ -131,13 +133,6 @@ async def _run(script: Any, *, name: str) -> None:
         await scene.close()
 
 
-@pytest.fixture(autouse=True)
-def _fast_hold(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_BASE_S", 0.3)
-    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_VAD_EXTENSION_S", 0.2)
-    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_MAX_S", 0.6)
-
-
 @pytest.mark.asyncio
 async def test_room_noise_before_the_first_frame_does_not_lose_the_prepared_reply() -> None:
     async def script(scene: _Scene) -> None:
@@ -168,45 +163,26 @@ async def test_without_a_noise_edge_the_prepared_reply_plays_at_once() -> None:
 
         assert scene.runtime.fence.matches(fence)
         assert scene.terminals() == []
-        assert scene.context.pending.evidence_less_hold_since is None
 
     await _run(script, name="n8-no-noise")
 
 
 @pytest.mark.asyncio
-async def test_the_reply_waits_for_the_floor_instead_of_talking_over_the_noise_edge() -> None:
+async def test_a_wordless_vad_edge_does_not_delay_the_prepared_reply() -> None:
+    """Soak 2026-10-29: a noise edge held an already synthesized reply for 3 s."""
+
     async def script(scene: _Scene) -> None:
         await scene.committed_question_with_a_prepared_reply()
         await scene.room_noise()
         scene.gated.gate.set()
 
-        await asyncio.sleep(0.1)  # well inside the hold: the floor is still the edge's
-        await scene.settle()
-        assert not scene.first_frame_sent()
-        owner = scene.context.output.output_owner
-        assert owner is not None and not scene.terminals()
+        # No words followed the edge, so it cannot hold the reply: the first PCM goes at once,
+        # while the edge's turn is still open.
+        await scene.wait_for(scene.first_frame_sent, timeout=1.0)
+        assert scene.context.pending.turn_start_sample is not None
+        assert not scene.terminals()
 
-        await scene.wait_for(scene.first_frame_sent, timeout=3.0)
-
-    await _run(script, name="n8-waits")
-
-
-@pytest.mark.asyncio
-async def test_words_heard_on_the_new_speech_still_take_the_floor_from_the_prepared_reply() -> None:
-    async def script(scene: _Scene) -> None:
-        await scene.committed_question_with_a_prepared_reply()
-        await scene.room_noise()
-        scene.gated.gate.set()
-        await asyncio.sleep(0.05)
-
-        # The edge turns out to be the owner talking on: the ASR delivers words for it.
-        await scene.audio_frames(10, final_text="我还想问一件事")
-        await scene.wait_for(lambda: bool(scene.terminals()), timeout=3.0)
-
-        assert not scene.first_frame_sent()
-        assert scene.terminals() == ["preempted"]
-
-    await _run(script, name="n8-words")
+    await _run(script, name="n8-released")
 
 
 @pytest.mark.asyncio
@@ -223,33 +199,6 @@ async def test_words_that_arrive_before_the_reply_is_ready_supersede_it_as_befor
         assert scene.terminals() == ["preempted"]
 
     await _run(script, name="n8-words-first")
-
-
-@pytest.mark.asyncio
-async def test_a_floor_that_never_comes_back_does_not_hold_the_reply_forever(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def never_expires(self: Any, session_id: str, stream_epoch: int) -> None:
-        return None
-
-    # Neither the hold cap nor the tail timeout may reopen the floor in this test.
-    monkeypatch.setattr(
-        media_session_turns.MediaTurnEndpointMixin,
-        "_expire_evidence_less_floor_hold",
-        never_expires,
-    )
-    monkeypatch.setattr(media_session_output_stream, "_UNHEARD_OUTPUT_TEXTLESS_HOLD_WAIT_S", 0.4)
-
-    async def script(scene: _Scene) -> None:
-        await scene.committed_question_with_a_prepared_reply()
-        await scene.room_noise()
-        scene.gated.gate.set()
-
-        await scene.wait_for(lambda: bool(scene.terminals()), timeout=3.0)
-        assert not scene.first_frame_sent()
-        assert scene.terminals() == ["preempted"]
-
-    await _run(script, name="n8-bounded")
 
 
 class _Predicate(MediaOutputStreamMixin):
@@ -347,58 +296,3 @@ async def test_a_reply_that_is_not_held_says_which_input_decided_it(
         assert expected in line
     assert "嗯" not in line  # lengths only, never the child's words
 
-
-def _dropped_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
-    return [m for m in (r.getMessage() for r in caplog.records) if "prepared reply dropped" in m]
-
-
-@pytest.mark.asyncio
-async def test_a_reply_dropped_because_words_arrived_says_so(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """N-8 diagnosis (2026-10-07): two of five held replies vanished and the three exits of the wait look alike."""
-
-    async def script(scene: _Scene) -> None:
-        await scene.committed_question_with_a_prepared_reply()
-        await scene.room_noise()
-        scene.gated.gate.set()
-        await asyncio.sleep(0.05)
-        await scene.audio_frames(10, final_text="我还想问一件事")
-        await scene.wait_for(lambda: bool(scene.terminals()), timeout=3.0)
-
-    with caplog.at_level(logging.INFO, logger=media_session_output_stream.logger.name):
-        await _run(script, name="n8-dropped-words")
-
-    [line] = _dropped_lines(caplog)
-    assert "我还想问一件事" not in line  # flags and lengths only, never the child's words
-    assert "cause=textless_turn_over" in line
-    assert "text_evidence=True" in line
-
-
-@pytest.mark.asyncio
-async def test_a_reply_dropped_at_the_hold_deadline_says_so(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    async def never_expires(self: Any, session_id: str, stream_epoch: int) -> None:
-        return None
-
-    monkeypatch.setattr(
-        media_session_turns.MediaTurnEndpointMixin,
-        "_expire_evidence_less_floor_hold",
-        never_expires,
-    )
-    monkeypatch.setattr(media_session_output_stream, "_UNHEARD_OUTPUT_TEXTLESS_HOLD_WAIT_S", 0.4)
-
-    async def script(scene: _Scene) -> None:
-        await scene.committed_question_with_a_prepared_reply()
-        await scene.room_noise()
-        scene.gated.gate.set()
-        await scene.wait_for(lambda: bool(scene.terminals()), timeout=3.0)
-
-    with caplog.at_level(logging.INFO, logger=media_session_output_stream.logger.name):
-        await _run(script, name="n8-dropped-deadline")
-
-    [line] = _dropped_lines(caplog)
-    assert "cause=deadline" in line
-    assert "textless_hold=True" in line
-    assert "text_evidence=False" in line
