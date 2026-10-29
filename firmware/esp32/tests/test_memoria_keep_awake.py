@@ -133,7 +133,7 @@ def test_both_callers_still_enter_tap_deep_sleep() -> None:
     assert "MEMORIA_KEEP_AWAKE" not in touch
     assert "MEMORIA_KEEP_AWAKE" not in usb
     assert "SetPhase(memoria::PowerPhase::kWaking)" in usb
-    assert source.count("#if CONFIG_MEMORIA_KEEP_AWAKE") == 2
+    assert source.count("#if CONFIG_MEMORIA_KEEP_AWAKE") == 3
     assert source.count("esp_deep_sleep_start();") == 1
 
 
