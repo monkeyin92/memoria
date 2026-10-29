@@ -90,6 +90,28 @@ def test_product_text_still_deep_sleeps_and_keep_awake_text_does_not() -> None:
     assert "kWifiHold" not in sleep
 
 
+def _on_idle_screen_off(source: str) -> str:
+    start = source.index("void OnIdleScreenOff()")
+    return source[start : source.index("void MaybeEnterDeepSleepFromWifiHold()", start)]
+
+
+def test_keep_awake_screen_off_does_not_enter_wifi_hold() -> None:
+    body = _on_idle_screen_off(_read(BOARD_CC))
+    assert body.count("#if CONFIG_MEMORIA_KEEP_AWAKE") == 1
+    assert body.count("#else") == 1
+    assert body.count("#endif") == 1
+    awake = _keep_awake_branch(body)
+    product = _sleep_branch(body)
+    assert "SetPhase" not in awake
+    assert "kWifiHold" not in awake
+    assert "wifi hold started" not in awake
+    assert "wifi hold suppressed" in awake
+    assert "memoria_keep_awake_build_marker" in awake
+    assert "SetPhase(memoria::PowerPhase::kWifiHold)" in product
+    assert 'ESP_LOGI(TAG, "wifi hold started hold_ms=%u", power.wifi_hold_ms());' in product
+    assert "MEMORIA_KEEP_AWAKE" not in product
+
+
 def test_both_callers_still_enter_tap_deep_sleep() -> None:
     source = _read(BOARD_CC)
     hold = source[
@@ -111,7 +133,7 @@ def test_both_callers_still_enter_tap_deep_sleep() -> None:
     assert "MEMORIA_KEEP_AWAKE" not in touch
     assert "MEMORIA_KEEP_AWAKE" not in usb
     assert "SetPhase(memoria::PowerPhase::kWaking)" in usb
-    assert source.count("#if CONFIG_MEMORIA_KEEP_AWAKE") == 2
+    assert source.count("#if CONFIG_MEMORIA_KEEP_AWAKE") == 3
     assert source.count("esp_deep_sleep_start();") == 1
 
 

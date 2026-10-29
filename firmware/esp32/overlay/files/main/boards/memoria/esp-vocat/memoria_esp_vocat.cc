@@ -948,11 +948,16 @@ private:
     }
 
     void OnIdleScreenOff() {
+#if CONFIG_MEMORIA_KEEP_AWAKE
+        // listening_closed paints an idle face while DeviceState stays listening.
+        ESP_LOGW(TAG, "wifi hold suppressed %s", memoria_keep_awake_build_marker);
+#else
         auto& power = memoria::PowerPolicyRegistry::GetInstance();
         power.SetPhase(memoria::PowerPhase::kWifiHold);
         wifi_hold_since_ms_.store(static_cast<std::uint32_t>(esp_timer_get_time() / 1000),
                                   std::memory_order_relaxed);
         ESP_LOGI(TAG, "wifi hold started hold_ms=%u", power.wifi_hold_ms());
+#endif
     }
 
     void MaybeEnterDeepSleepFromWifiHold() {
