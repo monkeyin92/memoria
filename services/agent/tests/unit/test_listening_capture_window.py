@@ -541,7 +541,7 @@ async def test_empty_asr_retire_admits_the_next_vad_after_the_capture_window(
         assert not [
             record
             for record in caplog.records
-            if "vad ignored during listening capture hold" in record.message
+            if "during listening capture hold" in record.message
         ]
     finally:
         await registry.finalize_session(identity.session_id)
