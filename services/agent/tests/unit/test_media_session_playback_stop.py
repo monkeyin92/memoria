@@ -602,6 +602,43 @@ async def test_device_tail_final_inside_a_wordless_pin_does_not_stop_the_reply()
 
 
 @pytest.mark.asyncio
+async def test_device_question_growing_past_the_answered_turn_stops_the_reply() -> None:
+    """Soak 2026-10-30 t019: one ASR segment kept growing over the reply.
+
+    Its head lay inside the range the playing reply already answered, so every
+    revision was refused as that turn's tail even though the rest was the
+    owner's new question, and the reply played to its end.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(5)
+        turn_start = harness.sample
+        pending = harness.context.pending
+        # Field t019: the turn the reply answers has a VAD end but no ASR
+        # endpoint yet, and the ASR keeps re-emitting one segment from inside it.
+        pending.turn_start_sample = turn_start
+        pending.turn_end_sample = turn_start + 1_500
+        assert pending.turn_endpoint_sample is None
+        question = "等一下，我想问另一个问题，云是怎么变出来的？"
+        await _accept_media_asr_final(
+            harness.registry,
+            harness.identity,
+            sentence_id="growing-final",
+            start_sample=turn_start + 800,
+            end_sample=turn_start + 33_000,
+            text=question,
+        )
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        [effect] = harness.cancel_effects()
+        assert effect.turn_id == story.turn_id
+        assert _user_turn_texts(harness.context) == ["给我讲个故事", question]
+        assert not harness.closed()
+
+    await _run_story(_device_identity("growing-question-barge"), script)
+
+
+@pytest.mark.asyncio
 async def test_device_question_starting_before_its_vad_edge_still_stops_the_reply() -> None:
     """Live speech may begin a little before the VAD edge detects it.
 

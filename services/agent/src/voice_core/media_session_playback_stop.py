@@ -64,8 +64,10 @@ _PLAYBACK_STOP_CAUSE = "media_voice_stop"
 CONTENT_BARGE_IN_CAUSE = "media_content_barge_in"
 # Soak 2026-10-30 t017: tail finals from pre-playback audio overlapped the
 # fresh reply by at most 0.64 s, while the shortest genuine question that
-# began before a first frame ran 2.16 s into it.  1.5 s separates the two.
-_PRE_PLAYBACK_BARGE_MIN_OVERLAP_SAMPLES = 24_000
+# began before a first frame ran 2.16 s into it.  1.5 s separates the two, and
+# the same run past the range a turn already handled separates its own ASR
+# revisions from the owner's next question (soak 2026-10-30 t019).
+_BARGE_MIN_LIVE_RUN_SAMPLES = 24_000
 _CONTENT_MIN_CJK = 4
 _BACKCHANNEL_FILLERS = tuple(
     sorted(
@@ -1083,15 +1085,17 @@ class MediaPlaybackStopMixin:
         result: ASRResult,
         handled_range: tuple[int | None, int | None] | None,
     ) -> bool:
-        """True when this final overlaps the range the turn already handled.
+        """True when this final only re-finalizes the range the turn already handled.
 
         ``_observe_final_asr_result`` merges the final into the pending turn
         before this decision, so the range from before it is passed in.  Only a
         turn that already reached an end defines that range: a final that
-        starts inside it re-finalizes audio the reply already answers.  A turn
-        with no end yet is not bounded here, because live speech may begin
-        slightly before the VAD edge that detects it; the t017 tail final that
-        arrived on such a turn is therefore not covered by this rule.
+        starts inside it is one of that turn's own ASR revisions.  Unless it
+        keeps running at least ``_BARGE_MIN_LIVE_RUN_SAMPLES`` past that end:
+        that audio is the owner still speaking into the reply, not a
+        re-emission (soak 2026-10-30 t019: one segment re-emitted every few
+        seconds, its head inside the answered turn and its tail the new
+        question, and every stop was refused until the reply finished).
         """
 
         if handled_range is None:
@@ -1099,7 +1103,11 @@ class MediaPlaybackStopMixin:
         start, end = handled_range
         if start is None or end is None:
             return False
-        return result.capture_start_sample < end and result.capture_end_sample > start
+        return (
+            result.capture_start_sample < end
+            and result.capture_end_sample > start
+            and result.capture_end_sample - end < _BARGE_MIN_LIVE_RUN_SAMPLES
+        )
 
     @staticmethod
     def _final_is_pre_playback_tail(
@@ -1122,7 +1130,7 @@ class MediaPlaybackStopMixin:
             return False
         return (
             result.capture_end_sample
-            < started[1] + _PRE_PLAYBACK_BARGE_MIN_OVERLAP_SAMPLES
+            < started[1] + _BARGE_MIN_LIVE_RUN_SAMPLES
         )
 
     @staticmethod
@@ -1236,9 +1244,10 @@ class MediaPlaybackStopMixin:
         nothing to lose.
 
         ``handled_range`` is the turn's range from before ``result`` was merged
-        into it.  A final that overlaps a range with a known end re-finalizes
-        the turn the reply already answers, so it never counts as a content
-        barge (``_final_overlaps_handled_turn``).
+        into it.  A final that overlaps a range with a known end and does not
+        run on past it re-finalizes the turn the reply already answers, so it
+        never counts as a content barge (``_final_overlaps_handled_turn``); one
+        that keeps running is the owner speaking into the reply.
 
         The committed turn is marked (``pending.playback_stop_text``) so its
         route cannot depend on the same text peeling twice: a stop stays the
