@@ -229,6 +229,11 @@ class MediaSessionProjectionMixin:
 
         def _pause_owner_silence_timer(self, context: _MediaVoiceSession) -> None: ...
 
+        @staticmethod
+        def _clear_evidence_less_floor_hold(context: _MediaVoiceSession) -> None: ...
+
+        def _schedule_output_retry(self, context: _MediaVoiceSession) -> None: ...
+
         async def _request_device_standby(
             self, context: _MediaVoiceSession, *, reason: str
         ) -> bool: ...
@@ -657,6 +662,23 @@ class MediaSessionProjectionMixin:
         return await self._enqueue_output_work(
             context,
             _OutputWork(acknowledgement, fence, tail_pcm_s16le=tail_pcm_s16le),
+        )
+
+    def _resume_capped_output(self, context: _MediaVoiceSession) -> None:
+        """Speak a queued answer once the floor cap closes with no pending turn.
+
+        A committed live-lookup turn clears its pending state, so a later
+        statement with no text evidence leaves queued output behind a closed
+        floor that nothing would ever reopen.  The cap is the only waiter
+        left; opening the floor here lets the admitted answer play.
+        """
+
+        context.runtime.open_assistant_floor(cause="evidence_less_hold_capped")
+        self._clear_evidence_less_floor_hold(context)
+        self._schedule_output_retry(context)
+        logger.warning(
+            "media evidence-less floor hold capped session=%s queue_resumed=true",
+            context.identity.session_id,
         )
 
     async def _release_media_delegation_claim(

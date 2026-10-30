@@ -3471,3 +3471,54 @@ async def test_fixed_weather_fallback_is_the_first_and_only_spoken_text() -> Non
 
     assert str(provider.output_intents[0].tts_source) == WEATHER_LOOKUP_UNAVAILABLE_REPLY
     await registry.finalize_session(context.identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_delegation_answer_waits_for_floor_cap_without_a_pending_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Soak 20261030-150810 t010: ownership handoff + closed floor + no pending turn.
+
+    The weather turn was committed, the reply dispatch handed audio to the
+    delegation, and a later statement closed the floor while ``pending`` held
+    no turn: the evidence-less cap required ``turn_start_sample`` and could
+    never fire, so the ready answer stayed queued with zero audio.
+    """
+
+    from services.agent.src.voice_core import media_session_turns
+
+    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_BASE_S", 0.3)
+    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_VAD_EXTENSION_S", 0.2)
+    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_MAX_S", 0.6)
+    provider = _LateOwnedDelegationProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("delegation-floor-cap-no-pending-turn")
+    bridge.bridge.open(identity)
+    try:
+        context = await registry.open_session(identity)
+        query = "今天南京天气怎么样"
+        fence = await context.runtime.on_turn_committed(query)
+        await _wait_until(lambda: fence in context.output.delegation_output_claims)
+        claim = context.output.delegation_output_claims[fence]
+        await _wait_until(lambda: claim.state is DelegationOutputState.OWNED)
+        assert await registry.generate_reply(identity.session_id, query, fence)
+        context.runtime.on_user_voice_started()
+        assert context.pending.turn_start_sample is None
+        assert not context.runtime.output_floor_allows_assistant
+        frame_count = len(bridge.frames)
+        provider.release.set()
+        await _wait_until(lambda: claim.state is DelegationOutputState.COMPLETED)
+        await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
+        await _wait_until(lambda: len(bridge.frames) > frame_count, timeout=2)
+        assert context.runtime.output_floor_allows_assistant
+        assert context.pending.evidence_less_hold_since is None
+        assert provider.output_kinds.count(media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT) == 1
+        assert context.output.output_owner is not None
+    finally:
+        provider.release.set()
+        await registry.finalize_session(identity.session_id)

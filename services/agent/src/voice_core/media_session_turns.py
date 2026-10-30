@@ -104,6 +104,7 @@ class MediaTurnEndpointMixin:
         _sessions: dict[str, _MediaVoiceSession]
 
         def _schedule_output_retry(self, context: _MediaVoiceSession) -> None: ...
+        def _resume_capped_output(self, context: _MediaVoiceSession) -> None: ...
 
         def _output_work_is_active(self, context: _MediaVoiceSession, work: OutputWork) -> bool: ...
 
@@ -1151,7 +1152,6 @@ class MediaTurnEndpointMixin:
             not context.closed
             and not context.standby_requested
             and not context.runtime.output_floor_allows_assistant
-            and context.pending.turn_start_sample is not None
             and not self._pending_turn_has_fresh_text_evidence(context)
             and any(
                 self._output_work_is_active(context, work)
@@ -1189,7 +1189,7 @@ class MediaTurnEndpointMixin:
                 return
             start_sample = context.pending.turn_start_sample
             if start_sample is None:
-                return
+                return self._resume_capped_output(context)
             endpoint_task = context.turn_endpoint_task
             if (
                 endpoint_task is not None
