@@ -1737,7 +1737,7 @@ class ReplyPipeline:
         if resume_interrupted_reply or script is not None:
             realtime_request, resume_realtime_request = None, False
         else:
-            realtime_request, resume_realtime_request = self._runtime.resolve_realtime_request(
+            realtime_request, resume_realtime_request = await self._runtime.resolve_realtime_request(
                 fence=fence,
                 direct_text=response_plan.direct_text,
             )

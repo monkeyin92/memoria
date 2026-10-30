@@ -527,14 +527,10 @@ class MediaSessionLifecycleMixin:
                     _run_deep_work,
                 )
 
-                def _start_delegation(
+                def _claim_and_run(
                     text: str,
                     fence: GenerationFence,
-                ) -> Coroutine[Any, Any, None] | None:
-                    if not current.runtime.live_lookup_needed(text) or not current.runtime.fence.matches(
-                        fence
-                    ):
-                        return None
+                ) -> Coroutine[Any, Any, Any] | None:
                     existing = current.output.delegation_output_claims.get(fence)
                     if existing is not None:
                         return None
@@ -553,6 +549,28 @@ class MediaSessionLifecycleMixin:
                         claim=claim,
                         output_intent_acceptor=output_intent_acceptor,
                     )
+
+                async def _start_after_verdict(
+                    text: str,
+                    fence: GenerationFence,
+                ) -> None:
+                    if not await current.runtime.resolve_live_lookup_needed(text):
+                        return
+                    if not current.runtime.fence.matches(fence):
+                        return
+                    started = _claim_and_run(text, fence)
+                    if started is not None:
+                        await started
+
+                def _start_delegation(
+                    text: str,
+                    fence: GenerationFence,
+                ) -> Coroutine[Any, Any, Any] | None:
+                    if not current.runtime.fence.matches(fence):
+                        return None
+                    if current.runtime.live_lookup_needed(text):
+                        return _claim_and_run(text, fence)
+                    return _start_after_verdict(text, fence)
 
                 runtime.set_delegation_starter(_start_delegation)
 

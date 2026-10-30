@@ -393,8 +393,9 @@ class MediaOutputDispatchMixin:
                 OutputDispatchStatus.SKIPPED,
                 "stale_fence",
             )
+        live_lookup = await context.runtime.resolve_live_lookup_needed(user_text)
         claim = context.output.delegation_output_claims.get(fence)
-        if claim is None and context.runtime.live_lookup_needed(user_text):
+        if claim is None and live_lookup:
             loop = asyncio.get_running_loop()
             deadline = loop.time() + self.delegation_initial_decision_timeout_s
             while claim is None and loop.time() < deadline:
@@ -454,7 +455,7 @@ class MediaOutputDispatchMixin:
                     OutputDispatchStatus.COMPLETED,
                     "local_reply_already_reserved",
                 )
-        elif context.runtime.live_lookup_needed(user_text):
+        elif live_lookup:
             # Lookup owns the audible path. Starting a parallel conversation
             # reply here is what cut FAST_ACK down to 「稍」 on live queries.
             return OutputDispatchResult(
