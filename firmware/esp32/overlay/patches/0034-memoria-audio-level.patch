@@ -14,7 +14,7 @@
          codec_->OutputData(task->pcm);
  
          /* Update the last output time */
-@@ -644,6 +651,12 @@ void AudioService::OpusCodecTask() {
+@@ -644,6 +651,16 @@ void AudioService::OpusCodecTask() {
                  }
                  last_uplink_rms_.store(static_cast<float>(
                      std::sqrt(sum / static_cast<double>(task->pcm.size())) / 32768.0));
@@ -23,17 +23,22 @@
 +                 * echo cancellation and noise suppression. */
 +                memoria::input_level_tap.Publish(
 +                    memoria::RmsToLevel(last_uplink_rms_.load(std::memory_order_relaxed)));
++                /* The protocol's vad.start peak window reads the same frame. */
++                memoria::uplink_frame_rms.store(
++                    last_uplink_rms_.load(std::memory_order_relaxed),
++                    std::memory_order_relaxed);
 +#endif
              }
  
              auto packet = std::make_unique<AudioStreamPacket>();
 --- a/main/audio/audio_service.h
 +++ b/main/audio/audio_service.h
-@@ -26,6 +26,7 @@
+@@ -26,6 +26,8 @@
  #include "ogg_demuxer.h"
  #include "memoria_playback_supply_meter.h"
  #include "memoria_input_settle.h"
 +#include "memoria_audio_level.h"
++#include "memoria_vad_start.h"
  
  /*
   * There are two types of audio data flow:
