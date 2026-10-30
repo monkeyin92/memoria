@@ -1382,6 +1382,25 @@ def _audio_written_since(
     return written
 
 
+async def _wait_for_audio_buffers_cleared(
+    docker_env: dict[str, str],
+    *,
+    timeout_s: float = 10.0,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_s
+    while True:
+        logs = _compose_logs(docker_env)
+        try:
+            return _assert_audio_buffers_cleared(logs)
+        except RuntimeError as exc:
+            if (
+                "did not log media_audio_buffers_cleared" not in str(exc)
+                or time.monotonic() >= deadline
+            ):
+                raise
+        await asyncio.sleep(0.5)
+
+
 def _assert_audio_buffers_cleared(logs: str) -> dict[str, Any]:
     lines = [
         line.split("media_audio_buffers_cleared ", 1)[1]
@@ -1792,7 +1811,7 @@ async def main(argv: list[str] | None = None) -> int:
             for line in logs.splitlines():
                 if "ERROR" in line or "output_intent_not_selected" in line:
                     raise RuntimeError(f"E2E agent emitted an error line: {line}")
-            buffers_cleared = _assert_audio_buffers_cleared(logs)
+            buffers_cleared = await _wait_for_audio_buffers_cleared(docker_env)
             disk_written = _audio_written_since(disk_before_run, disk_after_run)
             assert not disk_written, f"e2e wrote audio to disk: {disk_written}"
             if any(CRISIS_TEXT in spoken for spoken in state.tts_texts):
