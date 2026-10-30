@@ -258,7 +258,7 @@ async def test_minor_crisis_queues_one_notification_and_fixed_text_reaches_the_d
         assert body["direct_text"] == CRISIS_SELF_SCRIPT.display
         assert "12356" not in body["direct_text"]
         assert "120" not in body["direct_text"]
-        assert "心疼" in body["direct_text"]
+        assert "幺二三五六" in body["direct_text"]
         assert not body["direct_text"].endswith("？")
         # 固定话术不得被导师话轮约束或普通人格上下文改写。
         assert "【导师话轮约束】" not in body["instructions"]

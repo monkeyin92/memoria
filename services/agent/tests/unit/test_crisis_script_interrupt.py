@@ -45,10 +45,10 @@ def _event_id(*, announced_text: str, crisis_reply_heard: bool = False, minor_us
 def test_only_an_in_progress_crisis_self_or_victim_script_produces_an_event_id() -> None:
     assert _event_id(announced_text=CRISIS_SELF_SCRIPT.display) == _EVENT
     assert _event_id(announced_text=CRISIS_SELF_SCRIPT.spoken) == _EVENT
-    assert _event_id(announced_text="听到你这么说") == _EVENT
+    assert _event_id(announced_text="现在马上去找身边的大人。可以请大人拨") == _EVENT
     assert _event_id(announced_text=SUPPORT_VICTIM_SCRIPT.display) == _EVENT
     assert _event_id(announced_text=SUPPORT_VICTIM_SCRIPT.spoken) == _EVENT
-    assert _event_id(announced_text="你说的事情很重要") == _EVENT
+    assert _event_id(announced_text="现在马上去找身边的大人。有危险") == _EVENT
     assert _event_id(announced_text=CRISIS_SELF_SCRIPT.display, crisis_reply_heard=True) is None
     assert _event_id(announced_text=SUPPORT_VICTIM_SCRIPT.display, crisis_reply_heard=True) is None
     assert _event_id(announced_text=SUPPORT_RELAY_SCRIPT.display) is None
