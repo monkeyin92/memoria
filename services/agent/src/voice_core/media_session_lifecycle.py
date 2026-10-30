@@ -420,6 +420,7 @@ class MediaSessionLifecycleMixin:
                     # endpointed new-epoch speech as a post-playback follow-up
                     # (2026-09-29, boundary 90560 from the previous epoch).
                     current.last_playback_end_sample = None
+                    current.output.playback_started = None
                     current.last_asr_evidence_end_sample = 0
                     self._audio_ingress.reset_for_reconnect(current)
                     # The promise to parents is that the device records only

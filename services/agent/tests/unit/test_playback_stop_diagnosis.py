@@ -77,6 +77,7 @@ def _context(
             assistant_text=spoken,
             output_owner=GenerationFence("s1", 1, 4, 0),
             playback=playback,
+            playback_started=None,
         ),
         runtime=SimpleNamespace(
             assistant_speaking=True,
