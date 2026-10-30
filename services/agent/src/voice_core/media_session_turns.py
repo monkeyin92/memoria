@@ -53,13 +53,11 @@ _CLOCK_FACT_PARTIAL_STABLE_S = 0.6
 _CONVERSATION_CLOSE_PARTIAL_STABLE_S = 0.6
 _LIVE_LOOKUP_PARTIAL_STABLE_S = 0.6
 _DUPLICATE_COMMIT_DELIVERY_GUARD_S = 8.0
-# Bound how long admitted output may wait behind a pending turn that has no
-# text evidence at all.  Run 2026-09-24 session b18fede9: a ready weather
-# answer waited ~8 s because room-noise VAD bursts under 2.5 s apart kept
-# re-opening one empty pending turn (each vad.start resets the tail timeout)
-# while FunASR and the rescue both heard nothing.  Real speech yields a
-# partial well within the per-VAD extension, and any text evidence cancels
-# the cap, so only evidence-less holds are retired early.
+# Bound how long admitted output may wait behind a pending turn with no text
+# evidence. Run 2026-09-24 session b18fede9: a weather answer waited ~8 s
+# because room-noise VAD bursts under 2.5 s apart kept re-opening one empty
+# pending turn while FunASR and the rescue heard nothing. Real speech yields a
+# partial within the per-VAD extension, so only evidence-less holds retire early.
 _EVIDENCE_LESS_HOLD_BASE_S = 3.0
 _EVIDENCE_LESS_HOLD_VAD_EXTENSION_S = 1.5
 _EVIDENCE_LESS_HOLD_MAX_S = 6.0
