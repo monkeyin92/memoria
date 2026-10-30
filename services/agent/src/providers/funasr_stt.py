@@ -210,8 +210,8 @@ class FunASRSession:
         self._mid_segment_rescue_scheduled = False
         self._rescue_deadline: float | None = None
         self._context: tuple[dict[str, object], ...] = ()
-        # Test-period transcript logging for one whitelisted session. Empty
-        # (the default) keeps every line below off.
+        # Test-period transcript logging for one listed session, or for every
+        # session while MEMORIA_ASR_TEXT_TRACE is set. Empty (the default) logs nothing.
         self.asr_text_debug: AsrTextDebugSubjects | None = asr_text_debug
         # The bridge's answer for this session: the ids its switch names and the
         # session to name on the line. Unset here keeps every text line off.

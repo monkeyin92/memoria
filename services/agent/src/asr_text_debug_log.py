@@ -7,12 +7,15 @@ testing and stays off in production.
 
 Every line starts with ``asr_text_debug`` so one grep finds them.  They are
 plain log records: nothing here reaches evidence, the spool, the archive or
-#282's metadata-only turn.  A session not listed in
-``ASR_TEXT_DEBUG_LOG_SUBJECTS`` never has its text logged.
+#282's metadata-only turn.  Only a session listed in
+``ASR_TEXT_DEBUG_LOG_SUBJECTS``, or every session while
+``MEMORIA_ASR_TEXT_TRACE`` is set, has its text logged.  Both are off by
+default.
 
 The subject list is parsed and matched like
 ``MINOR_LIMIT_BYPASS_TEST_SUBJECTS`` in ``minor_limit_bypass``, except that any
 number of subjects may be listed (there is no single-owner invariant here).
+``MEMORIA_ASR_TEXT_TRACE`` is parsed like ``MEMORIA_UPLINK_PCM_TRACE``.
 """
 
 from __future__ import annotations
@@ -28,9 +31,17 @@ from services.agent.src.minor_limit_bypass import subject_id_hash
 from services.common.redaction import redact_pii
 
 ASR_TEXT_DEBUG_LOG_ENV: Final = "ASR_TEXT_DEBUG_LOG_SUBJECTS"
+ASR_TEXT_TRACE_ENV: Final = "MEMORIA_ASR_TEXT_TRACE"
 ASR_TEXT_DEBUG_LOG_PREFIX: Final = "asr_text_debug"
 
 logger = logging.getLogger(__name__)
+
+
+def asr_text_trace_enabled(environ: Mapping[str, str] | None = None) -> bool:
+    """The global probe, parsed like ``MEMORIA_UPLINK_PCM_TRACE``."""
+
+    raw = (os.environ if environ is None else environ).get(ASR_TEXT_TRACE_ENV, "")
+    return raw.strip().lower() not in {"", "0", "false", "off"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,16 +49,22 @@ class AsrTextDebugSubjects:
     """The subjects whose ASR text may be logged. Empty is off."""
 
     subject_ids: frozenset[str] = frozenset()
+    all_subjects: bool = False
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> AsrTextDebugSubjects:
-        raw = (os.environ if environ is None else environ).get(ASR_TEXT_DEBUG_LOG_ENV, "")
-        subjects = cls(frozenset(part.strip() for part in raw.split(",") if part.strip()))
+        env = os.environ if environ is None else environ
+        raw = env.get(ASR_TEXT_DEBUG_LOG_ENV, "")
+        subjects = cls(
+            frozenset(part.strip() for part in raw.split(",") if part.strip()),
+            asr_text_trace_enabled(env),
+        )
         if subjects.enabled:
             logger.warning(
-                "asr text debug log active at=%s configured=%d",
+                "asr text debug log active at=%s configured=%d trace=%s",
                 _now(),
                 len(subjects.subject_ids),
+                subjects.all_subjects,
             )
         return subjects
 
@@ -58,6 +75,8 @@ class AsrTextDebugSubjects:
         decided once here instead of looked up again per final.
         """
 
+        if self.all_subjects:
+            return self
         listed = frozenset(
             candidate
             for candidate in (subject_id(value) for value in subject_ids)
@@ -67,13 +86,13 @@ class AsrTextDebugSubjects:
 
     @property
     def enabled(self) -> bool:
-        return bool(self.subject_ids)
+        return self.all_subjects or bool(self.subject_ids)
 
     def logs(self, *subject_ids: str | None) -> bool:
-        """True when any of the session's subject / device ids is whitelisted."""
+        """True when the probe is global, or any of the session's ids is whitelisted."""
 
-        if not self.enabled:
-            return False
+        if self.all_subjects:
+            return True
         return any(
             subject_id is not None and subject_id in self.subject_ids for subject_id in subject_ids
         )
@@ -130,7 +149,7 @@ def _listed(subjects: AsrTextDebugSubjects | None, candidates: tuple[object, ...
 def asr_text_debug_line(
     subjects: AsrTextDebugSubjects | None, *subject_ids: object, **fields: object
 ) -> str | None:
-    """The ``asr_text_debug`` line for a listed session, ``None`` for everyone else.
+    """The ``asr_text_debug`` line for a switched-on session, ``None`` for everyone else.
 
     ``subject_ids`` are the subject and device ids the session carries; they
     select, and are not printed. What is printed is the log-safe
@@ -175,8 +194,10 @@ def _now() -> str:
 __all__ = [
     "ASR_TEXT_DEBUG_LOG_ENV",
     "ASR_TEXT_DEBUG_LOG_PREFIX",
+    "ASR_TEXT_TRACE_ENV",
     "AsrTextDebugSubjects",
     "asr_text_debug_line",
+    "asr_text_trace_enabled",
     "configured_asr_text_debug_subjects",
     "excerpt",
     "session_asr_text_debug_subjects",
