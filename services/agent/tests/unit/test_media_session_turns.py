@@ -4579,6 +4579,93 @@ async def test_absolute_endpoint_tail_commits_stable_partial_with_missing_final_
 
 
 @pytest.mark.asyncio
+async def test_endpoint_tail_rescues_partial_when_device_vad_end_trails_the_last_word() -> None:
+    class CapturingBridge(MediaBridgeGrpcServer):
+        def __init__(self) -> None:
+            super().__init__()
+            self.client_events: list[tuple[str, dict[str, Any]]] = []
+
+        async def emit_event(
+            self,
+            _session_id: str,
+            event_type: str,
+            payload: dict[str, Any],
+            **_kwargs: Any,
+        ) -> bool:
+            self.client_events.append((event_type, payload))
+            return True
+
+    bridge = CapturingBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: FakeMediaProvider(),
+        turn_endpoint_grace_s=0.001,
+        turn_endpoint_min_grace_s=0,
+        turn_endpoint_max_grace_s=0.01,
+        turn_endpoint_absolute_timeout_s=0.02,
+    )
+    identity = SessionIdentity("late-device-vad-end")
+    session = bridge.bridge.open(identity)
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="late-end-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=1,
+        ),
+    )
+    assert await registry.accept_asr_result(
+        identity.session_id,
+        ASRResult(
+            task_epoch=1,
+            sentence_id="late-end-sentence",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=30_000,
+            text="讲一个很短的笑话吧",
+            is_final=False,
+            confidence=0.9,
+            stream_epoch=1,
+        ),
+    )
+    # soak-150810 t014: the device VAD end lands 55 968 samples (3.5 s) after the last
+    # transcribed word, so no final ever covers the endpoint and the partial is the only text.
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="late-end-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=85_968,
+            capture_end_sample=85_969,
+            final=True,
+            voiced_end_sample=85_968,
+        ),
+    )
+
+    await asyncio.sleep(0.04)
+
+    context = registry.session_state(identity.session_id)
+    assert [
+        turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ] == ["讲一个很短的笑话吧"]
+    committed = [
+        payload for event_type, payload in bridge.client_events if event_type == "turn.committed"
+    ]
+    assert committed and committed[-1]["provider_final_missing"] is True
+    assert context.pending.pending_partial is None
+    await context.runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_endpoint_tail_keeps_farther_partial_when_final_timing_shrinks() -> None:
     class CapturingBridge(MediaBridgeGrpcServer):
         def __init__(self) -> None:

@@ -942,12 +942,11 @@ class MediaTurnEndpointMixin:
                 return
         partial = context.pending.pending_partial
         if (
-            partial is not None
-            and partial.text.strip()
-            and self._asr_covers_endpoint(context, partial.capture_end_sample, endpoint_sample)
+            partial is not None and partial.text.strip()
+            and partial.capture_end_sample > (context.pending.turn_start_sample or 0)
         ):
-            # A stable partial is safer than dropping a complete utterance when
-            # the provider's final marker is lost; re-submit it as a low-confidence final.
+            # A stable partial inside this turn is safer than dropping a complete utterance when
+            # the final marker is lost; a device VAD end can trail the last word (t014: 3.5 s).
             fallback_confidence = (
                 0.35
                 if partial.confidence is None
