@@ -9,6 +9,7 @@ from services.common.crisis_policy import (
     fixed_safety_reply_log_fields,
     log_fixed_safety_reply,
     more_protective_local_script,
+    prior_self_crisis_hits,
     route_crisis,
 )
 from services.common.fixed_safety_scripts import (
@@ -39,33 +40,48 @@ def test_first_self_crisis_keeps_the_first_round_script() -> None:
     assert route.evidence_source == "deterministic"
 
 
-def test_second_self_crisis_in_the_same_session_escalates() -> None:
-    route = route_crisis("我不想活了", prior_self_crisis_hits=1)
+def test_second_self_harm_mention_in_the_same_session_escalates() -> None:
+    prior_hits = prior_self_crisis_hits("好烦，不想活了", ["我不想活了"])
 
+    route = route_crisis("好烦，不想活了", prior_self_crisis_hits=prior_hits)
+
+    assert prior_hits == 1
     assert route.action == "crisis_support"
     assert route.notify_guardian is True
     assert route.attempt_push is True
     assert route.script is CRISIS_SELF_ESCALATION_SCRIPT
 
 
-def test_first_hit_with_explicit_method_or_imminent_action_escalates() -> None:
+def test_first_hit_naming_a_method_escalates() -> None:
     for query in (
         "我准备跳楼",
-        "我马上要自杀",
-        "我现在就去死",
-        "我正在自杀",
         "我已经割腕了",
         "我不想活了，我买了安眠药",
+        "我想拿刀划自己",
+        "我想从楼上跳下去",
     ):
         route = route_crisis(query)
         assert route.script is CRISIS_SELF_ESCALATION_SCRIPT, query
 
 
-def test_first_hit_without_method_keeps_the_first_round_script() -> None:
+def test_first_hit_saying_now_or_soon_escalates() -> None:
+    for query in (
+        "我马上要自杀",
+        "我现在就去死",
+        "我正在自杀",
+        "我现在好想死",
+        "我今晚就死",
+        "我今晚就不活了",
+    ):
+        route = route_crisis(query)
+        assert route.script is CRISIS_SELF_ESCALATION_SCRIPT, query
+
+
+def test_vague_first_self_harm_mention_stays_first_round() -> None:
     for query in (
         "我不想活了",
+        "好烦，不想活了",
         "我不想活了，我同学跳楼了",
-        "我现在好想死",
         "我今天烦死了，不想活了",
         "我已经很想死了",
         "我没有准备自杀",
