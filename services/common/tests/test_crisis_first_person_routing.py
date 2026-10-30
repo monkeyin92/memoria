@@ -18,7 +18,7 @@ from services.common.crisis_policy import route_crisis
         ("我有点难过，不想活了。", "crisis-self-v1"),
         ("我有点难过不想活了", "crisis-self-v1"),
         ("我想伤害我自己。", "crisis-self-v1"),
-        ("我想从窗户上跳下去看看。", "crisis-self-v1"),
+        ("我想从窗户上跳下去看看。", "crisis-self-escalation"),
         ("我真的好难过，好想死。", "crisis-self-v1"),
         ("不想活了。", "crisis-self-v1"),
         ("我爸爸打我，好疼。", "victim-support-v1"),

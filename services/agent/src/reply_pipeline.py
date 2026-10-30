@@ -582,7 +582,7 @@ class ReplyPipeline:
             or getattr(resolver, "qwen", None) is not None
         )
 
-    def _prior_user_text(self, query: str) -> str:
+    def _prior_user_texts(self, query: str) -> list[str]:
         context = getattr(getattr(self._runtime, "orchestrator", None), "context", None)
         turns = getattr(context, "turns", ()) or ()
         user_texts = [
@@ -592,7 +592,18 @@ class ReplyPipeline:
         ]
         if user_texts and user_texts[-1] == query:
             user_texts = user_texts[:-1]
+        return user_texts
+
+    def _prior_user_text(self, query: str) -> str:
+        user_texts = self._prior_user_texts(query)
         return user_texts[-1] if user_texts else ""
+
+    def _prior_self_crisis_hits(self, query: str) -> int:
+        return sum(
+            1
+            for text in self._prior_user_texts(query)
+            if route_crisis(text).action == "crisis_support"
+        )
 
     def _local_safe_plan(
         self,
@@ -632,7 +643,9 @@ class ReplyPipeline:
         """
 
         client = self._response_planner_client
-        script = route_crisis(text).script
+        script = route_crisis(
+            text, prior_self_crisis_hits=self._prior_self_crisis_hits(text)
+        ).script
         if client is None or not self._runtime.profile_permits(
             fence, capability="memory_recall_private"
         ):
@@ -691,11 +704,14 @@ class ReplyPipeline:
             except Exception:
                 fetched = None
             planned = getattr(getattr(fetched, "plan", None), "fixed_safety_script", None)
-            local = route_crisis(text).script
+            prior_hits = self._prior_self_crisis_hits(text)
+            local = route_crisis(text, prior_self_crisis_hits=prior_hits).script
             script = (
                 planned
                 if local is None
-                else more_protective_local_script(text, planned)
+                else more_protective_local_script(
+                    text, planned, prior_self_crisis_hits=prior_hits
+                )
             )
             latency_ms = (time.monotonic() - state.started) * 1000.0
             if script is not None:
@@ -714,7 +730,11 @@ class ReplyPipeline:
         task.add_done_callback(_resolved)
 
     def _with_local_crisis_floor(self, plan: ResponsePlan, query: str) -> ResponsePlan:
-        script = more_protective_local_script(query, plan.fixed_safety_script)
+        script = more_protective_local_script(
+            query,
+            plan.fixed_safety_script,
+            prior_self_crisis_hits=self._prior_self_crisis_hits(query),
+        )
         if script is None:
             return plan
         if not plan_is_local_safe(plan):
@@ -1021,11 +1041,14 @@ class ReplyPipeline:
             return
         self._drop_early_plan()
         client = self._response_planner_client
+        local_crisis = route_crisis(
+            text, prior_self_crisis_hits=self._prior_self_crisis_hits(text)
+        ).script
         if (
             client is None
             or not text.strip()
             # A crisis turn asks the control plane its own way (``_crisis_plan_or_local``).
-            or route_crisis(text).script is not None
+            or local_crisis is not None
             or not self._runtime.profile_permits(fence, capability="memory_recall_private")
             or response_plan_sidecar.applies(client, self._runtime, fence)
         ):
@@ -1269,7 +1292,9 @@ class ReplyPipeline:
             )
         warmed_memory = self._take_warmed_memory(text, speaker)
         classification_started = time.perf_counter()
-        local_crisis = route_crisis(text).script
+        local_crisis = route_crisis(
+            text, prior_self_crisis_hits=self._prior_self_crisis_hits(text)
+        ).script
         logger.info(
             "local_crisis_classification hit=%s category=%s latency_ms=%.1f "
             "session_id=%s turn_id=%s",

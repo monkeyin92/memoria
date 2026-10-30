@@ -1538,7 +1538,7 @@ class ExistingVoiceProviderAdapter:
 
         The crisis line is the one reply a child must hear in full. The chain is
         fixed: the configured approved clip, then StepFun realtime TTS, then the
-        four clips shipped with the image (re-verified by sha256). Doubao never
+        fixed-safety clips shipped with the image (re-verified by sha256). Doubao never
         speaks a crisis turn. A live take is buffered whole so a dropped provider
         cannot truncate the line, and the fallback is retried once inside the
         opening budget (C1, 2026-10-21 03:51:53Z).

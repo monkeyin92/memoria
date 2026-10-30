@@ -323,6 +323,45 @@ _EXPLICIT_SELF_HARM_ACTION_RE = re.compile(
     r"服药过量(?:了)?|站在楼顶(?:了)?"
     r")"
 )
+_SELF_HARM_METHOD_OR_IMMINENT_RE = re.compile(
+    r"(?:割腕|跳楼|跳下去|从楼上跳|吞药|服药过量|安眠药|"
+    r"(?:拿着|握着|手握).{0,6}(?:刀|小刀|剪刀|玻璃)|"
+    r"(?:拿|用).{0,6}(?:刀|小刀|剪刀|玻璃).{0,6}(?:割|划|捅)|"
+    r"(?:割|划)(?:伤|破)?(?:自己|手腕)|站在楼顶)"
+)
+_IMMINENT_SELF_HARM_RE = re.compile(
+    r"(?:现在|马上|这就|立刻|一会儿|等会儿|今晚|今天|已经|正在|准备|打算)"
+    r".{0,6}(?:死|自杀|自残|自尽|轻生|结束生命|跳楼|割腕|吞药|行动|动手)"
+)
+
+
+def self_harm_method_or_imminent(query: str) -> bool:
+    """True when the child names a method or says they will act soon."""
+
+    subject_is_self = True
+    for clause in _CLAUSE_SPLIT_RE.split(query.lower()):
+        if not clause:
+            continue
+        if _REPORTED_SPEECH_CLAUSE_RE.search(clause):
+            subject_is_self = False
+            continue
+        if _OTHER_SUBJECT_CLAUSE_RE.search(clause):
+            subject_is_self = False
+            continue
+        if _SELF_SUBJECT_CLAUSE_RE.search(clause):
+            subject_is_self = True
+        if (
+            _STORY_RETELL_FRAME_RE.search(clause)
+            and _SELF_SUBJECT_CLAUSE_RE.search(clause) is None
+        ):
+            continue
+        if not subject_is_self or _OTHER_PERSON_IN_CLAUSE_RE.search(clause):
+            continue
+        if _SELF_HARM_METHOD_OR_IMMINENT_RE.search(clause) or _IMMINENT_SELF_HARM_RE.search(
+            clause
+        ):
+            return True
+    return False
 _QUOTED_TEXT_RE = re.compile(r"“[^”]*”|「[^」]*」|『[^』]*』|\"[^\"]*\"")
 _REPORTED_OR_ANALYTICAL_RE = re.compile(
     r"(?:朋友|家人|同学|孩子|他|她|有人|别人).{0,8}(?:跟我说|告诉我|说|表示|提到)|"

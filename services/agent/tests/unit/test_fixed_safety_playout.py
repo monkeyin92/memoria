@@ -29,6 +29,7 @@ from services.agent.src.providers.tts_failover import (
     StepFunPrimaryTTS,
     TTSFailoverBreaker,
 )
+from services.agent.src.reply_pipeline import ReplyPipeline
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.provider_adapter import ExistingVoiceProviderAdapter
 from services.common.crisis_policy import route_crisis
@@ -143,6 +144,25 @@ def _playout_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
         for record in caplog.records
         if record.getMessage().startswith("fixed_safety_playout")
     ]
+
+
+def test_prior_self_crisis_hits_counts_only_earlier_self_crisis_turns() -> None:
+    pipeline = object.__new__(ReplyPipeline)
+    pipeline._runtime = SimpleNamespace(
+        orchestrator=SimpleNamespace(
+            context=SimpleNamespace(
+                turns=(
+                    SimpleNamespace(role="user", content="我不想活了"),
+                    SimpleNamespace(role="assistant", content="听到你这么说，我很心疼。"),
+                    SimpleNamespace(role="user", content="有人正在打我"),
+                    SimpleNamespace(role="user", content="我朋友说他不想活了"),
+                    SimpleNamespace(role="user", content="我不想活了"),
+                )
+            )
+        )
+    )
+
+    assert pipeline._prior_self_crisis_hits("我不想活了") == 1
 
 
 @pytest.mark.asyncio

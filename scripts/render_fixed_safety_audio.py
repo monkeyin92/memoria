@@ -1,15 +1,9 @@
 #!/usr/bin/env python3
-"""Synthesize the four fixed-safety clips in Doubao child-story female voice.
-
-Covers:
-1. crisis-self-v1.wav: "听到你这么说，我很心疼。你现在一定特别难受，我就在这里陪着你，哪儿也不去。愿意的话，跟我说说发生了什么事。"
-2. victim-support-v1.wav: "你说的事情很重要。现在马上去找身边的大人，爸爸妈妈、老师都可以。如果有危险，请大人帮你打幺幺零。"
-3. support-other-v1.wav: "谢谢你告诉我，你是个关心别人的好孩子。这件事要请大人帮忙，现在就去告诉爸爸妈妈或者老师吧。"
-4. daily-limit.wav: "今天的聊天时间用完啦，明天再来找我。"
+"""Synthesize the approved fixed-safety clips in Doubao child-story female voice.
 
 Every clip is saved as 24 kHz mono 16-bit integer PCM WAV, labelled with
 GB 45438-2025 compliant RIFF INFO chunks (IART, ISFT, ICMT, ICRD, IENG), and
-pinned in manifest.json.
+pinned in manifest.json. ``--template`` re-renders only the named clips.
 """
 
 from __future__ import annotations
@@ -33,7 +27,6 @@ from services.agent.src.providers.doubao_tts import (  # noqa: E402
 from services.agent.src.providers.fixed_safety_audio import (  # noqa: E402
     DEFAULT_FIXED_SAFETY_AUDIO_DIR,
     FIXED_SAFETY_AUDIO_ENGINE,
-    FIXED_SAFETY_AUDIO_SYNTHESIZED_ON,
     FIXED_SAFETY_AUDIO_VOICE,
     approved_templates,
     verify_fixed_safety_audio_directory,
@@ -74,12 +67,25 @@ async def _synthesize_clip(text: str, dest_wav: Path) -> None:
         handle.writeframes(pcm)
 
 
-def render_all(directory: Path, *, app_id: str, access_token: str) -> None:
+def render_all(
+    directory: Path,
+    *,
+    app_id: str,
+    access_token: str,
+    template_ids: tuple[str, ...] | None = None,
+) -> None:
     os.environ["DOUBAO_TTS_APP_ID"] = app_id
     os.environ["DOUBAO_TTS_ACCESS_TOKEN"] = access_token
     directory.mkdir(parents=True, exist_ok=True)
 
-    templates = approved_templates()
+    available = {template.template_id: template for template in approved_templates()}
+    if template_ids:
+        unknown = set(template_ids) - available.keys()
+        if unknown:
+            raise SystemExit(f"unknown fixed-safety templates: {', '.join(sorted(unknown))}")
+        templates = [available[template_id] for template_id in template_ids]
+    else:
+        templates = list(available.values())
     for template in templates:
         wav_path = directory / f"{template.template_id}.wav"
         print(f"Synthesizing {template.template_id}: {template.spoken!r}")
@@ -90,7 +96,6 @@ def render_all(directory: Path, *, app_id: str, access_token: str) -> None:
     manifest = write_manifest(
         directory,
         voice=FIXED_SAFETY_AUDIO_VOICE,
-        synthesized_on=FIXED_SAFETY_AUDIO_SYNTHESIZED_ON,
         engine=FIXED_SAFETY_AUDIO_ENGINE,
     )
     verify_fixed_safety_audio_directory(directory)
@@ -113,6 +118,12 @@ def main() -> None:
     )
     parser.add_argument("--app-id", default=os.environ.get("DOUBAO_TTS_APP_ID", ""))
     parser.add_argument("--access-token", default=os.environ.get("DOUBAO_TTS_ACCESS_TOKEN", ""))
+    parser.add_argument(
+        "--template",
+        action="append",
+        default=[],
+        help="re-render only this template id; repeat for more",
+    )
     args = parser.parse_args()
 
     if not args.app_id or not args.access_token:
@@ -122,7 +133,12 @@ def main() -> None:
     dest = Path(args.directory)
     if not dest.is_absolute():
         dest = REPO / dest
-    render_all(dest, app_id=args.app_id, access_token=args.access_token)
+    render_all(
+        dest,
+        app_id=args.app_id,
+        access_token=args.access_token,
+        template_ids=tuple(args.template) or None,
+    )
 
 
 if __name__ == "__main__":

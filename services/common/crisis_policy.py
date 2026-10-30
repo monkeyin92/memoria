@@ -13,8 +13,11 @@ from services.common.companion_response_safety import (
     SafetyDecision,
     companion_safety_decision,
     is_story_retell_context,
+    self_harm_method_or_imminent,
 )
 from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_ESCALATION_SCRIPT,
+    CRISIS_SELF_SCRIPT,
     FixedSafetyScript,
     FixedSafetyTemplateId,
     script_for_decision,
@@ -71,22 +74,30 @@ def _route(
     *,
     evidence_source: Literal["deterministic", "semantic_evidence"],
     possibly_story_retell: bool = False,
+    script: FixedSafetyScript | None = None,
 ) -> CrisisRoute:
     spec = _DETERMINISTIC_ROUTES[decision]
     return CrisisRoute(
         action=spec.action,
         notify_guardian=spec.notify_guardian,
         attempt_push=spec.attempt_push,
-        script=script_for_decision(decision),
+        script=script if script is not None else script_for_decision(decision),
         evidence_source=evidence_source,
         possibly_story_retell=possibly_story_retell,
     )
+
+
+def _crisis_self_script(query: str, prior_self_crisis_hits: int) -> FixedSafetyScript:
+    if prior_self_crisis_hits > 0 or self_harm_method_or_imminent(query):
+        return CRISIS_SELF_ESCALATION_SCRIPT
+    return CRISIS_SELF_SCRIPT
 
 
 def route_crisis(
     query: str,
     *,
     semantic_evidence: CrisisSemanticVerdict | None = None,
+    prior_self_crisis_hits: int = 0,
 ) -> CrisisRoute:
     """Resolve evidence without allowing a model verdict to execute an action alone."""
 
@@ -94,10 +105,16 @@ def route_crisis(
     # Annotation only: cue word required, and never set on a none route.
     story = is_story_retell_context(query)
     if deterministic in _DETERMINISTIC_ROUTES:
+        script = (
+            _crisis_self_script(query, prior_self_crisis_hits)
+            if deterministic == "crisis_self"
+            else None
+        )
         return _route(
             deterministic,
             evidence_source="deterministic",
             possibly_story_retell=story,
+            script=script,
         )
     if (
         semantic_evidence is CrisisSemanticVerdict.SELF_CRISIS
@@ -107,6 +124,7 @@ def route_crisis(
             "crisis_self",
             evidence_source="semantic_evidence",
             possibly_story_retell=story,
+            script=_crisis_self_script(query, prior_self_crisis_hits),
         )
     return CrisisRoute(
         action="none",
@@ -122,11 +140,15 @@ _PROTECTION_RANK: Final[dict[FixedSafetyTemplateId, int]] = {
     "support-other-v1": 1,
     "victim-support-v1": 2,
     "crisis-self-v1": 3,
+    "crisis-self-escalation": 4,
 }
 
 
 def more_protective_local_script(
-    query: str, planned: FixedSafetyScript | None
+    query: str,
+    planned: FixedSafetyScript | None,
+    *,
+    prior_self_crisis_hits: int = 0,
 ) -> FixedSafetyScript | None:
     """The local deterministic script when it protects more than ``planned``.
 
@@ -135,7 +157,7 @@ def more_protective_local_script(
     child hears the more protective of the two; ``None`` keeps ``planned``.
     """
 
-    local = route_crisis(query).script
+    local = route_crisis(query, prior_self_crisis_hits=prior_self_crisis_hits).script
     if local is None:
         return None
     if planned is not None and (

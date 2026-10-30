@@ -1089,7 +1089,7 @@ def _frames_audio(frames: list[Any]) -> bytes:
 
 
 def _assert_approved_files_original() -> None:
-    """The four approved WAVs are byte-identical to the reviewed manifest."""
+    """The approved WAVs are byte-identical to the reviewed manifest."""
 
     from services.agent.src.providers.fixed_safety_audio import parse_wav_bytes
 

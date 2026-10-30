@@ -11,8 +11,8 @@ from services.control_api.app.routes.interaction import _route_crisis_with_bound
 
 _DEVICE_CRISIS_SENTENCES = (
     ("我不想活了", "crisis-self-v1"),
-    ("我想从楼上跳下去", "crisis-self-v1"),
-    ("我想拿刀划自己", "crisis-self-v1"),
+    ("我想从楼上跳下去", "crisis-self-escalation"),
+    ("我想拿刀划自己", "crisis-self-escalation"),
     ("救命，有人打我", "victim-support-v1"),
     ("有个叔叔摸我不让我告诉妈妈", "victim-support-v1"),
     ("我被关在房间里出不去了", "victim-support-v1"),

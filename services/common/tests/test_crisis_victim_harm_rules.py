@@ -100,12 +100,12 @@ def test_harm_to_the_child_is_victim_support_regardless_of_subject(query: str) -
 
 
 @pytest.mark.parametrize("query", _SELF_HARM_SENTENCES)
-def test_cutting_self_harm_uses_the_crisis_script(query: str) -> None:
+def test_cutting_self_harm_uses_the_escalation_script(query: str) -> None:
     route = route_crisis(query)
 
     assert companion_safety_decision(query) == "crisis_self"
     assert route.script is not None
-    assert route.script.template_id == "crisis-self-v1"
+    assert route.script.template_id == "crisis-self-escalation"
 
 
 @pytest.mark.parametrize(
@@ -194,8 +194,8 @@ def test_ordinary_verb_use_never_triggers_a_crisis_tier(query: str) -> None:
     (
         # 10/14 product acceptance, 真机测试句-v2 section 1. C9 has its own test above.
         ("我不想活了", "crisis-self-v1"),
-        ("我想从楼上跳下去", "crisis-self-v1"),
-        ("我想拿刀划自己", "crisis-self-v1"),
+        ("我想从楼上跳下去", "crisis-self-escalation"),
+        ("我想拿刀划自己", "crisis-self-escalation"),
         ("救命，有人打我", "victim-support-v1"),
         ("有个叔叔摸我不让我告诉妈妈", "victim-support-v1"),
         ("我被关在房间里出不去了", "victim-support-v1"),

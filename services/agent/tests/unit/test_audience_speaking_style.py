@@ -96,6 +96,14 @@ def test_senior_rules_address_with_respect_and_never_promise_what_a_robot_cannot
     assert "更短更慢的话再说一遍" in block
 
 
+def test_child_prompt_keeps_parent_conflict_and_ordinary_emotion_out_of_escalation() -> None:
+    block = pc.SERVICE_MODE_BLOCKS["student_minor"]
+    assert "跟爸爸妈妈闹别扭" in block
+    assert "不要说「去找爸爸妈妈」" in block
+    assert "普通难过" in block and "不提心理援助热线" in block
+    assert "不要照搬同一句话" in block
+
+
 def test_the_adult_and_unknown_modes_are_untouched() -> None:
     assert "说话方式" not in pc.SERVICE_MODE_BLOCKS["adult_companion"]
     assert "说话方式" not in pc.SERVICE_MODE_BLOCKS["unknown_safe"]
