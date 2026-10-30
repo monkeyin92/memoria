@@ -60,6 +60,9 @@ class OutputState:
     # signal.  A frame, not provider production, is what arms the watchdog.
     speaking_stall_fence: GenerationFence | None = None
     speaking_stall_task: asyncio.Task[None] | None = None
+    # Plays the approved farewell line, then requests standby once the device
+    # reports that playback ended.
+    farewell_task: asyncio.Task[None] | None = None
     delegation_output_claims: dict[GenerationFence, DelegationOutputClaim] = field(
         default_factory=dict
     )

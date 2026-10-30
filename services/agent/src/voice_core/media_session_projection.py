@@ -39,6 +39,7 @@ from services.agent.src.orchestration.state_machine import ConversationState, In
 from services.agent.src.prompts import (
     BRIDGE_PHRASES,
     CONNECTION_RETRY_PHRASE,
+    FAREWELL_STANDBY_PHRASE,
     LIVE_LOOKUP_FILLER,
     MINOR_DAILY_LIMIT_PHRASE,
     device_wake_phrase,
@@ -83,6 +84,10 @@ _LIVE_LOOKUP_FILLER_MEMORY_S = 30.0
 # predecessor's answer has been spoken.  Reusing the 30s burst window here
 # swallowed the next question's acknowledgement (epoch 1900).
 _LIVE_LOOKUP_FILLER_ACK_REPEAT_S = 5.0
+# A farewell must reach the child quickly (2 s product budget) and the device
+# must report the end of its playback before standby closes the conversation.
+_FAREWELL_PLAYBACK_START_GRACE_S = 0.5
+_FAREWELL_PLAYBACK_CAP_S = 5.0
 media_pb2: Any = _media_pb2
 
 
@@ -663,6 +668,64 @@ class MediaSessionProjectionMixin:
             context,
             _OutputWork(acknowledgement, fence, tail_pcm_s16le=tail_pcm_s16le),
         )
+
+    def _schedule_farewell_standby(
+        self, context: _MediaVoiceSession, *, reason: str
+    ) -> None:
+        """Speak the approved farewell, then stand by once it has played."""
+
+        task = context.output.farewell_task
+        if task is not None and not task.done():
+            return
+        context.output.farewell_task = asyncio.create_task(
+            self._speak_farewell_then_standby(context, reason=reason),
+            name=f"media-farewell-standby-{context.identity.session_id}",
+        )
+
+    async def _speak_farewell_then_standby(
+        self, context: _MediaVoiceSession, *, reason: str
+    ) -> None:
+        task = asyncio.current_task()
+        try:
+            context.runtime.open_assistant_floor(cause="farewell_standby")
+            played = await self._speak_allowlisted_bridge_phrase(
+                context,
+                FAREWELL_STANDBY_PHRASE,
+                require_idle_input=False,
+            )
+            if played:
+                await self._await_farewell_playback(context)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "media farewell line failed session=%s",
+                context.identity.session_id,
+            )
+        finally:
+            if context.output.farewell_task is task:
+                context.output.farewell_task = None
+            # A failed or refused line must still end the conversation.
+            if not context.closed and not context.standby_requested:
+                await self._request_device_standby(context, reason=reason)
+
+    async def _await_farewell_playback(self, context: _MediaVoiceSession) -> None:
+        """Return once the device reports the farewell's playback ended."""
+
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        seen_owner = False
+        while loop.time() - started < _FAREWELL_PLAYBACK_CAP_S:
+            if context.closed or context.standby_requested:
+                return
+            owner = context.output.output_owner
+            if owner is not None:
+                seen_owner = True
+                if context.output.playback.terminal_received(owner.fence):
+                    return
+            elif seen_owner or loop.time() - started >= _FAREWELL_PLAYBACK_START_GRACE_S:
+                return
+            await asyncio.sleep(0.02)
 
     def _resume_capped_output(self, context: _MediaVoiceSession) -> None:
         """Speak a queued answer once the floor cap closes with no pending turn.

@@ -10,6 +10,7 @@ from services.agent.src.orchestration.interruption_guard import (
     is_backchannel,
     is_completion_ack_only,
     is_conversation_close_only,
+    is_explicit_farewell_text,
     is_explicit_interrupt,
     is_interrupt_command_only,
     is_primarily_non_chinese_script,
@@ -66,6 +67,13 @@ def test_assistant_farewell_reply_pairs_with_user_close_intent() -> None:
     assert user_turn_suggests_conversation_close("知道了，再见")
     assert is_short_assistant_farewell_reply("祝你上海玩得开心，再见")
     assert not user_turn_suggests_conversation_close("下次见到小明要说再见")
+
+
+def test_only_goodbye_close_phrases_play_the_spoken_farewell() -> None:
+    for phrase in ("再见", "好的，再见", "嗯，拜拜", "下次见", "回头见", "bye"):
+        assert is_explicit_farewell_text(phrase), phrase
+    for phrase in ("退下吧", "知道了", "先这样吧", "就这样吧", "休息吧"):
+        assert not is_explicit_farewell_text(phrase), phrase
 
 
 def test_primarily_non_chinese_script_detects_garbled_rescue() -> None:

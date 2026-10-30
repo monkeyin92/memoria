@@ -93,6 +93,9 @@ class PendingTurn:
     # to keep the stop a control turn and to release it from the fixed-safety
     # hold; a text-based peel alone must not decide after the reply was muted.
     playback_stop_text: str | None = None
+    # The utterance that ended the conversation explicitly; the media session
+    # speaks the product farewell before standby when it is a farewell.
+    conversation_close_text: str | None = None
     # A final heard during playback whose content, not a stop word, endpoints the turn:
     # the commit stops the playing reply before it prepares the answer.
     content_barge_in: bool = False
@@ -202,6 +205,7 @@ class PendingTurn:
         self.pending_turn_onset_floor = None
         self.playback_followup_endpoint_sample = None
         self.playback_stop_text = None
+        self.conversation_close_text = None
         self.content_barge_in = False
         self.followup_pin_monotonic = None
         self.warmed_commit_text = None

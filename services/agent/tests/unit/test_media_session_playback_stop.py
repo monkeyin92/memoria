@@ -1481,7 +1481,11 @@ async def _owner_farewell_after(
     provider.by_end[(epoch, start + 9_600)] = _window_final(
         epoch, sentence_id="3", start_sample=start, end_sample=start + 9_600, text="再见"
     )
+    audio_before = harness.count("audio")
     await _frames_to(harness, start + 9_600)
+    # The farewell line plays before standby; the device acknowledges it.
+    await harness.wait_for(lambda: harness.count("audio") > audio_before)
+    await harness.playback_ended()
     await harness.wait_for(harness.closed)
 
 

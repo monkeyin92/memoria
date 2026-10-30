@@ -27,7 +27,10 @@ from services.agent.src.orchestration.interaction_plane import (
     InteractionEvent,
     InteractionSnapshot,
 )
-from services.agent.src.orchestration.interruption_guard import normalize_short
+from services.agent.src.orchestration.interruption_guard import (
+    is_explicit_farewell_text,
+    normalize_short,
+)
 from services.agent.src.voice_core.asr_stream_supervisor import (
     ASRAcceptDecision,
     ASRDecisionReason,
@@ -323,6 +326,10 @@ class MediaSessionCommitMixin:
         async def _request_device_standby(
             self, context: _MediaVoiceSession, *, reason: str
         ) -> bool: ...
+
+        def _schedule_farewell_standby(
+            self, context: _MediaVoiceSession, *, reason: str
+        ) -> None: ...
 
         def _observe_partial_asr_result(
             self, context: _MediaVoiceSession, result: ASRResult
@@ -1133,7 +1140,16 @@ class MediaSessionCommitMixin:
             commit_started, since_endpoint_ms, timing,
         )
         if reason == "conversation_end_explicit":
-            await self._request_device_standby(context, reason=reason)
+            close_text = context.pending.conversation_close_text
+            context.pending.conversation_close_text = None
+            if (
+                close_text is not None
+                and is_explicit_farewell_text(close_text)
+                and callable(getattr(context.provider, "generate_output", None))
+            ):
+                self._schedule_farewell_standby(context, reason=reason)
+            else:
+                await self._request_device_standby(context, reason=reason)
         else:
             if reason == PLAYBACK_STOP_ROUTE_REASON:
                 # The Router suppressed the stop as a control turn; the reply
@@ -1544,6 +1560,8 @@ class MediaSessionCommitMixin:
             canonical_snapshot_bound=True,
         )
         if not accepted:
+            if reason == "conversation_end_explicit":
+                context.pending.conversation_close_text = text
             await self._commit_media_input_range(
                 context,
                 stream_epoch=stream_epoch,

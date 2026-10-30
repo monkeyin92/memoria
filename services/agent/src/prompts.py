@@ -93,6 +93,10 @@ BRIDGE_PHRASES = (
 LIVE_LOOKUP_FILLER = BRIDGE_PHRASES[1]
 CONNECTION_RETRY_PHRASE = BRIDGE_PHRASES[3]
 
+# Product-approved line spoken before an explicit farewell returns the device
+# to standby.  It is synthesized live by the configured TTS, never stored.
+FAREWELL_STANDBY_PHRASE = "好呀，再见，下次见～"
+
 DEVICE_WAKE_PHRASES = (
     "我在。",
     "哎，我来了。",
@@ -303,6 +307,7 @@ def is_allowlisted_device_phrase(phrase: str) -> bool:
         or phrase in DEVICE_WAKE_GREETING_PHRASES
         or phrase in SPEAKER_ENROLLMENT_PHRASES
         or phrase in MINOR_SESSION_LIMIT_PHRASES
+        or phrase == FAREWELL_STANDBY_PHRASE
     )
 
 
@@ -315,6 +320,7 @@ __all__ = [
     "DEVICE_WAKE_PHRASES",
     "DEVICE_WAKE_GREETING_PHRASES",
     "EMOTION_TAG_RULE",
+    "FAREWELL_STANDBY_PHRASE",
     "SAFETY_CORE",
     "SAFETY_CORE_TRANSPARENT",
     "SPEAKER_ENROLLMENT_DONE_PHRASE",

@@ -344,6 +344,14 @@ class MediaSessionConnectionMixin:
                 stream_epoch=context_stream_epoch,
             )
             context.closed = True
+            farewell_task = context.output.farewell_task
+            context.output.farewell_task = None
+            if (
+                farewell_task is not None
+                and farewell_task is not current_task
+                and not farewell_task.done()
+            ):
+                farewell_task.cancel()
             retry_task = context.output.output_retry_task
             context.output.output_retry_task = None
             if retry_task is not None and retry_task is not current_task:
