@@ -1115,7 +1115,7 @@ class MediaPlaybackStopMixin:
         0.64 s each and cancelled every reply they never heard.
         """
 
-        started = getattr(context.output, "playback_started", None)
+        started = context.output.playback_started
         if started is None or not started[0].matches(context.runtime.fence):
             return False
         if result.capture_start_sample >= started[1]:
