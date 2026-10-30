@@ -50,7 +50,10 @@ from services.agent.src.providers.funasr_protocol import (
     sentence_to_asr_result,
 )
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
-from services.agent.src.voice_core.media_session_types import ProviderAudioTaskSnapshot
+from services.agent.src.voice_core.media_session_types import (
+    ASREmptySegmentEvidence,
+    ProviderAudioTaskSnapshot,
+)
 from services.agent.src.voice_core.speech_timeline import ASRResult
 from services.common.fixed_safety_scripts import (
     FixedSafetyScript,
@@ -261,6 +264,22 @@ class ExistingVoiceProviderAdapter:
                 if int(getattr(asr, "task_pcm_sample_count", 0)) > 0
                 else None
             ),
+        )
+
+    @property
+    def last_empty_segment_evidence(self) -> ASREmptySegmentEvidence | None:
+        """What the ASR chain saw on the segment that just finished empty."""
+
+        asr = self._asr
+        if asr is None:
+            return None
+        had_speech = getattr(asr, "last_segment_had_speech", None)
+        if had_speech is None:
+            return None
+        return ASREmptySegmentEvidence(
+            had_speech=bool(had_speech),
+            provider_failed=bool(getattr(asr, "last_segment_provider_failed", False)),
+            retried=bool(getattr(asr, "last_segment_backup_retried", False)),
         )
 
     @property
