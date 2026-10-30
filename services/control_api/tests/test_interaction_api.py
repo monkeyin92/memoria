@@ -1432,7 +1432,7 @@ async def test_tutor_turn_policy_requires_two_stuck_turns_and_crisis_still_wins(
     assert "连续两次" in second_response.json()["instructions"]
     assert "只允许给一个" in second_response.json()["instructions"]
     assert crisis_response.json()["direct_text"] is not None
-    assert "幺二三五六" in crisis_response.json()["direct_text"]
+    assert "心疼" in crisis_response.json()["direct_text"]
     assert "12356" not in crisis_response.json()["direct_text"]
     assert "【导师话轮约束】" not in crisis_response.json()["instructions"]
 
@@ -1518,7 +1518,7 @@ async def test_response_plan_consumes_bounded_crisis_semantic_evidence(
 
     assert response.status_code == 200
     assert evidence.calls == ["我撑不下去了"]
-    assert "幺二三五六" in response.json()["direct_text"]
+    assert "心疼" in response.json()["direct_text"]
     assert "12356" not in response.json()["direct_text"]
 
 

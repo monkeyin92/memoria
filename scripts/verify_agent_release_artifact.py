@@ -90,14 +90,14 @@ assert len(denoiser.process(pcm)) == len(pcm), "DTLN changed the PCM length"
 
 
 def _check_fixed_safety_audio() -> None:
-    """Wav bytes match the manifest. Crisis clips may lag the short fallback copy."""
+    """Every approved safety clip must ship with a matching manifest hash."""
 
     code = """
 from services.agent.src.providers.fixed_safety_audio import (
-    accept_fixed_safety_audio,
+    verify_fixed_safety_audio_directory,
 )
 
-accept_fixed_safety_audio()
+verify_fixed_safety_audio_directory()
 """
     _run_subprocess_check(code)
     print("fixed safety audio clips OK")

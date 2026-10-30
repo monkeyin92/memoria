@@ -606,9 +606,7 @@ def test_heard_fixed_safety_script_adds_the_after_safety_instruction() -> None:
     assert AFTER_FIXED_SAFETY_SESSION_INSTRUCTION in system_text([SUPPORT_RELAY_SCRIPT.display])
     assert AFTER_FIXED_SAFETY_SESSION_INSTRUCTION in system_text([CRISIS_SELF_SCRIPT.display])
     assert AFTER_FIXED_SAFETY_SESSION_INSTRUCTION not in system_text(["你好呀。"])
-    assert AFTER_FIXED_SAFETY_SESSION_INSTRUCTION not in system_text(
-        [SUPPORT_VICTIM_SCRIPT.phrases[0].display]
-    )
+    assert AFTER_FIXED_SAFETY_SESSION_INSTRUCTION not in system_text([SUPPORT_VICTIM_SCRIPT.spoken])
 
 
 @pytest.mark.asyncio

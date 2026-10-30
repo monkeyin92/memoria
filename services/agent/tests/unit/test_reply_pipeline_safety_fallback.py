@@ -228,13 +228,8 @@ async def test_a_crisis_turn_does_not_wait_for_a_slow_planner_on_a_long_session(
         Path(__file__).resolve().parents[4] / DEFAULT_FIXED_SAFETY_AUDIO_DIR
     )
     clip = catalog.match(CRISIS_SELF_SCRIPT.spoken)
-    assert clip is not None and clip.playable is False
+    assert clip is not None and clip.playable
     assert clip.template_id == "crisis-self-v1"
-    assert any(
-        "spoken_sha256 mismatch" in issue.reason
-        for issue in catalog.issues
-        if issue.template_id == "crisis-self-v1"
-    )
     spoken = [
         token
         async for token in pipeline.stream(
@@ -799,7 +794,7 @@ async def test_fixed_safety_script_echo_stays_rejected_after_the_guard_window() 
         last_playback_completed_ns=aged,
         assistant_speaking=False,
     )
-    echo = "现在马上去找身边的大人"
+    echo = "听到你这么说，我很心疼"
     accepted, reason = runtime.accept_user_turn(
         echo,
         input_modality="audio",
@@ -941,13 +936,8 @@ async def test_fast_non_crisis_planner_plan_is_floored_to_the_prerecorded_crisis
         Path(__file__).resolve().parents[4] / DEFAULT_FIXED_SAFETY_AUDIO_DIR
     )
     clip = catalog.match(CRISIS_SELF_SCRIPT.spoken)
-    assert clip is not None and clip.playable is False
+    assert clip is not None and clip.playable
     assert clip.template_id == "crisis-self-v1"
-    assert any(
-        "spoken_sha256 mismatch" in issue.reason
-        for issue in catalog.issues
-        if issue.template_id == "crisis-self-v1"
-    )
 
     spoken = [
         token

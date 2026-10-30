@@ -268,9 +268,8 @@ async def test_fixed_safety_audio_crisis_tiers_and_daily_limit_play_prerecorded_
     catalog = _load()
     for template_id in _TEMPLATE_IDS:
         template = catalog.get(template_id)
-        assert template is not None
+        assert template is not None and template.pcm
         if template_id == "daily-limit":
-            assert template.pcm
             inner = _InnerTTS()
             wrapper = FixedSafetyTTS(inner, catalog)
             identity = _identity(f"daily-{template_id}")
@@ -290,19 +289,17 @@ async def test_fixed_safety_audio_crisis_tiers_and_daily_limit_play_prerecorded_
                 )
             ]
             pcm = b"".join(chunk.pcm_s16le for chunk in chunks)
-            assert inner.streams == 0
-            assert pcm.startswith(template.pcm)
-            assert set(pcm[len(template.pcm) :]) <= {0}
-            continue
-        assert template.playable is False
-        script = _script_for(template_id)
-        inner = _InnerTTS()
-        wrapper = FixedSafetyTTS(inner, catalog)
-        identity = _identity(f"crisis-{template_id}")
-        adapter = _adapter(script, wrapper)
-        with pytest.raises(FixedSafetyClipUnavailableError):
-            await _reply_pcm(adapter, identity, _fence(identity), script)
+        else:
+            script = _script_for(template_id)
+            inner = _InnerTTS()
+            wrapper = FixedSafetyTTS(inner, catalog)
+            identity = _identity(f"crisis-{template_id}")
+            fence = _fence(identity)
+            adapter = _adapter(script, wrapper)
+            pcm = await _reply_pcm(adapter, identity, fence, script)
         assert inner.streams == 0
+        assert pcm.startswith(template.pcm)
+        assert set(pcm[len(template.pcm) :]) <= {0}
 
 
 @pytest.mark.asyncio
@@ -310,11 +307,10 @@ async def test_fixed_safety_prerecorded_plays_before_any_realtime_tts_including_
     catalog = _load()
     for template_id in _TEMPLATE_IDS:
         template = catalog.get(template_id)
-        assert template is not None
+        assert template is not None and template.pcm
         inner = _DoubaoRealtimeTTS()
         wrapper = FixedSafetyTTS(cast(Any, inner), catalog)
         if template_id == "daily-limit":
-            assert template.pcm
             identity = _identity(f"precedes-live-daily-{template_id}")
             adapter = ExistingVoiceProviderAdapter(
                 asr_session_factory=cast(Any, lambda: None),
@@ -332,16 +328,13 @@ async def test_fixed_safety_prerecorded_plays_before_any_realtime_tts_including_
                 )
             ]
             pcm = b"".join(chunk.pcm_s16le for chunk in chunks)
-            assert inner.streams == 0
-            assert pcm.startswith(template.pcm)
-            continue
-        assert template.playable is False
-        script = _script_for(template_id)
-        identity = _identity(f"precedes-live-crisis-{template_id}")
-        adapter = _adapter(script, wrapper)
-        with pytest.raises(FixedSafetyClipUnavailableError):
-            await _reply_pcm(adapter, identity, _fence(identity), script)
+        else:
+            script = _script_for(template_id)
+            identity = _identity(f"precedes-live-crisis-{template_id}")
+            adapter = _adapter(script, wrapper)
+            pcm = await _reply_pcm(adapter, identity, _fence(identity), script)
         assert inner.streams == 0
+        assert pcm.startswith(template.pcm)
 
 
 @pytest.mark.asyncio
@@ -354,45 +347,46 @@ async def test_doubao_only_provider_never_speaks_a_crisis_turn(tmp_path: Path) -
     identity = _identity("doubao-never-crisis")
     adapter = _adapter(CRISIS_SELF_SCRIPT, wrapper)
 
-    with pytest.raises(FixedSafetyClipUnavailableError):
-        await _reply_pcm(adapter, identity, _fence(identity), CRISIS_SELF_SCRIPT)
+    pcm = await _reply_pcm(adapter, identity, _fence(identity), CRISIS_SELF_SCRIPT)
 
     assert inner.streams == 0
+    assert pcm.startswith(_load().get("crisis-self-v1").pcm or b"")
 
 
 @pytest.mark.asyncio
 async def test_crisis_turn_plays_only_approved_prerecorded_pcm_sha256() -> None:
-    """Daily-limit still plays its clip. The three crisis clips are stale placeholders."""
+    """Every crisis tier and daily-limit turn emits exactly one approved PCM."""
 
     catalog = _load()
     for template_id in _TEMPLATE_IDS:
         template = catalog.get(template_id)
-        assert template is not None
-        if template_id != "daily-limit":
-            assert template.playable is False
-            assert template.pcm_sha256 == ""
-            continue
-        assert template.pcm
+        assert template is not None and template.pcm
         assert template.pcm_sha256 == _APPROVED_PCM_SHA256[template_id]
         inner = _InnerTTS()
         wrapper = FixedSafetyTTS(inner, catalog)
-        identity = _identity(f"sha256-daily-{template_id}")
-        adapter = ExistingVoiceProviderAdapter(
-            asr_session_factory=cast(Any, lambda: None),
-            language_model=_ScriptLLM(CRISIS_SELF_SCRIPT),
-            speech_synthesis=cast(Any, wrapper),
-        )
-        chunks = [
-            chunk
-            async for chunk in adapter.generate_output(
-                identity,
-                _TtsIntent(MINOR_DAILY_LIMIT_PHRASE),
-                _fence(identity),
-                work_id="daily-limit-sha256",
-                source_start_sample=0,
+        if template_id == "daily-limit":
+            identity = _identity(f"sha256-daily-{template_id}")
+            adapter = ExistingVoiceProviderAdapter(
+                asr_session_factory=cast(Any, lambda: None),
+                language_model=_ScriptLLM(CRISIS_SELF_SCRIPT),
+                speech_synthesis=cast(Any, wrapper),
             )
-        ]
-        pcm = b"".join(chunk.pcm_s16le for chunk in chunks)
+            chunks = [
+                chunk
+                async for chunk in adapter.generate_output(
+                    identity,
+                    _TtsIntent(MINOR_DAILY_LIMIT_PHRASE),
+                    _fence(identity),
+                    work_id="daily-limit-sha256",
+                    source_start_sample=0,
+                )
+            ]
+            pcm = b"".join(chunk.pcm_s16le for chunk in chunks)
+        else:
+            script = _script_for(template_id)
+            identity = _identity(f"sha256-crisis-{template_id}")
+            adapter = _adapter(script, wrapper)
+            pcm = await _reply_pcm(adapter, identity, _fence(identity), script)
         assert inner.streams == 0
         assert hashlib.sha256(pcm).hexdigest() == _APPROVED_PCM_SHA256[template_id]
 
@@ -402,42 +396,73 @@ async def test_runtime_synthesized_crisis_audio_is_never_cached_as_approved(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A stale crisis clip is not played, and a live take is not stored as approved."""
+    """A live take must not become a later turn's approved audio.
+
+    The configured clip fails its hash, so the shipped copy of the same
+    template plays. That is a stored clip, not a live one, and it must never
+    be recorded as this deployment's approved audio.
+    """
 
     runtime_pcm = b"\x42\x00" * 960
     broken_directory = _tampered_copy(tmp_path, pcm_sha256="0" * 64)
     runtime_inner = _RuntimePcmTTS(runtime_pcm)
     broken_wrapper = FixedSafetyTTS(runtime_inner, _load(broken_directory))
     identity = _identity("runtime-synth-fallback")
+    broken_fence = _fence(identity)
     broken_adapter = _adapter(CRISIS_SELF_SCRIPT, broken_wrapper)
 
-    with caplog.at_level("WARNING"), pytest.raises(FixedSafetyClipUnavailableError):
-        await _reply_pcm(broken_adapter, identity, _fence(identity), CRISIS_SELF_SCRIPT)
+    with caplog.at_level("WARNING"):
+        first_pcm = await _reply_pcm(broken_adapter, identity, broken_fence, CRISIS_SELF_SCRIPT)
 
+    shipped = _load().get("crisis-self-v1")
+    assert shipped is not None and shipped.pcm
+    assert first_pcm.startswith(shipped.pcm)
+    assert first_pcm != runtime_pcm
     assert runtime_inner.streams == 0
-    assert not (broken_directory / "runtime-approved.wav").exists()
+    assert any(
+        "template_id=crisis-self-v1" in record.getMessage()
+        and "pcm_sha256 mismatch" in record.getMessage()
+        for record in caplog.records
+    )
+
+    approved_inner = _InnerTTS()
+    approved_wrapper = FixedSafetyTTS(approved_inner, _load())
+    approved_identity = _identity("approved-after-runtime-synth")
+    approved_pcm = await _reply_pcm(
+        _adapter(CRISIS_SELF_SCRIPT, approved_wrapper),
+        approved_identity,
+        _fence(approved_identity),
+        CRISIS_SELF_SCRIPT,
+    )
+
+    assert approved_inner.streams == 0
+    assert hashlib.sha256(approved_pcm).hexdigest() == _APPROVED_PCM_SHA256["crisis-self-v1"]
+    assert approved_pcm != runtime_pcm
 
 
 @pytest.mark.asyncio
-async def test_fixed_safety_audio_hash_mismatch_does_not_play_a_stale_clip(
+async def test_fixed_safety_audio_hash_mismatch_plays_the_shipped_clip_and_alerts(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A bad configured clip does not play the stale shipped wav, or a live engine."""
+    """A bad configured clip falls to the shipped clip, never a live engine."""
 
     directory = _tampered_copy(tmp_path, audio_sha256="0" * 64)
     wrapper, inner = _wrapper(directory)
 
-    with caplog.at_level("WARNING"), pytest.raises(FixedSafetyClipUnavailableError):
-        await _serve(wrapper, CRISIS_SELF_SCRIPT.spoken)
+    with caplog.at_level("WARNING"):
+        pcm = await _serve(wrapper, CRISIS_SELF_SCRIPT.spoken)
 
+    shipped = _load().get("crisis-self-v1")
+    assert shipped is not None and shipped.pcm
+    assert pcm.startswith(shipped.pcm)
     assert inner.pushed == []
     assert inner.streams == 0
     messages = [record.getMessage() for record in caplog.records]
     assert any(
-        "template_id=crisis-self-v1" in message and "mismatch" in message
+        "template_id=crisis-self-v1" in message and "audio_sha256 mismatch" in message
         for message in messages
     )
-    assert not any("source=shipped_clip" in message for message in messages)
+    assert any("source=shipped_clip" in message for message in messages)
     assert not any("12356" in message or "不想活" in message for message in messages)
 
 
@@ -459,9 +484,9 @@ async def test_fixed_safety_audio_timing_logged_when_a_clip_plays(
 
     wrapper, inner = _wrapper()
     with caplog.at_level("INFO"):
-        pcm = await _serve(wrapper, MINOR_DAILY_LIMIT_PHRASE)
+        pcm = await _serve(wrapper, CRISIS_SELF_SCRIPT.spoken)
 
-    shipped = _load().get("daily-limit")
+    shipped = _load().get("crisis-self-v1")
     assert shipped is not None and shipped.pcm
     assert pcm.startswith(shipped.pcm)
     assert inner.streams == 0
@@ -473,7 +498,7 @@ async def test_fixed_safety_audio_timing_logged_when_a_clip_plays(
     assert len(matches) == 1
     match = matches[0]
     assert match is not None
-    assert match.group("template_id") == "daily-limit"
+    assert match.group("template_id") == "crisis-self-v1"
     assert match.group("passed") == "true"
     select_ms = float(match.group("select_ms"))
     validate_ms = float(match.group("validate_ms"))
@@ -497,9 +522,12 @@ async def test_fixed_safety_audio_missing_file_plays_the_shipped_clip(
     (directory / "crisis-self-v1.wav").unlink()
     wrapper, inner = _wrapper(directory)
 
-    with caplog.at_level("ERROR"), pytest.raises(FixedSafetyClipUnavailableError):
-        await _serve(wrapper, CRISIS_SELF_SCRIPT.spoken)
+    with caplog.at_level("ERROR"):
+        pcm = await _serve(wrapper, CRISIS_SELF_SCRIPT.spoken)
 
+    shipped = _load().get("crisis-self-v1")
+    assert shipped is not None and shipped.pcm
+    assert pcm.startswith(shipped.pcm)
     assert inner.streams == 0
     assert any("template_id=crisis-self-v1" in record.getMessage() for record in caplog.records)
 
@@ -595,11 +623,11 @@ async def test_aigc_notice_plays_once_at_start_and_end_on_prerecorded_safety_tur
     host._open_aigc_round(context)
     await host._speak_aigc_opening_marker(context)
     await host._speak_aigc_opening_marker(context)
-    with pytest.raises(FixedSafetyClipUnavailableError):
-        await _serve(wrapper, CRISIS_SELF_SCRIPT.spoken)
+    pcm = await _serve(wrapper, CRISIS_SELF_SCRIPT.spoken)
     await host._play_aigc_closing_marker(context)
     await host._play_aigc_closing_marker(context)
 
+    assert pcm.startswith(_load().get("crisis-self-v1").pcm or b"")
     assert inner.streams == 0
     assert host.opening == 1
     assert host.closing == 1
@@ -608,38 +636,58 @@ async def test_aigc_notice_plays_once_at_start_and_end_on_prerecorded_safety_tur
 @pytest.mark.asyncio
 async def test_fixed_safety_audio_interrupt_reports_heard_complete_by_sentence() -> None:
     template = _load().get("crisis-self-v1")
-    assert template is not None and template.playable is False
-    total = 48_000
-    spans = sentence_spans(CRISIS_SELF_SCRIPT.spoken, total)
-    assert len(spans) == len(CRISIS_SELF_SCRIPT.phrases)
+    assert template is not None and template.pcm
+    total = len(template.pcm) // 2
+    spans = sentence_spans(template.spoken, total)
+    assert len(spans) >= 3
 
     assert (
         heard_complete_by_sentence(
-            CRISIS_SELF_SCRIPT.spoken,
-            played_samples=spans[0].end_sample,
+            template.spoken,
+            played_samples=spans[-2].end_sample,
             total_samples=total,
         )
         is False
     )
     assert (
         heard_complete_by_sentence(
-            CRISIS_SELF_SCRIPT.spoken,
+            template.spoken,
             played_samples=total,
             total_samples=total,
         )
         is True
     )
+
+    identity = _identity("heard-complete")
+    fence = _fence(identity)
+    wrapper, inner = _wrapper()
+    adapter = _adapter(CRISIS_SELF_SCRIPT, wrapper)
+    await _reply_pcm(adapter, identity, fence, CRISIS_SELF_SCRIPT)
+
+    assert inner.streams == 0
+    assert adapter.fixed_safety_heard_complete(fence, total - 1) is False
+    assert adapter.fixed_safety_heard_complete(fence, total) is True
+    base = {
+        "announced_text": CRISIS_SELF_SCRIPT.display,
+        "minor_user_id": "minor-1",
+        "session_id": identity.session_id,
+        "turn_id": fence.turn_id,
+        "generation_id": fence.generation_id,
+        "tool_epoch": fence.tool_epoch,
+    }
     assert (
         crisis_self_interrupt_event_id(
-            announced_text=CRISIS_SELF_SCRIPT.display,
-            crisis_reply_heard=False,
-            minor_user_id="minor-1",
-            session_id="heard-complete",
-            turn_id=1,
-            generation_id=1,
-            tool_epoch=0,
+            **base,
+            crisis_reply_heard=bool(adapter.fixed_safety_heard_complete(fence, total - 1)),
         )
         is not None
+    )
+    assert (
+        crisis_self_interrupt_event_id(
+            **base,
+            crisis_reply_heard=bool(adapter.fixed_safety_heard_complete(fence, total)),
+        )
+        is None
     )
 
 
@@ -650,7 +698,9 @@ class _HeldCrisisProvider(_ScriptedProvider):
         super().__init__()
         self.release = asyncio.Event()
         self.safety_fences: set[GenerationFence] = set()
-        self.prerecorded = b"\x00\x01" * 480
+        source = _load().get("crisis-self-v1")
+        assert source is not None and source.pcm
+        self.prerecorded = source.pcm[:960]
 
     def generate_reply(
         self,
@@ -767,12 +817,6 @@ def test_fixed_safety_manifest_spoken_hash_matches_main_scripts() -> None:
     manifest = json.loads((_AUDIO_DIR / "manifest.json").read_text(encoding="utf-8"))
     entries = {entry["template_id"]: entry for entry in manifest["templates"]}
     assert set(entries) == set(_TEMPLATE_IDS)
-    crisis_ids = {"crisis-self-v1", "victim-support-v1", "support-other-v1"}
     for template in approved_templates():
-        recorded = entries[template.template_id]["spoken_sha256"]
-        current = spoken_sha256(template.spoken)
-        if template.template_id in crisis_ids:
-            assert recorded != current
-        else:
-            assert recorded == current
+        assert entries[template.template_id]["spoken_sha256"] == spoken_sha256(template.spoken)
     assert entries["daily-limit"]["spoken_sha256"] == spoken_sha256(MINOR_DAILY_LIMIT_PHRASE)

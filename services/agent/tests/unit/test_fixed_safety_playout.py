@@ -21,6 +21,7 @@ from services.agent.src.providers.fixed_safety_audio import (
     FixedSafetyAudioCatalog,
     FixedSafetyAudioTemplate,
     FixedSafetyTTS,
+    shipped_approved_catalog,
 )
 from services.agent.src.providers.provider_errors import APIStatusError
 from services.agent.src.providers.tts_failover import (
@@ -243,9 +244,7 @@ async def test_buffered_synthesis_gets_spoken_copy_per_approved_phrase() -> None
     assert [chunk.text for chunk in chunks] == [
         phrase.display for phrase in CRISIS_SELF_SCRIPT.phrases
     ]
-    assert [chunk.final for chunk in chunks] == [
-        False for _ in CRISIS_SELF_SCRIPT.phrases[:-1]
-    ] + [True]
+    assert [chunk.final for chunk in chunks] == [False, False, True]
 
 
 @pytest.mark.asyncio
@@ -409,11 +408,16 @@ async def test_fixed_safety_stepfun_failure_plays_the_shipped_approved_clip() ->
     adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), _script_speech(primary=primary, backup=backup))
     identity, fence = _generation("fixed-safety-shipped-clip")
 
-    with pytest.raises(RuntimeError, match="fixed safety script produced no audio"):
-        _ = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
+    chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
 
+    template = shipped_approved_catalog().get("crisis-self-v1")
+    assert template is not None and template.pcm
+    pcm = b"".join(chunk.pcm_s16le for chunk in chunks)
+    assert pcm.startswith(template.pcm)
+    assert set(pcm[len(template.pcm) :]) <= {0}
     assert primary.received == [SPOKEN_SCRIPT, SPOKEN_SCRIPT]
     assert backup.received == []
+    assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display
 
 
 @pytest.mark.asyncio
@@ -436,11 +440,15 @@ async def test_fixed_safety_prerecorded_hash_mismatch_uses_the_shipped_clip_only
     adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), cast(Any, speech))
     identity, fence = _generation("fixed-safety-broken-clip")
 
-    with pytest.raises(RuntimeError, match="fixed safety script produced no audio"):
-        _ = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
+    chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
 
+    template = shipped_approved_catalog().get("crisis-self-v1")
+    assert template is not None and template.pcm
+    pcm = b"".join(chunk.pcm_s16le for chunk in chunks)
+    assert pcm.startswith(template.pcm)
     assert primary.received == []
     assert backup.received == []
+    assert "".join(chunk.assistant_text_delta for chunk in chunks) == CRISIS_SELF_SCRIPT.display
 
 
 @pytest.mark.asyncio
@@ -466,9 +474,12 @@ async def test_fixed_safety_broken_clip_and_stepfun_down_still_play_the_shipped_
     adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), cast(Any, speech))
     identity, fence = _generation("fixed-safety-broken-clip-stepfun-down")
 
-    with pytest.raises(RuntimeError, match="fixed safety script produced no audio"):
-        _ = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
+    chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
 
+    template = shipped_approved_catalog().get("crisis-self-v1")
+    assert template is not None and template.pcm
+    pcm = b"".join(chunk.pcm_s16le for chunk in chunks)
+    assert pcm.startswith(template.pcm)
     assert primary.received == []
     assert backup.received == []
 
@@ -481,10 +492,13 @@ async def test_stepfun_first_packet_timeout_falls_back_to_the_shipped_clip_insid
     identity, fence = _generation("fixed-safety-stepfun-timeout")
 
     started = time.monotonic()
-    with pytest.raises(RuntimeError, match="fixed safety script produced no audio"):
-        _ = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
+    chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
     elapsed = time.monotonic() - started
 
+    template = shipped_approved_catalog().get("crisis-self-v1")
+    assert template is not None and template.pcm
+    pcm = b"".join(chunk.pcm_s16le for chunk in chunks)
+    assert pcm.startswith(template.pcm)
     assert primary.received
     assert backup.received == []
     assert elapsed < 5.0
@@ -577,13 +591,19 @@ async def test_a_later_failure_does_not_replay_a_live_take(
     second = _UnavailableSpeech()
     cold = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), second)
     identity, fence = _generation("fixed-safety-live-cold")
-    with caplog.at_level(logging.INFO), pytest.raises(
-        RuntimeError, match="fixed safety script produced no audio"
-    ):
-        _ = [chunk async for chunk in cold.generate_reply(identity, CHILD_TEXT, fence)]
+    with caplog.at_level(logging.INFO):
+        chunks = [chunk async for chunk in cold.generate_reply(identity, CHILD_TEXT, fence)]
 
+    template = shipped_approved_catalog().get("crisis-self-v1")
+    assert template is not None and template.pcm
+    pcm = b"".join(chunk.pcm_s16le for chunk in chunks)
+    assert pcm.startswith(template.pcm)
+    assert pcm != warm.pcm_s16le
+    ready = [
+        r.getMessage() for r in caplog.records if "fixed safety speech ready" in r.getMessage()
+    ]
+    assert len(ready) == 1 and "source=prerecorded_fallback" in ready[0]
     assert not any("replayed from cache" in r.getMessage() for r in caplog.records)
-    assert not any("source=prerecorded_fallback" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -591,8 +611,13 @@ async def test_realtime_fallback_failure_plays_the_shipped_approved_clip() -> No
     adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), _UnavailableSpeech())
     identity, fence = _generation("fixed-safety-no-prerecorded")
 
-    with pytest.raises(RuntimeError, match="fixed safety script produced no audio"):
-        _ = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
+    chunks = [chunk async for chunk in adapter.generate_reply(identity, CHILD_TEXT, fence)]
+
+    template = shipped_approved_catalog().get("crisis-self-v1")
+    assert template is not None and template.pcm
+    pcm = b"".join(chunk.pcm_s16le for chunk in chunks)
+    assert pcm.startswith(template.pcm)
+    assert set(pcm[len(template.pcm) :]) <= {0}
 
 
 @pytest.mark.asyncio
