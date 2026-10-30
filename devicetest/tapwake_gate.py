@@ -1,6 +1,7 @@
 """Wait gate: "session" before a run needs idle, "turn" between utterances accepts a listening window."""
 import re
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 CLOSED_RE = re.compile(r"listening[ _]closed")
@@ -24,12 +25,14 @@ def bridge_size(bridge: Path) -> int:
 
 def wait_gate(get_state, bridge: Path, offset: int, timeout: float | None = None,
               mode: str = "session", clock=time.monotonic, sleep=time.sleep,
-              poll: float = 0.5) -> str | None:
+              poll: float = 0.5, is_closed: Callable[[], bool] | None = None) -> str | None:
     """Return why the gate opened, or None after `timeout`.
 
     session: only serial state idle opens it (cold start / between runs).
-    turn: idle, or a listening window (state listening, or `listening_closed` in bridge.log after
-    `offset`) opens it, so the next line can follow a reply without a forced idle.
+    turn: idle, or a listening window opens it, so the next line can follow a reply without a forced idle.
+    A listening window is `listening_closed` when the mic is shut, `listening` when open. `is_closed` reads
+    the serial hold flag directly; without it the gate falls back to `listening_closed` in bridge.log after
+    `offset` (which lags the serial stream).
     """
     if mode not in DEFAULT_TIMEOUT_S:
         raise ValueError(f"unknown gate mode: {mode}")
@@ -42,8 +45,12 @@ def wait_gate(get_state, bridge: Path, offset: int, timeout: float | None = None
             return "idle"
         if mode == "turn":
             if state == "listening":
+                if is_closed is not None:
+                    return "listening_closed" if is_closed() else "listening"
+                if closed_since(bridge, offset):
+                    return "listening_closed"
                 return "listening"
-            if closed_since(bridge, offset):
+            if is_closed is None and closed_since(bridge, offset):
                 return "listening_closed"
         if clock() >= end:
             return None
