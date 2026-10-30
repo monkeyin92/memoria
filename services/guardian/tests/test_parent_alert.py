@@ -73,6 +73,8 @@ def test_hotline_numbers_appear_only_in_their_own_tier_action() -> None:
     assert hits == {
         ("crisis-self-v1", "parent_action", "12356"),
         ("crisis-self-v1", "interrupted_detail", "12356"),
+        ("crisis-self-escalation", "parent_action", "12356"),
+        ("crisis-self-escalation", "interrupted_detail", "12356"),
         ("victim-support-v1", "parent_action", "110"),
         ("victim-support-v1", "interrupted_detail", "110"),
     }

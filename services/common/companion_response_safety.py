@@ -6,6 +6,7 @@ import re
 from typing import Final, Literal
 
 from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_ESCALATION_SCRIPT,
     CRISIS_SELF_SCRIPT,
     SUPPORT_RELAY_SCRIPT,
     SUPPORT_VICTIM_SCRIPT,
@@ -103,7 +104,12 @@ def assistant_text_repeats_or_dilutes_safety(
         return True
     if len(compact) < 4:
         return False
-    for script in (CRISIS_SELF_SCRIPT, SUPPORT_VICTIM_SCRIPT, SUPPORT_RELAY_SCRIPT):
+    for script in (
+        CRISIS_SELF_SCRIPT,
+        CRISIS_SELF_ESCALATION_SCRIPT,
+        SUPPORT_VICTIM_SCRIPT,
+        SUPPORT_RELAY_SCRIPT,
+    ):
         display = "".join(ch for ch in script.display if not ch.isspace())
         spoken = "".join(ch for ch in script.spoken if not ch.isspace())
         if compact in display or compact in spoken:
@@ -316,6 +322,7 @@ _OTHER_JUMP_RE = re.compile(r"(?:从楼上跳|跳下去)")
 _CONFINEMENT_BEAT_RE = re.compile(r"关起来打")
 _EXPLICIT_SELF_HARM_ACTION_RE = re.compile(
     r"我(?:已经|刚刚?|正在|现在)?(?:"
+    r"自杀(?:了)?|自残(?:了)?|自尽(?:了)?|轻生(?:了)?|"
     r"割腕(?:了)?|割伤自己(?:了)?|"
     r"(?:拿|用)?(?:刀|小刀|剪刀)?(?:划|割)(?:伤|破)?(?:自己|手腕)(?:了)?|"
     r"吞(?:了)?(?:很多|大量|一瓶|一整瓶)?(?:安眠)?药(?:了)?|"
@@ -323,6 +330,64 @@ _EXPLICIT_SELF_HARM_ACTION_RE = re.compile(
     r"服药过量(?:了)?|站在楼顶(?:了)?"
     r")"
 )
+_IMMEDIATE_SELF_HARM_INTENT_RE = re.compile(
+    r"我(?:现在|马上|这就|立刻|今晚|一会儿|等会儿)(?:就)?(?:去)?"
+    r"(?:死|自杀|自残|自尽|轻生|结束生命|跳楼|割腕|吞药|"
+    r"不活(?!动)(?:下去)?(?:了)?)"
+)
+_NEGATED_SELF_HARM_INTENT_RE = re.compile(
+    r"(?:不|没|没有|别)(?:再)?(?:准备|打算|想|要|会)(?!(?:再|继续)?活)"
+)
+_SELF_HARM_METHOD_OR_IMMINENT_RE = re.compile(
+    r"(?:割腕|跳楼|跳下去|从楼上跳|吞药|服药过量|安眠药|"
+    r"(?:拿着|握着|手握).{0,6}(?:刀|小刀|剪刀|玻璃)|"
+    r"(?:拿|用).{0,6}(?:刀|小刀|剪刀|玻璃).{0,6}(?:割|划|捅)|"
+    r"(?:割|划)(?:伤|破)?(?:自己|手腕)|站在楼顶)"
+)
+_IMMINENT_SELF_HARM_RE = re.compile(
+    r"(?:"
+    r"(?:马上|这就|立刻|现在就|今晚就|一会儿就|等会儿就)(?:要|去|就)?(?:去)?"
+    r"(?:死|自杀|自残|自尽|轻生|结束生命|跳楼|割腕|吞药|行动|动手)"
+    r"|(?<!不)(?<!没)(?<!别)(?:准备|打算)(?:要|去)?"
+    r"(?:死|自杀|自残|自尽|轻生|结束生命|跳楼|割腕|吞药|行动|动手)"
+    r"|(?:已经|正在)(?:在)?(?:割腕|吞药|服药过量|跳楼|站在楼顶|动手|行动|自杀)"
+    r"|(?:现在|今晚|马上|这就|立刻|一会儿|等会儿)(?:就)?(?:好|很|特别|真的)?"
+    r"(?:想|要)(?:去)?(?:死(?!你|您)|自杀|自残|自尽|轻生|结束生命|跳楼|割腕|吞药)"
+    r"|(?:现在|今晚|马上|这就|立刻|一会儿|等会儿)(?:就)?"
+    r"(?:不想|不)(?:再|继续)?活(?!动)(?:下去)?(?:了)?"
+    r")"
+)
+
+
+def self_harm_method_or_imminent(query: str) -> bool:
+    """True when the child names a method or says they will act soon."""
+
+    subject_is_self = True
+    for clause in _CLAUSE_SPLIT_RE.split(query.lower()):
+        if not clause:
+            continue
+        if _REPORTED_SPEECH_CLAUSE_RE.search(clause):
+            subject_is_self = False
+            continue
+        if _OTHER_SUBJECT_CLAUSE_RE.search(clause):
+            subject_is_self = False
+            continue
+        if _SELF_SUBJECT_CLAUSE_RE.search(clause):
+            subject_is_self = True
+        if (
+            _STORY_RETELL_FRAME_RE.search(clause)
+            and _SELF_SUBJECT_CLAUSE_RE.search(clause) is None
+        ):
+            continue
+        if not subject_is_self or _OTHER_PERSON_IN_CLAUSE_RE.search(clause):
+            continue
+        if _NEGATED_SELF_HARM_INTENT_RE.search(clause):
+            continue
+        if _SELF_HARM_METHOD_OR_IMMINENT_RE.search(clause) or _IMMINENT_SELF_HARM_RE.search(
+            clause
+        ):
+            return True
+    return False
 _QUOTED_TEXT_RE = re.compile(r"“[^”]*”|「[^」]*」|『[^』]*』|\"[^\"]*\"")
 _REPORTED_OR_ANALYTICAL_RE = re.compile(
     r"(?:朋友|家人|同学|孩子|他|她|有人|别人).{0,8}(?:跟我说|告诉我|说|表示|提到)|"
@@ -581,6 +646,7 @@ def companion_safety_decision(query: str) -> SafetyDecision:
     if (
         normalized in _EXPLICIT_SELF_HARM_EXACT
         or _EXPLICIT_SELF_HARM_INTENT_RE.search(normalized)
+        or _IMMEDIATE_SELF_HARM_INTENT_RE.search(normalized)
         or _EXPLICIT_SELF_HARM_ACTION_RE.search(normalized)
         or _SELF_HARM_METHOD_RE.search(normalized)
         or _EXPLICIT_SELF_HARM_ENGLISH_RE.search(crisis_query.lower())

@@ -396,7 +396,7 @@ def test_three_tier_fixed_safety_scripts_are_model_independent() -> None:
     scripts = (CRISIS_SELF_SCRIPT, SUPPORT_VICTIM_SCRIPT, SUPPORT_RELAY_SCRIPT)
     assert len(scripts) == 3
     for script in scripts:
-        assert script.display.endswith("。")
+        assert script.display.endswith(("。", "？"))
         assert "危机" not in script.display
 
 

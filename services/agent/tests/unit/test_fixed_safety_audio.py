@@ -20,7 +20,6 @@ from services.agent.src.providers.fixed_safety_audio import (
     DEFAULT_FIXED_SAFETY_AUDIO_DIR,
     FIXED_SAFETY_AUDIO_ARTIST,
     FIXED_SAFETY_AUDIO_SOFTWARE,
-    FIXED_SAFETY_AUDIO_SYNTHESIZED_ON,
     FixedSafetyAudioCatalog,
     FixedSafetyClipUnavailableError,
     FixedSafetyTTS,
@@ -46,6 +45,7 @@ from services.agent.tests.unit.test_media_session_golden import (
     _ScriptedProvider,
 )
 from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_ESCALATION_SCRIPT,
     CRISIS_SELF_SCRIPT,
     SUPPORT_RELAY_SCRIPT,
     SUPPORT_VICTIM_SCRIPT,
@@ -56,20 +56,24 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 _AUDIO_DIR = _REPO_ROOT / DEFAULT_FIXED_SAFETY_AUDIO_DIR
 _TEMPLATE_IDS = (
     "crisis-self-v1",
+    "crisis-self-escalation",
     "victim-support-v1",
     "support-other-v1",
     "daily-limit",
 )
-# Exactly the four approved clips' PCM hashes from the reviewed manifest.
+# Exactly the approved clips' PCM hashes from the reviewed manifest.
 _APPROVED_PCM_SHA256 = {
     "crisis-self-v1": (
         "f463a8547c6ed176a70924813a6e58bda370bcb4557109ad779c7f8af57ea5b7"
     ),
+    "crisis-self-escalation": (
+        "916191cb1e18a3b89ed508ef994669c834642e08f797be6ab15bc8eef941ef1e"
+    ),
     "victim-support-v1": (
-        "908b75c12732cb71f175cf67cc39e25449ffb39ee921c87930ebe9637ebc3ea2"
+        "fd2e68f0559569c51124673bf13697723b848be89055c4cfc2a2aff5eff93454"
     ),
     "support-other-v1": (
-        "a2b52bde1a7f5715a07b588da46c9b4daddd77602e12a8c02aabbeda31b060fe"
+        "29f966cac1df98366ad2d09f715de0ebf46f5a0e29119db61baa7e6732621da7"
     ),
     "daily-limit": (
         "5ac3cc407306cafb2e450f878ff5cd7cabbae2639d639b3e0d7235d22d5a4c2e"
@@ -80,6 +84,7 @@ _APPROVED_PCM_SHA256 = {
 def _script_for(template_id: str) -> FixedSafetyScript:
     return {
         CRISIS_SELF_SCRIPT.template_id: CRISIS_SELF_SCRIPT,
+        CRISIS_SELF_ESCALATION_SCRIPT.template_id: CRISIS_SELF_ESCALATION_SCRIPT,
         SUPPORT_VICTIM_SCRIPT.template_id: SUPPORT_VICTIM_SCRIPT,
         SUPPORT_RELAY_SCRIPT.template_id: SUPPORT_RELAY_SCRIPT,
     }[template_id]
@@ -808,7 +813,7 @@ def test_fixed_safety_wav_implicit_aigc_label_metadata_present_and_pcm_unchanged
         assert parsed.info["IART"] == FIXED_SAFETY_AUDIO_ARTIST
         assert parsed.info["ISFT"] == FIXED_SAFETY_AUDIO_SOFTWARE
         assert parsed.info["ICMT"] == entry["content_id"]
-        assert parsed.info["ICRD"] == FIXED_SAFETY_AUDIO_SYNTHESIZED_ON
+        assert parsed.info["ICRD"] == entry["synthesized_on"]
         assert hashlib.sha256(parsed.pcm).hexdigest() == entry["pcm_sha256"]
         assert hashlib.sha256(raw).hexdigest() == entry["audio_sha256"]
 

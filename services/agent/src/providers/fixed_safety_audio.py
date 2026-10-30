@@ -1,8 +1,8 @@
 """Pre-synthesized audio for the approved fixed-safety and daily-limit turns.
 
-The four clips live under ``infra/voices/fixed_safety`` and were rendered once
+The approved clips live under ``infra/voices/fixed_safety`` and were rendered
 with the Volcengine Doubao ``seed-tts-2.0`` child-story female voice
-``zh_female_shaoergushi_uranus_bigtts`` on 2026-10-27.  A crisis turn must not
+``zh_female_shaoergushi_uranus_bigtts`` on 2026-10-27 and 2026-10-31.  A crisis turn must not
 depend on a live TTS connection: this module validates the manifest and the
 labelled WAVs, then serves the stored PCM directly.  Any validation failure
 degrades to the existing realtime provider with an alert that names only the
@@ -32,6 +32,7 @@ _CRISIS_PLAYOUT_LIMIT_MS: Final = 5000.0
 
 FixedSafetyAudioTemplateId = Literal[
     "crisis-self-v1",
+    "crisis-self-escalation",
     "victim-support-v1",
     "support-other-v1",
     "daily-limit",
@@ -43,6 +44,7 @@ FIXED_SAFETY_AUDIO_CHANNELS: Final = 1
 FIXED_SAFETY_AUDIO_BITS_PER_SAMPLE: Final = 16
 FIXED_SAFETY_AUDIO_VOICE: Final = "zh_female_shaoergushi_uranus_bigtts"
 FIXED_SAFETY_AUDIO_SYNTHESIZED_ON: Final = "2026-10-27"
+FIXED_SAFETY_AUDIO_REVISED_ON: Final = "2026-10-31"
 FIXED_SAFETY_AUDIO_ENGINE: Final = "volcengine doubao-seed-tts-2.0"
 FIXED_SAFETY_AUDIO_ARTIST: Final = "Volcengine Doubao / memoria"
 FIXED_SAFETY_AUDIO_SOFTWARE: Final = "Volcengine Doubao / memoria"
@@ -221,6 +223,8 @@ def _load_manifest(path: Path) -> dict[str, Any]:
         raise FixedSafetyAudioError("manifest channels must be 1")
     if payload.get("bits_per_sample") != FIXED_SAFETY_AUDIO_BITS_PER_SAMPLE:
         raise FixedSafetyAudioError("manifest bits_per_sample must be 16")
+    if not _is_iso_date(payload.get("synthesized_on")):
+        raise FixedSafetyAudioError("manifest synthesized_on must be YYYY-MM-DD")
     return payload
 
 
@@ -261,10 +265,8 @@ def _validated_template(
     if voice != FIXED_SAFETY_AUDIO_VOICE or voice != manifest.get("voice"):
         raise FixedSafetyAudioError("voice mismatch")
     synthesized_on = entry.get("synthesized_on")
-    if synthesized_on != FIXED_SAFETY_AUDIO_SYNTHESIZED_ON or synthesized_on != manifest.get(
-        "synthesized_on"
-    ):
-        raise FixedSafetyAudioError("synthesized_on mismatch")
+    if not _is_iso_date(synthesized_on):
+        raise FixedSafetyAudioError("synthesized_on invalid")
     if entry.get("content_id") != content_id_for(template.template_id):
         raise FixedSafetyAudioError("content_id mismatch")
     file_name = entry.get("file")
@@ -283,7 +285,7 @@ def _validated_template(
     if (
         parsed.info.get("IART") != FIXED_SAFETY_AUDIO_ARTIST
         or parsed.info.get("ISFT") != FIXED_SAFETY_AUDIO_SOFTWARE
-        or parsed.info.get("ICRD") != FIXED_SAFETY_AUDIO_SYNTHESIZED_ON
+        or parsed.info.get("ICRD") != synthesized_on
     ):
         raise FixedSafetyAudioError("implicit AIGC label mismatch")
     return replace(
@@ -301,6 +303,10 @@ def _is_sha256(value: object) -> bool:
     return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
+def _is_iso_date(value: object) -> bool:
+    return isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is not None
+
+
 def spoken_sha256(spoken: str) -> str:
     return hashlib.sha256(spoken.encode("utf-8")).hexdigest()
 
@@ -310,6 +316,7 @@ def approved_templates() -> tuple[FixedSafetyAudioTemplate, ...]:
 
     from services.agent.src.prompts import MINOR_DAILY_LIMIT_PHRASE
     from services.common.fixed_safety_scripts import (
+        CRISIS_SELF_ESCALATION_SCRIPT,
         CRISIS_SELF_SCRIPT,
         SUPPORT_RELAY_SCRIPT,
         SUPPORT_VICTIM_SCRIPT,
@@ -317,22 +324,34 @@ def approved_templates() -> tuple[FixedSafetyAudioTemplate, ...]:
 
     return (
         FixedSafetyAudioTemplate(
-            "crisis-self-v1", CRISIS_SELF_SCRIPT.display, CRISIS_SELF_SCRIPT.spoken
+            "crisis-self-v1",
+            CRISIS_SELF_SCRIPT.display,
+            CRISIS_SELF_SCRIPT.spoken,
+            synthesized_on=FIXED_SAFETY_AUDIO_SYNTHESIZED_ON,
+        ),
+        FixedSafetyAudioTemplate(
+            "crisis-self-escalation",
+            CRISIS_SELF_ESCALATION_SCRIPT.display,
+            CRISIS_SELF_ESCALATION_SCRIPT.spoken,
+            synthesized_on=FIXED_SAFETY_AUDIO_REVISED_ON,
         ),
         FixedSafetyAudioTemplate(
             "victim-support-v1",
             SUPPORT_VICTIM_SCRIPT.display,
             SUPPORT_VICTIM_SCRIPT.spoken,
+            synthesized_on=FIXED_SAFETY_AUDIO_REVISED_ON,
         ),
         FixedSafetyAudioTemplate(
             "support-other-v1",
             SUPPORT_RELAY_SCRIPT.display,
             SUPPORT_RELAY_SCRIPT.spoken,
+            synthesized_on=FIXED_SAFETY_AUDIO_REVISED_ON,
         ),
         FixedSafetyAudioTemplate(
             "daily-limit",
             MINOR_DAILY_LIMIT_PHRASE,
             MINOR_DAILY_LIMIT_PHRASE,
+            synthesized_on=FIXED_SAFETY_AUDIO_SYNTHESIZED_ON,
             clip_only=False,
         ),
     )
@@ -349,7 +368,7 @@ def load_fixed_safety_audio_catalog(
 
 @lru_cache(maxsize=1)
 def shipped_approved_catalog() -> FixedSafetyAudioCatalog:
-    """The four clips that ship with the image, independent of deployment config.
+    """The approved clips that ship with the image, independent of deployment config.
 
     This is the last rung of the crisis chain. If a deployment's
     ``FIXED_SAFETY_AUDIO_DIR`` is stale or disabled, these files still carry
@@ -577,18 +596,22 @@ def write_manifest(
     directory: Path,
     *,
     voice: str = FIXED_SAFETY_AUDIO_VOICE,
-    synthesized_on: str = FIXED_SAFETY_AUDIO_SYNTHESIZED_ON,
+    synthesized_on: str | None = None,
     engine: str = FIXED_SAFETY_AUDIO_ENGINE,
 ) -> dict[str, Any]:
     entries: list[dict[str, Any]] = []
-    for template in approved_templates():
+    dated = [
+        (template, synthesized_on or template.synthesized_on)
+        for template in approved_templates()
+    ]
+    for template, template_date in dated:
         file_name = f"{template.template_id}.wav"
         path = directory / file_name
         audio_sha256, pcm_sha256 = label_wav_with_aigc_info(
             path,
             template_id=template.template_id,
             voice=voice,
-            synthesized_on=synthesized_on,
+            synthesized_on=template_date,
         )
         entries.append(
             {
@@ -599,14 +622,14 @@ def write_manifest(
                 "audio_sha256": audio_sha256,
                 "pcm_sha256": pcm_sha256,
                 "voice": voice,
-                "synthesized_on": synthesized_on,
+                "synthesized_on": template_date,
             }
         )
     manifest: dict[str, Any] = {
         "schema_version": _MANIFEST_SCHEMA_VERSION,
         "engine": engine,
         "voice": voice,
-        "synthesized_on": synthesized_on,
+        "synthesized_on": synthesized_on or max(date for _, date in dated),
         "sample_rate_hz": FIXED_SAFETY_AUDIO_SAMPLE_RATE_HZ,
         "channels": FIXED_SAFETY_AUDIO_CHANNELS,
         "bits_per_sample": FIXED_SAFETY_AUDIO_BITS_PER_SAMPLE,
@@ -900,6 +923,7 @@ __all__ = [
     "DEFAULT_FIXED_SAFETY_AUDIO_DIR",
     "FIXED_SAFETY_AUDIO_ARTIST",
     "FIXED_SAFETY_AUDIO_BITS_PER_SAMPLE",
+    "FIXED_SAFETY_AUDIO_REVISED_ON",
     "FIXED_SAFETY_AUDIO_CHANNELS",
     "FIXED_SAFETY_AUDIO_ENGINE",
     "FIXED_SAFETY_AUDIO_SAMPLE_RATE_HZ",

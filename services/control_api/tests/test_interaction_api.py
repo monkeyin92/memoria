@@ -1439,8 +1439,8 @@ async def test_tutor_turn_policy_requires_two_stuck_turns_and_crisis_still_wins(
 
 _DEVICE_CRISIS_SENTENCES = (
     ("我不想活了", "crisis-self-v1"),
-    ("我想从楼上跳下去", "crisis-self-v1"),
-    ("我想拿刀划自己", "crisis-self-v1"),
+    ("我想从楼上跳下去", "crisis-self-escalation"),
+    ("我想拿刀划自己", "crisis-self-escalation"),
     ("救命，有人打我", "victim-support-v1"),
     ("有个叔叔摸我不让我告诉妈妈", "victim-support-v1"),
     ("我被关在房间里出不去了", "victim-support-v1"),
@@ -1482,6 +1482,36 @@ async def test_control_api_tier_matches_local_tier_for_the_nine_device_sentences
             assert local is not None and planned is not None
             assert planned.template_id == expected
             assert local.template_id == planned.template_id
+
+
+@pytest.mark.asyncio
+async def test_second_self_crisis_in_recall_context_uses_escalation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, user_headers = await _identity(client)
+        session_id = (
+            await client.post("/v1/sessions", headers=user_headers, json={})
+        ).json()["session_id"]
+        body = _response_plan_body(session_id)
+        body["query"] = "我有点难过，不想活了"
+        body["recall_context"] = ["我不想活了"]
+        body["fence"]["turn_id"] = 2
+        body["fence"]["generation_id"] = 2
+        response = await client.post(
+            "/v1/interaction/response-plan",
+            headers=token,
+            json=body,
+        )
+
+    assert response.status_code == 200, response.text
+    planned = script_for_display(response.json()["direct_text"])
+    assert planned is not None
+    assert planned.template_id == "crisis-self-escalation"
 
 
 @pytest.mark.asyncio
@@ -2124,7 +2154,7 @@ async def test_long_session_over_budget_crisis_turn_skips_companion_context(
         _mark_verified_adult(app, user_id)
 
     body = _response_plan_body(session_id)
-    body["query"] = "我想拿刀划自己"
+    body["query"] = "我不想活了"
     body["recall_context"] = [f"第{index}轮普通聊天" for index in range(4)]
     body["fence"]["turn_id"] = 9
     token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}

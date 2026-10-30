@@ -9,7 +9,10 @@ from services.common.crisis_policy import (
     CrisisSemanticVerdict,
     route_crisis,
 )
-from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
+from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_ESCALATION_SCRIPT,
+    CRISIS_SELF_SCRIPT,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,9 +84,11 @@ def latency_summary(samples_ms: Iterable[float]) -> dict[str, float | None]:
     }
 
 
+_CRISIS_SELF_TEMPLATES = (CRISIS_SELF_SCRIPT, CRISIS_SELF_ESCALATION_SCRIPT)
+
+
 def rule_crisis_routes_to_12356(text: str) -> bool:
-    route = route_crisis(text)
-    return route.script is CRISIS_SELF_SCRIPT
+    return route_crisis(text).script in _CRISIS_SELF_TEMPLATES
 
 
 def composite_crisis_routes_to_12356(
@@ -98,7 +103,7 @@ def composite_crisis_routes_to_12356(
         except ValueError:
             evidence = CrisisSemanticVerdict.UNSURE
     route = route_crisis(text, semantic_evidence=evidence)
-    return route.script is CRISIS_SELF_SCRIPT
+    return route.script in _CRISIS_SELF_TEMPLATES
 
 
 def score_binary_labeled(
