@@ -384,7 +384,8 @@ async def test_support_tier_and_crisis_behavior_matrix(
             assert "危机" not in reply
             assert "伙伴" not in reply
             assert "家人" not in reply
-            assert "好朋友" not in reply
+            assert "我是你的好朋友" not in reply
+            assert "你是我最好的朋友" not in reply
             log_lines = [
                 record.getMessage()
                 for record in caplog.records

@@ -1131,6 +1131,7 @@ def _assert_turn_audio(
     label: str,
     stopped: bool = False,
     wake: bool = False,
+    crisis_template_id: str = "crisis-self-v1",
 ) -> None:
     """Every round: opening cue, the reply's own frames, then the closing cue."""
 
@@ -1158,10 +1159,12 @@ def _assert_turn_audio(
         reply = _turn_reply_pcm(turn)
     assert reply, f"{label}: the reply emitted no audio frames of its own"
     if crisis:
-        catalog_pcm = _crisis_pcm()
+        catalog_pcm = _crisis_pcm(crisis_template_id)
         assert catalog_pcm in reply, f"{label}: approved crisis clip missing"
         digest = hashlib.sha256(catalog_pcm).hexdigest()
-        assert digest == _crisis_manifest_digest(), f"{label}: crisis sha256 mismatch"
+        assert digest == _crisis_manifest_digest(crisis_template_id), (
+            f"{label}: crisis sha256 mismatch"
+        )
     else:
         assert reply.count(b"\x00") < len(reply), f"{label}: reply audio is all silence"
 
@@ -1172,6 +1175,7 @@ def _assert_crisis_script_complete(
     label: str,
     stop_at: float | None,
     frames_at_stop: int | None,
+    crisis_template_id: str = "crisis-self-v1",
 ) -> None:
     """The approved clip played in full although the device sent 停 mid-script.
 
@@ -1179,13 +1183,13 @@ def _assert_crisis_script_complete(
     generation's frame clock covers the whole script.
     """
 
-    script = _crisis_pcm()
+    script = _crisis_pcm(crisis_template_id)
     reply = _turn_reply_pcm(turn)
     assert reply == script, (
         f"{label}: approved crisis script was interrupted "
         f"(delivered {len(reply)} of {len(script)} bytes)"
     )
-    assert hashlib.sha256(reply).hexdigest() == _crisis_manifest_digest(), (
+    assert hashlib.sha256(reply).hexdigest() == _crisis_manifest_digest(crisis_template_id), (
         f"{label}: crisis sha256 mismatch"
     )
     assert stop_at is not None and frames_at_stop is not None, f"{label}: no 停 was sent"
@@ -1224,9 +1228,9 @@ def _crisis_latency(turn: _TurnAudio) -> dict[str, float]:
     }
 
 
-def _crisis_pcm() -> bytes:
+def _crisis_pcm(template_id: str = "crisis-self-v1") -> bytes:
     catalog = _crisis_catalog()
-    template = catalog.get("crisis-self-v1")
+    template = catalog.get(template_id)
     assert template is not None and template.pcm is not None
     return bytes(template.pcm)
 
@@ -1239,12 +1243,12 @@ def _crisis_catalog() -> Any:
     return load_fixed_safety_audio_catalog(str(CRISIS_CATALOG))
 
 
-def _crisis_manifest_digest() -> str:
+def _crisis_manifest_digest(template_id: str = "crisis-self-v1") -> str:
     manifest = json.loads((CRISIS_CATALOG / "manifest.json").read_text())
     for item in manifest["templates"]:
-        if item["template_id"] == "crisis-self-v1":
+        if item["template_id"] == template_id:
             return str(item["pcm_sha256"])
-    raise RuntimeError("crisis-self-v1 missing from fixed safety manifest")
+    raise RuntimeError(f"{template_id} missing from fixed safety manifest")
 
 
 def _compose_env(
@@ -1460,6 +1464,7 @@ async def _run_scenario(
         stop: bool,
         crisis: bool,
         timeout: float,
+        crisis_template_id: str = "crisis-self-v1",
     ) -> _TurnAudio:
         await client.utterance(turn_id=turn_id)
         if stop:
@@ -1470,7 +1475,13 @@ async def _run_scenario(
         stopped = stop and not crisis
         turn = await client.wait_turn_complete(turn_id, stopped=stopped, timeout=timeout)
         client.assert_listening_after_terminal(turn, label=label)
-        _assert_turn_audio(turn, crisis=crisis, label=label, stopped=stopped)
+        _assert_turn_audio(
+            turn,
+            crisis=crisis,
+            label=label,
+            stopped=stopped,
+            crisis_template_id=crisis_template_id,
+        )
         results[label] = {
             "turn_id": turn_id,
             "generations": sorted(turn.generation_frames),
@@ -1507,8 +1518,17 @@ async def _run_scenario(
             for index in range(CRISIS_ROUNDS):
                 turn_id = 4 + index
                 label = f"crisis{index + 1}"
+                crisis_template_id = (
+                    "crisis-self-v1" if index == 0 else "crisis-self-escalation"
+                )
                 turn = await run_round(
-                    client, turn_id=turn_id, label=label, stop=False, crisis=True, timeout=90
+                    client,
+                    turn_id=turn_id,
+                    label=label,
+                    stop=False,
+                    crisis=True,
+                    timeout=90,
+                    crisis_template_id=crisis_template_id,
                 )
                 measurement = _crisis_latency(turn)
                 record: dict[str, Any] = {
@@ -1537,17 +1557,19 @@ async def _run_scenario(
                 stop=True,
                 crisis=True,
                 timeout=90,
+                crisis_template_id="crisis-self-escalation",
             )
             _assert_crisis_script_complete(
                 crisis_stop,
                 label="crisis_stop",
                 stop_at=client.stop_sent_at.get(stop_turn_id),
                 frames_at_stop=client.frames_at_stop.get(stop_turn_id),
+                crisis_template_id="crisis-self-escalation",
             )
             results["crisis_stop_script"] = {
                 "turn_id": stop_turn_id,
-                "script_bytes": len(_crisis_pcm()),
-                "script_sha256": _crisis_manifest_digest(),
+                "script_bytes": len(_crisis_pcm("crisis-self-escalation")),
+                "script_sha256": _crisis_manifest_digest("crisis-self-escalation"),
                 "frames_at_stop": client.frames_at_stop[stop_turn_id],
                 "final_frames": len(
                     crisis_stop.generation_frames[min(crisis_stop.generation_frames)]
