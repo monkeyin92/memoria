@@ -411,46 +411,6 @@ def verify_fixed_safety_audio_directory(
             )
 
 
-_CRISIS_PLACEHOLDER_IDS = frozenset(
-    {"crisis-self-v1", "victim-support-v1", "support-other-v1"}
-)
-
-
-def accept_fixed_safety_audio(
-    directory: str | Path = DEFAULT_FIXED_SAFETY_AUDIO_DIR,
-) -> None:
-    """Ship the wav bytes as stored. Crisis clips may lag the short fallback copy."""
-
-    path = Path(directory)
-    manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
-    for entry in manifest["templates"]:
-        raw = (path / entry["file"]).read_bytes()
-        if hashlib.sha256(raw).hexdigest() != entry["audio_sha256"]:
-            raise FixedSafetyAudioError(f"{entry['template_id']} wav bytes changed")
-        parsed = parse_wav_bytes(raw)
-        if hashlib.sha256(parsed.pcm).hexdigest() != entry["pcm_sha256"]:
-            raise FixedSafetyAudioError(f"{entry['template_id']} pcm bytes changed")
-    catalog = FixedSafetyAudioCatalog.load(path)
-    for template in catalog.templates:
-        if template.template_id == "daily-limit":
-            if not template.playable:
-                raise FixedSafetyAudioError("daily-limit clip is not playable")
-            continue
-        if template.template_id not in _CRISIS_PLACEHOLDER_IDS:
-            raise FixedSafetyAudioError(f"unexpected template {template.template_id}")
-        if template.playable:
-            continue
-        reasons = [
-            issue.reason
-            for issue in catalog.issues
-            if issue.template_id == template.template_id
-        ]
-        if not any("spoken_sha256 mismatch" in reason for reason in reasons):
-            raise FixedSafetyAudioError(
-                f"{template.template_id} is not a spoken-hash placeholder: {reasons}"
-            )
-
-
 # WAV / RIFF ----------------------------------------------------------------
 
 
@@ -967,7 +927,6 @@ __all__ = [
     "sentence_spans",
     "shipped_approved_catalog",
     "spoken_sha256",
-    "accept_fixed_safety_audio",
     "verify_fixed_safety_audio_directory",
     "wrap_fixed_safety_tts",
     "write_manifest",

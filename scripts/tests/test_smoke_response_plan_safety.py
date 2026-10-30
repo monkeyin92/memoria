@@ -59,14 +59,14 @@ def test_smoke_locks_the_spoken_phone_readings() -> None:
     routes = assert_smoke_route_table()
 
     assert routes["crisis"]["tts_text"] == CRISIS_SELF_SCRIPT.display
-    assert routes["crisis"]["tts_text"].startswith("现在马上去找身边的大人")
-    assert routes["victim"]["tts_text"].endswith("有危险请大人打幺幺零。")
+    assert routes["crisis"]["tts_text"].startswith("听到你这么说")
+    assert routes["victim"]["tts_text"].endswith("请大人帮你打幺幺零。")
     assert routes["third_party"]["tts_text"] == SUPPORT_RELAY_SCRIPT.display
 
 
 def test_route_table_fails_when_spoken_copy_drifts(monkeypatch: pytest.MonkeyPatch) -> None:
     crisis, *rest = SMOKE_SAFETY_CASES
-    drifted = {**crisis, "tts_text": crisis["tts_text"].replace("幺二三五六", "一二三五六")}
+    drifted = {**crisis, "tts_text": crisis["tts_text"].replace("我很心疼", "我好难过")}
     monkeypatch.setattr(checker, "SMOKE_SAFETY_CASES", (drifted, *rest))
 
     with pytest.raises(AssertionError, match="crisis: spoken copy drifted"):
