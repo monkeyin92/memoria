@@ -42,7 +42,10 @@ from services.agent.src.orchestration.interruption_guard import (
     is_stop_command_only,
 )
 from services.agent.src.voice_core.media_protocol import should_pause_asr_for_playback
-from services.agent.src.voice_core.media_session_pending_turn import EndpointPinSource
+from services.agent.src.voice_core.media_session_pending_turn import (
+    EndpointPinSource,
+    open_turn_verdict_scope,
+)
 from services.agent.src.voice_core.speech_timeline import ASRResult
 
 if TYPE_CHECKING:
@@ -1000,6 +1003,7 @@ class MediaPlaybackStopMixin:
         context.pending.cancel_close_semantic()
         context.pending.pending_turn_playback_overlap = False
         context.pending.pending_turn_onset_floor = result.capture_start_sample
+        open_turn_verdict_scope(context.pending, context.runtime)
 
     @staticmethod
     def _scope_pending_turn_to(context: _MediaVoiceSession, result: ASRResult) -> None:

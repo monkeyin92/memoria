@@ -39,6 +39,7 @@ from services.agent.src.voice_core.interruption import (
     evidence_from_speech_segment,
 )
 from services.agent.src.voice_core.media_protocol import should_pause_asr_for_playback
+from services.agent.src.voice_core.media_session_pending_turn import open_turn_verdict_scope
 from services.agent.src.voice_core.media_session_playback_stop import (
     CONTENT_BARGE_IN_CAUSE,
     PLAYBACK_STOP_ROUTE_REASON,
@@ -250,8 +251,6 @@ class MediaSessionCommitMixin:
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
 
-        def _open_turn_verdict_scope(self, context: _MediaVoiceSession) -> None: ...
-
         def _split_pending_turn_at_unvoiced_gap(
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
@@ -378,6 +377,7 @@ class MediaSessionCommitMixin:
                 stage="pending_turn_boundary",
             )
             return ASRAcceptDecision(None, ASRDecisionReason.INTERVAL_CONFLICT)
+        open_turn_verdict_scope(context.pending, context.runtime)
         preview = context.asr.preview_result(result)
         candidate = preview.accepted
         if candidate is None:
@@ -690,7 +690,6 @@ class MediaSessionCommitMixin:
                 reason=reason,
             )
             return
-        self._open_turn_verdict_scope(context)
         close_needed, live_lookup_needed = await asyncio.gather(
             context.runtime.resolve_conversation_close_needed(text),
             context.runtime.resolve_live_lookup_needed(text),

@@ -6,7 +6,7 @@ import asyncio
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Protocol
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.voice_core.speech_end_denoise import SpeechEndDenoiseLatch
@@ -15,6 +15,19 @@ from services.agent.src.voice_core.speech_timeline import ASRResult
 # Who pinned the endpoint of a pending turn that has no accepted text yet:
 # the device VAD end, or the playback-followup boundary.
 EndpointPinSource = Literal["vad_end", "playback_followup"]
+
+
+class _VerdictRuntime(Protocol):
+    def begin_turn_verdicts(self) -> None: ...
+
+
+def open_turn_verdict_scope(pending: PendingTurn, runtime: _VerdictRuntime) -> None:
+    """Open this turn's classifier scope once; the turn's reply joins it after the commit."""
+
+    if pending.verdict_scope_open:
+        return
+    pending.verdict_scope_open = True
+    runtime.begin_turn_verdicts()
 
 
 @dataclass(slots=True)

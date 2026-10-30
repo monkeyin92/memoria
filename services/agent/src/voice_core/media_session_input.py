@@ -27,6 +27,7 @@ from services.agent.src.voice_core.media_protocol import (
     SessionIdentity,
     should_pause_asr_for_playback,
 )
+from services.agent.src.voice_core.media_session_pending_turn import open_turn_verdict_scope
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
@@ -129,8 +130,6 @@ class MediaSessionInputMixin:
         def _arm_evidence_less_floor_hold(self, context: _MediaVoiceSession) -> None: ...
 
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
-
-        def _open_turn_verdict_scope(self, context: _MediaVoiceSession) -> None: ...
 
         def resume_listening_capture(
             self,
@@ -246,7 +245,7 @@ class MediaSessionInputMixin:
             voice_decision = context.runtime.on_user_voice_started()
             if voice_decision is PlaybackInputDecision.IGNORE:
                 return False
-            self._open_turn_verdict_scope(context)
+            open_turn_verdict_scope(context.pending, context.runtime)
             context.pending.turn_input_fence = context.runtime.fence
         if pending_endpoint is not None and segment.capture_start_sample >= pending_endpoint:
             self._arm_reopen_evidence_window(context, pending_endpoint)

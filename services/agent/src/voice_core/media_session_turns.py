@@ -252,7 +252,6 @@ class MediaTurnEndpointMixin:
         while len(context.pending.committed_asr_keys) > 128:
             context.pending.committed_asr_keys.popitem(last=False)
         self._split_pending_turn_at_unvoiced_gap(context, result)
-        self._open_turn_verdict_scope(context)
         onset = min(
             result.capture_start_sample,
             context.pending.turn_start_sample
@@ -767,7 +766,6 @@ class MediaTurnEndpointMixin:
 
         if not result.text.strip():
             return
-        self._open_turn_verdict_scope(context)
         if result.capture_end_sample > context.last_asr_evidence_end_sample:
             context.last_asr_evidence_end_sample = result.capture_end_sample
         previous = context.pending.pending_partial
@@ -860,15 +858,6 @@ class MediaTurnEndpointMixin:
             and context.pending.turn_commit_retry_stream_epoch == stream_epoch
             and context.pending.turn_commit_retry_endpoint_sample == endpoint_sample
         )
-
-    @staticmethod
-    def _open_turn_verdict_scope(context: _MediaVoiceSession) -> None:
-        """Open this turn's classifier scope at its first speech; the reply keeps it after the commit."""
-
-        if context.pending.verdict_scope_open:
-            return
-        context.pending.verdict_scope_open = True
-        context.runtime.begin_turn_verdicts()
 
     @staticmethod
     def _clear_pending_turn_state(context: _MediaVoiceSession) -> None:

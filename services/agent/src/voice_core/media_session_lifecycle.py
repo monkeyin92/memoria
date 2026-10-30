@@ -36,6 +36,7 @@ from services.agent.src.voice_core.media_protocol import (
     PlaybackProgress,
     SessionIdentity,
 )
+from services.agent.src.voice_core.media_session_pending_turn import open_turn_verdict_scope
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
@@ -90,8 +91,6 @@ class MediaSessionLifecycleMixin:
         async def _discard_projection(self, context: _MediaVoiceSession, reason: str) -> None: ...
 
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
-
-        def _open_turn_verdict_scope(self, context: _MediaVoiceSession) -> None: ...
 
         def _finish_owner_silence_turn(
             self, context: _MediaVoiceSession, *, accepted: bool, refresh_owner_budget: bool = True
@@ -494,7 +493,7 @@ class MediaSessionLifecycleMixin:
                 device_wake_ack_pending=identity.client_type == "device",
             )
             runtime.set_device_conversation_controls(identity.client_type == "device")
-            self._open_turn_verdict_scope(current)
+            open_turn_verdict_scope(current.pending, runtime)
             runtime.orchestrator.delegation.queue_while_floor_blocked = True
             delegation_starter = getattr(provider, "start_delegation", None)
             output_intent_acceptor = getattr(provider, "accept_output_intent", None)
