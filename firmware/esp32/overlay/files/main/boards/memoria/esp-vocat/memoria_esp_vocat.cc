@@ -948,11 +948,16 @@ private:
     }
 
     void OnIdleScreenOff() {
+#if CONFIG_MEMORIA_KEEP_AWAKE
+        // listening_closed paints an idle face while DeviceState stays listening.
+        ESP_LOGW(TAG, "wifi hold suppressed %s", memoria_keep_awake_build_marker);
+#else
         auto& power = memoria::PowerPolicyRegistry::GetInstance();
         power.SetPhase(memoria::PowerPhase::kWifiHold);
         wifi_hold_since_ms_.store(static_cast<std::uint32_t>(esp_timer_get_time() / 1000),
                                   std::memory_order_relaxed);
         ESP_LOGI(TAG, "wifi hold started hold_ms=%u", power.wifi_hold_ms());
+#endif
     }
 
     void MaybeEnterDeepSleepFromWifiHold() {
@@ -1030,6 +1035,14 @@ private:
                  static_cast<unsigned>(hold_ms), memoria::TapWakeActionName(action),
                  static_cast<int>(state), memoria::OfflineModeName(offline_menu_.mode()));
 
+        DispatchTapWakeAction(action, "screen_tap", now_ms, hold_ms, online, idle);
+    }
+
+    void DispatchTapWakeAction(memoria::TapWakeAction action, const char* wake_source,
+                               std::uint32_t now_ms, std::uint32_t hold_ms, bool online,
+                               bool idle) {
+        auto& app = Application::GetInstance();
+        auto& power = memoria::PowerPolicyRegistry::GetInstance();
         switch (action) {
             case memoria::TapWakeAction::kWifiConfig:
                 EnterWifiConfigMode();
@@ -1052,7 +1065,7 @@ private:
                 power.SetPhase(memoria::PowerPhase::kWaking);
                 wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
                 PlayLocalAssetClip("wo_zai_ne.ogg");
-                app.WakeWordInvoke("screen_tap");
+                app.WakeWordInvoke(wake_source);
                 return;
             case memoria::TapWakeAction::kResumeListening:
                 PlayLocalAssetClip("wo_zai_ne.ogg");
@@ -1063,11 +1076,11 @@ private:
         }
     }
 
-    // The `wake` line on the USB port (build 20): what a tap on the round screen does, for the computer
-    // driven tests that must not play the wake word. Pairing and start-up come first and keep their
-    // behaviour; from there it follows the tap's gate, so it only ever starts a conversation on an idle
-    // device in a mode that includes the screen. It never stops the robot, never closes a session and
-    // never changes a setting.
+    // USB wake runs the screen tap action for a computer that cannot touch the glass.
+    // Pairing and start-up return first. TapDeviceFor treats listening with capture
+    // closed as the standby face, and the shared dispatch resumes that session.
+    // Quiet hours, the offline menu, and the online drop stay on the glass path.
+    // An idle robot that is already online still starts a conversation from this command.
     // TODO(release-blocker): remove USB serial wake before final firmware; it opens the mic without a screen tap
     void HandleUsbWake() {
         auto& app = Application::GetInstance();
@@ -1083,19 +1096,19 @@ private:
                      static_cast<int>(state), memoria::WakeModeName(mode));
             return;
         }
-        const auto decision = memoria::UsbWakeDecisionFor(mode, state == kDeviceStateIdle);
-        if (decision == memoria::UsbWakeDecision::kStartConversation) {
+        const auto device = TapDeviceFor(state);
+        const auto action = memoria::TapActionFor(mode, device);
+        if (action == memoria::TapWakeAction::kResumeListening) {
+            ESP_LOGI(kUsbTag, "usb wake action=resume_listening");
+        } else if (action == memoria::TapWakeAction::kStartConversation) {
             ESP_LOGI(kUsbTag, "usb wake accepted wake_mode=%s", memoria::WakeModeName(mode));
-            auto& power = memoria::PowerPolicyRegistry::GetInstance();
-            power.SetPhase(memoria::PowerPhase::kWaking);
-            wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
-            PlayLocalAssetClip("wo_zai_ne.ogg");
-            app.WakeWordInvoke("usb_wake");
-            return;
+        } else if (action == memoria::TapWakeAction::kIgnore) {
+            ESP_LOGI(kUsbTag, "usb wake ignored reason=not_idle state=%d wake_mode=%s",
+                     static_cast<int>(state), memoria::WakeModeName(mode));
+        } else {
+            ESP_LOGI(kUsbTag, "usb wake action=%s", memoria::TapWakeActionName(action));
         }
-        ESP_LOGI(kUsbTag, "usb wake ignored reason=%s state=%d wake_mode=%s",
-                 memoria::UsbWakeDecisionName(decision), static_cast<int>(state),
-                 memoria::WakeModeName(mode));
+        DispatchTapWakeAction(action, "usb_wake", 0, 0, false, false);
     }
 
     void HandleUsbSleepOrPowerOff(bool stop_wifi) {

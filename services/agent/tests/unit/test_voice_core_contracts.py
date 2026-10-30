@@ -843,17 +843,83 @@ def test_asr_supervisor_supersedes_cross_sentence_when_later_final_extends() -> 
     assert supervisor.accept_result(extended, session_id="session")
 
 
-def test_asr_supervisor_fences_old_task_with_a_different_sentence_id() -> None:
+def test_asr_supervisor_accepts_a_final_that_lands_after_the_next_task_starts() -> None:
+    """Soak 20261030-202305 t022/t026: VAD end starts the next provider task
+    while the finished segment's final is still in flight."""
+
     supervisor = ASRStreamSupervisor()
     supervisor.start_task()
     supervisor.record_audio(start_sample=0, frame_samples=960)
-    newer = ASRResult(2, "new-sentence", 1, 320, 640, "新话轮", True)
+    partial = ASRResult(1, "s1", 1, 0, 640, "我这次", False)
+    assert supervisor.accept_result(partial, session_id="session")
+    supervisor.start_task()
+    final = ASRResult(1, "s1", 2, 0, 640, "我这次考试没考好", True)
+
+    decision = supervisor.accept_result(final, session_id="session")
+
+    assert decision.reason is ASRDecisionReason.ACCEPTED
+
+
+def test_asr_supervisor_fences_an_old_task_final_over_accepted_audio() -> None:
+    supervisor = ASRStreamSupervisor()
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=960)
+    newer = ASRResult(2, "new-sentence", 1, 0, 320, "新话轮", True)
     older = ASRResult(1, "old-sentence", 1, 0, 320, "旧话轮", True)
 
     assert supervisor.accept_result(newer, session_id="session")
     decision = supervisor.accept_result(older, session_id="session")
     assert not decision
+    assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
+
+
+def test_asr_supervisor_fences_an_old_task_revision_of_the_same_sentence() -> None:
+    supervisor = ASRStreamSupervisor()
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=960)
+    newer = ASRResult(2, "s1", 1, 0, 320, "新话轮", True)
+    older = ASRResult(1, "s1", 1, 0, 320, "旧话轮", True)
+
+    assert supervisor.accept_result(newer, session_id="session")
+    decision = supervisor.accept_result(older, session_id="session")
+    assert not decision
     assert decision.reason is ASRDecisionReason.STALE_TASK_EPOCH
+
+
+@pytest.mark.parametrize(
+    ("committed_text", "committed_final", "merged_text", "tail"),
+    [
+        ("你是真人吗？", False, "你是真人吗？我告诉你一个秘密，你不要告诉别人。", "我告诉你一个秘密，你不要告诉别人。"),
+        ("停", True, "停。讲讲太阳系有哪些行星。", "讲讲太阳系有哪些行星。"),
+        ("你是真人吗？", False, "你是真人吗？", None),
+        ("你是真人吗？", False, "你是谁呀？我告诉你一个秘密。", None),
+    ],
+)
+def test_asr_supervisor_keeps_the_new_tail_of_an_untimed_final_over_its_committed_prefix(
+    committed_text: str,
+    committed_final: bool,
+    merged_text: str,
+    tail: str | None,
+) -> None:
+    supervisor = ASRStreamSupervisor()
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=6_400)
+    committed = ASRResult(1, "s1", 1, 0, 1_600, committed_text, committed_final)
+    assert supervisor.accept_result(committed, session_id="session")
+    supervisor.mark_committed(2_400)
+
+    merged = ASRResult(1, "s1", 2, 0, 6_400, merged_text, True)
+    decision = supervisor.accept_result(merged, session_id="session")
+
+    if tail is None:
+        assert decision.accepted is None
+        assert decision.reason is ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING
+    else:
+        assert decision.reason is ASRDecisionReason.ACCEPTED
+        assert decision.accepted is not None
+        assert decision.accepted.text == tail
+        assert decision.accepted.capture_start_sample == 2_400
+        assert decision.accepted.capture_end_sample == 6_400
 
 
 def test_rejected_new_task_result_does_not_take_authority() -> None:

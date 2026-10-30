@@ -16,7 +16,7 @@ here touches the device, its configuration or production data: it only talks to 
         --scenario scripts/voice_soak_scenarios/child.json --bank outputs/voice-bank \
         --serial-log outputs/serial/robot.log \
         --out outputs/acceptance/run-<stamp>-soak [--duration-min 35] [--volume 55] \
-        [--wake-socket PATH] [--post-scenario-wait 90]
+        [--wake-socket PATH] [--post-scenario-wait 180]
 
 The robot is woken over the USB cable (firmware build 20): the driver sends `wake` through the logger's
 command socket and the robot starts a conversation exactly like a tap on the round screen, under the same
@@ -214,7 +214,7 @@ class SerialWatcher:
 
 
 MIN_CLIP_SECONDS = 0.5
-DEFAULT_POST_SCENARIO_WAIT_S = 90.0
+DEFAULT_POST_SCENARIO_WAIT_S = 180.0
 MAX_POST_SCENARIO_WAIT_S = 180.0
 
 
@@ -315,7 +315,7 @@ def main() -> int:
         "--post-scenario-wait",
         type=float,
         default=DEFAULT_POST_SCENARIO_WAIT_S,
-        help="seconds to keep collecting logs after the scenario (0-180; default 90)",
+        help="seconds to keep collecting logs after the scenario (0-180; default 180)",
     )
     ap.add_argument("--port", default=DEFAULT_PORT, help="the robot's USB serial port")
     ap.add_argument("--serial-log", default=None, help="follow this log (voice_soak_serial_logger.py) instead of opening the port")

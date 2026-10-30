@@ -109,6 +109,10 @@ class ASRStreamSupervisor:
         default_factory=deque,
         init=False,
     )
+    _accepted_text: dict[tuple[int, int, int], tuple[int, str]] = field(
+        default_factory=dict,
+        init=False,
+    )
 
     def __post_init__(self) -> None:
         if self.sample_rate <= 0 or self.reconnect_audio_ms <= 0 or self.max_result_history <= 0:
@@ -175,10 +179,7 @@ class ASRStreamSupervisor:
             or evidence.coverage is not ASRTimingCoverage.COMPLETE
             or evidence.words != result.word_timings
         ):
-            return ASRAcceptDecision(
-                None,
-                ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING,
-            )
+            return self._untimed_tail_after_committed_prefix(result, committed)
         tail_items = tuple(
             (index, word)
             for index, word in enumerate(evidence.words)
@@ -207,6 +208,41 @@ class ASRStreamSupervisor:
             word_timings=tail_words,
         )
         return ASRAcceptDecision(tail, ASRDecisionReason.ACCEPTED)
+
+    def _untimed_tail_after_committed_prefix(
+        self,
+        result: ASRResult,
+        committed: int,
+    ) -> ASRAcceptDecision:
+        """Keep what an untimed final says after the text already committed.
+
+        Volc can hold one utterance open across a committed turn and send a
+        final that repeats the committed revision before the new speech.
+        """
+
+        rejected = ASRAcceptDecision(None, ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING)
+        prefix = self._accepted_text.get(
+            (result.stream_epoch, result.task_epoch, result.capture_start_sample)
+        )
+        if prefix is None or prefix[0] > committed:
+            return rejected
+        wanted = [char for char in prefix[1] if char.isalnum()]
+        matched = 0
+        for index, char in enumerate(result.text):
+            if not char.isalnum():
+                continue
+            if matched == len(wanted):
+                tail = replace(
+                    result,
+                    capture_start_sample=committed,
+                    text=result.text[index:],
+                    timeline_segment_id=f"{result.sentence_id}:tail:{committed}",
+                )
+                return ASRAcceptDecision(tail, ASRDecisionReason.ACCEPTED)
+            if char != wanted[matched]:
+                return rejected
+            matched += 1
+        return rejected
 
     @staticmethod
     def _should_supersede_cross_sentence(
@@ -270,15 +306,14 @@ class ASRStreamSupervisor:
         return tuple(evicted)
 
     def preview_result(self, result: ASRResult) -> ASRAcceptDecision:
-        """Apply stream/task/watermark gates without mutating supervisor state."""
+        """Apply the stream gate and the committed watermark without mutating state."""
 
         if result.stream_epoch != self.stream_epoch:
             return ASRAcceptDecision(None, ASRDecisionReason.STALE_STREAM_EPOCH)
-        if (
-            self.latest_authoritative_task_epoch > 0
-            and result.task_epoch < self.latest_authoritative_task_epoch
-        ):
-            return ASRAcceptDecision(None, ASRDecisionReason.STALE_TASK_EPOCH)
+        # The task epoch advances with every VAD segment, so it cannot fence the
+        # previous segment's still in-flight final.  Older results are fenced by
+        # their audio range and by the per-sentence task lattice in
+        # ``accept_result``.
         return self._normalize_committed_result(result)
 
     def accept_result(self, result: ASRResult, *, session_id: str) -> ASRAcceptDecision:
@@ -288,9 +323,9 @@ class ASRStreamSupervisor:
         result = normalized.accepted
         # A provider task epoch is part of the revision identity. Providers
         # can restart within one media epoch and legitimately reuse a sentence
-        # id with an expanded absolute range; the stream-scoped fence above
-        # still rejects every result from a superseded task, regardless of
-        # sentence id or interval overlap.
+        # id with an expanded absolute range; a superseded task of the same
+        # sentence is fenced here, every other older task is fenced by the
+        # interval rules below.
         source_segment_id = result.sentence_id
         latest_task = self._latest_task_by_segment.get(source_segment_id)
         if latest_task is not None and result.task_epoch < latest_task:
@@ -446,6 +481,11 @@ class ASRStreamSupervisor:
                     if key[1] == evicted_segment:
                         self._revisions.pop(key, None)
             self.mark_provider_acked(result.capture_end_sample)
+            text_key = (result.stream_epoch, result.task_epoch, result.capture_start_sample)
+            self._accepted_text.pop(text_key, None)
+            self._accepted_text[text_key] = (result.capture_end_sample, result.text)
+            while len(self._accepted_text) > self.max_result_history:
+                self._accepted_text.pop(next(iter(self._accepted_text)))
             if result.is_final:
                 replaced = set(superseded_intervals)
                 if final_interval in self._final_intervals:

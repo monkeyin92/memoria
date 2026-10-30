@@ -1719,6 +1719,8 @@ async def test_late_clock_fact_recovery_does_not_preempt_in_flight_reply(
         assert committed >= 178_240
 
         # Blocking interval after the committed watermark (playback echo shape).
+        # The reply's own line is what the uplink hears: announce it first.
+        context.output.assistant_text = "你好我是茉莉今天想聊点什么呀"
         echo = ASRResult(
             stream_epoch=identity.stream_epoch,
             task_epoch=1,

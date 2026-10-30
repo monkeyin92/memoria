@@ -39,7 +39,9 @@ from services.agent.src.voice_core.interruption import (
     evidence_from_speech_segment,
 )
 from services.agent.src.voice_core.media_protocol import should_pause_asr_for_playback
+from services.agent.src.voice_core.media_session_pending_turn import open_turn_verdict_scope
 from services.agent.src.voice_core.media_session_playback_stop import (
+    CONTENT_BARGE_IN_CAUSE,
     PLAYBACK_STOP_ROUTE_REASON,
 )
 from services.agent.src.voice_core.media_session_state import (
@@ -76,6 +78,11 @@ media_pb2: Any = _media_pb2
 # a hallucinated one loses the pending reply, so this gate leans to reject.
 _CLOSE_RECOVERY_MIN_RESCUE_RMS = 1_000
 _CLOSE_RECOVERY_MIN_RESCUE_PEAK_ABS = 8_000
+
+# After an accepted final the commit waits at most this long for the device VAD end.  Soak
+# 20261029-200043: the slow turns spent 1.0-2.0 s there while ASR already had the sentence.
+_FINAL_VAD_END_WAIT_S = 0.3
+_FINAL_VAD_END_WAIT_SAMPLES = 4_800  # 300 ms of 16 kHz uplink past the final
 
 
 def _elapsed_ms(started: float) -> int:
@@ -222,6 +229,14 @@ class MediaSessionCommitMixin:
 
         async def _discard_projection(self, context: _MediaVoiceSession, reason: str) -> None: ...
 
+        async def _commit_pending_turn(
+            self,
+            context: _MediaVoiceSession,
+            *,
+            provider_final_missing: bool = False,
+            schedule_prepare_retry: bool = True,
+        ) -> str | None: ...
+
         def _event_versions(
             self, context: _MediaVoiceSession, fence: GenerationFence
         ) -> tuple[int, int]: ...
@@ -251,6 +266,7 @@ class MediaSessionCommitMixin:
             context: _MediaVoiceSession,
             *,
             endpoint_sample: int | None = None,
+            require_owner_evidence: bool = True,
         ) -> None: ...
 
         def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None: ...
@@ -325,10 +341,11 @@ class MediaSessionCommitMixin:
             result: ASRResult,
             *,
             source: str,
+            handled_range: tuple[int | None, int | None] | None = None,
         ) -> None: ...
 
         async def _stop_reply_for_voice_command(
-            self, context: _MediaVoiceSession, text: str
+            self, context: _MediaVoiceSession, text: str, *, cause: str = ...
         ) -> bool: ...
 
     async def accept_asr_result(self, session_id: str, result: ASRResult) -> bool:
@@ -360,6 +377,7 @@ class MediaSessionCommitMixin:
                 stage="pending_turn_boundary",
             )
             return ASRAcceptDecision(None, ASRDecisionReason.INTERVAL_CONFLICT)
+        open_turn_verdict_scope(context.pending, context.runtime)
         preview = context.asr.preview_result(result)
         candidate = preview.accepted
         if candidate is None:
@@ -446,8 +464,12 @@ class MediaSessionCommitMixin:
             )
         if accepted.is_final:
             self._release_empty_turn_pin_for_final(context, accepted)
+            handled_range = self._pending_turn_handled_range(context)
             self._observe_final_asr_result(context, accepted)
-            self._maybe_pin_playback_stop(context, accepted, source="final")
+            self._arm_final_vad_end_wait(context, accepted)
+            self._maybe_pin_playback_stop(
+                context, accepted, source="final", handled_range=handled_range
+            )
         else:
             self._observe_partial_asr_result(context, accepted)
             self._maybe_early_commit_stable_clock_fact_partial(context)
@@ -456,6 +478,91 @@ class MediaSessionCommitMixin:
             # A spoken stop waits for its final: a partial 「等一下」 may still
             # grow into 「等一下我想问…」, whose rest must not be dropped.
         return decision
+
+    def _arm_final_vad_end_wait(self, context: _MediaVoiceSession, result: ASRResult) -> None:
+        """Bound how long the commit waits for the device VAD end after a final.
+
+        The final already carries the endpoint evidence.  The wait is spent on the uplink the device also sends
+        its VAD end on: only once the stream has moved past the final does a missing end mean the commit may go
+        ahead at the ASR-covered endpoint.  A turn that is still growing, and a reply still in flight, keep the
+        old wait.
+        """
+
+        pending = context.pending
+        playback_end = context.last_playback_end_sample
+        if (
+            context.identity.client_type != "device"
+            or pending.turn_endpoint_sample is not None
+            or pending.final_vad_end_wait_handle is not None
+            or pending.turn_start_sample is None
+            or pending.turn_end_sample is None
+            or pending.turn_end_sample < result.capture_end_sample
+            or self._reply_in_flight(context)
+            or (playback_end is not None and result.capture_start_sample < playback_end)
+        ):
+            # The last clause is the playback echo margin: a final there may be the reply's own tail.
+            return
+        self._schedule_final_vad_end_wait(context)
+
+    def _schedule_final_vad_end_wait(self, context: _MediaVoiceSession) -> None:
+        pending = context.pending
+        pending.final_vad_end_wait_handle = asyncio.get_running_loop().call_later(
+            _FINAL_VAD_END_WAIT_S,
+            self._commit_final_without_vad_end,
+            context.identity.session_id,
+            context.stream_epoch,
+            pending.turn_start_sample,
+            pending.turn_end_sample,
+        )
+
+    def _commit_final_without_vad_end(
+        self,
+        session_id: str,
+        stream_epoch: int,
+        turn_start_sample: int | None,
+        armed_end_sample: int | None,
+    ) -> None:
+        context = self._sessions.get(session_id)
+        if context is None:
+            return
+        pending = context.pending
+        pending.final_vad_end_wait_handle = None
+        if (
+            context.closed
+            or context.standby_requested
+            or context.stream_epoch != stream_epoch
+            or pending.turn_endpoint_sample is not None
+            or pending.turn_start_sample != turn_start_sample
+            or turn_start_sample is None
+            or pending.turn_end_sample is None
+            or pending.turn_end_sample <= turn_start_sample
+        ):
+            return
+        if pending.turn_end_sample != armed_end_sample or pending.pending_partial is not None:
+            # The sentence grew after the wait was armed: wait again from its new end.
+            self._schedule_final_vad_end_wait(context)
+            return
+        if (
+            int(getattr(context.asr, "last_sent_sample", 0) or 0) - pending.turn_end_sample
+            < _FINAL_VAD_END_WAIT_SAMPLES
+        ):
+            # The uplink has not moved past the final, so its VAD end cannot be overdue yet.
+            self._schedule_final_vad_end_wait(context)
+            return
+        endpoint = pending.turn_end_sample
+        pending.turn_endpoint_sample = endpoint
+        pending.turn_retire_sample = max(pending.turn_retire_sample or 0, endpoint)
+        pending.final_vad_endpoint_pinned = endpoint
+        pending.turn_endpoint_grace_deadline = time.monotonic()
+        logger.info(
+            "media final committed without device VAD end session=%s stream_epoch=%s "
+            "endpoint=%s waited_s=%.1f",
+            session_id,
+            stream_epoch,
+            endpoint,
+            _FINAL_VAD_END_WAIT_S,
+        )
+        self._schedule_turn_commit(context)
 
     @staticmethod
     def _release_empty_turn_pin_for_final(
@@ -531,6 +638,21 @@ class MediaSessionCommitMixin:
         )
 
     @staticmethod
+    def _pending_turn_handled_range(
+        context: _MediaVoiceSession,
+    ) -> tuple[int | None, int | None]:
+        """The range this turn already held before the final being admitted.
+
+        ``turn_end_sample`` and ``turn_endpoint_sample`` are both endpoints the
+        turn has reached; the later one bounds the range.  ``None`` means the
+        turn has no endpoint yet, so only its start can bound it.
+        """
+
+        pending = context.pending
+        end = max(pending.turn_end_sample or 0, pending.turn_endpoint_sample or 0)
+        return pending.turn_start_sample, end or None
+
+    @staticmethod
     def _pending_turn_holds_no_words(context: _MediaVoiceSession) -> bool:
         start = context.pending.turn_start_sample
         end = context.pending.turn_endpoint_sample
@@ -568,8 +690,10 @@ class MediaSessionCommitMixin:
                 reason=reason,
             )
             return
-        close_needed = await context.runtime.resolve_conversation_close_needed(text)
-        live_lookup_needed = await context.runtime.resolve_live_lookup_needed(text)
+        close_needed, live_lookup_needed = await asyncio.gather(
+            context.runtime.resolve_conversation_close_needed(text),
+            context.runtime.resolve_live_lookup_needed(text),
+        )
         if (
             not self._stream_epoch_is_current(context, result.stream_epoch)
             or self._asr_precedes_pending_turn(context, result)
@@ -672,8 +796,10 @@ class MediaSessionCommitMixin:
         text = result.text.strip()
         if not text:
             return
-        close_needed = await context.runtime.resolve_conversation_close_needed(text)
-        live_lookup_needed = await context.runtime.resolve_live_lookup_needed(text)
+        close_needed, live_lookup_needed = await asyncio.gather(
+            context.runtime.resolve_conversation_close_needed(text),
+            context.runtime.resolve_live_lookup_needed(text),
+        )
         if (
             not self._stream_epoch_is_current(context, result.stream_epoch)
             or self._asr_precedes_pending_turn(context, result)
@@ -915,6 +1041,30 @@ class MediaSessionCommitMixin:
         if result.is_final:
             self._log_asr_rejection(session_id, result, reason, stage=stage)
         return ASRAcceptDecision(None, reason)
+
+    async def _commit_final_before_tail(self, context: _MediaVoiceSession) -> bool:
+        """Commit an accepted final of this turn before the tail timeout drops it.
+
+        The final can land inside the turn or past the endpoint; both are this
+        turn's text.
+        """
+
+        endpoint_sample = context.pending.turn_endpoint_sample
+        start_sample = context.pending.turn_start_sample
+        turn_end = context.pending.turn_end_sample
+        if endpoint_sample is None or start_sample is None or endpoint_sample <= start_sample:
+            return False
+        if not any(
+            segment.final and segment.text.strip()
+            for segment in context.runtime.speech_timeline.segments_in_range(
+                stream_epoch=context.stream_epoch,
+                start_sample=start_sample,
+                end_sample=max(turn_end or endpoint_sample, endpoint_sample),
+            )
+        ):
+            return False
+        await self._commit_pending_turn(context, provider_final_missing=True)
+        return context.pending.turn_endpoint_sample != endpoint_sample
 
     async def commit_user_turn(
         self,
@@ -1198,6 +1348,11 @@ class MediaSessionCommitMixin:
             # returns it.  Arming it here would close the session early.
             self._pause_owner_silence_timer(context)
             return None, "duplicate_media_turn"
+        # Both semantic verdicts start before the projection and route work. The commit joins the close
+        # verdict below; the live verdict only fills its cache and must not hold the reply.
+        context.runtime.start_conversation_close_verdict(text)
+        if not self._reply_in_flight(context):
+            context.runtime.live_lookup_needed(text, start_verdict=True)
         aligned = context.projection.align_provisional_text(text)
         if aligned is not None:
             logger.info(
@@ -1356,7 +1511,21 @@ class MediaSessionCommitMixin:
             await self._discard_projection(context, interaction.reason)
             context.runtime.publish_assistant_audio("restore", gain=1.0)
             return None, interaction.reason
-        if context.runtime.assistant_speaking and not interaction.cancel_generation:
+        content_barge_in = (
+            bool(context.pending.content_barge_in)
+            and context.runtime.assistant_speaking
+            and guarded_reason is None
+            and context.runtime.floor.interruptible
+            and not context.runtime.floor.fixed_safety_audible
+        )
+        # Consume the pin's intent here: a retry must not stop the reply twice, and a
+        # guarded or fixed-safety final must fall back to the old hold.
+        context.pending.content_barge_in = False
+        if (
+            context.runtime.assistant_speaking
+            and not interaction.cancel_generation
+            and not content_barge_in
+        ):
             await self._commit_media_input_range(
                 context,
                 stream_epoch=stream_epoch,
@@ -1386,6 +1555,14 @@ class MediaSessionCommitMixin:
             if context.runtime.assistant_speaking:
                 context.runtime.publish_assistant_audio("restore", gain=1.0)
             return None, reason or "user_turn_rejected"
+        if content_barge_in:
+            context.pending.content_barge_in = False
+            if await self._stop_reply_for_voice_command(
+                context, text, cause=CONTENT_BARGE_IN_CAUSE
+            ):
+                # The accepted turn already owns the floor: the stop's listen
+                # restore must not leave the answer queued behind user speech.
+                context.runtime.open_assistant_floor(cause=CONTENT_BARGE_IN_CAUSE)
         if context.runtime.assistant_speaking:
             context.runtime.publish_assistant_audio("restore", gain=1.0)
         before_prepare_fence = context.runtime.fence

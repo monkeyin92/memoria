@@ -106,6 +106,46 @@ def read_until(port: logger.ReopeningPort, wanted: bytes, limit: int = 200) -> b
     raise AssertionError(f"never read {wanted!r}, got {got!r}")
 
 
+def test_open_port_uses_the_given_baud_and_still_sets_the_lines_before_open():
+    bench = Bench([[]])
+    opened = logger.open_port(bench.module, PORT, 9600)
+    assert opened.ops == NO_RESET_OPEN
+    assert (opened.port, opened.baudrate) == (PORT, 9600)
+
+
+def test_reopen_keeps_the_requested_baud_and_the_no_reset_line_order():
+    bench = Bench([[], [b"again\n"]])
+    port = logger.ReopeningPort(
+        bench.module,
+        PORT,
+        bench.logs.append,
+        baudrate=57600,
+        list_ports=lambda: [PORT],
+        clock=lambda: bench.now,
+        sleep=bench.sleep,
+    )
+    assert read_until(port, b"again") == b"again\n"
+    assert [item.baudrate for item in bench.ports] == [57600, 57600]
+    assert all(item.ops == NO_RESET_OPEN for item in bench.ports)
+
+
+def test_main_applies_baud_before_every_open(monkeypatch, tmp_path):
+    bench = Bench([[b"I (1) up\n"], [], [], []])
+    status, _log = run_main(monkeypatch, tmp_path, bench, "--baud", "9600")
+    assert status == 2
+    assert bench.ports
+    assert all(port.baudrate == 9600 and port.ops == NO_RESET_OPEN for port in bench.ports)
+
+
+def test_main_rejects_a_non_positive_baud(monkeypatch, tmp_path, capsys):
+    bench = Bench([[]])
+    with pytest.raises(SystemExit) as raised:
+        run_main(monkeypatch, tmp_path, bench, "--baud", "0")
+    assert raised.value.code == 2
+    assert bench.ports == []
+    assert "positive" in capsys.readouterr().err
+
+
 def test_open_sets_rts_low_then_dtr_high_before_the_open_and_never_touches_them_again():
     bench = Bench([[b"boot ok\n"]])
     port = bench.keeper([])
@@ -198,8 +238,12 @@ def run_main(monkeypatch, tmp_path, bench: Bench, *extra: str) -> tuple[int, str
     monkeypatch.setattr(
         logger,
         "ReopeningPort",
-        lambda *args: real(
-            *args, list_ports=lambda: next(listings), clock=lambda: bench.now, sleep=bench.sleep
+        lambda *args, **kwargs: real(
+            *args,
+            **kwargs,
+            list_ports=lambda: next(listings),
+            clock=lambda: bench.now,
+            sleep=bench.sleep,
         ),
     )
     monkeypatch.setattr(
@@ -255,4 +299,4 @@ def test_the_soak_driver_opens_its_own_port_without_a_reset(monkeypatch, tmp_pat
         watcher._thread.join(timeout=5)
     (opened,) = bench.ports
     assert opened.ops == NO_RESET_OPEN
-    assert opened.port == PORT
+    assert (opened.port, opened.baudrate) == (PORT, 115200)

@@ -103,9 +103,10 @@ rg -Fq '#include "memoria_pat.h"' "$board_dir/memoria_esp_vocat.cc" || \
     die "board does not use the host-testable pat detector"
 rg -Fq 'TapWakeActionFor' "$board_dir/memoria_esp_vocat.cc" || \
     die "a screen tap must follow the power policy (wake only, never stop or standby)"
-rg -Fq 'memoria::UsbWakeDecisionFor(mode, state == kDeviceStateIdle)' \
-    "$board_dir/memoria_esp_vocat.cc" || \
-    die "the USB wake command must follow the screen tap's gate (wake only, never stop or standby)"
+rg -Fq 'usb wake action=resume_listening' "$board_dir/memoria_esp_vocat.cc" || \
+    die "USB wake on a closed listen must resume and log usb wake action=resume_listening"
+rg -Fq 'UsbWakeDecisionFor' "$board_dir/memoria_esp_vocat.cc" && \
+    die "USB wake must use the tap action, not the idle-bool decision"
 rg -Fq 'MemoriaMic' "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_power_policy.cc" || \
     die "mic open/close must log at the MemoriaMic tag for demos"
 rg -Fq 'esp_deep_sleep_start' "$board_dir/memoria_esp_vocat.cc" || \
@@ -140,20 +141,31 @@ import sys
 
 kconfig = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
 symbols = re.findall(r"^config (MEMORIA_\w+)", kconfig, re.MULTILINE)
-if symbols != ["MEMORIA_BENCH_SERIAL", "MEMORIA_KEEP_AWAKE"]:
+if symbols != ["MEMORIA_BENCH_SERIAL", "MEMORIA_KEEP_AWAKE", "MEMORIA_VAD_START_RMS_FLOOR_MILLI"]:
     raise SystemExit(
-        "Memoria Kconfig options must be MEMORIA_BENCH_SERIAL then MEMORIA_KEEP_AWAKE"
+        "Memoria Kconfig options must be MEMORIA_BENCH_SERIAL, "
+        "MEMORIA_KEEP_AWAKE, then MEMORIA_VAD_START_RMS_FLOOR_MILLI"
     )
 
 def block(name: str) -> str:
     return kconfig.split(f"config {name}\n", 1)[1].split("\nconfig ", 1)[0].split("\nendmenu", 1)[0]
 
-for name in symbols:
+for name in ("MEMORIA_BENCH_SERIAL", "MEMORIA_KEEP_AWAKE"):
     body = block(name)
     if "default n" not in body or "depends on BOARD_TYPE_MEMORIA_ESP_VOCAT" not in body:
         raise SystemExit(f"{name} must default to n and depend on the Memoria board")
     if "default y" in body:
         raise SystemExit(f"{name} must not default to y")
+
+floor = block("MEMORIA_VAD_START_RMS_FLOOR_MILLI")
+if "int " not in floor.split("help", 1)[0]:
+    raise SystemExit("MEMORIA_VAD_START_RMS_FLOOR_MILLI must be an int")
+if "depends on BOARD_TYPE_MEMORIA_ESP_VOCAT" not in floor:
+    raise SystemExit("MEMORIA_VAD_START_RMS_FLOOR_MILLI must depend on the Memoria board")
+if not re.search(r"^\s*range 0 1000$", floor, re.MULTILINE):
+    raise SystemExit("MEMORIA_VAD_START_RMS_FLOOR_MILLI range must be 0 1000")
+if not re.search(r"^\s*default 3$", floor, re.MULTILINE):
+    raise SystemExit("MEMORIA_VAD_START_RMS_FLOOR_MILLI must default to 3")
 PY
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_input_settle.h" ]] || die "input settle header missing"
 rg -Fq 'input_settle_.Arm();' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \

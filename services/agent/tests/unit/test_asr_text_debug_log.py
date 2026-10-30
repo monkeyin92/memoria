@@ -16,6 +16,7 @@ import pytest
 from services.agent.src.asr_text_debug_log import (
     ASR_TEXT_DEBUG_LOG_ENV,
     ASR_TEXT_DEBUG_LOG_PREFIX,
+    ASR_TEXT_TRACE_ENV,
     AsrTextDebugSubjects,
     asr_text_debug_line,
     configured_asr_text_debug_subjects,
@@ -294,3 +295,40 @@ def test_the_bridge_normalized_final_is_logged_for_a_listed_session(
     with caplog.at_level(logging.INFO, logger=ADAPTER_LOGGER):
         adapter._log_asr_text_debug_decision(unlisted, _final("停"), source="segment_final")  # type: ignore[arg-type]
     assert len(_debug_lines(caplog)) == 1
+
+
+def test_the_trace_probe_turns_the_playback_stop_line_on_for_every_session(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    context = _context(
+        subject_id=UNLISTED, registry_subjects=AsrTextDebugSubjects.from_env({ASR_TEXT_TRACE_ENV: "1"})
+    )
+    with caplog.at_level(logging.INFO, logger=STOP_LOGGER):
+        _StopSession()._maybe_pin_playback_stop(context, _final("停"), source="final")
+
+    [line] = _debug_lines(caplog)
+    assert "source=final" in line and "text=1:停" in line
+
+
+def test_the_trace_probe_logs_a_funasr_final_and_stays_off_by_default(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger=FUNASR_LOGGER):
+        _funasr_session(AsrTextDebugSubjects(), SUBJECT)._log_realtime_final_text(
+            _sentence("停"), "task-1"
+        )
+    assert not _debug_lines(caplog)
+
+    traced = AsrTextDebugSubjects.from_env({ASR_TEXT_TRACE_ENV: "true"})
+    assert traced.logs(UNLISTED)
+    with caplog.at_level(logging.INFO, logger=FUNASR_LOGGER):
+        _funasr_session(traced, UNLISTED)._log_realtime_final_text(_sentence("停"), "task-1")
+    [line] = _debug_lines(caplog)
+    assert "source=realtime_final" in line and "text=1:停" in line
+
+
+def test_the_trace_values_match_the_uplink_probe() -> None:
+    for value in ("1", "true", "TRUE", " yes ", "on"):
+        assert AsrTextDebugSubjects.from_env({ASR_TEXT_TRACE_ENV: value}).logs(UNLISTED)
+    for value in ("", "0", "false", "off", " 0 "):
+        assert not AsrTextDebugSubjects.from_env({ASR_TEXT_TRACE_ENV: value}).logs(UNLISTED)

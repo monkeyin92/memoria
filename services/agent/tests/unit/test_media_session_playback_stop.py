@@ -62,6 +62,8 @@ class _LongStoryProvider(_ScriptedProvider):
         self.story_call = story_call
         self.partials: dict[int, tuple[str, int]] = {}
         self.release = asyncio.Event()
+        self.first_frame_gate: asyncio.Event | None = None
+        self.gate_call: int | None = None
 
     async def ingest_audio(
         self,
@@ -96,8 +98,11 @@ class _LongStoryProvider(_ScriptedProvider):
         self.reply_calls += 1
         opening = self.opening if self.reply_calls == self.story_call else "好的。"
         release = self.release if self.reply_calls == self.story_call else None
+        gate = self.first_frame_gate if self.reply_calls == self.gate_call else None
 
         async def chunks() -> AsyncIterator[MediaReplyChunk]:
+            if gate is not None:
+                await gate.wait()
             yield MediaReplyChunk(
                 pcm_s16le=_REPLY_PCM,
                 source_start_sample=0,
@@ -288,8 +293,12 @@ async def _run_story(
     *,
     opening: str = _STORY_OPENING,
     story_call: int = 1,
+    gate_call: int | None = None,
 ) -> None:
     provider = _LongStoryProvider(opening, story_call=story_call)
+    if gate_call is not None:
+        provider.gate_call = gate_call
+        provider.first_frame_gate = asyncio.Event()
     harness = _StoryHarness(identity, provider)
     await harness.start()
     try:
@@ -356,7 +365,7 @@ async def test_device_stop_word_commits_without_earlier_playback_candidates() ->
         story = await harness.start_story()
         # Uplink speech during the story that no endpoint may ever pick up:
         # without owner proof it is a held candidate, not a user turn.
-        await harness.audio_frames(20, final_text="小猫咪去哪儿了")
+        await harness.audio_frames(20, final_text="嗯")
         await harness.audio_frames(15, final_text="停")
         await harness.wait_for(lambda: bool(harness.cancel_effects()))
         harness.assert_story_stopped_session_open(story)
@@ -392,14 +401,19 @@ async def test_device_repeated_stop_word_stops_the_story() -> None:
 
 
 @pytest.mark.asyncio
-async def test_device_wait_that_grows_into_a_question_does_not_stop() -> None:
+async def test_device_wait_partial_does_not_stop_but_its_question_final_does() -> None:
+    """A partial 「等一下」 may still grow into a question; the final stops and is answered."""
+
     async def script(harness: _StoryHarness) -> None:
         story = await harness.start_story()
         harness.story.partials[harness._audio_sequence + 9] = ("等一下", harness.sample)
         await harness.audio_frames(10)
-        await harness.audio_frames(10, final_text="等一下我想问下周三")
         await harness.assert_story_still_playing(story)
-        assert not harness.cancel_effects()
+        await harness.audio_frames(10, final_text="等一下我想问下周三")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert len(harness.cancel_effects()) == 1
+        assert _user_turn_texts(harness.context) == ["给我讲个故事", "等一下我想问下周三"]
+        assert not harness.closed()
 
     await _run_story(_device_identity("stop-word-grows"), script)
 
@@ -439,21 +453,297 @@ async def test_device_story_saying_stop_does_not_interrupt_itself() -> None:
 
 
 @pytest.mark.asyncio
-async def test_device_ordinary_speech_during_story_stays_held() -> None:
-    """Only a lexical stop gets an early endpoint; other speech is not widened."""
+async def test_device_plain_question_during_story_stops_and_is_answered() -> None:
+    """Four or more spoken characters are a question even with no stop marker."""
 
     async def script(harness: _StoryHarness) -> None:
         story = await harness.start_story()
         await harness.audio_frames(20, final_text="我们下午几点出发")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        [effect] = harness.cancel_effects()
+        assert effect.turn_id == story.turn_id
+        assert _user_turn_texts(harness.context) == ["给我讲个故事", "我们下午几点出发"]
+        assert not harness.closed()
+
+    await _run_story(_device_identity("plain-question-barge-in"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_question_mid_story_stops_the_reply_and_answers_it() -> None:
+    """Soak 2026-10-29 t017: a whole new question was refused as ``not_stop_word``."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        question = "等一下，我想问另一个问题，云是怎么变出来的？"
+        await harness.audio_frames(30, final_text=question)
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        [effect] = harness.cancel_effects()
+        assert effect.turn_id == story.turn_id
+        assert _user_turn_texts(harness.context) == ["给我讲个故事", question]
+        assert not harness.closed()
+
+    await _run_story(_device_identity("content-barge-in-question"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_question_starting_before_the_first_frame_still_barges() -> None:
+    """A question already under way when the reply starts may still stop it.
+
+    Product line: a content question begun before the first frame is allowed to
+    barge.  Only a tail that ends at the reply's edge is refused.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        await harness.audio_frames(20, final_text="云是怎么变出来的？")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        await harness.audio_frames(20)
+        harness.story.first_frame_gate.set()
+        await harness.wait_for(
+            lambda: harness.context.output.playback_started is not None
+        )
+        started = harness.context.output.playback_started[1]
+        reply = harness.runtime.fence
+
+        # The question began 0.1 s before the first frame and is still being
+        # spoken 2 s into the reply.
+        await harness.audio_frames(100)
+        harness.provider.finals[harness._audio_sequence] = (
+            "为什么天是蓝的",
+            started - 1_600,
+        )
+        await harness.audio_frames(1)
+        await harness.wait_for(lambda: harness.story.reply_calls == 3)
+        assert not harness.runtime.fence.matches(reply)
+        assert not harness.closed()
+
+    await _run_story(_device_identity("pre-first-frame-question"), script, gate_call=2)
+
+
+@pytest.mark.asyncio
+async def test_device_final_recorded_before_the_reply_started_does_not_barge() -> None:
+    """Soak 2026-10-30 t017: pre-playback finals cancelled each reply they never heard.
+
+    Five finals decoded from audio the device captured before the reply's first
+    frame each stopped it milliseconds later; the replacement reply repeated the
+    loop until real speech arrived.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        await harness.audio_frames(20, final_text="云是怎么变出来的？")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        # The reply is still synthesizing while the uplink keeps moving: t017
+        # had 1.9 s between the commit and the first frame.
+        await harness.audio_frames(20)
+        harness.story.first_frame_gate.set()
+        await harness.wait_for(
+            lambda: harness.context.output.playback_started is not None
+        )
+        started = harness.context.output.playback_started[1]
+        reply = harness.runtime.fence
+        assert harness.runtime.assistant_speaking
+        cancels = len(harness.cancel_effects())
+
+        harness.provider.finals[harness._audio_sequence] = (
+            "我们下午几点出发",
+            started - 3_200,
+        )
+        await harness.audio_frames(1)
+        await asyncio.sleep(0.05)
+        await harness.settle()
+        assert harness.context.pending.content_barge_in is False
+        assert len(harness.cancel_effects()) == cancels
+        assert harness.runtime.fence.matches(reply)
+        assert harness.story.reply_calls == 2
+
+        # A question heard while the reply plays still stops it and is answered.
+        await harness.audio_frames(10, final_text="那我们明天出门要带伞吗")
+        await harness.wait_for(lambda: harness.story.reply_calls == 3)
+        assert not harness.runtime.fence.matches(reply)
+        assert "我们下午几点出发" not in _user_turn_texts(harness.context)
+        assert not harness.closed()
+
+    await _run_story(_device_identity("pre-playback-tail"), script, gate_call=2)
+
+
+@pytest.mark.asyncio
+async def test_device_tail_final_inside_a_wordless_pin_does_not_stop_the_reply() -> None:
+    """A final that starts inside the turn already handled is that turn's tail.
+
+    The pin holds no words, so the rule that lets a later question take it must
+    not reach audio the turn already covered: this would otherwise stop the
+    reply on a re-finalization of its own input.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(5)
+        turn_start = harness.sample
+        await harness.vad_start(turn_start)
+        await harness.audio_frames(5)  # noise: the ASR hears no words
+        await harness.vad_end(harness.sample)
+        pending = harness.context.pending
+        assert pending.turn_start_sample == turn_start
+        assert pending.turn_endpoint_sample == harness.sample
+        await _accept_media_asr_final(
+            harness.registry,
+            harness.identity,
+            sentence_id="tail-final",
+            start_sample=turn_start + 800,
+            end_sample=turn_start + 2_400,
+            text="云是怎么变出来的？",
+        )
+        await harness.assert_story_still_playing(story)
+        assert harness.context.pending.content_barge_in is False
+        assert harness.story.reply_calls == 1
+
+    await _run_story(_device_identity("tail-final-overlap"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_question_growing_past_the_answered_turn_stops_the_reply() -> None:
+    """Soak 2026-10-30 t019: one ASR segment kept growing over the reply.
+
+    Its head lay inside the range the playing reply already answered, so every
+    revision was refused as that turn's tail even though the rest was the
+    owner's new question, and the reply played to its end.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(5)
+        turn_start = harness.sample
+        pending = harness.context.pending
+        # Field t019: the turn the reply answers has a VAD end but no ASR
+        # endpoint yet, and the ASR keeps re-emitting one segment from inside it.
+        pending.turn_start_sample = turn_start
+        pending.turn_end_sample = turn_start + 1_500
+        assert pending.turn_endpoint_sample is None
+        question = "等一下，我想问另一个问题，云是怎么变出来的？"
+        await _accept_media_asr_final(
+            harness.registry,
+            harness.identity,
+            sentence_id="growing-final",
+            start_sample=turn_start + 800,
+            end_sample=turn_start + 33_000,
+            text=question,
+        )
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        [effect] = harness.cancel_effects()
+        assert effect.turn_id == story.turn_id
+        assert _user_turn_texts(harness.context) == ["给我讲个故事", question]
+        assert not harness.closed()
+
+    await _run_story(_device_identity("growing-question-barge"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_question_starting_before_its_vad_edge_still_stops_the_reply() -> None:
+    """Live speech may begin a little before the VAD edge detects it.
+
+    The open turn holds fresh user speech, so a question final that starts
+    before the VAD start is still the owner's new question and must stop the
+    reply (soak turn 18: the ASR began 0.15 s before its VAD start).
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(5)
+        turn_start = harness.sample
+        await harness.vad_start(turn_start)
+        assert harness.runtime.floor.fresh_user_speech is True
+        question = "我们下午几点出发"
+        await _accept_media_asr_final(
+            harness.registry,
+            harness.identity,
+            sentence_id="early-final",
+            start_sample=turn_start - 320,
+            end_sample=turn_start + 6_400,
+            text=question,
+        )
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        [effect] = harness.cancel_effects()
+        assert effect.turn_id == story.turn_id
+        assert _user_turn_texts(harness.context) == ["给我讲个故事", question]
+        assert not harness.closed()
+
+    await _run_story(_device_identity("question-before-vad-edge"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_question_replaces_a_wordless_pin_at_the_turn_start() -> None:
+    """Soak 2026-10-30 t019: a wordless VAD pinned its own start.
+
+    The owner's question then arrived after that pin and was refused as
+    ``endpoint_already_pinned`` until the ASR tail timeout discarded the turn,
+    so the story played on.  A pin whose range holds no words has nothing to
+    lose: the content question takes it over, as a stop word already does.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(5)
+        await harness.vad_start(harness.sample)
+        pending = harness.context.pending
+        pending.turn_endpoint_sample = pending.turn_start_sample
+        question = "等一下，我想问另一个问题，云是怎么变出来的？"
+        await harness.audio_frames(30, final_text=question)
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        [effect] = harness.cancel_effects()
+        assert effect.turn_id == story.turn_id
+        assert _user_turn_texts(harness.context) == ["给我讲个故事", question]
+        assert not harness.closed()
+
+    await _run_story(_device_identity("wordless-pin-question"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_backchannel_mid_story_does_not_stop() -> None:
+    """Soak 2026-10-29 t018: 「嗯。」 is agreement, not a new question."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(15, final_text="嗯。")
         await harness.assert_story_still_playing(story)
         assert harness.context.pending.turn_endpoint_sample is None
-        # Even endpointed by VAD, unverified speech during playback is held.
-        await harness.utterance("我们下午几点出发呀", frames=20)
-        await harness.assert_story_still_playing(story)
         assert harness.story.reply_calls == 1
         assert _user_turn_texts(harness.context) == ["给我讲个故事"]
 
-    await _run_story(_device_identity("ordinary-speech-held"), script)
+    await _run_story(_device_identity("content-barge-in-backchannel"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_garbled_echo_of_the_story_is_not_a_question() -> None:
+    """A fuzzy repeat of the announced line (12+ chars) is the reply's own voice."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(15, final_text="从前有一座山，山里有一座庙，庙里有一个小和尚。")
+        await harness.assert_story_still_playing(story)
+        assert harness.context.pending.turn_endpoint_sample is None
+        assert harness.story.reply_calls == 1
+
+    await _run_story(
+        _device_identity("content-barge-in-fuzzy-echo"),
+        script,
+        opening="从前有一座山，山里有一座庙，庙里有一个老和尚。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_device_echo_of_the_playing_line_is_not_a_question() -> None:
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(15, final_text="小兔子跑到河边")
+        await harness.assert_story_still_playing(story)
+        assert harness.context.pending.turn_endpoint_sample is None
+
+    await _run_story(
+        _device_identity("content-barge-in-echo"),
+        script,
+        opening="小兔子跑到河边，大声喊。",
+    )
 
 
 @pytest.mark.asyncio
@@ -473,13 +763,13 @@ async def test_device_misheard_stop_read_as_farewell_cannot_block_the_next_stop(
         merged_verdict = asyncio.Event()
 
         async def close_verdict(text: str) -> bool:
-            if "小猫咪" in text and "行" in text:
+            if "嗯" in text and "行" in text:
                 await merged_verdict.wait()  # classifier latency on merged text
             return "行" in text
 
         harness.runtime.set_conversation_close_semantic_resolver(close_verdict)
         try:
-            await harness.audio_frames(20, final_text="小猫咪去哪儿了")
+            await harness.audio_frames(20, final_text="嗯")
             await harness.audio_frames(15, final_text="行。")
             assert harness.context.pending.turn_endpoint_sample is None
             await harness.audio_frames(15, final_text="停")
@@ -628,6 +918,31 @@ async def test_device_question_begun_before_playback_end_is_answered_without_vad
 
 
 @pytest.mark.asyncio
+async def test_device_comma_final_inside_an_open_vad_after_playback_does_not_end_the_turn() -> None:
+    """Soak 2026-10-29 t042: a final at a comma, 62 s after playback, ended the turn."""
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.utterance("你好", frames=25)
+        await harness.wait_for(lambda: harness.count("audio") >= 1)
+        await harness.audio_frames(60)
+        await harness.playback_ended()
+        await harness.audio_frames(60)
+        await harness.vad_start(harness.sample)
+        await harness.audio_frames(25, final_text="我又回来啦，")
+        await asyncio.sleep(1.5)
+        await harness.audio_frames(25, final_text="你还记得我今天画的什么吗？")
+        await harness.vad_end(harness.sample)
+        await harness.wait_for(lambda: harness.story.reply_calls >= 2, timeout=5.0)
+        await asyncio.sleep(1.5)
+        assert _user_turn_texts(harness.context) == [
+            "你好",
+            "我又回来啦， 你还记得我今天画的什么吗？",
+        ]
+
+    await _run_story(_device_identity("comma-final-in-open-vad"), script, story_call=0)
+
+
+@pytest.mark.asyncio
 async def test_device_farewell_during_story_still_ends_the_session() -> None:
     async def script(harness: _StoryHarness) -> None:
         await harness.start_story()
@@ -647,14 +962,14 @@ async def test_device_farewell_after_a_held_candidate_still_ends_the_session() -
     """A farewell during playback commits on its own interval, like a stop.
 
     Any playback-window candidate held before it (echo, or speech without
-    owner authority) merged into 「小猫咪去哪儿了 再见」, routed as chat and was
+    owner authority) merged into 「嗯 再见」, routed as chat and was
     held for missing owner authority: the story played on.
     """
 
     async def script(harness: _StoryHarness) -> None:
         await harness.start_story()
         context = harness.context
-        await harness.audio_frames(20, final_text="小猫咪去哪儿了")
+        await harness.audio_frames(20, final_text="嗯")
         await harness.audio_frames(15, final_text="再见")
         await harness.wait_for(harness.closed)
         assert context.standby_requested
@@ -670,7 +985,7 @@ async def test_device_farewell_partial_after_a_held_candidate_still_ends_the_ses
     async def script(harness: _StoryHarness) -> None:
         await harness.start_story()
         context = harness.context
-        await harness.audio_frames(20, final_text="小猫咪去哪儿了")
+        await harness.audio_frames(20, final_text="嗯")
         harness.story.partials[harness._audio_sequence + 9] = ("再见", harness.sample)
         await harness.audio_frames(10)
         await harness.wait_for(harness.closed)
@@ -848,7 +1163,7 @@ async def test_device_question_after_a_stop_word_at_the_natural_end_is_answered(
     async def script(harness: _StoryHarness) -> None:
         await harness.utterance("你好", frames=25)
         await harness.wait_for(lambda: harness.count("audio") >= 1)
-        await harness.audio_frames(20, final_text="小兔子说谢谢")  # a playback-window candidate
+        await harness.audio_frames(20, final_text="嗯")  # a playback-window candidate
         await harness.audio_frames(140)
         await harness.playback_ended()
         boundary = harness.context.last_playback_end_sample
@@ -1019,7 +1334,7 @@ async def test_device_stop_reusing_a_held_candidates_sentence_id_still_stops() -
             revision=1,
             capture_start_sample=candidate_start,
             capture_end_sample=candidate_start + 20 * 320,
-            text="小猫咪去哪儿了",
+            text="嗯",
             is_final=True,
             confidence=0.9,
             stream_epoch=epoch,

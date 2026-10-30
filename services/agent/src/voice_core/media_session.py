@@ -21,6 +21,7 @@ from services.agent.src.daily_chat import DailyChatClient
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.minor_limit_bypass import MinorLimitBypass
 from services.agent.src.observability.metrics import GLOBAL_METRICS, MetricsRegistry
+from services.agent.src.reply_text_debug_log import ReplyTextDebugLog
 from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.grpc_bridge import (
@@ -119,6 +120,7 @@ class MediaVoiceCoreRegistry(
     # conjunctions or fillers) extend grace to 1200 ms to protect mid-utterance pauses.
     turn_endpoint_grace_complete_s: float = 0.5
     turn_endpoint_grace_incomplete_s: float = 1.2
+    dtln_tail_confidence_enabled: bool = False
     # The first question after a reply waits a 2.0 s follow-up window before it commits, and then the
     # commit itself prepares (two classifiers, runtime profile, response plan, context prefetch) for
     # 1-1.5 s. 2.5 s left 0.5 s for that and closed the conversation (turn_prepare_timeout) under the
@@ -154,6 +156,9 @@ class MediaVoiceCoreRegistry(
     asr_text_debug_subjects: AsrTextDebugSubjects = field(
         default_factory=AsrTextDebugSubjects.from_env
     )
+    # Test-period reply text logging. Off by default, and only the whitelisted
+    # test subject above can write a line.
+    reply_text_debug_log: ReplyTextDebugLog = field(default_factory=ReplyTextDebugLog.from_env)
     _sessions: dict[str, _MediaVoiceSession] = field(default_factory=dict, init=False)
     _cleanup_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False)
     _creation_futures: dict[str, asyncio.Future[_MediaVoiceSession]] = field(

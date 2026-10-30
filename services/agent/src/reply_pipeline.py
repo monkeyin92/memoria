@@ -124,10 +124,8 @@ AUDIENCE_REPLY_LIMITS: dict[str, tuple[tuple[int, int], tuple[int, int]]] = {
 }
 _SENTENCE_ENDINGS = frozenset("。！？；!?")
 # The bound person's memory is fetched while the response plan is.  The call itself is bounded like the
-# plan's tool, and once the plan is in, a memory that is still outstanding gets only this long: a late
-# memory means a reply without memory, never a slower one.
+# plan's tool; a memory that is still outstanding when the plan is in is dropped, never waited for.
 _DEVICE_MEMORY_TIMEOUT_S = 2.0
-_DEVICE_MEMORY_GRACE_S = 0.6
 DEVICE_MEMORY_TASK_NAME = "device-memory-prefetch"
 # A fetch started for a sentence whose turn is about to be committed (``warm_committed_turn``) is only ever
 # taken by that commit; one that nobody took within this long belonged to a turn that never committed.
@@ -582,7 +580,7 @@ class ReplyPipeline:
             or getattr(resolver, "qwen", None) is not None
         )
 
-    def _prior_user_text(self, query: str) -> str:
+    def _prior_user_texts(self, query: str) -> list[str]:
         context = getattr(getattr(self._runtime, "orchestrator", None), "context", None)
         turns = getattr(context, "turns", ()) or ()
         user_texts = [
@@ -592,7 +590,18 @@ class ReplyPipeline:
         ]
         if user_texts and user_texts[-1] == query:
             user_texts = user_texts[:-1]
+        return user_texts
+
+    def _prior_user_text(self, query: str) -> str:
+        user_texts = self._prior_user_texts(query)
         return user_texts[-1] if user_texts else ""
+
+    def _prior_self_crisis_hits(self, query: str) -> int:
+        return sum(
+            1
+            for text in self._prior_user_texts(query)
+            if route_crisis(text).action == "crisis_support"
+        )
 
     def _local_safe_plan(
         self,
@@ -632,7 +641,9 @@ class ReplyPipeline:
         """
 
         client = self._response_planner_client
-        script = route_crisis(text).script
+        script = route_crisis(
+            text, prior_self_crisis_hits=self._prior_self_crisis_hits(text)
+        ).script
         if client is None or not self._runtime.profile_permits(
             fence, capability="memory_recall_private"
         ):
@@ -691,11 +702,14 @@ class ReplyPipeline:
             except Exception:
                 fetched = None
             planned = getattr(getattr(fetched, "plan", None), "fixed_safety_script", None)
-            local = route_crisis(text).script
+            prior_hits = self._prior_self_crisis_hits(text)
+            local = route_crisis(text, prior_self_crisis_hits=prior_hits).script
             script = (
                 planned
                 if local is None
-                else more_protective_local_script(text, planned)
+                else more_protective_local_script(
+                    text, planned, prior_self_crisis_hits=prior_hits
+                )
             )
             latency_ms = (time.monotonic() - state.started) * 1000.0
             if script is not None:
@@ -714,7 +728,11 @@ class ReplyPipeline:
         task.add_done_callback(_resolved)
 
     def _with_local_crisis_floor(self, plan: ResponsePlan, query: str) -> ResponsePlan:
-        script = more_protective_local_script(query, plan.fixed_safety_script)
+        script = more_protective_local_script(
+            query,
+            plan.fixed_safety_script,
+            prior_self_crisis_hits=self._prior_self_crisis_hits(query),
+        )
         if script is None:
             return plan
         if not plan_is_local_safe(plan):
@@ -1021,11 +1039,14 @@ class ReplyPipeline:
             return
         self._drop_early_plan()
         client = self._response_planner_client
+        local_crisis = route_crisis(
+            text, prior_self_crisis_hits=self._prior_self_crisis_hits(text)
+        ).script
         if (
             client is None
             or not text.strip()
             # A crisis turn asks the control plane its own way (``_crisis_plan_or_local``).
-            or route_crisis(text).script is not None
+            or local_crisis is not None
             or not self._runtime.profile_permits(fence, capability="memory_recall_private")
             or response_plan_sidecar.applies(client, self._runtime, fence)
         ):
@@ -1212,11 +1233,17 @@ class ReplyPipeline:
         # The plan request needs nothing the steps up to the commit decide, so it goes out first and runs
         # beside them; the commit below takes it only if it is still the request it would send.
         self._start_early_plan(text, speaker)
-        # Two independent cloud classifiers: one after the other they cost ~0.6 s of the turn's budget.
-        await asyncio.gather(
-            self._runtime.resolve_live_lookup_needed(text),
-            self._runtime.resolve_conversation_close_needed(text),
-        )
+        # Both classifiers start together. Live lookup only fills its cache and never holds the reply;
+        # the close verdict is joined after the voice refresh because the commit's route needs it.
+        self._runtime.start_conversation_close_verdict(text)
+        self._runtime.live_lookup_needed(text, start_verdict=True)
+        warmed_memory = self._take_warmed_memory(text, speaker)
+        memory_fetch: asyncio.Task[Any] | None = warmed_memory
+        if memory_fetch is None and self._device_memory_in_scope(speaker, self._runtime.fence):
+            memory_fetch = self._runtime._spawn(
+                self._fetch_device_memory(text=text, speaker=speaker),
+                name=DEVICE_MEMORY_TASK_NAME,
+            )
         # Live lookup starts inside on_turn_committed. A voice-bind failure after
         # that point leaves filler on a new generation and drops the weather
         # result as stale. Refresh and reject before the lookup task is created.
@@ -1244,6 +1271,7 @@ class ReplyPipeline:
                     self._runtime.fence.generation_id,
                 )
                 raise StopResponse()
+        await self._runtime.resolve_conversation_close_needed(text)
         fence = await self._runtime.on_turn_committed(
             text,
             input_modality=input_modality,
@@ -1267,9 +1295,10 @@ class ReplyPipeline:
                 final=True,
                 fence=fence,
             )
-        warmed_memory = self._take_warmed_memory(text, speaker)
         classification_started = time.perf_counter()
-        local_crisis = route_crisis(text).script
+        local_crisis = route_crisis(
+            text, prior_self_crisis_hits=self._prior_self_crisis_hits(text)
+        ).script
         logger.info(
             "local_crisis_classification hit=%s category=%s latency_ms=%.1f "
             "session_id=%s turn_id=%s",
@@ -1279,17 +1308,19 @@ class ReplyPipeline:
             self._runtime.session_id,
             fence.turn_id,
         )
-        memory_fetch: asyncio.Task[MemoryCapsule | None] | None = None
         if local_crisis is not None:
-            if warmed_memory is not None:
-                warmed_memory.cancel()
-        elif self._device_memory_in_scope(speaker, fence):
-            memory_fetch = warmed_memory or asyncio.create_task(
+            if memory_fetch is not None:
+                memory_fetch.cancel()
+                memory_fetch = None
+        elif not self._device_memory_in_scope(speaker, fence):
+            if memory_fetch is not None:
+                memory_fetch.cancel()
+                memory_fetch = None
+        elif memory_fetch is None:
+            memory_fetch = self._runtime._spawn(
                 self._fetch_device_memory(text=text, speaker=speaker),
                 name=DEVICE_MEMORY_TASK_NAME,
             )
-        elif warmed_memory is not None:
-            warmed_memory.cancel()
         try:
             if local_crisis is not None:
                 self._drop_early_plan()
@@ -1315,10 +1346,11 @@ class ReplyPipeline:
                     plan = None
                     fetch_reason = "request_exception"
             device_memory = None
-            if memory_fetch is not None:
-                await asyncio.wait({memory_fetch}, timeout=_DEVICE_MEMORY_GRACE_S)
-                if memory_fetch.done() and not memory_fetch.cancelled():
+            if memory_fetch is not None and memory_fetch.done() and not memory_fetch.cancelled():
+                try:
                     device_memory = memory_fetch.result()
+                except Exception:
+                    device_memory = None
         finally:
             if memory_fetch is not None and not memory_fetch.done():
                 memory_fetch.cancel()
@@ -1730,7 +1762,7 @@ class ReplyPipeline:
         if resume_interrupted_reply or script is not None:
             realtime_request, resume_realtime_request = None, False
         else:
-            realtime_request, resume_realtime_request = self._runtime.resolve_realtime_request(
+            realtime_request, resume_realtime_request = await self._runtime.resolve_realtime_request(
                 fence=fence,
                 direct_text=response_plan.direct_text,
             )

@@ -554,6 +554,98 @@ async def test_media_realtime_delegation_owns_output_and_skips_conversation_repl
 
 
 @pytest.mark.asyncio
+async def test_media_delegation_waits_for_a_semantic_verdict_before_a_conversation_reply() -> None:
+    """A no-keyword live query must not start its fallback conversation reply while the verdict runs."""
+
+    class DelegatingProvider(FakeMediaProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.delegations: list[tuple[str, GenerationFence]] = []
+            self.conversation_reply_calls = 0
+
+        async def start_delegation(self, text: str, fence: GenerationFence) -> str:
+            self.delegations.append((text, fence))
+            return "明天从南京到上海可以坐高铁。"
+
+        @staticmethod
+        def accept_output_intent(intent: Any) -> Any:
+            return intent
+
+        def generate_reply(
+            self,
+            identity: SessionIdentity,
+            user_text: str,
+            fence: GenerationFence,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            self.conversation_reply_calls += 1
+            return super().generate_reply(identity, user_text, fence)
+
+        def generate_output(
+            self,
+            _identity: SessionIdentity,
+            _intent: Any,
+            _fence: GenerationFence,
+            *,
+            work_id: str,
+            source_start_sample: int,
+        ) -> AsyncIterator[MediaReplyChunk]:
+            _ = work_id
+
+            async def chunks() -> AsyncIterator[MediaReplyChunk]:
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00\x03\x00",
+                    source_start_sample=source_start_sample,
+                    first=True,
+                    final=True,
+                )
+
+            return chunks()
+
+    class CapturingBridge(MediaBridgeGrpcServer):
+        async def emit_pcm(self, _session_id: str, _frame: object) -> bool:
+            return True
+
+        async def emit_generation(self, *_args: object, **_kwargs: object) -> bool:
+            return True
+
+    provider = DelegatingProvider()
+    registry = MediaVoiceCoreRegistry(
+        bridge=CapturingBridge(),
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("delegation-semantic-live")
+    context = await registry.open_session(identity)
+    query = "明天从南京去上海，哪种交通方式最快"
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def live(_text: str) -> bool:
+        started.set()
+        await release.wait()
+        return True
+
+    context.runtime.set_live_lookup_semantic_resolver(live)
+    context.runtime.live_lookup_needed(query, start_verdict=True)
+    await asyncio.wait_for(started.wait(), timeout=1)
+    fence = await context.runtime.on_turn_committed(query)
+    try:
+        dispatch = asyncio.create_task(registry.generate_reply(identity.session_id, query, fence))
+        await asyncio.sleep(0.05)
+
+        assert not dispatch.done(), "dispatch waits for the semantic verdict"
+        assert provider.conversation_reply_calls == 0
+
+        release.set()
+        assert await asyncio.wait_for(dispatch, timeout=2.0)
+        assert provider.delegations == [(query, fence)]
+        assert provider.conversation_reply_calls == 0
+    finally:
+        release.set()
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_slow_media_delegation_plays_typed_fast_ack_then_deep_result() -> None:
     ack_started = asyncio.Event()
     ack_completed = asyncio.Event()
@@ -3471,3 +3563,54 @@ async def test_fixed_weather_fallback_is_the_first_and_only_spoken_text() -> Non
 
     assert str(provider.output_intents[0].tts_source) == WEATHER_LOOKUP_UNAVAILABLE_REPLY
     await registry.finalize_session(context.identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_delegation_answer_waits_for_floor_cap_without_a_pending_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Soak 20261030-150810 t010: ownership handoff + closed floor + no pending turn.
+
+    The weather turn was committed, the reply dispatch handed audio to the
+    delegation, and a later statement closed the floor while ``pending`` held
+    no turn: the evidence-less cap required ``turn_start_sample`` and could
+    never fire, so the ready answer stayed queued with zero audio.
+    """
+
+    from services.agent.src.voice_core import media_session_turns
+
+    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_BASE_S", 0.3)
+    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_VAD_EXTENSION_S", 0.2)
+    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_MAX_S", 0.6)
+    provider = _LateOwnedDelegationProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = SessionIdentity("delegation-floor-cap-no-pending-turn")
+    bridge.bridge.open(identity)
+    try:
+        context = await registry.open_session(identity)
+        query = "今天南京天气怎么样"
+        fence = await context.runtime.on_turn_committed(query)
+        await _wait_until(lambda: fence in context.output.delegation_output_claims)
+        claim = context.output.delegation_output_claims[fence]
+        await _wait_until(lambda: claim.state is DelegationOutputState.OWNED)
+        assert await registry.generate_reply(identity.session_id, query, fence)
+        context.runtime.on_user_voice_started()
+        assert context.pending.turn_start_sample is None
+        assert not context.runtime.output_floor_allows_assistant
+        frame_count = len(bridge.frames)
+        provider.release.set()
+        await _wait_until(lambda: claim.state is DelegationOutputState.COMPLETED)
+        await asyncio.wait_for(provider.deep_started.wait(), timeout=2)
+        await _wait_until(lambda: len(bridge.frames) > frame_count, timeout=2)
+        assert context.runtime.output_floor_allows_assistant
+        assert context.pending.evidence_less_hold_since is None
+        assert provider.output_kinds.count(media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT) == 1
+        assert context.output.output_owner is not None
+    finally:
+        provider.release.set()
+        await registry.finalize_session(identity.session_id)

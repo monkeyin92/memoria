@@ -134,7 +134,7 @@ _TRAILING_PARTICLES = ("", "呀", "啊", "呢", "嘛", "哦")
 
 def test_identity_and_affection_fixed_replies_have_exact_product_copy() -> None:
     assert NAMELESS_IDENTITY_REPLY == (
-        "我是 AI 助手，不是真人，可以陪你聊天、讲故事。你今天想聊什么呀？"
+        "我是小助手，不是真人，可以陪你聊天、讲故事。你今天想聊什么呀？"
     )
     assert AFFECTION_FIXED_REPLY == (
         "我是 AI，没有喜欢的感觉，不过我会认真听你说话。你今天想聊点什么呀？"

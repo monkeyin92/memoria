@@ -5,12 +5,14 @@ from pathlib import Path
 
 import pytest
 from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_ESCALATION_SCRIPT,
     CRISIS_SELF_SCRIPT,
     SUPPORT_RELAY_SCRIPT,
     SUPPORT_VICTIM_SCRIPT,
     FixedSafetyScript,
     SpokenPhrase,
     _approved,
+    fixed_safety_echo_reference,
     script_for_decision,
     script_for_display,
     spoken_prefix_for_display,
@@ -29,16 +31,26 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
             "愿意的话，跟我说说发生了什么事。",
         ),
         (
+            CRISIS_SELF_ESCALATION_SCRIPT,
+            "crisis-self-escalation",
+            "你愿意告诉我，我很感谢你，你现在一定很难受，我会一直陪你说话。"
+            "这件事太重了，我们需要一个你信得过的大人一起来帮你，"
+            "就算你没有手机，也可以请他帮你打12356，那里有人专门听小朋友说心里话。"
+            "你现在身边有谁可以找吗？",
+        ),
+        (
             SUPPORT_VICTIM_SCRIPT,
             "victim-support-v1",
-            "你说的事情很重要。现在马上去找身边的大人，爸爸妈妈、老师都可以。"
-            "如果有危险，请大人帮你打110。",
+            "听起来你受委屈了，被这样对待一定很难受，这不是你的错。"
+            "我在这儿，你想说多少都可以。"
+            "要是你愿意，我们一起想想，告诉哪个你信得过的大人，让他帮帮你。",
         ),
         (
             SUPPORT_RELAY_SCRIPT,
             "support-other-v1",
-            "谢谢你告诉我，你是个关心别人的好孩子。"
-            "这件事要请大人帮忙，现在就去告诉爸爸妈妈或者老师吧。",
+            "你这么担心他，真是个暖心的好朋友，这件事你心里也不轻松吧。"
+            "这种事光靠小朋友有点难，需要大人一起帮忙。"
+            "我们想想先告诉谁，好吗？",
         ),
     ),
 )
@@ -73,24 +85,34 @@ def test_crisis_script_soothes_and_accompanies() -> None:
     assert CRISIS_SELF_SCRIPT.spoken == CRISIS_SELF_SCRIPT.display
 
 
-def test_victim_script_speaks_the_police_number_digit_by_digit() -> None:
+def test_victim_script_has_no_number_and_speaks_its_display_copy() -> None:
     assert [phrase.spoken for phrase in SUPPORT_VICTIM_SCRIPT.phrases] == [
-        "你说的事情很重要。",
-        "现在马上去找身边的大人，爸爸妈妈、老师都可以。",
-        "如果有危险，请大人帮你打幺幺零。",
+        "听起来你受委屈了，被这样对待一定很难受，这不是你的错。",
+        "我在这儿，你想说多少都可以。",
+        "要是你愿意，我们一起想想，告诉哪个你信得过的大人，让他帮帮你。",
     ]
-    assert list(SUPPORT_VICTIM_SCRIPT.spoken) == list(
-        "你说的事情很重要。现在马上去找身边的大人，爸爸妈妈、老师都可以。"
-        "如果有危险，请大人帮你打幺幺零。"
-    )
+    assert SUPPORT_VICTIM_SCRIPT.spoken == SUPPORT_VICTIM_SCRIPT.display
 
 
 def test_relay_script_has_no_number_so_it_speaks_its_display_copy() -> None:
     assert [phrase.spoken for phrase in SUPPORT_RELAY_SCRIPT.phrases] == [
-        "谢谢你告诉我，你是个关心别人的好孩子。",
-        "这件事要请大人帮忙，现在就去告诉爸爸妈妈或者老师吧。",
+        "你这么担心他，真是个暖心的好朋友，这件事你心里也不轻松吧。",
+        "这种事光靠小朋友有点难，需要大人一起帮忙。",
+        "我们想想先告诉谁，好吗？",
     ]
     assert SUPPORT_RELAY_SCRIPT.spoken == SUPPORT_RELAY_SCRIPT.display
+
+
+def test_escalation_script_speaks_the_helpline_as_one_two_three_five_six() -> None:
+    assert [phrase.spoken for phrase in CRISIS_SELF_ESCALATION_SCRIPT.phrases] == [
+        "你愿意告诉我，我很感谢你，你现在一定很难受，我会一直陪你说话。",
+        "这件事太重了，我们需要一个你信得过的大人一起来帮你，"
+        "就算你没有手机，也可以请他帮你打一二三五六，那里有人专门听小朋友说心里话。",
+        "你现在身边有谁可以找吗？",
+    ]
+    assert "12356" in CRISIS_SELF_ESCALATION_SCRIPT.display
+    assert "一二三五六" in CRISIS_SELF_ESCALATION_SCRIPT.spoken
+    assert "幺二三五六" not in CRISIS_SELF_ESCALATION_SCRIPT.spoken
 
 
 def test_scripts_resolve_by_decision_and_exact_display_copy_only() -> None:
@@ -98,10 +120,24 @@ def test_scripts_resolve_by_decision_and_exact_display_copy_only() -> None:
     assert script_for_decision("support_victim") is SUPPORT_VICTIM_SCRIPT
     assert script_for_decision("support_relay") is SUPPORT_RELAY_SCRIPT
     assert script_for_decision("prohibited_request") is None
-    for script in (CRISIS_SELF_SCRIPT, SUPPORT_VICTIM_SCRIPT, SUPPORT_RELAY_SCRIPT):
+    for script in (
+        CRISIS_SELF_SCRIPT,
+        CRISIS_SELF_ESCALATION_SCRIPT,
+        SUPPORT_VICTIM_SCRIPT,
+        SUPPORT_RELAY_SCRIPT,
+    ):
         assert script_for_display(script.display) is script
     assert script_for_display(CRISIS_SELF_SCRIPT.spoken) is CRISIS_SELF_SCRIPT
-    assert script_for_display(SUPPORT_VICTIM_SCRIPT.spoken) is None
+    assert script_for_display(SUPPORT_VICTIM_SCRIPT.spoken) is SUPPORT_VICTIM_SCRIPT
+    assert script_for_display(CRISIS_SELF_ESCALATION_SCRIPT.spoken) is None
+    assert (
+        script_for_display(CRISIS_SELF_ESCALATION_SCRIPT.display)
+        is CRISIS_SELF_ESCALATION_SCRIPT
+    )
+    assert (
+        fixed_safety_echo_reference(CRISIS_SELF_ESCALATION_SCRIPT.spoken)
+        == CRISIS_SELF_ESCALATION_SCRIPT.display
+    )
     assert script_for_display(CRISIS_SELF_SCRIPT.phrases[0].display) is None
     assert script_for_display(None) is None
 
@@ -118,6 +154,10 @@ def test_announced_display_maps_to_spoken_copy_only_at_phrase_boundaries() -> No
     assert spoken_prefix_for_display(SUPPORT_VICTIM_SCRIPT.display) == SUPPORT_VICTIM_SCRIPT.spoken
     assert spoken_prefix_for_display(CRISIS_SELF_SCRIPT.display[:5]) is None
     assert spoken_prefix_for_display(second.display) is None
+    assert (
+        spoken_prefix_for_display(CRISIS_SELF_ESCALATION_SCRIPT.display)
+        == CRISIS_SELF_ESCALATION_SCRIPT.spoken
+    )
 
 
 def test_ordinary_text_is_spoken_as_written() -> None:

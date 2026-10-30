@@ -15,6 +15,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 
 from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_ESCALATION_SCRIPT,
     CRISIS_SELF_SCRIPT,
     SUPPORT_RELAY_SCRIPT,
     SUPPORT_VICTIM_SCRIPT,
@@ -49,7 +50,12 @@ def announced_interruptible_script(text: str) -> bool:
         return False
     covered = [
         script
-        for script in (CRISIS_SELF_SCRIPT, SUPPORT_VICTIM_SCRIPT, SUPPORT_RELAY_SCRIPT)
+        for script in (
+            CRISIS_SELF_SCRIPT,
+            CRISIS_SELF_ESCALATION_SCRIPT,
+            SUPPORT_VICTIM_SCRIPT,
+            SUPPORT_RELAY_SCRIPT,
+        )
         if _covers(script, stripped)
     ]
     if len(covered) != 1:

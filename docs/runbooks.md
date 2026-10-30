@@ -892,6 +892,31 @@ bench 镜像在 USB 串口多认两条命令；产品镜像不含这两个动词
 
 `config.keep-awake.json` 只比产品清单多 `CONFIG_MEMORIA_KEEP_AWAKE=y`。固件停在 wifi hold，不调用 `esp_deep_sleep_start()`。空闲时麦克风关闭，不上传音频。屏幕轻点或 USB `wake` 才开始会话。文件名带 `-keep-awake`，`publish_firmware_release.py` 拒绝发布。测完刷回产品镜像。`--bench` 与 `--keep-awake` 不能同时使用。
 
+### 真机窗口：串口、句表、判据、日志包
+
+这一节不授权刷机、播放或改音量。下面的命令都在电脑上跑。
+
+真机窗口用 `scripts/voice_soak_serial_logger.py` 抓串口。`open()` 之前把 RTS 设为低、DTR 设为高，避免 USB-Serial-JTAG 复位板子。`--port` 和 `--baud` 可改，波特率默认 115200。每一行日志带本机时间戳。刷机前停掉这个进程。
+
+```bash
+uv run --no-project --with pyserial python scripts/voice_soak_serial_logger.py outputs/serial/robot.log \
+    --port /dev/cu.usbmodem2101 --baud 115200
+```
+
+拨测句表是 `scripts/voice_soak_scenarios/child.json`。不要另建一份。`voice_soak.py --scenario` 读这一份。
+
+窗口结束后用 run 目录算通过或失败。命令只读本地文件。尾窗必须是 `verified_idle`。静音步必须看到 idle。打断由 `voice_soak_evidence.py` 用 bridge 和 serial 日志重算。timeline 里旧的 `stopped` 字段不算数。没复核成停止就不通过。`scripts/voice_soak_verdict.py` 的 `MAX_NO_REPLY` 是 0。`MAX_REPLY_LATENCY_P95_S` 是 2.0。漏答 `no_reply` 必须为 0。回复时延 `reply_latency_p95_s` 不超过 2.0 秒。`reply_latency_p95_s` 缺失时脚本判失败。判失败时脚本以退出码 1 结束。
+
+```bash
+python scripts/voice_soak_verdict.py outputs/acceptance/run-<stamp>-soak
+```
+
+同一目录里打包 `timeline.jsonl`，以及已经跟上的 `serial.log`、`bridge.log`、`edge.log`、`control.log`。缺的日志不进包。没有 `timeline.jsonl` 则命令失败。包写在 run 目录的上一级，旁边有 sha256。不连设备，不连生产。
+
+```bash
+python scripts/voice_soak_pack.py outputs/acceptance/run-<stamp>-soak
+```
+
 ### 电脑语音测试的停止证据（2026-10-10 修正）
 
 每轮真机、串口命令、刷机与调整音量仍须当场授权；本节只规定判据，不授权执行。运行脚本时显式给用户确认的 `--volume`，不靠脚本默认值；缺声学测量不报端到端声学停止延迟。
@@ -995,7 +1020,10 @@ uv run python scripts/evaluate_sensevoice_rescue.py --url http://127.0.0.1:18001
 
 - `result=duplicate` 且 `audio_admitted_watermark <= previous_finalized_watermark` 表示从上次 finalize 以来没有新增的已送音频。结合 `listening_capture_hold` 和连续冻结的水位，可以区分收麦后的设备 VAD 边沿与真正的 ASR 空结果。
 - 水位有推进时，再检查 `provider_pcm_observed_samples`、`provider_pcm_rms`、`provider_pcm_peak_abs` 和 `provider_pcm_clipping_detected`。短噪声与削波不能靠延长尾超时修复。
-- 收麦期间的 VAD 不应创建新的回合或尾超时，也不能删除收麦前已经接收的真实输入。点屏后的 `listening.resume` 恢复收音，恢复后的 VAD 仍须能正常定端点。
+- 收麦期间的 VAD end 不创建新的回合或尾超时，也不能删除收麦前已经接收的真实输入。收麦后设备 VAD start 一律忽略（不恢复收音，也不产生回合）；只有点屏后的 `listening.resume` 恢复收音（phase cause 为 `screen_tap`），只送恢复点之后的音频，恢复后的 VAD 仍须能正常定端点。产品固件熄屏后进 wifi hold 关麦，所以 VAD 恢复只发生在熄屏前和 keep-awake 测试机上。
+- 收音窗口只在 `listening` 时到期，孩子说话时（`user_speaking`）不会收麦；说话期间由 max-user-speech watchdog 兜底。设备 VAD 在播放结束之后才打开时，`playback-followup` 不钉端点，由这次 VAD 的 end 定端点。soak 20261029-200043 的 t042 同时踩到这两条：逗号处的 final 被钉成端点，窗口又在说话中到期，句子被截断提交，收麦状态还延续到下一轮。
+- 收音窗口（`MEDIA_LISTENING_CAPTURE_WINDOW_S`，默认 30 s）从回复播完（或本轮被接受）时起算。之后 `listening` 期间收到的第一帧上行音频若已过期，就收麦并发 `assistant_state=listening_closed`。被当作空轮回收的噪声 VAD 不重新起算窗口，所以回复播完后没人说话时，`listening_closed` 在约 30 s 后发出；窗口到期时正好有噪声段在进行，就等这段噪声被回收时立即发出。每次发送都打一行 `media listening closed session=… silence_since_reply_s=…`；本轮已被接受、还没有新回复播完时，该值为 `None`。
+- 尾超时之前，同一 `task_epoch` 出现过 `reason=straddles_committed_without_timing is_final=True` 且 `text_len>0` 时，`empty+vendor_silent` 是误标。厂商把已提交的上一句和新的一句合成了一条没有词时间戳的 final。该句最后被接收的文本若是新 final 的前缀，supervisor 只收后面的新话；对不上时仍整条丢弃。
 
 2026-10-25 排查的 37 次尾超时中，33 次发生在收麦后，没有新增的已送音频。其余 4 次有音频，另按采集质量排查。该历史结论不代表其他 `empty+vendor_silent` 都属于同一原因。
 

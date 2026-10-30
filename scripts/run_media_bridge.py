@@ -131,6 +131,9 @@ async def run() -> None:
     listening_capture_window_s = float(getattr(settings, "media_listening_capture_window_s", 30.0))
     max_user_speech_duration_s = float(getattr(settings, "media_max_user_speech_duration_s", 60.0))
     speaking_stall_timeout_s = float(getattr(settings, "media_speaking_stall_timeout_s", 15.0))
+    dtln_tail_confidence_enabled = bool(
+        getattr(settings, "media_dtln_tail_confidence_enabled", False)
+    )
     prometheus_port = int(getattr(settings, "prometheus_port", 0))
     if prometheus_port > 0:
         try:
@@ -200,6 +203,7 @@ async def run() -> None:
                     recap_sink.publish_session_end if recap_sink is not None else None
                 ),
                 daily_chat_client=getattr(session_factory, "daily_chat_client", None),
+                dtln_tail_confidence_enabled=dtln_tail_confidence_enabled,
             )
             registry.install()
             logger.info("media bridge shared Agent session registry installed")
@@ -225,6 +229,7 @@ async def run() -> None:
                         else None
                     ),
                     crisis_script_interrupt_publisher=interrupt_publisher,
+                    dtln_tail_confidence_enabled=dtln_tail_confidence_enabled,
                 )
                 if runtime_factory is not None
                 else MediaVoiceCoreRegistry(
@@ -243,6 +248,7 @@ async def run() -> None:
                         else None
                     ),
                     crisis_script_interrupt_publisher=interrupt_publisher,
+                    dtln_tail_confidence_enabled=dtln_tail_confidence_enabled,
                 )
             )
             registry.install()

@@ -9,7 +9,7 @@ the port, and nothing touches DTR/RTS afterwards. The port is still held by this
 driver / trials read this log (`voice_soak.py --serial-log FILE`) instead of opening the port again.
 
     uv run --no-project --with pyserial python scripts/voice_soak_serial_logger.py outputs/serial/robot.log \
-        [--port /dev/cu.usbmodem2101] [--command-socket PATH] [--last-seen-cmd 'CMD']
+        [--port /dev/cu.usbmodem2101] [--baud 115200] [--command-socket PATH] [--last-seen-cmd 'CMD']
 
 When the port gives no data for 30 s (or reading it fails), the logger closes it, looks for /dev/cu.usbmodem*
 again (the name may change after a re-enumeration), reopens it the same way and waits another 30 s, at most
@@ -65,6 +65,7 @@ WIRE_COMMANDS = {
 _MAX_REQUEST = 64
 
 PORT_GLOB = "/dev/cu.usbmodem*"
+DEFAULT_BAUD = 115200
 SILENCE_S = 30.0
 REOPEN_ATTEMPTS = 3
 REOPEN_PAUSE_S = 5.0
@@ -75,10 +76,20 @@ def stamp(t: float) -> str:
     return time.strftime("%H:%M:%S", time.localtime(t)) + f".{int((t % 1) * 1000):03d}"
 
 
-def open_port(serial_module: Any, port: str) -> Any:
+def positive_baud(value: str) -> int:
+    try:
+        baud = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("baud must be an integer") from exc
+    if baud <= 0:
+        raise argparse.ArgumentTypeError("baud must be positive")
+    return baud
+
+
+def open_port(serial_module: Any, port: str, baudrate: int = DEFAULT_BAUD) -> Any:
     """Open the robot's port without resetting it: RTS low and DTR high must be set before the open."""
     ser = serial_module.Serial()
-    ser.port, ser.baudrate, ser.timeout, ser.write_timeout = port, 115200, 0.2, 2.0
+    ser.port, ser.baudrate, ser.timeout, ser.write_timeout = port, baudrate, 0.2, 2.0
     ser.rts = False
     ser.dtr = True
     ser.open()
@@ -108,6 +119,7 @@ class ReopeningPort:
         silence_s: float = SILENCE_S,
         attempts: int = REOPEN_ATTEMPTS,
         pause_s: float = REOPEN_PAUSE_S,
+        baudrate: int = DEFAULT_BAUD,
         list_ports: Callable[[], list[str]] = lambda: glob.glob(PORT_GLOB),
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
@@ -118,11 +130,12 @@ class ReopeningPort:
         self._silence_s = silence_s
         self._attempts = attempts
         self._pause_s = pause_s
+        self._baudrate = baudrate
         self._list_ports = list_ports
         self._clock = clock
         self._sleep = sleep
         self._lock = threading.Lock()
-        self._ser: Any = open_port(serial_module, port)
+        self._ser: Any = open_port(serial_module, port, baudrate)
         self._last_data = clock()
         self._reopens = 0
 
@@ -175,7 +188,7 @@ class ReopeningPort:
             self._log(f"LOGGER: {attempt}: no {PORT_GLOB} present")
             return
         try:
-            ser = open_port(self._serial, port)
+            ser = open_port(self._serial, port, self._baudrate)
         except (self._serial.SerialException, OSError) as exc:
             self._log(f"LOGGER: {attempt}: cannot open {port}: {exc}")
             return
@@ -307,6 +320,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("out", type=Path)
     ap.add_argument("--port", default=serial_command.DEFAULT_PORT)
+    ap.add_argument("--baud", type=positive_baud, default=DEFAULT_BAUD)
     ap.add_argument(
         "--command-socket", type=Path, default=None, help="default: /tmp/memoria-serial-<port>.sock"
     )
@@ -342,7 +356,7 @@ def main() -> int:
                 fh.write(f"{stamp(time.time())} {text}\n".encode())
                 fh.flush()
 
-        ser = ReopeningPort(serial, args.port, emit)
+        ser = ReopeningPort(serial, args.port, emit, baudrate=args.baud)
         server: CommandServer | None = None
         if not args.no_command_socket:
             path = args.command_socket or serial_command.default_socket_path(args.port)

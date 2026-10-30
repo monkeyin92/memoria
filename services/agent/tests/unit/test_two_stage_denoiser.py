@@ -3,6 +3,12 @@
 import math
 import struct
 
+from services.agent.src.voice_core.deep_denoiser import DeepDenoiser, DeepDenoiserConfig
+from services.agent.src.voice_core.speech_end_denoise import (
+    SpeechEndDenoiseScore,
+    add_shift_mean,
+    mark_utterance,
+)
 from services.agent.src.voice_core.two_stage_denoiser import (
     TwoStageDenoiser,
     TwoStageDenoisingConfig,
@@ -37,6 +43,23 @@ def add_audio(audio1: bytes, audio2: bytes) -> bytes:
         for s1, s2 in zip(samples1, samples2, strict=True)
     ]
     return struct.pack(f"<{len(mixed)}h", *mixed)
+
+
+def test_speech_end_score_follows_stage_2() -> None:
+    denoiser = TwoStageDenoiser.__new__(TwoStageDenoiser)
+    stage2 = DeepDenoiser(DeepDenoiserConfig(enabled=False))
+    denoiser._stage2 = stage2
+    window = mark_utterance(stage2._score_window)
+    window = add_shift_mean(window, 0.25)
+    window = add_shift_mean(window, 0.75)
+    stage2._score_window = window
+
+    score = denoiser.speech_end_score()
+    assert isinstance(score, SpeechEndDenoiseScore)
+    assert score.summary == 0.5
+
+    denoiser.mark_utterance_start()
+    assert denoiser.speech_end_score() is None
 
 
 class TestTwoStageDenoiser:

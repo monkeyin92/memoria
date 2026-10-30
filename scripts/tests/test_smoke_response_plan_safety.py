@@ -21,7 +21,7 @@ from services.common.companion_response_safety import (
 )
 from services.common.crisis_policy import route_crisis
 from services.common.fixed_safety_scripts import (
-    CRISIS_SELF_SCRIPT,
+    CRISIS_SELF_ESCALATION_SCRIPT,
     SUPPORT_RELAY_SCRIPT,
     SUPPORT_VICTIM_SCRIPT,
 )
@@ -34,9 +34,9 @@ CI = ROOT / ".github" / "workflows" / "ci.yml"
 def test_smoke_utterances_map_to_approved_templates_and_push_flags() -> None:
     routes = assert_smoke_route_table()
     assert set(routes) == set(SMOKE_CASE_NAMES)
-    assert routes["crisis"]["script"].template_id == "crisis-self-v1"
+    assert routes["crisis"]["script"].template_id == "crisis-self-escalation"
     assert routes["crisis"]["attempt_push"] is True
-    assert routes["crisis"]["script"] is CRISIS_SELF_SCRIPT
+    assert routes["crisis"]["script"] is CRISIS_SELF_ESCALATION_SCRIPT
     assert routes["victim"]["script"].template_id == "victim-support-v1"
     assert routes["victim"]["attempt_push"] is True
     assert routes["victim"]["script"] is SUPPORT_VICTIM_SCRIPT
@@ -58,15 +58,16 @@ def test_smoke_utterances_map_to_approved_templates_and_push_flags() -> None:
 def test_smoke_locks_the_spoken_phone_readings() -> None:
     routes = assert_smoke_route_table()
 
-    assert routes["crisis"]["tts_text"] == CRISIS_SELF_SCRIPT.display
-    assert routes["crisis"]["tts_text"].startswith("听到你这么说")
-    assert routes["victim"]["tts_text"].endswith("请大人帮你打幺幺零。")
+    assert routes["crisis"]["tts_text"] == CRISIS_SELF_ESCALATION_SCRIPT.spoken
+    assert routes["crisis"]["tts_text"].startswith("你愿意告诉我")
+    assert "一二三五六" in routes["crisis"]["tts_text"]
+    assert routes["victim"]["tts_text"].endswith("让他帮帮你。")
     assert routes["third_party"]["tts_text"] == SUPPORT_RELAY_SCRIPT.display
 
 
 def test_route_table_fails_when_spoken_copy_drifts(monkeypatch: pytest.MonkeyPatch) -> None:
     crisis, *rest = SMOKE_SAFETY_CASES
-    drifted = {**crisis, "tts_text": crisis["tts_text"].replace("我很心疼", "我好难过")}
+    drifted = {**crisis, "tts_text": crisis["tts_text"].replace("我很感谢你", "我很谢谢你")}
     monkeypatch.setattr(checker, "SMOKE_SAFETY_CASES", (drifted, *rest))
 
     with pytest.raises(AssertionError, match="crisis: spoken copy drifted"):
@@ -75,7 +76,7 @@ def test_route_table_fails_when_spoken_copy_drifts(monkeypatch: pytest.MonkeyPat
 
 def test_checker_rejects_display_copy_that_names_no_script() -> None:
     for direct_text in (
-        CRISIS_SELF_SCRIPT.display + "额外文字",
+        CRISIS_SELF_ESCALATION_SCRIPT.display + "额外文字",
         "不是任何已知文案",
     ):
         with pytest.raises(AssertionError, match="crisis: unexpected direct_text"):
@@ -90,7 +91,7 @@ def test_checker_rejects_display_copy_that_names_no_script() -> None:
 
 def test_checker_accepts_canonical_payloads_and_rejects_old_draft() -> None:
     good = {
-        "crisis": {"direct_text": CRISIS_SELF_SCRIPT.display},
+        "crisis": {"direct_text": CRISIS_SELF_ESCALATION_SCRIPT.display},
         "third_party": {"direct_text": SUPPORT_RELAY_SCRIPT.display},
         "victim": {"direct_text": SUPPORT_VICTIM_SCRIPT.display},
         "prevention": {"direct_text": SUPPORT_RELAY_SCRIPT.display},

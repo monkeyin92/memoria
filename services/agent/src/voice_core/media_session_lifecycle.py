@@ -18,6 +18,7 @@ from services.agent.src.orchestration.conversation_projection import (
 )
 from services.agent.src.orchestration.delegation_coordinator import SideEffectPolicy
 from services.agent.src.orchestration.task_manager import ToolSpec
+from services.agent.src.reply_text_debug_log import reply_text_debug_enabled
 from services.agent.src.voice_core.asr_stream_supervisor import (
     ASRAcceptDecision,
     ASRStreamSupervisor,
@@ -35,6 +36,7 @@ from services.agent.src.voice_core.media_protocol import (
     PlaybackProgress,
     SessionIdentity,
 )
+from services.agent.src.voice_core.media_session_pending_turn import open_turn_verdict_scope
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
@@ -419,6 +421,7 @@ class MediaSessionLifecycleMixin:
                     # endpointed new-epoch speech as a post-playback follow-up
                     # (2026-09-29, boundary 90560 from the previous epoch).
                     current.last_playback_end_sample = None
+                    current.output.playback_started = None
                     current.last_asr_evidence_end_sample = 0
                     self._audio_ingress.reset_for_reconnect(current)
                     # The promise to parents is that the device records only
@@ -486,9 +489,11 @@ class MediaSessionLifecycleMixin:
                 ),
                 stream_epoch=identity.stream_epoch,
                 ingress=MediaAudioIngressState.create(self.audio_ingress_max_frames),
+                reply_text_debug=reply_text_debug_enabled(self, identity.subject_id),
                 device_wake_ack_pending=identity.client_type == "device",
             )
             runtime.set_device_conversation_controls(identity.client_type == "device")
+            open_turn_verdict_scope(current.pending, runtime)
             runtime.orchestrator.delegation.queue_while_floor_blocked = True
             delegation_starter = getattr(provider, "start_delegation", None)
             output_intent_acceptor = getattr(provider, "accept_output_intent", None)
@@ -523,14 +528,10 @@ class MediaSessionLifecycleMixin:
                     _run_deep_work,
                 )
 
-                def _start_delegation(
+                def _claim_and_run(
                     text: str,
                     fence: GenerationFence,
-                ) -> Coroutine[Any, Any, None] | None:
-                    if not current.runtime.live_lookup_needed(text) or not current.runtime.fence.matches(
-                        fence
-                    ):
-                        return None
+                ) -> Coroutine[Any, Any, Any] | None:
                     existing = current.output.delegation_output_claims.get(fence)
                     if existing is not None:
                         return None
@@ -549,6 +550,28 @@ class MediaSessionLifecycleMixin:
                         claim=claim,
                         output_intent_acceptor=output_intent_acceptor,
                     )
+
+                async def _start_after_verdict(
+                    text: str,
+                    fence: GenerationFence,
+                ) -> None:
+                    if not await current.runtime.resolve_live_lookup_needed(text):
+                        return
+                    if not current.runtime.fence.matches(fence):
+                        return
+                    started = _claim_and_run(text, fence)
+                    if started is not None:
+                        await started
+
+                def _start_delegation(
+                    text: str,
+                    fence: GenerationFence,
+                ) -> Coroutine[Any, Any, Any] | None:
+                    if not current.runtime.fence.matches(fence):
+                        return None
+                    if current.runtime.live_lookup_needed(text):
+                        return _claim_and_run(text, fence)
+                    return _start_after_verdict(text, fence)
 
                 runtime.set_delegation_starter(_start_delegation)
 

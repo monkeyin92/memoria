@@ -44,20 +44,20 @@ _PREPARE_RETRY_SUPERSEDED_REASON = "provider_prepare_retry_superseded_by_new_vad
 # later sentence can arrive, permit at most 1.5 seconds of tail skew after
 # firmware removes its known 900 ms AFE hangover. Real-device evidence still
 # showed 1.14 seconds between FunASR's last word and the device voiced end;
-# larger gaps remain fail-closed so an earlier provider sentence cannot commit
-# a later turn.
+# larger gaps keep the endpoint commit waiting for a covering final. The tail
+# timeout then commits this turn's accepted final instead of dropping it, and
+# the turn's own sample range is what stops an earlier sentence reaching a
+# later turn.
 _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES = 24_000
 _CLOCK_FACT_PARTIAL_STABLE_S = 0.6
 _CONVERSATION_CLOSE_PARTIAL_STABLE_S = 0.6
 _LIVE_LOOKUP_PARTIAL_STABLE_S = 0.6
 _DUPLICATE_COMMIT_DELIVERY_GUARD_S = 8.0
-# Bound how long admitted output may wait behind a pending turn that has no
-# text evidence at all.  Run 2026-09-24 session b18fede9: a ready weather
-# answer waited ~8 s because room-noise VAD bursts under 2.5 s apart kept
-# re-opening one empty pending turn (each vad.start resets the tail timeout)
-# while FunASR and the rescue both heard nothing.  Real speech yields a
-# partial well within the per-VAD extension, and any text evidence cancels
-# the cap, so only evidence-less holds are retired early.
+# Bound how long admitted output may wait behind a pending turn with no text
+# evidence. Run 2026-09-24 session b18fede9: a weather answer waited ~8 s
+# because room-noise VAD bursts under 2.5 s apart kept re-opening one empty
+# pending turn while FunASR and the rescue heard nothing. Real speech yields a
+# partial within the per-VAD extension, so only evidence-less holds retire early.
 _EVIDENCE_LESS_HOLD_BASE_S = 3.0
 _EVIDENCE_LESS_HOLD_VAD_EXTENSION_S = 1.5
 _EVIDENCE_LESS_HOLD_MAX_S = 6.0
@@ -92,8 +92,6 @@ class MediaTurnEndpointMixin:
         self.metrics.inc_funasr_empty_transcript(outcome)
         return outcome
 
-    """Own the bounded VAD/ASR endpoint state behind the registry interface."""
-
     if TYPE_CHECKING:
         bridge: MediaBridgeGrpcServer
         metrics: MetricsRegistry
@@ -106,16 +104,17 @@ class MediaTurnEndpointMixin:
         _sessions: dict[str, _MediaVoiceSession]
 
         def _schedule_output_retry(self, context: _MediaVoiceSession) -> None: ...
+        def _resume_capped_output(self, context: _MediaVoiceSession) -> None: ...
 
-        def _output_work_is_active(
-            self, context: _MediaVoiceSession, work: OutputWork
-        ) -> bool: ...
+        def _output_work_is_active(self, context: _MediaVoiceSession, work: OutputWork) -> bool: ...
 
         async def _accept_asr_result_decision(
             self,
             session_id: str,
             result: ASRResult,
         ) -> ASRAcceptDecision: ...
+
+        async def _commit_final_before_tail(self, context: _MediaVoiceSession) -> bool: ...
 
         async def _discard_projection(
             self,
@@ -177,6 +176,10 @@ class MediaTurnEndpointMixin:
             *,
             endpoint_sample: int | None = None,
         ) -> None: ...
+
+        def _nudge_empty_turn(self, context: _MediaVoiceSession, *, endpoint_sample: int) -> None: ...
+
+        def _settle_listening_capture_after_empty_retire(self, context: _MediaVoiceSession, *, cause: str) -> None: ...
 
         async def _dispatch_reply(
             self,
@@ -282,8 +285,7 @@ class MediaTurnEndpointMixin:
         self._maybe_early_commit_live_lookup(context, result)
         self._maybe_early_commit_conversation_close(context, result)
         self._maybe_endpoint_playback_followup(context, result)
-        # A provider final is evidence, never the endpoint itself. If VAD has
-        # already ended, a late final re-arms the same logical-turn commit.
+        # A provider final is evidence, never the endpoint itself. If VAD has already ended, a late final re-arms the same logical-turn commit.
         if context.pending.turn_endpoint_sample is not None:
             maybe_rearm_grace_on_evidence(self, context, result.text)
             self._schedule_turn_commit(context)
@@ -915,9 +917,7 @@ class MediaTurnEndpointMixin:
                 or self._turn_commit_retry_matches(context, stream_epoch, endpoint_sample)
             )
         ):
-            # Backoff count is not an I/O bound. Revoke admission before
-            # cancellation/lock acquisition so even a late provider result
-            # cannot publish or start output after the absolute deadline.
+            # Revoke admission before the deadline can pass, even for a late provider result.
             await self._request_device_standby(
                 context, reason="turn_prepare_timeout",
                 expected_endpoint=(stream_epoch, endpoint_sample),
@@ -941,14 +941,11 @@ class MediaTurnEndpointMixin:
                 return
         partial = context.pending.pending_partial
         if (
-            partial is not None
-            and partial.text.strip()
-            and self._asr_covers_endpoint(context, partial.capture_end_sample, endpoint_sample)
+            partial is not None and partial.text.strip()
+            and partial.capture_end_sample > (context.pending.turn_start_sample or 0)
         ):
-            # A stable partial is safer than silently dropping a complete user
-            # utterance when the provider's final marker is lost.  Re-submit it
-            # as a low-confidence final on the same sample interval; the ASR
-            # supervisor still owns all revision and watermark checks.
+            # A stable partial inside this turn is safer than dropping a complete utterance when
+            # the final marker is lost; a device VAD end can trail the last word (t014: 3.5 s).
             fallback_confidence = (
                 0.35
                 if partial.confidence is None
@@ -966,12 +963,12 @@ class MediaTurnEndpointMixin:
                     decision.accepted.capture_end_sample,
                     context.pending.turn_end_sample or 0,
                 )
-                await self._commit_pending_turn(
-                    context,
-                    provider_final_missing=True,
-                )
+                await self._commit_pending_turn(context, provider_final_missing=True)
                 if context.pending.turn_endpoint_sample != endpoint_sample:
                     return
+
+        if await self._commit_final_before_tail(context):
+            return
 
         discarded: ProjectionPatch | None = None
         resume_owned_output = False
@@ -1005,7 +1002,7 @@ class MediaTurnEndpointMixin:
             self._classify_provider_final_missing(context),
         )
         if endpoint_sample > 0 and not resume_owned_output:
-            self._nudge_missed_hearing(context, endpoint_sample=endpoint_sample)
+            self._nudge_empty_turn(context, endpoint_sample=endpoint_sample)
 
     @staticmethod
     def _pending_turn_has_text_evidence(context: _MediaVoiceSession) -> bool:
@@ -1054,11 +1051,9 @@ class MediaTurnEndpointMixin:
         endpoint_sample: int,
         floor_cause: str,
     ) -> tuple[ProjectionPatch | None, bool]:
-        """Discard the pending turn; hand the floor back if it held no text.
+        """Discard the pending turn; the caller holds ``turn_commit_lock``.
 
-        Caller holds ``turn_commit_lock``.  Returns the projection discard
-        patch and whether queued same-turn output was resumed.
-        """
+        Returns the projection discard patch and whether queued same-turn output was resumed."""
 
         input_fence = context.pending.turn_input_fence
         empty_input = not self._pending_turn_has_fresh_text_evidence(context)
@@ -1074,8 +1069,7 @@ class MediaTurnEndpointMixin:
         )
         self._clear_pending_turn_state(context)
         resume_owned_output = False
-        # A control/identity/generation change retires this placeholder;
-        # only the exact originating fence may restore queued playback.
+        # A control, identity, or generation change retires this placeholder. Only the exact originating fence may restore queued playback.
         if (
             empty_input
             and input_fence is not None
@@ -1085,18 +1079,19 @@ class MediaTurnEndpointMixin:
             and not context.runtime.formal_speaker_enrollment_active
         ):
             self._clear_evidence_less_floor_hold(context)
-            context.runtime.open_assistant_floor(cause=floor_cause)
             resume_owned_output = owned_delegation_holds_turn(
                 context.output.delegation_output_claims, input_fence
             ) or any(
                 self._output_work_is_active(context, work)
                 for work in tuple(context.output.output_work.values())
             )
+            if not resume_owned_output:
+                self._settle_listening_capture_after_empty_retire(context, cause=floor_cause)
+            context.runtime.open_assistant_floor(cause=floor_cause)
             self._schedule_output_retry(context)
             logger.info(
                 "media empty input retired session=%s fence=%s resume_output=%s cause=%s",
-                context.identity.session_id, input_fence, resume_owned_output, floor_cause,
-            )
+                context.identity.session_id, input_fence, resume_owned_output, floor_cause)
         if context.runtime.assistant_speaking:
             context.runtime.publish_assistant_audio("restore", gain=1.0)
         return discarded, resume_owned_output
@@ -1155,7 +1150,6 @@ class MediaTurnEndpointMixin:
             not context.closed
             and not context.standby_requested
             and not context.runtime.output_floor_allows_assistant
-            and context.pending.turn_start_sample is not None
             and not self._pending_turn_has_fresh_text_evidence(context)
             and any(
                 self._output_work_is_active(context, work)
@@ -1193,7 +1187,7 @@ class MediaTurnEndpointMixin:
                 return
             start_sample = context.pending.turn_start_sample
             if start_sample is None:
-                return
+                return self._resume_capped_output(context)
             endpoint_task = context.turn_endpoint_task
             if (
                 endpoint_task is not None
@@ -1375,20 +1369,21 @@ class MediaTurnEndpointMixin:
             or retire_sample < endpoint_sample
         ):
             return "invalid_pending_media_turn"
-        # Direct/fallback commits share the same absolute deadline as the
-        # scheduled endpoint. Rearming never grants a new retry interval.
+        # Rescues commit the turn's last evidence; other commits stop at the VAD endpoint.
+        commit_end = max(end_sample, endpoint_sample) if provider_final_missing else endpoint_sample
+        retire_sample = max(retire_sample, commit_end)
+        # Direct/fallback commits share the endpoint deadline; rearming never extends it.
         self._arm_endpoint_tail_timeout(context, endpoint_sample)
         previous_fence = context.output.playback.current_fence or context.runtime.fence
         fence, reason = await self.commit_user_turn(
             context.identity.session_id,
             stream_epoch=context.stream_epoch,
             start_sample=start_sample,
-            end_sample=endpoint_sample,
+            end_sample=commit_end,
             retire_sample=retire_sample,
             provider_final_missing=provider_final_missing,
         )
-        # The range was consumed even when Router turns it into a low-risk
-        # control action rather than a chat generation.
+        # The range is consumed even when Router routes it to a low-risk control action.
         prepare_retryable = (
             reason == "provider_prepare_failed" and context.projection.provisional is not None
         )
@@ -1679,3 +1674,8 @@ class MediaTurnEndpointMixin:
             stream_epoch,
             endpoint_sample,
         )
+
+
+
+
+

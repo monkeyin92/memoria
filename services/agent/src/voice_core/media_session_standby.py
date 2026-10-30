@@ -268,16 +268,36 @@ class MediaSessionStandbyMixin:
         )
 
     def _open_listening_capture(self, context: _MediaVoiceSession) -> None:
-        if context.listening_capture_hold or not self._listening_capture_armed(context):
+        if (
+            context.listening_capture_hold
+            or context.listening_capture_deadline is not None
+            or not self._listening_capture_armed(context)
+        ):
             return
-        if context.listening_capture_deadline is None:
-            context.listening_capture_deadline = time.monotonic() + self.listening_capture_window_s
+        context.listening_capture_deadline = time.monotonic() + self.listening_capture_window_s
 
     def _restart_listening_capture(self, context: _MediaVoiceSession) -> None:
         if context.listening_capture_hold or not self._listening_capture_armed(context):
             return
         context.listening_capture_resume_sample = None
         context.listening_capture_deadline = time.monotonic() + self.listening_capture_window_s
+
+    def _settle_listening_capture_after_empty_retire(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        cause: str,
+    ) -> None:
+        if not self._listening_capture_armed(context):
+            return
+        held = context.listening_capture_hold
+        context.listening_capture_hold = False
+        context.listening_capture_resume_sample = None
+        if held and context.runtime.interaction_phase is InteractionPhase.CONNECTING:
+            context.runtime.set_interaction_phase(
+                InteractionPhase.LISTENING,
+                cause=cause,
+            )
 
     def _latch_listening_capture(self, context: _MediaVoiceSession) -> None:
         if context.listening_capture_hold or not self._listening_capture_armed(context):
@@ -294,6 +314,15 @@ class MediaSessionStandbyMixin:
                 cause="listening_capture_hold",
                 publish=True,
             )
+        self._publish_listening_closed(context)
+
+    def _publish_listening_closed(self, context: _MediaVoiceSession) -> None:
+        completed_ns = context.runtime._voice_floor.last_playback_completed_ns
+        logger.info(
+            "media listening closed session=%s silence_since_reply_s=%s",
+            context.identity.session_id,
+            None if completed_ns is None else f"{(time.monotonic_ns() - completed_ns) / 1e9:.1f}",
+        )
         context.runtime.publish_assistant_state("listening_closed")
 
     def hold_listening_capture_until_tap(self, context: _MediaVoiceSession) -> None:
@@ -311,13 +340,14 @@ class MediaSessionStandbyMixin:
         already_held = context.listening_capture_hold
         self._latch_listening_capture(context)
         if already_held:
-            context.runtime.publish_assistant_state("listening_closed")
+            self._publish_listening_closed(context)
 
-    def resume_listening_from_screen_tap(
+    def resume_listening_capture(
         self,
         context: _MediaVoiceSession,
         *,
         wake_sample: int,
+        cause: str,
     ) -> None:
         if context.closed or context.standby_requested or wake_sample < 0:
             return
@@ -329,7 +359,7 @@ class MediaSessionStandbyMixin:
         if context.runtime.interaction_phase is not InteractionPhase.LISTENING:
             context.runtime.set_interaction_phase(
                 InteractionPhase.LISTENING,
-                cause="screen_tap",
+                cause=cause,
                 publish=True,
             )
         else:
@@ -340,7 +370,7 @@ class MediaSessionStandbyMixin:
         if context.listening_capture_hold or deadline is None or time.monotonic() <= deadline:
             return
         phase = context.runtime.interaction_phase
-        if phase not in (InteractionPhase.LISTENING, InteractionPhase.USER_SPEAKING):
+        if phase is not InteractionPhase.LISTENING:
             return
         self._latch_listening_capture(context)
 
@@ -381,6 +411,8 @@ class MediaSessionStandbyMixin:
             # particular, an open VAD turn must not consume the owner's
             # post-reply window while its endpoint is still pending.
             self._pause_owner_silence_timer(context)
+            if phase == "speaking":
+                context.listening_capture_deadline = None
 
     def _finish_owner_silence_turn(
         self,

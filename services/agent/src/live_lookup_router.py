@@ -57,6 +57,7 @@ async def resolve_live_lookup_needed(
     *,
     cache: dict[str, bool],
     semantic_resolver: Callable[[str], Awaitable[bool]] | None = None,
+    turn_key: str | None = None,
 ) -> bool:
     """Resolve once per normalized query; keyword hits skip the classifier."""
 
@@ -78,7 +79,9 @@ async def resolve_live_lookup_needed(
     if semantic_resolver is None:
         cache[compact] = False
         return False
-    return await resolve_shared(cache, compact, semantic_resolver, query)
+    return await resolve_shared(
+        cache, compact, semantic_resolver, query, turn_key=turn_key
+    )
 
 
 def start_live_lookup_verdict(
@@ -86,6 +89,7 @@ def start_live_lookup_verdict(
     *,
     cache: dict[str, bool],
     semantic_resolver: Callable[[str], Awaitable[bool]] | None,
+    turn_key: str | None = None,
 ) -> None:
     """Start the semantic verdict for a sentence that will probably be committed, and leave it in flight.
 
@@ -105,7 +109,7 @@ def start_live_lookup_verdict(
         or is_conversation_close_only(query)
     ):
         return
-    start_shared(cache, compact, semantic_resolver, query)
+    start_shared(cache, compact, semantic_resolver, query, turn_key=turn_key)
 
 
 def live_lookup_needed(

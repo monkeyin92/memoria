@@ -4,7 +4,7 @@
   "engine": "volcengine doubao-seed-tts-2.0",
   "sample_rate_hz": 24000,
   "schema_version": 1,
-  "synthesized_on": "2026-10-27",
+  "synthesized_on": "2026-10-31",
   "templates": [
     {
       "audio_sha256": "444674df638ea780550e8638242c1b812b81326e05fde0f99d798d46760f786e",
@@ -17,22 +17,32 @@
       "voice": "zh_female_shaoergushi_uranus_bigtts"
     },
     {
-      "audio_sha256": "b8ef53b1a99c0fb4e82f6a35f1e139ef67c15eeaa4bc9d44e0ffc4fce3e73455",
+      "audio_sha256": "f9128838a13907ebcf904bc127b604a036d8872e736dec89e326d8c0bcfbe920",
+      "content_id": "memoria-fixed-safety-crisis-self-escalation-v1",
+      "file": "crisis-self-escalation.wav",
+      "pcm_sha256": "916191cb1e18a3b89ed508ef994669c834642e08f797be6ab15bc8eef941ef1e",
+      "spoken_sha256": "6f380789a9a1c8568613f7a31844ec6f2c08504532cc1ab71e11c78397634911",
+      "synthesized_on": "2026-10-31",
+      "template_id": "crisis-self-escalation",
+      "voice": "zh_female_shaoergushi_uranus_bigtts"
+    },
+    {
+      "audio_sha256": "65f33a79956629b70718715436730491c5f5646d1a83f7e715b8f391f6470fed",
       "content_id": "memoria-fixed-safety-victim-support-v1-v1",
       "file": "victim-support-v1.wav",
-      "pcm_sha256": "908b75c12732cb71f175cf67cc39e25449ffb39ee921c87930ebe9637ebc3ea2",
-      "spoken_sha256": "0c4c801a67f29cbf2a5436d34b91ce2d9d1af2ae765dfec1ecbd93f694a81688",
-      "synthesized_on": "2026-10-27",
+      "pcm_sha256": "fd2e68f0559569c51124673bf13697723b848be89055c4cfc2a2aff5eff93454",
+      "spoken_sha256": "3404e8c84b5395309c0e7add19bfe4ae638ad1f8211975b8bfee586d80fc9ab1",
+      "synthesized_on": "2026-10-31",
       "template_id": "victim-support-v1",
       "voice": "zh_female_shaoergushi_uranus_bigtts"
     },
     {
-      "audio_sha256": "024f7a0fced8fe4b32c11c176826f1751ca7d1eb60351449d6e40cfc14d16199",
+      "audio_sha256": "8e518f967220ac440afc3d4ccd83132c0b05f0107d31b9706b78df2f0a26f12e",
       "content_id": "memoria-fixed-safety-support-other-v1-v1",
       "file": "support-other-v1.wav",
-      "pcm_sha256": "a2b52bde1a7f5715a07b588da46c9b4daddd77602e12a8c02aabbeda31b060fe",
-      "spoken_sha256": "8a969945c5e3634ede9055854edcaa13f9567757d057303898d7b1828f5eb873",
-      "synthesized_on": "2026-10-27",
+      "pcm_sha256": "29f966cac1df98366ad2d09f715de0ebf46f5a0e29119db61baa7e6732621da7",
+      "spoken_sha256": "f7c3a3bc3dcfa370869dfc7afda5f8cab245c7cd1c3b84fb6b093f254a64c4f3",
+      "synthesized_on": "2026-10-31",
       "template_id": "support-other-v1",
       "voice": "zh_female_shaoergushi_uranus_bigtts"
     },

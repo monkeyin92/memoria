@@ -14,6 +14,15 @@ from typing import Any, ClassVar
 import numpy as np
 from numpy.typing import NDArray
 
+from services.agent.src.voice_core.speech_end_denoise import (
+    ScoreWindow,
+    SpeechEndDenoiseScore,
+    _ScoreIdle,
+    add_shift_mean,
+    freeze_utterance,
+    mark_utterance,
+)
+
 logger = logging.getLogger(__name__)
 
 _MODEL_SOURCE_COMMIT = "1de1f15a8b5b7e1c44905618ff2ef70ca8277fbc"
@@ -88,6 +97,7 @@ class DeepDenoiser:
         self._input_names_2: tuple[str, str] = ("", "")
         self._states_1 = np.zeros((1, 2, 128, 2), dtype=np.float32)
         self._states_2 = np.zeros((1, 2, 128, 2), dtype=np.float32)
+        self._score_window: ScoreWindow = _ScoreIdle()
         self._in_buffer = np.zeros(_BLOCK_LEN, dtype=np.float32)
         self._out_buffer = np.zeros(_BLOCK_LEN, dtype=np.float32)
         self._pending_input = np.empty(0, dtype=np.float32)
@@ -215,6 +225,8 @@ class DeepDenoiser:
             },
         )
         self._states_1 = np.asarray(output_1[1], dtype=np.float32)
+        bin_mean = float(np.asarray(output_1[0], dtype=np.float64).mean())
+        self._score_window = add_shift_mean(self._score_window, bin_mean)
         estimated = magnitude * np.asarray(output_1[0]) * np.exp(1j * phase)
         block = np.fft.irfft(estimated).reshape(1, 1, -1).astype(np.float32)
 
@@ -240,6 +252,15 @@ class DeepDenoiser:
         self._out_buffer.fill(0)
         self._pending_input = np.empty(0, dtype=np.float32)
         self._ready_output = np.zeros(_INITIAL_OUTPUT_DELAY, dtype=np.float32)
+        self._score_window = _ScoreIdle()
+
+    def mark_utterance_start(self) -> None:
+        self._score_window = mark_utterance(self._score_window)
+
+    def speech_end_score(self) -> SpeechEndDenoiseScore | None:
+        window, score = freeze_utterance(self._score_window)
+        self._score_window = window
+        return score
 
 
 __all__ = [

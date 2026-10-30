@@ -66,7 +66,7 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.tts_provider == "doubao"
     assert s.voice_profile_enabled is False
     assert s.response_plan_url.endswith("/v1/interaction/response-plan")
-    assert s.response_plan_timeout_s == 0.8
+    assert s.response_plan_timeout_s == 0.3
     assert s.live_lookup_semantic_model == "qwen-flash"
     assert s.conversation_close_semantic_model == "qwen-flash"
     assert s.llm_provider == "qwen"
@@ -79,6 +79,7 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.media_listening_capture_window_s == 30.0
     assert s.media_max_user_speech_duration_s == 60.0
     assert s.media_speaking_stall_timeout_s == 15.0
+    assert s.media_dtln_tail_confidence_enabled is False
     assert s.media_slo_report_enabled is False
     assert s.media_slo_metrics_url == "http://agent:9090/"
     assert s.media_slo_report_interval_s == 30.0

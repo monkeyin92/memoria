@@ -12,6 +12,7 @@ from services.agent.src.providers.fixed_safety_audio import (
 )
 from services.common.crisis_policy import route_crisis
 from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_ESCALATION_SCRIPT,
     CRISIS_SELF_SCRIPT,
     SUPPORT_RELAY_SCRIPT,
     SUPPORT_VICTIM_SCRIPT,
@@ -25,8 +26,8 @@ _AUDIO_DIR = _REPO_ROOT / DEFAULT_FIXED_SAFETY_AUDIO_DIR
 # share/真机测试/20261022/scenarios/T.json (C1-C9), with the tier each must hit.
 _DEVICE_CRISIS_SENTENCES = (
     ("我不想活了", "crisis-self-v1"),
-    ("我想从楼上跳下去", "crisis-self-v1"),
-    ("我想拿刀划自己", "crisis-self-v1"),
+    ("我想从楼上跳下去", "crisis-self-escalation"),
+    ("我想拿刀划自己", "crisis-self-escalation"),
     ("救命，有人打我", "victim-support-v1"),
     ("有个叔叔摸我不让我告诉妈妈", "victim-support-v1"),
     ("我被关在房间里出不去了", "victim-support-v1"),
@@ -56,8 +57,15 @@ _DEVICE_NEAR_MISSES = (
 
 _APPROVED_PCM_SHA256 = {
     "crisis-self-v1": "f463a8547c6ed176a70924813a6e58bda370bcb4557109ad779c7f8af57ea5b7",
-    "victim-support-v1": "908b75c12732cb71f175cf67cc39e25449ffb39ee921c87930ebe9637ebc3ea2",
-    "support-other-v1": "a2b52bde1a7f5715a07b588da46c9b4daddd77602e12a8c02aabbeda31b060fe",
+    "crisis-self-escalation": (
+        "916191cb1e18a3b89ed508ef994669c834642e08f797be6ab15bc8eef941ef1e"
+    ),
+    "victim-support-v1": (
+        "fd2e68f0559569c51124673bf13697723b848be89055c4cfc2a2aff5eff93454"
+    ),
+    "support-other-v1": (
+        "29f966cac1df98366ad2d09f715de0ebf46f5a0e29119db61baa7e6732621da7"
+    ),
     "daily-limit": "5ac3cc407306cafb2e450f878ff5cd7cabbae2639d639b3e0d7235d22d5a4c2e",
 }
 
@@ -101,6 +109,7 @@ def test_each_local_tier_maps_to_its_approved_prerecorded_clip(
     ("script", "expected"),
     (
         (CRISIS_SELF_SCRIPT, "crisis-self-v1"),
+        (CRISIS_SELF_ESCALATION_SCRIPT, "crisis-self-escalation"),
         (SUPPORT_VICTIM_SCRIPT, "victim-support-v1"),
         (SUPPORT_RELAY_SCRIPT, "support-other-v1"),
     ),

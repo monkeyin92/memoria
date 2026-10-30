@@ -218,7 +218,7 @@ class MediaAudioIngress:
             return False
         runtime = getattr(context, "runtime", None)
         phase = getattr(runtime, "interaction_phase", None)
-        if phase not in (InteractionPhase.LISTENING, InteractionPhase.USER_SPEAKING):
+        if phase is not InteractionPhase.LISTENING:
             return False
         deadline = getattr(context, "listening_capture_deadline", None)
         if isinstance(deadline, bool) or not isinstance(deadline, (int, float)):

@@ -7,12 +7,12 @@ from typing import Any
 
 import pytest
 from services.common.crisis_policy import route_crisis
-from services.control_api.app.routes.interaction import _route_crisis_with_bounded_evidence
+from services.control_api.app.crisis_routing import route_crisis_with_bounded_evidence
 
 _DEVICE_CRISIS_SENTENCES = (
     ("我不想活了", "crisis-self-v1"),
-    ("我想从楼上跳下去", "crisis-self-v1"),
-    ("我想拿刀划自己", "crisis-self-v1"),
+    ("我想从楼上跳下去", "crisis-self-escalation"),
+    ("我想拿刀划自己", "crisis-self-escalation"),
     ("救命，有人打我", "victim-support-v1"),
     ("有个叔叔摸我不让我告诉妈妈", "victim-support-v1"),
     ("我被关在房间里出不去了", "victim-support-v1"),
@@ -34,7 +34,7 @@ def _request() -> Any:
 async def test_control_api_crisis_route_matches_the_local_tier(
     query: str, expected: str
 ) -> None:
-    control_api = await _route_crisis_with_bounded_evidence(_request(), query)
+    control_api = await route_crisis_with_bounded_evidence(_request(), query)
     local = route_crisis(query)
 
     assert control_api.script is not None

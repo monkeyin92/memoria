@@ -54,6 +54,7 @@ from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
 from services.agent.src.voice_core.media_session_types import (
+    ASREmptySegmentEvidence,
     DelegationOutputClaim,
     DelegationOutputState,
     owned_delegation_holds_turn,
@@ -227,6 +228,11 @@ class MediaSessionProjectionMixin:
         ) -> bool: ...
 
         def _pause_owner_silence_timer(self, context: _MediaVoiceSession) -> None: ...
+
+        @staticmethod
+        def _clear_evidence_less_floor_hold(context: _MediaVoiceSession) -> None: ...
+
+        def _schedule_output_retry(self, context: _MediaVoiceSession) -> None: ...
 
         async def _request_device_standby(
             self, context: _MediaVoiceSession, *, reason: str
@@ -433,6 +439,32 @@ class MediaSessionProjectionMixin:
             return False
         return await self._wait_for_output_idle(context, wait_for_start=True)
 
+    @staticmethod
+    def _empty_segment_needs_audible_fallback(context: _MediaVoiceSession) -> bool:
+        """True when ASR heard real audio but still finished the segment empty.
+
+        The provider has already retried the backup chain by the time the tail
+        expires. A provider fault or a truly silent segment keeps the old
+        silent-discard behaviour; speech the vendor dropped must not.
+        """
+
+        evidence = getattr(context.provider, "last_empty_segment_evidence", None)
+        if callable(evidence):
+            evidence = evidence()
+        return bool(
+            isinstance(evidence, ASREmptySegmentEvidence)
+            and evidence.had_speech
+            and not evidence.provider_failed
+        )
+
+    def _nudge_empty_turn(self, context: _MediaVoiceSession, *, endpoint_sample: int) -> None:
+        """Prompt after an empty turn, bypassing owner authority only for unheard speech."""
+
+        self._nudge_missed_hearing(
+            context,
+            endpoint_sample=endpoint_sample,
+            require_owner_evidence=not self._empty_segment_needs_audible_fallback(context),
+        )
 
     def _owner_speech_is_established(self, context: _MediaVoiceSession) -> bool:
         """True only when this turn carries verified owner authority.
@@ -457,6 +489,7 @@ class MediaSessionProjectionMixin:
         context: _MediaVoiceSession,
         *,
         endpoint_sample: int | None = None,
+        require_owner_evidence: bool = True,
     ) -> None:
         if context.closed or context.standby_requested:
             return
@@ -477,7 +510,13 @@ class MediaSessionProjectionMixin:
         )
         if effective_endpoint <= 0:
             return
-        if not self._owner_speech_is_established(context):
+        if not require_owner_evidence:
+            logger.info(
+                "media empty turn fallback requested session=%s endpoint=%s",
+                context.identity.session_id,
+                effective_endpoint,
+            )
+        if require_owner_evidence and not self._owner_speech_is_established(context):
             return
         now = time.monotonic()
         last = context.last_missed_hearing_nudge_at
@@ -623,6 +662,23 @@ class MediaSessionProjectionMixin:
         return await self._enqueue_output_work(
             context,
             _OutputWork(acknowledgement, fence, tail_pcm_s16le=tail_pcm_s16le),
+        )
+
+    def _resume_capped_output(self, context: _MediaVoiceSession) -> None:
+        """Speak a queued answer once the floor cap closes with no pending turn.
+
+        A committed live-lookup turn clears its pending state, so a later
+        statement with no text evidence leaves queued output behind a closed
+        floor that nothing would ever reopen.  The cap is the only waiter
+        left; opening the floor here lets the admitted answer play.
+        """
+
+        context.runtime.open_assistant_floor(cause="evidence_less_hold_capped")
+        self._clear_evidence_less_floor_hold(context)
+        self._schedule_output_retry(context)
+        logger.warning(
+            "media evidence-less floor hold capped session=%s queue_resumed=true",
+            context.identity.session_id,
         )
 
     async def _release_media_delegation_claim(

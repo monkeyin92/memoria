@@ -14,6 +14,7 @@ from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
 from services.agent.src.voice_core.speech_timeline import SegmentKind, SpeechSegment
 from services.agent.tests.unit.media_session_support import (
     FakeMediaProvider,
+    _accept_media_asr_final,
     _connect_vad_segment,
     _device_identity,
     open_bridge_connection,
@@ -96,6 +97,17 @@ def _spy_states(monkeypatch: pytest.MonkeyPatch, runtime: object) -> list[str]:
     return published
 
 
+async def _cancel_scheduled_endpoint(context: object) -> None:
+    task = context.turn_endpoint_task
+    if task is not None:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    handle = context.pending.turn_endpoint_timeout_handle
+    if handle is not None:
+        handle.cancel()
+        context.pending.turn_endpoint_timeout_handle = None
+
+
 async def _ingested(provider: _CaptureProvider, count: int) -> None:
     for _ in range(50):
         if len(provider.frames) >= count:
@@ -148,6 +160,63 @@ async def test_held_capture_ignores_vad_end_without_opening_an_empty_turn(
         assert context.listening_capture_hold is True
         assert registry.context(identity.session_id) is context.runtime
         assert not [record for record in caplog.records if "media_asr_boundary" in record.message]
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hold_reason", ["expired", "reclaimed"])
+async def test_vad_start_cannot_reopen_a_held_capture(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    hold_reason: str,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        if hold_reason == "expired":
+            clock["now"] = 1_031.0
+            await registry._audio_ingress.accept(context, _frame(identity, 1, 48_000))
+        else:
+            registry.hold_listening_capture_until_tap(context)
+        assert context.listening_capture_hold is True
+        assert context.runtime.interaction_phase is InteractionPhase.CONNECTING
+        published = _spy_states(monkeypatch, context.runtime)
+        session = registry.bridge._connections[identity.session_id].session
+
+        with caplog.at_level(logging.INFO):
+            await registry.on_speech_segment(
+                session,
+                replace(
+                    _connect_vad_segment(identity, sample=64_000, segment_id="held-rewake"),
+                    capture_end_sample=65_280,
+                ),
+            )
+
+        assert context.listening_capture_hold is True
+        assert context.runtime.interaction_phase is InteractionPhase.CONNECTING
+        assert context.listening_capture_deadline is None
+        assert context.pending.turn_start_sample is None
+        assert "listening" not in published
+        assert provider.frames == []
+        assert [
+            record for record in caplog.records if "during listening capture hold" in record.message
+        ]
+
+        await registry.on_client_event(
+            session,
+            MediaEnvelope.create(
+                type="listening.resume",
+                event_id="tap-after-noise",
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                sequence=2,
+                payload={"wake_sample": 80_000},
+            ),
+            0,
+        )
+        assert context.listening_capture_hold is False
+        assert published[-1] == "listening"
     finally:
         await registry.finalize_session(identity.session_id)
 
@@ -465,5 +534,471 @@ async def test_accepted_speech_restarts_the_thirty_second_capture_window(
         assert context.listening_capture_hold is True
         assert context.runtime.interaction_phase is not InteractionPhase.LISTENING
         assert registry.context(identity.session_id) is context.runtime
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_capture_window_does_not_close_on_a_child_mid_sentence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        session = registry.bridge._connections[identity.session_id].session
+        clock["now"] = 1_028.0
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=48_000, segment_id="mid-sentence"),
+                capture_end_sample=49_280,
+            ),
+        )
+        assert context.runtime.interaction_phase is InteractionPhase.USER_SPEAKING
+
+        clock["now"] = 1_031.0
+        await registry._audio_ingress.accept(context, _frame(identity, 1, 49_281))
+        await _ingested(provider, 1)
+        assert context.listening_capture_hold is False
+        assert context.runtime.interaction_phase is InteractionPhase.USER_SPEAKING
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_empty_asr_retire_reopens_a_capture_held_by_tap(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        session = registry.bridge._connections[identity.session_id].session
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=48_000, segment_id="empty-start"),
+                capture_end_sample=49_280,
+            ),
+        )
+        assert context.pending.turn_start_sample == 48_000
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=64_000, segment_id="empty-end"),
+                final=True,
+                voiced_end_sample=64_000,
+            ),
+        )
+        endpoint = context.pending.turn_endpoint_sample
+        assert endpoint == 64_000
+        grace = context.turn_endpoint_task
+        if grace is not None:
+            grace.cancel()
+            await asyncio.gather(grace, return_exceptions=True)
+        timeout_handle = context.pending.turn_endpoint_timeout_handle
+        if timeout_handle is not None:
+            timeout_handle.cancel()
+            context.pending.turn_endpoint_timeout_handle = None
+
+        clock["now"] = 1_031.0
+        registry.hold_listening_capture_until_tap(context)
+        assert context.listening_capture_hold is True
+        with caplog.at_level(logging.INFO):
+            await registry._expire_endpoint_tail(
+                identity.session_id,
+                identity.stream_epoch,
+                endpoint,
+            )
+            for _ in range(10):
+                await asyncio.sleep(0)
+            next_sample = 80_000
+            await registry.on_speech_segment(
+                session,
+                replace(
+                    _connect_vad_segment(
+                        identity, sample=next_sample, segment_id="after-empty"
+                    ),
+                    capture_end_sample=next_sample + 1_280,
+                ),
+            )
+
+        assert context.pending.turn_start_sample == next_sample
+        await registry._audio_ingress.accept(
+            context, _frame(identity, 2, next_sample + 1)
+        )
+        await _ingested(provider, 1)
+        assert context.listening_capture_hold is False
+        assert not [
+            record
+            for record in caplog.records
+            if "during listening capture hold" in record.message
+        ]
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_tail_timeout_rescues_the_final_that_arrived_after_the_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Soak 20261030-134232 t003: the final landed past the endpoint.
+
+    The endpoint commit projected nothing, then the tail timeout discarded the turn.
+    """
+
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        session = registry.bridge._connections[identity.session_id].session
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=618_240, segment_id="t003-start"),
+                capture_end_sample=619_520,
+            ),
+        )
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=843_520, segment_id="t003-end"),
+                final=True,
+                voiced_end_sample=843_520,
+            ),
+        )
+        endpoint = context.pending.turn_endpoint_sample
+        assert endpoint == 843_520
+        await _cancel_scheduled_endpoint(context)
+
+        await _accept_media_asr_final(
+            registry,
+            identity,
+            sentence_id="t003-final",
+            start_sample=865_632,
+            end_sample=907_712,
+            text="天空为什么是蓝色的？",
+        )
+        assert context.pending.turn_end_sample == 907_712
+        await _cancel_scheduled_endpoint(context)
+        assert await registry._commit_pending_turn(context) == "empty_media_turn"
+
+        await _cancel_scheduled_endpoint(context)
+        published = _spy_states(monkeypatch, context.runtime)
+        clock["now"] = 1_031.0
+        await registry._expire_endpoint_tail(
+            identity.session_id,
+            identity.stream_epoch,
+            endpoint,
+        )
+        for _ in range(10):
+            await asyncio.sleep(0)
+
+        assert [
+            turn.content
+            for turn in context.runtime.orchestrator.context.turns
+            if turn.role == "user"
+        ] == ["天空为什么是蓝色的？"]
+        assert context.listening_capture_hold is False
+        assert "listening_closed" not in published
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_tail_timeout_keeps_the_final_of_a_rotated_provider_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Soak 20261030-202305 t022/t026: the next VAD edge already started a new
+    provider task, so the finished segment's final must not be dropped as stale
+    and take the whole turn with it."""
+
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        session = registry.bridge._connections[identity.session_id].session
+        context.asr.start_task()
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=618_240, segment_id="t026-start"),
+                capture_end_sample=619_520,
+            ),
+        )
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=843_520, segment_id="t026-end"),
+                final=True,
+                voiced_end_sample=843_520,
+            ),
+        )
+        endpoint = context.pending.turn_endpoint_sample
+        assert endpoint == 843_520
+        await _cancel_scheduled_endpoint(context)
+        context.asr.start_task()
+
+        await _accept_media_asr_final(
+            registry,
+            identity,
+            sentence_id="t026-final",
+            start_sample=700_000,
+            end_sample=800_000,
+            text="我好生气，妈妈不让我玩游戏。",
+            task_epoch=1,
+        )
+        await _cancel_scheduled_endpoint(context)
+        clock["now"] = 1_031.0
+        await registry._expire_endpoint_tail(
+            identity.session_id,
+            identity.stream_epoch,
+            endpoint,
+        )
+        for _ in range(10):
+            await asyncio.sleep(0)
+
+        assert [
+            turn.content
+            for turn in context.runtime.orchestrator.context.turns
+            if turn.role == "user"
+        ] == ["我好生气，妈妈不让我玩游戏。"]
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_capture_window_expiring_during_an_empty_turn_closes_listening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        session = registry.bridge._connections[identity.session_id].session
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=48_000, segment_id="expiring-start"),
+                capture_end_sample=49_280,
+            ),
+        )
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=64_000, segment_id="expiring-end"),
+                final=True,
+                voiced_end_sample=64_000,
+            ),
+        )
+        endpoint = context.pending.turn_endpoint_sample
+        assert endpoint == 64_000
+        grace = context.turn_endpoint_task
+        if grace is not None:
+            grace.cancel()
+            await asyncio.gather(grace, return_exceptions=True)
+        timeout_handle = context.pending.turn_endpoint_timeout_handle
+        if timeout_handle is not None:
+            timeout_handle.cancel()
+            context.pending.turn_endpoint_timeout_handle = None
+
+        published = _spy_states(monkeypatch, context.runtime)
+        clock["now"] = 1_031.0
+        await registry._expire_endpoint_tail(
+            identity.session_id,
+            identity.stream_epoch,
+            endpoint,
+        )
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert context.listening_capture_hold is True
+        assert published[-1] == "listening_closed"
+
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=80_000, segment_id="after-close"),
+                capture_end_sample=81_280,
+            ),
+        )
+
+        assert context.listening_capture_hold is True
+        assert context.runtime.interaction_phase is InteractionPhase.CONNECTING
+        assert context.pending.turn_start_sample is None
+        assert provider.frames == []
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_long_playout_opens_a_fresh_capture_window_for_the_next_vad(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        context.runtime.barge_in_enabled = False
+        clock["now"] = 1_010.0
+        registry._finish_owner_silence_turn(context, accepted=True)
+        await context.runtime.on_assistant_speaking("reply")
+        assert context.runtime.interaction_phase is InteractionPhase.SPEAKING
+        assert context.runtime.playback_overlap_input_blocked() is True
+
+        clock["now"] = 1_050.0
+        session = registry.bridge._connections[identity.session_id].session
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=48_000, segment_id="during-story"),
+                capture_end_sample=49_280,
+            ),
+        )
+        assert context.pending.turn_start_sample is None
+        assert context.runtime.interaction_phase is InteractionPhase.SPEAKING
+        assert context.listening_capture_hold is False
+        assert context.standby_requested is False
+
+        context.runtime._voice_floor.update(assistant_speaking=False)
+        context.runtime.set_interaction_phase(
+            InteractionPhase.LISTENING,
+            cause="media_playback_ack",
+        )
+        for _ in range(8):
+            await asyncio.sleep(0)
+        assert context.listening_capture_hold is False
+        assert context.runtime.interaction_phase is InteractionPhase.LISTENING
+
+        clock["now"] = 1_055.0
+        next_sample = 96_000
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=next_sample, segment_id="after-story"),
+                capture_end_sample=next_sample + 1_280,
+            ),
+        )
+        assert context.pending.turn_start_sample == next_sample
+        await registry._audio_ingress.accept(context, _frame(identity, 1, next_sample + 1))
+        await _ingested(provider, 1)
+        assert context.listening_capture_hold is False
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("noise_after_reply_s", [None, 27.6])
+async def test_listening_closes_within_sixty_seconds_of_a_silent_room_after_the_reply(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    noise_after_reply_s: float | None,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    monkeypatch.setattr(
+        media_session_standby.time, "monotonic_ns", lambda: int(clock["now"] * 1e9)
+    )
+    caplog.set_level(logging.INFO, logger=media_session_standby.__name__)
+    try:
+        session = registry.bridge._connections[identity.session_id].session
+        context.runtime.barge_in_enabled = False
+        await context.runtime.on_assistant_speaking("reply")
+        clock["now"] = 1_010.0
+        reply_end = clock["now"]
+        context.runtime._voice_floor.update(
+            assistant_speaking=False,
+            last_playback_completed_ns=int(reply_end * 1e9),
+        )
+        context.runtime.set_interaction_phase(
+            InteractionPhase.LISTENING,
+            cause="media_playback_ack",
+        )
+        for _ in range(8):
+            await asyncio.sleep(0)
+        closed_at: list[float] = []
+        original = context.runtime.publish_assistant_state
+
+        def _publish(state: str, **kwargs: object) -> object:
+            if state == "listening_closed":
+                closed_at.append(clock["now"])
+            return original(state, **kwargs)
+
+        monkeypatch.setattr(context.runtime, "publish_assistant_state", _publish)
+
+        if noise_after_reply_s is not None:
+            clock["now"] = reply_end + noise_after_reply_s
+            await registry.on_speech_segment(
+                session,
+                replace(
+                    _connect_vad_segment(identity, sample=48_000, segment_id="noise"),
+                    capture_end_sample=49_280,
+                ),
+            )
+            clock["now"] += 1.0
+            await registry.on_speech_segment(
+                session,
+                replace(
+                    _connect_vad_segment(identity, sample=64_000, segment_id="noise-end"),
+                    final=True,
+                    voiced_end_sample=64_000,
+                ),
+            )
+            endpoint = context.pending.turn_endpoint_sample
+            assert endpoint == 64_000
+            clock["now"] += 6.0
+            await registry._expire_endpoint_tail(
+                identity.session_id, identity.stream_epoch, endpoint
+            )
+            for _ in range(10):
+                await asyncio.sleep(0)
+
+        sample = 80_000
+        while not closed_at and clock["now"] < reply_end + 90.0:
+            clock["now"] += 1.0
+            sample += 16_000
+            await registry._audio_ingress.accept(context, _frame(identity, sample, sample))
+
+        assert closed_at, "listening_closed never published"
+        assert closed_at[0] - reply_end <= 60.0
+        assert [r.getMessage() for r in caplog.records if "listening closed" in r.getMessage()] == [
+            f"media listening closed session={identity.session_id} "
+            f"silence_since_reply_s={closed_at[0] - reply_end:.1f}"
+        ]
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_noise_after_listening_closed_leaves_the_device_on_standby(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _clock()
+    registry, context, _provider, identity = await _open(monkeypatch, clock)
+    try:
+        published = _spy_states(monkeypatch, context.runtime)
+        clock["now"] = 1_031.0
+        await registry._audio_ingress.accept(context, _frame(identity, 1, 32_000))
+        assert published[-1] == "listening_closed"
+
+        session = registry.bridge._connections[identity.session_id].session
+        clock["now"] = 1_040.0
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=48_000, segment_id="noise"),
+                capture_end_sample=49_280,
+            ),
+        )
+        clock["now"] += 1.0
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=64_000, segment_id="noise-end"),
+                final=True,
+                voiced_end_sample=64_000,
+            ),
+        )
+
+        assert context.listening_capture_hold is True
+        assert context.runtime.interaction_phase is InteractionPhase.CONNECTING
+        assert context.pending.turn_start_sample is None
+        assert context.pending.turn_endpoint_sample is None
+        assert published[-1] == "listening_closed"
     finally:
         await registry.finalize_session(identity.session_id)

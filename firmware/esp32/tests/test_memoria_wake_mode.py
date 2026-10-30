@@ -154,8 +154,10 @@ def test_deep_sleep_reset_arms_offline_reconnect_before_the_battery_tick() -> No
     assert "network_was_online_" not in source
     assert "OnNetworkSample(" in source
     handler = _function(source, "void HandleScreenTouchRelease(std::uint32_t hold_ms)")
+    dispatch = _function(source, "void DispatchTapWakeAction(")
     assert "OnDeepSleepWake(" not in handler
-    assert handler.index("TapWakeActionFor") < handler.index("EnterWifiConfigMode()")
+    assert "EnterWifiConfigMode()" in dispatch
+    assert handler.index("TapWakeActionFor") < handler.index("DispatchTapWakeAction(")
     overlay = FIRMWARE_ROOT / "overlay"
     hits = [
         path.relative_to(overlay).as_posix()
@@ -169,9 +171,11 @@ def test_deep_sleep_reset_arms_offline_reconnect_before_the_battery_tick() -> No
 def test_board_tap_handler_uses_power_policy_and_never_ends_the_conversation() -> None:
     source = (BOARD_DIR / "memoria_esp_vocat.cc").read_text(encoding="utf-8")
     handler = _function(source, "void HandleScreenTouchRelease(std::uint32_t hold_ms)")
+    dispatch = _function(source, "void DispatchTapWakeAction(")
     assert "TapWakeActionFor" in handler
-    assert 'PlayLocalAssetClip("wo_zai_ne.ogg")' in handler
-    assert 'app.WakeWordInvoke("screen_tap")' in handler
+    assert 'DispatchTapWakeAction(action, "screen_tap"' in handler
+    assert 'PlayLocalAssetClip("wo_zai_ne.ogg")' in dispatch
+    assert "WakeWordInvoke(wake_source)" in dispatch
     assert "offline_menu_" in source
     assert "HoldDurationMsOnRelease" in source
     # 2026-10-21 field test: a tap while the companion spoke did nothing. The
@@ -188,7 +192,8 @@ def test_board_tap_handler_uses_power_policy_and_never_ends_the_conversation() -
     # It never ends the conversation or closes the transport.
     for forbidden in ("StopListening", "ToggleChatState", "CloseAudioChannel"):
         assert forbidden not in handler, f"a tap must not call {forbidden}"
-    resume = handler.split("kResumeListening", 1)[1].split("kIgnore", 1)[0]
+        assert forbidden not in dispatch, f"a tap action must not call {forbidden}"
+    resume = dispatch.split("kResumeListening", 1)[1].split("kIgnore", 1)[0]
     assert 'PlayLocalAssetClip("wo_zai_ne.ogg")' in resume
     assert "SendListeningResume()" in resume
     assert "WakeWordInvoke" not in resume

@@ -63,6 +63,11 @@ class OutputState:
     delegation_output_claims: dict[GenerationFence, DelegationOutputClaim] = field(
         default_factory=dict
     )
+    # Uplink-capture position when a reply's first frame reached the device,
+    # with the fence it belongs to.  A final recorded before it cannot be the
+    # owner answering that reply; it is a tail from audio the previous turn
+    # already consumed.
+    playback_started: tuple[GenerationFence, int] | None = None
 
     def begin_turn_output(self, fence: GenerationFence) -> bool:
         """Make ``fence`` the playback generation and zero the per-response counters.
@@ -110,6 +115,9 @@ class MediaVoiceSessionState:
     pending: PendingTurn = field(default_factory=PendingTurn)
     stream_epoch: int = 0
     floor_epoch: int = 0
+    # Decided at session open from the reply-text switch and the test-subject
+    # whitelist. False for every real child session.
+    reply_text_debug: bool = False
     turn_started_ns: int | None = None
     # P0-04 D3: when the session began (monotonic) for a minor's time limit,
     # and whether it heard the crisis reply (never cut short afterwards).

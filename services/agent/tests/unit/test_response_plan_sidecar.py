@@ -310,7 +310,7 @@ def test_the_real_client_declares_that_it_echoes_the_epoch() -> None:
 
 @pytest.mark.asyncio
 async def test_the_real_client_puts_the_wider_bound_on_the_wire_only_when_asked() -> None:
-    """``timeout_s`` reaches httpx for the sidecar request; a plain ``fetch`` keeps the configured 0.8 s."""
+    """``timeout_s`` reaches httpx for the sidecar request; a plain ``fetch`` keeps the configured 0.3 s."""
 
     import httpx
     from services.agent.src.response_planner_client import ResponsePlannerClientConfig
@@ -342,5 +342,5 @@ async def test_the_real_client_puts_the_wider_bound_on_the_wire_only_when_asked(
         )
 
     assert plain.reason == wide.reason == "http_500"
-    assert seen[0]["read"] == config.timeout_s == 0.8
+    assert seen[0]["read"] == config.timeout_s == 0.3
     assert seen[1]["read"] == 3.0

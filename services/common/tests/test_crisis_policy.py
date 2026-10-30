@@ -8,9 +8,12 @@ from services.common.crisis_policy import (
     crisis_semantic_candidate,
     fixed_safety_reply_log_fields,
     log_fixed_safety_reply,
+    more_protective_local_script,
+    prior_self_crisis_hits,
     route_crisis,
 )
 from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_ESCALATION_SCRIPT,
     CRISIS_SELF_SCRIPT,
     SUPPORT_RELAY_SCRIPT,
     SUPPORT_VICTIM_SCRIPT,
@@ -28,6 +31,117 @@ def test_explicit_self_crisis_always_uses_fixed_script_and_notification() -> Non
     assert route.attempt_push is True
     assert route.script is CRISIS_SELF_SCRIPT
     assert route.evidence_source == "deterministic"
+
+
+def test_first_self_crisis_keeps_the_first_round_script() -> None:
+    route = route_crisis("我不想活了")
+
+    assert route.script is CRISIS_SELF_SCRIPT
+    assert route.evidence_source == "deterministic"
+
+
+def test_second_self_harm_mention_in_the_same_session_escalates() -> None:
+    prior_hits = prior_self_crisis_hits("好烦，不想活了", ["我不想活了"])
+
+    route = route_crisis("好烦，不想活了", prior_self_crisis_hits=prior_hits)
+
+    assert prior_hits == 1
+    assert route.action == "crisis_support"
+    assert route.notify_guardian is True
+    assert route.attempt_push is True
+    assert route.script is CRISIS_SELF_ESCALATION_SCRIPT
+
+
+def test_first_hit_naming_a_method_escalates() -> None:
+    for query in (
+        "我准备跳楼",
+        "我已经割腕了",
+        "我不想活了，我买了安眠药",
+        "我想拿刀划自己",
+        "我想从楼上跳下去",
+    ):
+        route = route_crisis(query)
+        assert route.script is CRISIS_SELF_ESCALATION_SCRIPT, query
+
+
+def test_first_hit_saying_now_or_soon_escalates() -> None:
+    for query in (
+        "我马上要自杀",
+        "我现在就去死",
+        "我正在自杀",
+        "我现在好想死",
+        "我今晚就想死",
+        "我今晚好想死",
+        "我今晚就不想活了",
+        "我现在不想活了",
+        "我今晚就死",
+        "我今晚就不活了",
+    ):
+        route = route_crisis(query)
+        assert route.script is CRISIS_SELF_ESCALATION_SCRIPT, query
+
+
+def test_vague_first_self_harm_mention_stays_first_round() -> None:
+    for query in (
+        "我不想活了",
+        "好烦，不想活了",
+        "我不想活了，我同学跳楼了",
+        "我今天烦死了，不想活了",
+        "我已经很想死了",
+        "我没有准备自杀",
+    ):
+        route = route_crisis(query)
+        assert route.script is CRISIS_SELF_SCRIPT, query
+
+
+def test_ordinary_emotion_has_no_fixed_script() -> None:
+    route = route_crisis("我现在很难受")
+
+    assert route.action == "none"
+    assert route.script is None
+
+
+def test_other_tiers_ignore_prior_self_crisis_hits() -> None:
+    victim = route_crisis("有人正在打我", prior_self_crisis_hits=1)
+    relay = route_crisis("我朋友说他不想活了", prior_self_crisis_hits=1)
+
+    assert victim.script is SUPPORT_VICTIM_SCRIPT
+    assert relay.script is SUPPORT_RELAY_SCRIPT
+
+
+def test_new_session_has_no_prior_self_crisis_hits() -> None:
+    assert (
+        route_crisis("我不想活了", prior_self_crisis_hits=0).script
+        is CRISIS_SELF_SCRIPT
+    )
+
+
+def test_more_protective_local_script_upgrades_a_second_hit() -> None:
+    assert (
+        more_protective_local_script(
+            "我不想活了", CRISIS_SELF_SCRIPT, prior_self_crisis_hits=1
+        )
+        is CRISIS_SELF_ESCALATION_SCRIPT
+    )
+    assert more_protective_local_script("我不想活了", CRISIS_SELF_SCRIPT) is None
+
+
+def test_ordinary_knife_context_is_not_a_crisis() -> None:
+    route = route_crisis("我拿着刀切水果")
+
+    assert route.action == "none"
+    assert route.script is None
+
+
+def test_second_self_crisis_with_semantic_evidence_escalates() -> None:
+    route = route_crisis(
+        "我撑不下去了",
+        semantic_evidence=CrisisSemanticVerdict.SELF_CRISIS,
+        prior_self_crisis_hits=1,
+    )
+
+    assert route.script is CRISIS_SELF_ESCALATION_SCRIPT
+    assert route.evidence_source == "semantic_evidence"
 
 
 def test_victim_support_tier_notifies_and_attempts_push() -> None:

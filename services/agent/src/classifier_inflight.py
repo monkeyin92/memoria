@@ -51,19 +51,39 @@ class _Flight:
 
 
 class ClassifierCache(dict[str, bool]):
-    """Finished verdicts by normalized text, plus the call in flight for each text."""
+    """Finished verdicts by normalized text, plus the call in flight for each text.
+
+    ``turn_verdicts`` and ``turn_flights`` do the same per turn: the first sentence of the turn answers for the
+    turn, so a later projection of the same speech joins or reuses it instead of asking the cloud again.
+    """
+
+    _TURN_LIMIT = 64
 
     def __init__(self, kind: str = "") -> None:
         super().__init__()
         self.kind = kind  # which classifier this is, for the timing log lines
         self.inflight: dict[str, _Flight] = {}
+        self.turn_verdicts: dict[str, bool] = {}
+        self.turn_flights: dict[str, _Flight] = {}
         self._background: set[asyncio.Task[bool]] = set()
 
-    def _open(self, key: str, driver: asyncio.Task[bool] | None) -> asyncio.Future[bool | None]:
+    def _open(
+        self,
+        key: str,
+        driver: asyncio.Task[bool] | None,
+        turn_key: str | None,
+    ) -> asyncio.Future[bool | None]:
         future: asyncio.Future[bool | None] = asyncio.get_running_loop().create_future()
         future.add_done_callback(_retrieve)  # a failure nobody joined must not log "never retrieved"
-        self.inflight[key] = _Flight(future, driver)
+        flight = _Flight(future, driver)
+        self.inflight[key] = flight
+        if turn_key is not None:
+            self.turn_flights[turn_key] = flight
         return future
+
+    def turn_flight(self, turn_key: str | None) -> _Flight | None:
+        flight = None if turn_key is None else self.turn_flights.get(turn_key)
+        return flight if flight is not None and flight.joinable() else None
 
     async def _drive(
         self,
@@ -71,6 +91,7 @@ class ClassifierCache(dict[str, bool]):
         future: asyncio.Future[bool | None],
         resolver: Resolver,
         text: str,
+        turn_key: str | None,
     ) -> bool:
         started = time.monotonic()
         outcome, verdict = "error", None
@@ -86,32 +107,45 @@ class ClassifierCache(dict[str, bool]):
         else:
             outcome, verdict = "ok", needed
             self[key] = needed
+            if turn_key is not None:
+                self.turn_verdicts[turn_key] = needed
+                if len(self.turn_verdicts) > self._TURN_LIMIT:
+                    del self.turn_verdicts[next(iter(self.turn_verdicts))]
             future.set_result(needed)
             return needed
         finally:
             flight = self.inflight.get(key)
             if flight is not None and flight.future is future:
                 del self.inflight[key]
+            if turn_key is not None:
+                turn_flight = self.turn_flights.get(turn_key)
+                if turn_flight is not None and turn_flight.future is future:
+                    del self.turn_flights[turn_key]
             logger.info(
                 "classifier call kind=%s outcome=%s verdict=%s duration_ms=%s",
                 self.kind, outcome, verdict, _elapsed_ms(started),
             )
 
-    async def run(self, key: str, resolver: Resolver, text: str) -> bool:
+    async def run(self, key: str, resolver: Resolver, text: str, turn_key: str | None = None) -> bool:
         """Publish a call for ``key`` and run it in the calling task."""
 
         driver = asyncio.current_task()
         assert driver is not None
-        return await self._drive(key, self._open(key, driver), resolver, text)
+        return await self._drive(key, self._open(key, driver, turn_key), resolver, text, turn_key)
 
-    def start(self, key: str, resolver: Resolver, text: str) -> None:
+    def start(self, key: str, resolver: Resolver, text: str, turn_key: str | None = None) -> None:
         """Run the call for ``key`` in the background, unless one is already in flight."""
 
+        if turn_key is not None:
+            if self.turn_verdicts.get(turn_key) is not None:
+                return
+            if self.turn_flight(turn_key) is not None:
+                return
         flight = self.inflight.get(key)
         if flight is not None and flight.joinable():
             return
-        future = self._open(key, None)
-        task = asyncio.ensure_future(self._drive(key, future, resolver, text))
+        future = self._open(key, None, turn_key)
+        task = asyncio.ensure_future(self._drive(key, future, resolver, text, turn_key))
         self.inflight[key].driver = task
         self._background.add(task)
         task.add_done_callback(self._background.discard)
@@ -139,21 +173,30 @@ async def resolve_shared(
     text: str,
     *,
     log_wait: bool = True,
+    turn_key: str | None = None,
 ) -> bool:
-    """The verdict for ``text``: join the call in flight for ``key``, or make it, caching what it returns."""
+    """The verdict for ``text``: join the call in flight for ``key`` or its turn, or make it."""
 
     if not isinstance(cache, ClassifierCache):
         needed = await resolver(text)
         cache[key] = needed
         return needed
     started = time.monotonic()
-    while (flight := cache.inflight.get(key)) is not None and flight.joinable():
+    if turn_key is not None:
+        settled = cache.turn_verdicts.get(turn_key)
+        if settled is not None:
+            cache[key] = settled
+            return settled
+    while (
+        flight := cache.turn_flight(turn_key) or cache.inflight.get(key)
+    ) is not None and flight.joinable():
         verdict = await asyncio.shield(flight.future)
         if verdict is not None:
+            cache[key] = verdict
             if log_wait:
                 _log_wait(cache, "joined", started)
             return verdict
-    verdict = await cache.run(key, resolver, text)
+    verdict = await cache.run(key, resolver, text, turn_key)
     if log_wait:
         _log_wait(cache, "called", started)
     return verdict
@@ -165,11 +208,13 @@ def _log_wait(cache: ClassifierCache, source: str, started: float) -> None:
     )
 
 
-def start_shared(cache: dict[str, bool], key: str, resolver: Resolver, text: str) -> None:
+def start_shared(
+    cache: dict[str, bool], key: str, resolver: Resolver, text: str, *, turn_key: str | None = None
+) -> None:
     """Start ``resolver(text)`` in the background when the cache can share it; later callers join it."""
 
     if isinstance(cache, ClassifierCache):
-        cache.start(key, resolver, text)
+        cache.start(key, resolver, text, turn_key)
 
 
 def live_lookup_cache() -> ClassifierCache:

@@ -6,14 +6,28 @@ import asyncio
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Protocol
 
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.voice_core.speech_end_denoise import SpeechEndDenoiseLatch
 from services.agent.src.voice_core.speech_timeline import ASRResult
 
 # Who pinned the endpoint of a pending turn that has no accepted text yet:
 # the device VAD end, or the playback-followup boundary.
 EndpointPinSource = Literal["vad_end", "playback_followup"]
+
+
+class _VerdictRuntime(Protocol):
+    def begin_turn_verdicts(self) -> None: ...
+
+
+def open_turn_verdict_scope(pending: PendingTurn, runtime: _VerdictRuntime) -> None:
+    """Open this turn's classifier scope once; the turn's reply joins it after the commit."""
+
+    if pending.verdict_scope_open:
+        return
+    pending.verdict_scope_open = True
+    runtime.begin_turn_verdicts()
 
 
 @dataclass(slots=True)
@@ -39,6 +53,8 @@ class PendingTurn:
         default_factory=OrderedDict
     )
     turn_start_sample: int | None = None
+    # One classifier scope per turn: opened by the turn's first speech, kept through its reply.
+    verdict_scope_open: bool = False
     turn_input_fence: GenerationFence | None = None
     turn_end_sample: int | None = None
     turn_endpoint_sample: int | None = None
@@ -46,10 +62,15 @@ class PendingTurn:
     # final of the turn's own speech may take back (see media_session_commit).
     empty_turn_endpoint_pin: EndpointPinSource | None = None
     child_speech_ended_mono: float | None = None
+    speech_end_denoise_latch: SpeechEndDenoiseLatch | None = None
     turn_retire_sample: int | None = None
     turn_endpoint_grace_deadline: float | None = None
     turn_endpoint_tail_deadline: float | None = None
     turn_endpoint_timeout_handle: asyncio.TimerHandle | None = None
+    # Armed by the first final with no device VAD end: the commit waits at most this long for that signal.
+    final_vad_end_wait_handle: asyncio.TimerHandle | None = None
+    # The endpoint the final wait committed at; a later device VAD end must not move it.
+    final_vad_endpoint_pinned: int | None = None
     # A turn that already has text, reopened by a later vad.start: the
     # text-covered endpoint to fall back to, the transcript end it had, and
     # the bounded window for the new speech to produce any text of its own.
@@ -72,6 +93,9 @@ class PendingTurn:
     # to keep the stop a control turn and to release it from the fixed-safety
     # hold; a text-based peel alone must not decide after the reply was muted.
     playback_stop_text: str | None = None
+    # A final heard during playback whose content, not a stop word, endpoints the turn:
+    # the commit stops the playing reply before it prepares the answer.
+    content_barge_in: bool = False
     # Wall clock when the follow-up pin first landed; bounds incomplete-hold deferrals.
     followup_pin_monotonic: float | None = None
     # The sentence the commit's head start was last started for: a reschedule of the same commit must
@@ -158,13 +182,19 @@ class PendingTurn:
         if self.turn_endpoint_timeout_handle is not None:
             self.turn_endpoint_timeout_handle.cancel()
             self.turn_endpoint_timeout_handle = None
+        if self.final_vad_end_wait_handle is not None:
+            self.final_vad_end_wait_handle.cancel()
+            self.final_vad_end_wait_handle = None
+        self.final_vad_endpoint_pinned = None
         self.clear_commit_retry()
         self.turn_start_sample = None
+        self.verdict_scope_open = False
         self.turn_input_fence = None
         self.turn_end_sample = None
         self.turn_endpoint_sample = None
         self.empty_turn_endpoint_pin = None
         self.child_speech_ended_mono = None
+        self.speech_end_denoise_latch = None
         self.turn_retire_sample = None
         self.turn_endpoint_grace_deadline = None
         self.turn_endpoint_tail_deadline = None
@@ -172,6 +202,7 @@ class PendingTurn:
         self.pending_turn_onset_floor = None
         self.playback_followup_endpoint_sample = None
         self.playback_stop_text = None
+        self.content_barge_in = False
         self.followup_pin_monotonic = None
         self.warmed_commit_text = None
         self.committed_asr_keys.clear()

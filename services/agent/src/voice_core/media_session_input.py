@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -26,9 +27,11 @@ from services.agent.src.voice_core.media_protocol import (
     SessionIdentity,
     should_pause_asr_for_playback,
 )
+from services.agent.src.voice_core.media_session_pending_turn import open_turn_verdict_scope
 from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
+from services.agent.src.voice_core.speech_end_denoise import SpeechEndDenoiseLatch
 from services.agent.src.voice_core.speech_timeline import SegmentKind, SpeechSegment
 from services.common.llm_thinking_filler import speech_end_monotonic
 
@@ -41,6 +44,34 @@ media_pb2: Any = _media_pb2
 logger = logging.getLogger(__name__)
 
 _EMPTY_VAD_RMS = 1e-4
+# Opt-in forensic probe for uplink PCM disputes: one line per 25th frame.
+_UPLINK_PCM_TRACE = os.getenv("MEMORIA_UPLINK_PCM_TRACE", "").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "off",
+}
+_UPLINK_PCM_TRACE_EVERY = 25
+
+
+def _trace_uplink_pcm(session_id: str, frame: AudioFrame) -> None:
+    """Report what the runtime actually received, not what a driver meant to send."""
+
+    if frame.sequence % _UPLINK_PCM_TRACE_EVERY:
+        return
+    samples = memoryview(frame.payload).cast("h")
+    rms = (sum(value * value for value in samples) / len(samples)) ** 0.5 if samples else 0.0
+    logger.info(
+        "media uplink pcm session=%s seq=%d sample=%d frames=%d bytes=%d rms=%.1f",
+        session_id,
+        frame.sequence,
+        frame.capture_start_sample,
+        frame.frame_samples,
+        len(frame.payload),
+        rms,
+    )
+
+
 # How long a turn that already has text may stay reopened by vad.start
 # without the new speech producing any text of its own. Field 2026-09-28:
 # background sound kept reopening an answered weather question for 17 s.
@@ -99,6 +130,14 @@ class MediaSessionInputMixin:
         def _arm_evidence_less_floor_hold(self, context: _MediaVoiceSession) -> None: ...
 
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
+
+        def resume_listening_capture(
+            self,
+            context: _MediaVoiceSession,
+            *,
+            wake_sample: int,
+            cause: str,
+        ) -> None: ...
 
         async def _retire_prepare_retry_before_new_vad(
             self, context: _MediaVoiceSession
@@ -206,6 +245,7 @@ class MediaSessionInputMixin:
             voice_decision = context.runtime.on_user_voice_started()
             if voice_decision is PlaybackInputDecision.IGNORE:
                 return False
+            open_turn_verdict_scope(context.pending, context.runtime)
             context.pending.turn_input_fence = context.runtime.fence
         if pending_endpoint is not None and segment.capture_start_sample >= pending_endpoint:
             self._arm_reopen_evidence_window(context, pending_endpoint)
@@ -223,12 +263,16 @@ class MediaSessionInputMixin:
             # Resumed VAD resets the tail timeout above, but may only nudge,
             # never lift, the cap on output waiting behind an empty turn.
             self._arm_evidence_less_floor_hold(context)
-        context.pending.turn_start_sample = min(
+        turn_start_sample = min(
             segment.capture_start_sample,
             context.pending.turn_start_sample
             if context.pending.turn_start_sample is not None
             else segment.capture_start_sample,
         )
+        context.pending.turn_start_sample = turn_start_sample
+        note_vad_start = getattr(context.provider, "note_vad_start", None)
+        if callable(note_vad_start):
+            note_vad_start(context.identity, turn_start_sample)
         self._admit_owner_silence_vad(context, segment.capture_start_sample)
         logger.info(
             "media vad start admitted session=%s stream_epoch=%s sample=%s "
@@ -241,6 +285,7 @@ class MediaSessionInputMixin:
             context.pending.max_user_speech_task is not None,
             context.owner_silence_activity_revision,
         )
+        context.ingress.denoiser.mark_utterance_start()
         return True
 
     def _arm_reopen_evidence_window(
@@ -419,6 +464,8 @@ class MediaSessionInputMixin:
         context = await self.open_session(session.identity)
         if context.closed or context.standby_requested or not session.accepts_uplink():
             return
+        if _UPLINK_PCM_TRACE:
+            _trace_uplink_pcm(session.identity.session_id, frame)
         await self._audio_ingress.accept(context, frame)
 
     async def on_speech_segment(
@@ -435,10 +482,11 @@ class MediaSessionInputMixin:
         context = await self.open_session(session.identity)
         if context.closed or context.standby_requested or not session.accepts_uplink():
             return
+        # Only a tap (``listening.resume``) reopens a held capture; VAD edges
+        # are room noise once the microphone is closed.
         if segment.kind is SegmentKind.VAD and context.listening_capture_hold:
             logger.info(
-                "media vad ignored during listening capture hold session=%s "
-                "sample=%s final=%s",
+                "media vad ignored during listening capture hold session=%s sample=%s final=%s",
                 context.identity.session_id,
                 segment.capture_start_sample,
                 segment.final,
@@ -652,6 +700,15 @@ class MediaSessionInputMixin:
                         voiced_end_sample,
                     )
                     return
+                if context.pending.final_vad_endpoint_pinned is not None:
+                    logger.info(
+                        "media vad_end ignored after final-wait commit session=%s "
+                        "pinned_endpoint=%s voiced_end=%s",
+                        context.identity.session_id,
+                        context.pending.final_vad_endpoint_pinned,
+                        voiced_end_sample,
+                    )
+                    return
                 if (
                     context.pending.live_query_forced_authoritative
                     and context.pending.live_query_forced_text
@@ -678,15 +735,28 @@ class MediaSessionInputMixin:
                     voiced_end_sample,
                 )
                 if context.pending.turn_endpoint_sample != previous_endpoint:
+                    if previous_endpoint is not None:
+                        # The turn grew past its first endpoint: the sentence changed, so verdicts ask again.
+                        context.runtime.begin_turn_verdicts()
                     if context.pending.turn_endpoint_timeout_handle is not None:
                         context.pending.turn_endpoint_timeout_handle.cancel()
                         context.pending.turn_endpoint_timeout_handle = None
+                    if context.pending.final_vad_end_wait_handle is not None:
+                        context.pending.final_vad_end_wait_handle.cancel()
+                        context.pending.final_vad_end_wait_handle = None
                     context.pending.turn_endpoint_grace_deadline = None
                     context.pending.turn_endpoint_tail_deadline = None
                     context.pending.child_speech_ended_mono = speech_end_monotonic(
                         received_at=received_at,
                         event_sample=segment.capture_start_sample,
                         voiced_end_sample=segment.voiced_end_sample,
+                    )
+                    score = context.ingress.denoiser.speech_end_score()
+                    endpoint = context.pending.turn_endpoint_sample
+                    context.pending.speech_end_denoise_latch = (
+                        SpeechEndDenoiseLatch(endpoint, score)
+                        if score is not None and endpoint is not None
+                        else None
                     )
                 context.pending.turn_retire_sample = max(
                     context.pending.turn_retire_sample or 0,

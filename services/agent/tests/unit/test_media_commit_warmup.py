@@ -136,6 +136,29 @@ async def test_a_vad_flow_commit_asks_the_close_verdict_before_the_grace_runs_ou
 
 
 @pytest.mark.asyncio
+async def test_the_commit_starts_both_verdicts_before_it_waits_for_either(
+    device_media_session: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The VAD flow commits after its grace: close and live start together, not one after the other."""
+
+    window = await _open(device_media_session, "vad-warm-verdicts-together")
+    # Isolate the commit gate: the final's early verdicts and the endpoint warm-up must not start them.
+    monkeypatch.setattr(window.registry, "_warm_endpoint_commit", lambda _context: None)
+    monkeypatch.setattr(window.registry, "_maybe_early_commit_live_lookup", lambda *_args: None)
+    monkeypatch.setattr(
+        window.registry, "_maybe_early_commit_conversation_close", lambda *_args: None
+    )
+
+    await _end_the_utterance(window, _final("q-1", 40_000, 58_000, _QUESTION), vad_start=40_000)
+    await _wait_until(lambda: window.close_verdict.calls == [_QUESTION], timeout=2.0)
+    await _let_tasks_run()
+
+    assert window.live_verdict.calls == [_QUESTION], "live starts while close is still waiting"
+    _release(window)
+    await _wait_until(lambda: window.provider.prepared == [_QUESTION], timeout=3.0)
+
+
+@pytest.mark.asyncio
 async def test_a_vad_flow_commit_names_its_sentence_to_the_provider_before_the_grace_runs_out(
     device_media_session: Any,
 ) -> None:
@@ -151,13 +174,13 @@ async def test_a_vad_flow_commit_names_its_sentence_to_the_provider_before_the_g
 
 
 @pytest.mark.asyncio
-async def test_a_stray_final_in_the_turn_makes_the_verdicts_ask_about_the_sentence_the_commit_reads(
+async def test_a_stray_final_in_the_turn_does_not_make_the_commit_ask_the_verdicts_again(
     device_media_session: Any,
 ) -> None:
     """Round 14, t002: a 2-character final earlier in the turn made the commit's sentence 11 characters.
 
-    The live-lookup verdict started at the last final was keyed on its 8 characters, so the commit asked
-    the cloud classifier a second time (0.65 s) and then fetched the memory (0.43 s) after it.
+    One verdict answers the whole turn: the first sentence asked keeps its answer, and the commit prepares
+    the sentence it reads without asking the cloud classifier a second time.
     """
 
     window = await _open(device_media_session, "vad-warm-merged")
@@ -175,13 +198,11 @@ async def test_a_stray_final_in_the_turn_makes_the_verdicts_ask_about_the_senten
 
     committed = _turn_text(window, 20_000, _VOICED_END)
     assert _STRAY in committed and _QUESTION in committed and committed != _QUESTION
-    assert committed in window.close_verdict.calls
-    assert committed in window.live_verdict.calls
     assert window.provider.warmed == [committed]
+    assert window.live_verdict.calls == [_STRAY]
+    assert len(window.close_verdict.calls) == 1
     _release(window)
     await _wait_until(lambda: window.provider.prepared == [committed], timeout=3.0)
-    assert window.close_verdict.calls.count(committed) == 1
-    assert window.live_verdict.calls.count(committed) == 1  # the commit joined it
 
 
 @pytest.mark.asyncio
@@ -207,7 +228,8 @@ async def test_a_partial_after_the_last_final_is_part_of_the_sentence_that_is_wa
     committed = _turn_text(window, 40_000, _VOICED_END)
     assert committed == "明天我们去 动物园好不好"
     assert window.provider.warmed == [committed]
-    assert committed in window.close_verdict.calls
+    assert window.live_verdict.calls == ["明天我们去"]
+    assert len(window.close_verdict.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -233,7 +255,8 @@ async def test_a_final_that_extends_the_turn_inside_the_grace_warms_the_longer_s
     committed = _turn_text(window, 40_000, _VOICED_END)
     assert committed != "明天我们去" and "动物园好不好" in committed
     assert window.provider.warmed == ["明天我们去", committed]
-    assert committed in window.close_verdict.calls
+    assert window.live_verdict.calls == ["明天我们去"]
+    assert len(window.close_verdict.calls) == 1
     _release(window)
     await _wait_until(lambda: window.provider.prepared == [committed], timeout=3.0)
 

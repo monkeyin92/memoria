@@ -33,6 +33,9 @@ DEPENDENCY_LOCK = (Path(__file__).parents[1] / "overlay" / "files" / "dependenci
 PROTOCOL_HEADER = (
     Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_protocol.h"
 ).read_text(encoding="utf-8")
+VAD_START_HEADER = (
+    Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_vad_start.h"
+).read_text(encoding="utf-8")
 AUDIO_FRAME_SOURCE = (
     Path(__file__).parents[1] / "overlay" / "files" / "main" / "memoria" / "memoria_audio_frame.cc"
 ).read_text(encoding="utf-8")
@@ -439,8 +442,23 @@ def test_afe_vad_is_fenced_and_sent_on_the_device_media_protocol() -> None:
     assert "legacy_attempt == websocket_attempt_id_.load()" in legacy_commit
     assert "stream_epoch_ == legacy_stream_epoch" in legacy_commit
     assert '"Device VAD %s at sample=%llu rms=%.4f"' in vad
-    assert "speaking == vad_active_" in SOURCE
+    assert "speaking == epoch_open" in VAD_START_HEADER
+    assert "rms >= floor" in VAD_START_HEADER
+    assert "kPeakWindowMs = 250" in VAD_START_HEADER
+    assert "vad_gate_.Edge(vad_active_, speaking, near_end_rms, floor" in vad
+    assert "vad_gate_.Frame(" in SOURCE
+    assert "uplink_frame_rms.load(" in SOURCE
+    assert "vad.start suppressed rms=%.4f peak=%.4f floor=%.4f" in SOURCE
+    assert "vad.idle rms=%.4f peak=%.4f floor=%.4f" in SOURCE
+    assert vad.index("HasActivePlaybackGeneration()") < vad.index("LogVadStartSuppressed(")
+    assert vad.index("LogVadStartSuppressed(") < vad.index("++control_sequence_")
+    assert vad.index("LogVadStartSuppressed(") < vad.index("vad_active_ = speaking")
     assert "vad_active_ = speaking" in SOURCE
+    ctor = SOURCE[SOURCE.index("MemoriaProtocol::MemoriaProtocol()") :]
+    ctor = ctor[: ctor.index("MemoriaProtocol::~MemoriaProtocol")]
+    assert ctor.count('vad.start rms floor=%.4f') == 1
+    assert "static bool logged_vad_start_floor" in ctor
+    assert SOURCE.count('vad.start rms floor=%.4f') == 1
     assert "Schedule([this, speaking, listening]()" in APPLICATION_PATCH
     assert "const bool listening = GetDeviceState() == kDeviceStateListening" in APPLICATION_PATCH
     assert "memoria_protocol->SendVadState(speaking)" in APPLICATION_PATCH
@@ -574,7 +592,7 @@ def test_active_vad_is_closed_at_all_media_lifecycle_boundaries() -> None:
 
     assert "kMaxVadSpeechSamples" in SOURCE
     assert "uplink_sample_start_ - vad_started_sample_ >= kMaxVadSpeechSamples" in SOURCE
-    assert "vad_started_sample_ = speaking ? uplink_sample_start_ : 0" in SOURCE
+    assert "vad_started_sample_ = speaking ? edge_sample : 0" in SOURCE
 
 
 def test_send_audio_rejects_null_or_empty_packets_before_encoding() -> None:
@@ -2213,8 +2231,9 @@ def test_v2_listening_closed_leaves_the_listening_face_until_a_screen_resume() -
     handler = SOURCE[SOURCE.index('if (type == "assistant.state")') :]
     handler = handler[: handler.index('if (type == "session.close")')]
     assert 'assistant_state == "listening_closed"' in handler
-    assert "NotifyListeningClosed(true)" in handler
     assert 'assistant_state == "listening"' in handler
+    assert 'ESP_LOGI(kTag, "listening_closed closed=%s", closed ? "true" : "false")' in handler
+    assert "NotifyListeningClosed(closed)" in handler
     assert "EmitLegacyTts" not in handler
     resume = SOURCE[SOURCE.index("bool MemoriaProtocol::SendListeningResume()") :]
     resume = resume[: resume.index("void MemoriaProtocol::SendWakeWordDetected")]

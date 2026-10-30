@@ -1,0 +1,22 @@
+[
+  {"tag": "d07-hello", "say": "你好呀？", "rate": 165, "reply_timeout": 20},
+  {"tag": "d07-name", "say": "你叫什么名字？", "rate": 165, "reply_timeout": 20},
+  {"tag": "d07-weather", "say": "今天天气怎么样？", "rate": 165, "reply_timeout": 20},
+  {"tag": "d07-rain", "say": "为什么会下雨呀？", "rate": 165, "reply_timeout": 20},
+  {"tag": "d07-moon", "say": "月亮为什么跟着我走？", "rate": 165, "reply_timeout": 20},
+  {"tag": "d07-dino", "say": "恐龙吃什么？", "rate": 165, "reply_timeout": 20},
+  {"tag": "d07-math", "say": "七加八等于多少？", "rate": 165, "reply_timeout": 20},
+  {"tag": "d07-english", "say": "苹果用英语怎么说？", "rate": 165, "reply_timeout": 20},
+  {"tag": "d07-story", "say": "给我讲个故事吧。", "rate": 165, "reply_timeout": 20},
+  {"tag": "d07-play", "say": "我们出去玩吧。", "rate": 165, "reply_timeout": 20},
+  {"tag": "d07-stop", "say": "停。", "rate": 165, "reply_timeout": 20},
+  {"tag": "d07-no-more", "say": "别说了。", "rate": 165, "reply_timeout": 20},
+  {"tag": "d07-got-it", "say": "我知道了。", "rate": 165, "reply_timeout": 20},
+  {"tag": "d07-thanks", "say": "谢谢你。", "rate": 165, "reply_timeout": 20},
+  {"tag": "d07-like", "say": "我喜欢你。", "rate": 165, "reply_timeout": 20},
+  {"tag": "d07-think", "say": "我想想……", "rate": 165, "reply_timeout": 15},
+  {"tag": "d07-then", "say": "然后……", "rate": 165, "reply_timeout": 15},
+  {"tag": "d07-because", "say": "因为……", "rate": 165, "reply_timeout": 15},
+  {"tag": "d07-that", "say": "那个……", "rate": 165, "reply_timeout": 15},
+  {"tag": "d07-want-say", "say": "我想说……", "rate": 165, "reply_timeout": 15}
+]

@@ -41,6 +41,7 @@ async def resolve_conversation_close_needed(
     cache: dict[str, bool],
     semantic_resolver: Callable[[str], Awaitable[bool]] | None = None,
     log_wait: bool = True,
+    turn_key: str | None = None,
 ) -> bool:
     """Resolve once per normalized query; rule hits skip the classifier."""
 
@@ -59,7 +60,9 @@ async def resolve_conversation_close_needed(
     if semantic_resolver is None:
         cache[compact] = False
         return False
-    return await resolve_shared(cache, compact, semantic_resolver, text, log_wait=log_wait)
+    return await resolve_shared(
+        cache, compact, semantic_resolver, text, log_wait=log_wait, turn_key=turn_key
+    )
 
 
 def start_conversation_close_verdict(
@@ -67,6 +70,7 @@ def start_conversation_close_verdict(
     *,
     cache: dict[str, bool],
     semantic_resolver: Callable[[str], Awaitable[bool]] | None,
+    turn_key: str | None = None,
 ) -> None:
     """Start the semantic verdict for a sentence that is about to be committed, and leave it in flight.
 
@@ -84,7 +88,7 @@ def start_conversation_close_verdict(
         or lexical_playback_control_only(text)
     ):
         return
-    start_shared(cache, compact, semantic_resolver, text)
+    start_shared(cache, compact, semantic_resolver, text, turn_key=turn_key)
 
 
 def conversation_close_needed(

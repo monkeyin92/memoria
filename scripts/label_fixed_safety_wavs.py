@@ -18,7 +18,6 @@ from pathlib import Path
 
 from services.agent.src.providers.fixed_safety_audio import (
     DEFAULT_FIXED_SAFETY_AUDIO_DIR,
-    FIXED_SAFETY_AUDIO_SYNTHESIZED_ON,
     FIXED_SAFETY_AUDIO_VOICE,
     approved_templates,
     verify_fixed_safety_audio_directory,
@@ -32,12 +31,12 @@ def main(argv: list[str] | None = None) -> int:
         "directory",
         nargs="?",
         default=DEFAULT_FIXED_SAFETY_AUDIO_DIR,
-        help="directory holding the four approved WAVs",
+        help="directory holding the approved WAVs",
     )
     parser.add_argument(
         "--synthesized-on",
-        default=FIXED_SAFETY_AUDIO_SYNTHESIZED_ON,
-        help="synthesis date recorded in the manifest and ICRD",
+        default=None,
+        help="override the synthesis date for every clip; default keeps each clip's date",
     )
     parser.add_argument(
         "--voice",

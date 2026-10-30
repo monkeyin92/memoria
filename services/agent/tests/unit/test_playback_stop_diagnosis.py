@@ -2,9 +2,10 @@
 
 2026-10-01 voice soak on DeepSeek: the owner's 「别说了」 reached the ASR clearly and a final
 followed, yet no stop ran and nothing was logged, because each guard of
-``_maybe_pin_playback_stop`` returned silently. These pin the diagnostics (never the text)
-and that the guards decide as before, except that a stop word takes the endpoint of an
-earlier turn that holds no words (soak10: a text-less VAD edge held the stop out for 3-6 s).
+``_maybe_pin_playback_stop`` returned silently. These pin the diagnostics, and the
+redacted final on the ``not_stop_word`` line, and that the guards decide as before,
+except that a stop word takes the endpoint of an earlier turn that holds no words
+(soak10: a text-less VAD edge held the stop out for 3-6 s).
 """
 
 from __future__ import annotations
@@ -77,11 +78,13 @@ def _context(
             assistant_text=spoken,
             output_owner=GenerationFence("s1", 1, 4, 0),
             playback=playback,
+            playback_started=None,
         ),
         runtime=SimpleNamespace(
             assistant_speaking=True,
             fence=fence,
             speech_timeline=SimpleNamespace(projected_text=lambda **_: words),
+            playback_guarded_reason=lambda _text, *, duration_ms: None,
         ),
     )
 
@@ -196,13 +199,57 @@ def test_a_pin_that_is_a_real_turn_still_refuses_the_stop_word(
     assert context.pending.turn_endpoint_sample == 150_000 and session.commits == 0
 
 
-def test_ordinary_speech_under_an_empty_pin_is_still_refused_by_the_pin(
+@pytest.mark.parametrize(
+    ("start", "endpoint"),
+    [
+        pytest.param(140_000, 150_000, id="wordless-range"),
+        pytest.param(150_000, 150_000, id="pin-at-the-turn-start"),
+    ],
+)
+def test_a_content_question_takes_over_an_empty_pin(
     caplog: pytest.LogCaptureFixture,
+    start: int,
+    endpoint: int,
 ) -> None:
-    # Only a stop word takes the endpoint; other speech stays held and the log still names the pin.
-    session, context = _Session(), _context(endpoint=150_000, start=140_000)
+    # soak 2026-10-30 t019: a wordless VAD pinned its own start, and the owner's
+    # question after it was refused as endpoint_already_pinned until the tail timeout.
+    session, context = _Session(), _context(endpoint=endpoint, start=start)
     with caplog.at_level(logging.INFO, logger=LOGGER):
         session._maybe_pin_playback_stop(context, _final("我们下午几点出发"), source="final")
+
+    assert context.pending.turn_endpoint_sample == 176_000 and session.commits == 1
+    assert context.pending.content_barge_in is True
+    [line] = _lines(caplog, "media early playback-stop endpoint")
+    assert "content_barge_in=True" in line and f"replaced_empty_endpoint={endpoint}" in line
+    assert not _lines(caplog, "media playback-stop not taken")
+
+
+def test_a_content_question_inside_an_empty_pin_is_a_tail_not_a_barge(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The pin has no words, but the final starts inside the range it covers:
+    # that is the turn's own tail, not the later question that may take it.
+    session, context = _Session(), _context(endpoint=150_000, start=140_000)
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        session._maybe_pin_playback_stop(
+            context,
+            _final("我们下午几点出发", start=145_000, end=161_000),
+            source="final",
+            handled_range=(140_000, 150_000),
+        )
+
+    [line] = _lines(caplog, "media playback-stop not taken")
+    assert "reason=overlapping_turn_final" in line and "content_barge_in=True" in line
+    assert context.pending.turn_endpoint_sample == 150_000 and session.commits == 0
+
+
+def test_speech_with_no_content_still_leaves_an_empty_pin_alone(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A backchannel has no question to answer; the pin stays and the log names it.
+    session, context = _Session(), _context(endpoint=150_000, start=140_000)
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        session._maybe_pin_playback_stop(context, _final("嗯。"), source="final")
 
     [line] = _lines(caplog, "media playback-stop not taken")
     assert "reason=endpoint_already_pinned" in line and "stop_word=False" in line
@@ -227,16 +274,28 @@ def test_a_stop_word_the_later_guards_refuse_leaves_the_empty_pin_alone(
     assert context.pending.turn_endpoint_sample == 150_000 and session.commits == 0
 
 
-def test_the_replys_own_voice_heard_as_speech_is_logged_without_its_text(
+def test_the_not_stop_word_line_carries_the_redacted_final(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     session, context = _Session(), _context()
     with caplog.at_level(logging.INFO, logger=LOGGER):
-        session._maybe_pin_playback_stop(context, _final("现在可以。"), source="final")
+        session._maybe_pin_playback_stop(context, _final("现在可。"), source="final")
 
     [line] = _lines(caplog, "media playback-stop not taken")
     assert "reason=not_stop_word" in line and "stop_word=False" in line and "in_flight=True" in line
-    assert "现在可以" not in line and "text_len=5" in line
+    assert "asr_text=4:现在可。" in line and "text_len=4" in line
+
+
+def test_the_not_stop_word_line_redacts_pii_in_the_final(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session, context = _Session(), _context()
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        session._maybe_pin_playback_stop(context, _final("打13812345678"), source="final")
+
+    [line] = _lines(caplog, "media playback-stop not taken")
+    assert "reason=not_stop_word" in line and "asr_text=12:打[手机号]" in line
+    assert "13812345678" not in line
 
 
 def test_a_clear_stop_word_still_pins_the_stop(caplog: pytest.LogCaptureFixture) -> None:
@@ -245,6 +304,8 @@ def test_a_clear_stop_word_still_pins_the_stop(caplog: pytest.LogCaptureFixture)
         session._maybe_pin_playback_stop(context, _final("别说了。"), source="final")
 
     assert context.pending.turn_endpoint_sample == 176_000 and session.commits == 1
+    assert context.pending.playback_stop_text == "别说了。"
+    assert context.pending.content_barge_in is False
     [line] = _lines(caplog, "media early playback-stop endpoint")
     assert "stop_word=True" in line and "echo=False" in line
     assert not _lines(caplog, "media playback-stop not taken")
@@ -310,6 +371,47 @@ def test_ordinary_speech_outside_playback_logs_nothing(caplog: pytest.LogCapture
         session._maybe_pin_playback_stop(context, _final("停"), source="final")
     [line] = _lines(caplog, "media playback-stop not taken")
     assert "reason=no_reply_in_flight" in line
+
+
+def test_a_question_heard_during_playback_pins_and_is_not_a_control_turn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session, context = _Session(), _context()
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        session._maybe_pin_playback_stop(
+            context, _final("等一下，我想问另一个问题，云是怎么变出来的？"), source="final"
+        )
+
+    assert context.pending.turn_endpoint_sample == 176_000 and session.commits == 1
+    assert context.pending.content_barge_in is True
+    assert context.pending.playback_stop_text is None
+    assert not _lines(caplog, "media playback-stop not taken")
+
+
+def test_a_question_the_playing_line_already_says_is_echo(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session, context = _Session(), _context()
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        session._maybe_pin_playback_stop(context, _final("小刺猬回到家，"), source="final")
+
+    [line] = _lines(caplog, "media playback-stop not taken")
+    assert "reason=not_stop_word" in line and "echo=True" in line
+    assert context.pending.turn_endpoint_sample is None and session.commits == 0
+    assert context.pending.content_barge_in is False
+
+
+def test_a_backchannel_alone_does_not_pin_the_endpoint(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session, context = _Session(), _context()
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        session._maybe_pin_playback_stop(context, _final("嗯。"), source="final")
+
+    [line] = _lines(caplog, "media playback-stop not taken")
+    assert "reason=not_stop_word" in line
+    assert context.pending.turn_endpoint_sample is None and session.commits == 0
+    assert context.pending.content_barge_in is False
 
 
 def test_a_rejected_final_says_whether_it_was_a_stop_word(caplog: pytest.LogCaptureFixture) -> None:

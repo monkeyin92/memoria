@@ -62,10 +62,10 @@ def test_plain_turns_never_mechanically_self_report() -> None:
 @pytest.mark.parametrize(
     ("category", "markers"),
     [
-        ("student", ("AI 助手", "不是真正的小朋友")),
-        ("adult", ("AI 助手", "不是真人")),
+        ("student", ("小助手", "不是真正的小朋友")),
+        ("adult", ("小助手", "不是真人")),
         ("senior", ("不是真人", "联系家人")),
-        ("unknown", ("AI 助手", "不是真人")),
+        ("unknown", ("小助手", "不是真人")),
     ],
 )
 def test_asked_are_you_real_is_truthful_per_category(
@@ -80,7 +80,8 @@ def test_asked_are_you_real_is_truthful_per_category(
         assert marker in text
     assert "星澜" not in text
     assert "小智" not in text
-    assert "AI 助手" in text
+    assert "小助手" in text
+    assert "AI 助手" not in text
 
 
 def test_asked_answers_differ_across_categories() -> None:
@@ -182,17 +183,19 @@ def test_first_use_intro_per_category() -> None:
     unknown = render_identity_expression(
         _obligation("FIRST_USE_INTRO", "FIRST_USE"), "unknown", STARLIGHT
     )
-    assert "AI 助手" in student and "不是真正的小朋友" in student
-    assert "AI 助手" in adult and "没有个人名字" in adult
+    assert "小助手" in student and "不是真正的小朋友" in student
+    assert "小助手" in adult and "没有个人名字" in adult
     assert "不是真人" in senior and "不是您的家人" in senior
-    assert "AI 助手" in unknown and "不会记录私人内容" in unknown
+    assert "小助手" in unknown and "不会记录私人内容" in unknown
+    assert "AI 助手" not in student
 
 
 def test_unknown_category_renders_safe_generic() -> None:
     text = render_identity_expression(
         _obligation("AI_IDENTITY_CLARIFICATION", "USER_ASKED"), "unknown", STARLIGHT
     )
-    assert "AI 助手" in text
+    assert "小助手" in text
+    assert "AI 助手" not in text
     assert "不是真人" in text
 
 
@@ -346,7 +349,7 @@ def test_persona_never_changes_policy_effect() -> None:
     ]
     for text in texts:
         assert "不是真人" in text
-        assert "AI" in text
+        assert "小助手" in text
     assert len(set(texts)) == 3
 
 
@@ -377,6 +380,16 @@ def test_render_rejects_unknown_subject_category() -> None:
             "robot",  # type: ignore[arg-type]
             STARLIGHT,
         )
+
+
+def test_student_asked_identity_uses_assistant_label_and_makes_no_forever_promise() -> None:
+    text = render_identity_expression(
+        _obligation("AI_IDENTITY_CLARIFICATION", "USER_ASKED"), "student", STARLIGHT
+    )
+    assert "小助手" in text
+    assert "AI 助手" not in text
+    assert "一直陪" not in text
+    assert "永远陪" not in text
 
 
 def test_student_dependency_never_promises_human_presence() -> None:

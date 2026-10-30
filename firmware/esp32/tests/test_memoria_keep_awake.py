@@ -9,6 +9,9 @@ FIRMWARE_ROOT = pathlib.Path(__file__).parents[1]
 BOARD = FIRMWARE_ROOT / "overlay" / "files" / "main" / "boards" / "memoria" / "esp-vocat"
 BOARD_CC = BOARD / "memoria_esp_vocat.cc"
 PATCH = FIRMWARE_ROOT / "overlay" / "patches" / "0039-memoria-keep-awake.patch"
+IDLE_ARM_PATCH = (
+    FIRMWARE_ROOT / "overlay" / "patches" / "0044-memoria-keep-awake-idle-phase.patch"
+)
 SCRIPTS = FIRMWARE_ROOT / "scripts"
 OVERLAY_FILES = FIRMWARE_ROOT / "overlay" / "files"
 
@@ -90,6 +93,77 @@ def test_product_text_still_deep_sleeps_and_keep_awake_text_does_not() -> None:
     assert "kWifiHold" not in sleep
 
 
+def _on_idle_screen_off(source: str) -> str:
+    start = source.index("void OnIdleScreenOff()")
+    return source[start : source.index("void MaybeEnterDeepSleepFromWifiHold()", start)]
+
+
+def _patched_hunk(patch: str, must_contain: str) -> str:
+    hunks: list[list[str]] = []
+    current: list[str] | None = None
+    for line in patch.splitlines():
+        if line.startswith("@@"):
+            if current is not None:
+                hunks.append(current)
+            current = []
+            continue
+        if current is None or line.startswith(("diff ", "index ", "--- ", "+++ ")):
+            continue
+        if line.startswith("+"):
+            current.append(line[1:])
+        elif line.startswith("-"):
+            continue
+        elif line.startswith("\\"):
+            continue
+        else:
+            current.append(line[1:] if line.startswith(" ") else line)
+    if current is not None:
+        hunks.append(current)
+    matches = ["\n".join(hunk) for hunk in hunks if must_contain in "\n".join(hunk)]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def test_keep_awake_idle_arm_does_not_enter_wifi_hold() -> None:
+    assert IDLE_ARM_PATCH.is_file()
+    patch = _read(IDLE_ARM_PATCH)
+    assert 'extern "C" const char memoria_keep_awake_build_marker[];' in patch
+    body = _patched_hunk(patch, "void Application::ArmIdleWakeWord()")
+    before_gate = body.split("#if CONFIG_MEMORIA_KEEP_AWAKE", 1)[0]
+    assert "SetPhase" not in before_gate
+    assert body.count("#if CONFIG_MEMORIA_KEEP_AWAKE") == 1
+    assert body.count("#else") == 2
+    assert body.count("#endif") == 2
+    assert "EnableWakeWordDetection(false)" in body
+    assert "EnableWakeWordDetection(true)" in body
+    awake = _keep_awake_branch(body)
+    product = _sleep_branch(body)
+    assert "SetPhase" not in awake
+    assert "kWifiHold" not in awake
+    assert "wifi hold suppressed" in awake
+    assert "memoria_keep_awake_build_marker" in awake
+    assert "SetPhase(memoria::PowerPhase::kWifiHold)" in product
+    assert "MEMORIA_KEEP_AWAKE" not in product
+    assert "wifi hold suppressed" not in product
+
+
+def test_keep_awake_screen_off_does_not_enter_wifi_hold() -> None:
+    body = _on_idle_screen_off(_read(BOARD_CC))
+    assert body.count("#if CONFIG_MEMORIA_KEEP_AWAKE") == 1
+    assert body.count("#else") == 1
+    assert body.count("#endif") == 1
+    awake = _keep_awake_branch(body)
+    product = _sleep_branch(body)
+    assert "SetPhase" not in awake
+    assert "kWifiHold" not in awake
+    assert "wifi hold started" not in awake
+    assert "wifi hold suppressed" in awake
+    assert "memoria_keep_awake_build_marker" in awake
+    assert "SetPhase(memoria::PowerPhase::kWifiHold)" in product
+    assert 'ESP_LOGI(TAG, "wifi hold started hold_ms=%u", power.wifi_hold_ms());' in product
+    assert "MEMORIA_KEEP_AWAKE" not in product
+
+
 def test_both_callers_still_enter_tap_deep_sleep() -> None:
     source = _read(BOARD_CC)
     hold = source[
@@ -110,8 +184,9 @@ def test_both_callers_still_enter_tap_deep_sleep() -> None:
     assert "MEMORIA_KEEP_AWAKE" not in hold
     assert "MEMORIA_KEEP_AWAKE" not in touch
     assert "MEMORIA_KEEP_AWAKE" not in usb
-    assert "SetPhase(memoria::PowerPhase::kWaking)" in usb
-    assert source.count("#if CONFIG_MEMORIA_KEEP_AWAKE") == 2
+    assert "SetPhase(memoria::PowerPhase::kWaking)" in touch
+    assert "DispatchTapWakeAction(" in usb
+    assert source.count("#if CONFIG_MEMORIA_KEEP_AWAKE") == 3
     assert source.count("esp_deep_sleep_start();") == 1
 
 
@@ -140,7 +215,10 @@ def test_scripts_select_the_keep_awake_profile_and_keep_it_off_the_product() -> 
     assert "the build in the tree is a KEEP-AWAKE image" in flash
     assert "--keep-awake was given but the build in the tree is not a keep-awake image" in flash
     assert flash.index("tree_is_keep_awake") < flash.index('idf.py -p "$port" flash')
-    assert '["MEMORIA_BENCH_SERIAL", "MEMORIA_KEEP_AWAKE"]' in check
+    assert (
+        '["MEMORIA_BENCH_SERIAL", "MEMORIA_KEEP_AWAKE", "MEMORIA_VAD_START_RMS_FLOOR_MILLI"]'
+        in check
+    )
     assert "config.json and config.bench.json must omit MEMORIA_KEEP_AWAKE" in check
     assert "config.keep-awake.json must be config.json plus CONFIG_MEMORIA_KEEP_AWAKE=y" in check
     assert "this is not a keep-awake build" in check

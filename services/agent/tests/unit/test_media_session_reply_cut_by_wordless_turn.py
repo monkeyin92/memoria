@@ -22,7 +22,6 @@ from typing import Any
 
 import pytest
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.voice_core import media_session_turns
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
 from services.agent.src.voice_core.media_session import MediaReplyChunk
 from services.agent.src.voice_core.speech_timeline import ASRResult
@@ -41,7 +40,6 @@ class _InterimProvider(_GatedReplyProvider):
         super().__init__()
         self.interims: dict[int, tuple[str, int]] = {}
         self.edge_finals: dict[int, tuple[str, int]] = {}
-        self.asked: list[str] = []
 
     def generate_reply(
         self,
@@ -49,7 +47,6 @@ class _InterimProvider(_GatedReplyProvider):
         user_text: str,
         fence: GenerationFence,
     ) -> AsyncIterator[MediaReplyChunk]:
-        self.asked.append(user_text)
         return super().generate_reply(identity, user_text, fence)
 
     async def ingest_audio(self, identity: SessionIdentity, frame: AudioFrame) -> Sequence[ASRResult]:
@@ -113,13 +110,6 @@ async def _run(script: Any, *, name: str) -> None:
         await scene.close()
 
 
-@pytest.fixture(autouse=True)
-def _fast_timers(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_BASE_S", 0.3)
-    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_VAD_EXTENSION_S", 0.2)
-    monkeypatch.setattr(media_session_turns, "_EVIDENCE_LESS_HOLD_MAX_S", 0.6)
-
-
 @pytest.mark.asyncio
 async def test_interim_text_from_before_the_edge_does_not_cost_the_prepared_reply() -> None:
     async def script(scene: _InterimScene) -> None:
@@ -132,7 +122,7 @@ async def test_interim_text_from_before_the_edge_does_not_cost_the_prepared_repl
         scene.gated.gate.set()
         await scene.audio_frames(3)
 
-        # The edge brings nothing: the hold cap runs out and the question is answered, once.
+        # The edge brings nothing, so it cannot hold the question: the reply goes at once.
         answered = await scene.wait_for_first_frame(timeout=3.0)
         assert answered, (
             "the committed question was never answered after an edge that had no words of its own: "

@@ -145,6 +145,22 @@ def test_completion_or_failure_never_counts_as_a_stop(evidence, terminal: str, r
     assert result["stop_delay_s"] is None
 
 
+@pytest.mark.parametrize("after_s", [0.0, 0.132])
+def test_interrupt_at_or_after_playback_end_is_an_unverified_harness_race(
+    evidence, after_s: float
+) -> None:
+    bridge, serial, attempt = evidence
+    bridge = bridge.replace(
+        delivery_line(5, "preempted", "preempted", "superseded"),
+        delivery_line(5, "playback_ended", "playback_ended", "playback_completed"),
+    )
+    attempt["interrupt_start_ts"] = BASE + 5 + after_s
+    result = assess_interruption(bridge, serial, attempt)
+    assert result["stopped"] is None
+    assert result["stop_verdict"] == "unverified"
+    assert result["stop_reason"] == "interrupt_started_after_playback"
+
+
 @pytest.mark.parametrize("session,generation", [("other-session", 3), ("session-a", 4)])
 def test_a_stop_for_another_reply_is_not_borrowed(evidence, session: str, generation: int) -> None:
     bridge, serial, attempt = evidence
