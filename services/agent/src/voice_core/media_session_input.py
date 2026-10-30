@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
@@ -42,6 +43,34 @@ media_pb2: Any = _media_pb2
 logger = logging.getLogger(__name__)
 
 _EMPTY_VAD_RMS = 1e-4
+# Opt-in forensic probe for uplink PCM disputes: one line per 25th frame.
+_UPLINK_PCM_TRACE = os.getenv("MEMORIA_UPLINK_PCM_TRACE", "").strip().lower() not in {
+    "",
+    "0",
+    "false",
+    "off",
+}
+_UPLINK_PCM_TRACE_EVERY = 25
+
+
+def _trace_uplink_pcm(session_id: str, frame: AudioFrame) -> None:
+    """Report what the runtime actually received, not what a driver meant to send."""
+
+    if frame.sequence % _UPLINK_PCM_TRACE_EVERY:
+        return
+    samples = memoryview(frame.payload).cast("h")
+    rms = (sum(value * value for value in samples) / len(samples)) ** 0.5 if samples else 0.0
+    logger.info(
+        "media uplink pcm session=%s seq=%d sample=%d frames=%d bytes=%d rms=%.1f",
+        session_id,
+        frame.sequence,
+        frame.capture_start_sample,
+        frame.frame_samples,
+        len(frame.payload),
+        rms,
+    )
+
+
 # How long a turn that already has text may stay reopened by vad.start
 # without the new speech producing any text of its own. Field 2026-09-28:
 # background sound kept reopening an answered weather question for 17 s.
@@ -433,6 +462,8 @@ class MediaSessionInputMixin:
         context = await self.open_session(session.identity)
         if context.closed or context.standby_requested or not session.accepts_uplink():
             return
+        if _UPLINK_PCM_TRACE:
+            _trace_uplink_pcm(session.identity.session_id, frame)
         await self._audio_ingress.accept(context, frame)
 
     async def on_speech_segment(
