@@ -674,7 +674,7 @@ async def test_backup_truncates_to_the_last_twelve_seconds() -> None:
         sensevoice=sensevoice,
     )
     await session.connect()
-    for second in range(15):
+    for second in range(27):
         await session.send_pcm(
             _pcm(16_000, 1000 + second),
             capture_start_sample=second * 16_000,
@@ -682,13 +682,13 @@ async def test_backup_truncates_to_the_last_twelve_seconds() -> None:
     await session.rotate_task(require_consumed=False)
     pcm = sensevoice.requests[0][0]
     assert len(pcm) == 12 * 16_000 * 2
-    assert int.from_bytes(pcm[:2], "little") == 1003
+    assert int.from_bytes(pcm[:2], "little") == 1015
     final = next(
         event.sentence
         for event in _drain(session.events)
         if event.event == "result-generated" and event.sentence is not None
     )
-    assert (final.begin_ms, final.end_ms) == (3_000, 15_000)
+    assert (final.begin_ms, final.end_ms) == (15_000, 27_000)
 
 
 @pytest.mark.asyncio
