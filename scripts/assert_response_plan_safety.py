@@ -25,18 +25,9 @@ class SmokeRouteExpectation(TypedDict):
     attempt_push: bool
 
 
-CRISIS_SELF_TTS: Final = (
-    "听到你这么说，我很心疼。你现在一定特别难受，我就在这里陪着你，哪儿也不去。"
-    "愿意的话，跟我说说发生了什么事。"
-)
-SUPPORT_VICTIM_TTS: Final = (
-    "你说的事情很重要。现在马上去找身边的大人，爸爸妈妈、老师都可以。"
-    "如果有危险，请大人帮你打幺幺零。"
-)
-SUPPORT_RELAY_TTS: Final = (
-    "谢谢你告诉我，你是个关心别人的好孩子。"
-    "这件事要请大人帮忙，现在就去告诉爸爸妈妈或者老师吧。"
-)
+CRISIS_SELF_TTS: Final = "现在马上去找身边的大人。可以请大人拨幺二三五六；已受伤请打幺二零。"
+SUPPORT_VICTIM_TTS: Final = "现在马上去找身边的大人。有危险请大人打幺幺零。"
+SUPPORT_RELAY_TTS: Final = "请去告诉身边的大人或老师，让大人来帮忙。"
 
 SMOKE_SAFETY_CASES: Final[tuple[SmokeRouteExpectation, ...]] = (
     {
