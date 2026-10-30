@@ -3,9 +3,9 @@ import argparse
 import difflib
 import json
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
-import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from voice_soak_analyze import pct  # noqa: E402  same P95 as voice_soak_verdict / keepawake_verdict
@@ -75,7 +75,7 @@ def p95(xs):
 
 def load_clock(path: Path | None) -> dict:
     """Mean server-minus-Mac offset; error = worst half round trip + drift between pre and post."""
-    rows = [json.loads(l) for l in path.read_text().splitlines() if l.strip()] if path and path.exists() else []
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()] if path and path.exists() else []
     if not rows:
         return {"offset_s": None, "error_s": None, "note": "未测时钟差"}
     offs = [r["offset_s"] for r in rows]
@@ -98,8 +98,8 @@ def slope(xs, ys):
     sxx = sum((x - mx) ** 2 for x in xs)
     if not sxx:
         return None, None
-    b = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
-    resid = sum((y - my - b * (x - mx)) ** 2 for x, y in zip(xs, ys))
+    b = sum((x - mx) * (y - my) for x, y in zip(xs, ys, strict=True)) / sxx
+    resid = sum((y - my - b * (x - mx)) ** 2 for x, y in zip(xs, ys, strict=True))
     se = (resid / (n - 2) / sxx) ** 0.5
     return b, (b / se if se else float("inf"))
 
@@ -107,7 +107,7 @@ def slope(xs, ys):
 def half_stats(ts):
     lat = [t["latency_s"] for t in ts if t["kind"] == "reply" and t["latency_s"] is not None]
     texts = [t["reply_text"] for t in ts if t["kind"] == "reply" and t.get("reply_text")]
-    pairs = list(zip(texts, texts[1:]))
+    pairs = list(zip(texts, texts[1:], strict=False))
     rep = sum(difflib.SequenceMatcher(None, a, b).ratio() >= REPEAT_RATIO for a, b in pairs)
     return {"turns": len(ts), "replies": sum(t["kind"] == "reply" for t in ts),
             "reply_rate": round(sum(t["kind"] == "reply" for t in ts) / len(ts), 3) if ts else None,
@@ -146,10 +146,10 @@ def degradation(turns):
 
 def build(out: Path, stop_tags: dict[str, str], clock_path: Path | None = None) -> dict:
     clock = load_clock(clock_path)
-    rows = [json.loads(l) for l in (out / "timeline.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    rows = [json.loads(line) for line in (out / "timeline.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
     events = bridge_events(out / "bridge.log")
     said, turns = {}, []
-    for i, r in enumerate(rows):
+    for _i, r in enumerate(rows):
         if r.get("kind") == "said":
             said[r["tag"]] = r
         if r.get("kind") in ("reply", "no_reply") and r["tag"] in said:
