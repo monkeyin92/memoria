@@ -236,6 +236,7 @@ class SerialWatcher:
 MIN_CLIP_SECONDS = 0.5
 DEFAULT_POST_SCENARIO_WAIT_S = 90.0
 MAX_POST_SCENARIO_WAIT_S = 180.0
+FORCE_SETTLE_S = 5.0  # a repeated wake refusal: just wait for listening|idle, never force a full idle
 
 
 class LogTailWatcher(SerialWatcher):
@@ -341,6 +342,8 @@ def main() -> int:
     ap.add_argument("--serial-log", default=None, help="follow this log (voice_soak_serial_logger.py) instead of opening the port")
     ap.add_argument("--wake-socket", default=None, help="the serial logger's command socket (default: derived from --port)")
     ap.add_argument("--gate-timeout", type=float, default=180.0)
+    ap.add_argument("--turn-gate-timeout", type=float, default=30.0,
+                    help="turn gate wait before a line: idle, listening, or listening_closed")
     ap.add_argument("--remote", default=DEFAULT_REMOTE, help="ssh host that runs the production containers")
     args = ap.parse_args()
     if not 0 <= args.post_scenario_wait <= MAX_POST_SCENARIO_WAIT_S:
@@ -389,15 +392,20 @@ def main() -> int:
         bridge = out / "bridge.log"
         gate = {"offset": 0}
 
-        def gate_wait(tag: str) -> str | None:
+        def gate_wait(tag: str, mode: str = "turn", timeout: float | None = None) -> str | None:
             t0 = now()
-            got = wait_gate(lambda: watcher.state, bridge, gate["offset"], args.gate_timeout)
-            record(kind="wait_gate", tag=tag, result=got or "timeout", waited_s=round(now() - t0, 1))
+            got = wait_gate(lambda: watcher.state, bridge, gate["offset"], timeout, mode=mode)
+            record(kind="wait_gate", tag=tag, mode=mode, result=got or "timeout",
+                   waited_s=round(now() - t0, 1))
             return got
 
-        if gate_wait("pre") is None:
+        # Cold start: idle only, learned from a real State line (#461). Between turns a listening window is
+        # the product state (#453), so the turn gate accepts it instead of forcing idle.
+        if gate_wait("pre", "session", args.gate_timeout) is None:
             record(kind="abort", verdict="ABORT_PRE_WAIT", reason="no idle before the run (idle-only gate)")
             return 5
+        # bridge.log follows the container log from its start: count listening_closed only from here on.
+        gate["offset"] = bridge_size(bridge)
         streak = TimeoutStreak(3)
 
         def wake_from_standby(tag: str) -> bool:
@@ -487,24 +495,28 @@ def main() -> int:
                     got = watcher.wait_state({"idle"}, float(step["expect_idle_wait"]))
                     record(kind="silence", tag=tag, went_idle=got is not None, after_s=round(now() - t0, 1))
                     continue
-                got = gate_wait(tag)
+                got = gate_wait(tag, "turn", args.turn_gate_timeout)
                 if streak.update(got is None):
                     record(kind="abort", verdict="ABORT_WAIT_3", tag=tag,
-                           reason="3 consecutive idle gate timeouts")
+                           reason="3 consecutive turn gate timeouts")
                     return 6
                 if got is None:
                     record(kind="tool_wait_timeout", tag=tag, state=watcher.state)
                     gate["offset"] = bridge_size(bridge)
                     continue
-                # Gate is idle-only. Optional standby probe: step["standby_resume"]=true → one resume; success = serial resume_listening.
+                # Turn gate accepts listening. Optional standby probe: step["standby_resume"]=true → one resume;
+                # success = serial resume_listening.
                 refuse_streak = gate.setdefault("refuse_streak", 0)
                 if refuse_streak >= 2:
+                    # Wait for a state we can speak into, never a forced full idle: the device may stay
+                    # listening between turns (#453), and a long idle wait would only stall the loop.
                     t_force = now()
-                    forced = watcher.wait_state({"idle"}, args.gate_timeout)
-                    record(kind="force_idle", tag=tag, result="idle" if forced else "timeout",
+                    settled = watcher.wait_state({"listening", "idle"}, FORCE_SETTLE_S)
+                    record(kind="force_idle", tag=tag,
+                           result=watcher.state if settled is not None else "timeout",
                            waited_s=round(now() - t_force, 1), refuse_streak=refuse_streak)
                     gate["refuse_streak"] = 0
-                    if forced is None:
+                    if settled is None:
                         record(kind="tool_wait_timeout", tag=tag, state=watcher.state, reason="force_idle")
                         gate["offset"] = bridge_size(bridge)
                         continue
