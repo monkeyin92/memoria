@@ -443,12 +443,16 @@ def test_afe_vad_is_fenced_and_sent_on_the_device_media_protocol() -> None:
     assert "stream_epoch_ == legacy_stream_epoch" in legacy_commit
     assert '"Device VAD %s at sample=%llu rms=%.4f"' in vad
     assert "speaking == epoch_open" in VAD_START_HEADER
-    assert "near_end_rms < floor" in VAD_START_HEADER
-    assert "ClassifyVadEdge(vad_active_, speaking, near_end_rms, floor)" in vad
-    assert 'vad.start suppressed rms=%.4f floor=%.4f' in vad
-    assert vad.index("HasActivePlaybackGeneration()") < vad.index("vad.start suppressed")
-    assert vad.index("vad.start suppressed") < vad.index("++control_sequence_")
-    assert vad.index("vad.start suppressed") < vad.index("vad_active_ = speaking")
+    assert "rms >= floor" in VAD_START_HEADER
+    assert "kPeakWindowMs = 250" in VAD_START_HEADER
+    assert "vad_gate_.Edge(vad_active_, speaking, near_end_rms, floor" in vad
+    assert "vad_gate_.Frame(" in SOURCE
+    assert "uplink_frame_rms.load(" in SOURCE
+    assert "vad.start suppressed rms=%.4f peak=%.4f floor=%.4f" in SOURCE
+    assert "vad.idle rms=%.4f peak=%.4f floor=%.4f" in SOURCE
+    assert vad.index("HasActivePlaybackGeneration()") < vad.index("LogVadStartSuppressed(")
+    assert vad.index("LogVadStartSuppressed(") < vad.index("++control_sequence_")
+    assert vad.index("LogVadStartSuppressed(") < vad.index("vad_active_ = speaking")
     assert "vad_active_ = speaking" in SOURCE
     ctor = SOURCE[SOURCE.index("MemoriaProtocol::MemoriaProtocol()") :]
     ctor = ctor[: ctor.index("MemoriaProtocol::~MemoriaProtocol")]
@@ -588,7 +592,7 @@ def test_active_vad_is_closed_at_all_media_lifecycle_boundaries() -> None:
 
     assert "kMaxVadSpeechSamples" in SOURCE
     assert "uplink_sample_start_ - vad_started_sample_ >= kMaxVadSpeechSamples" in SOURCE
-    assert "vad_started_sample_ = speaking ? uplink_sample_start_ : 0" in SOURCE
+    assert "vad_started_sample_ = speaking ? edge_sample : 0" in SOURCE
 
 
 def test_send_audio_rejects_null_or_empty_packets_before_encoding() -> None:

@@ -60,6 +60,9 @@ constexpr uint32_t kUplinkSampleRate = 16000;
 constexpr uint32_t kDownlinkSampleRate24k = 24000;
 constexpr uint32_t kDownlinkSampleRate16k = 16000;
 constexpr uint32_t kFrameMs = 20;
+// One heartbeat per second of uplink frames with no VAD line, so an open
+// microphone whose VAD never fires leaves an rms trace in the serial log.
+constexpr uint32_t kVadQuietLogFrames = 1000 / kFrameMs;
 // The Memoria AFE configuration keeps 900 ms of quiet audio before emitting
 // VAD end. Report the estimated last voiced sample instead of the callback
 // time; otherwise Voice Core waits for ASR text to cover silence that cannot
@@ -347,6 +350,11 @@ std::string RenderJson(cJSON* root) {
 
 float ConfiguredVadStartRmsFloor() {
     return VadStartRmsFloorFromMilli(CONFIG_MEMORIA_VAD_START_RMS_FLOOR_MILLI);
+}
+
+void LogVadStartSuppressed(float rms, float peak, float floor) {
+    ESP_LOGW(kTag, "vad.start suppressed rms=%.4f peak=%.4f floor=%.4f",
+             static_cast<double>(rms), static_cast<double>(peak), static_cast<double>(floor));
 }
 
 }  // namespace
@@ -1178,6 +1186,7 @@ bool MemoriaProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
     }
     uplink_sequence_ = (uplink_sequence_ + 1) & 0xffffffffU;
     uplink_sample_start_ += MemoriaAudioFrame::kUplinkFrameSamples;
+    TrackUplinkVadFrame();
     if (vad_active_ && uplink_sample_start_ - vad_started_sample_ >= kMaxVadSpeechSamples) {
         ESP_LOGW(kTag, "Closing overlong device VAD epoch at sample=%llu",
                  static_cast<unsigned long long>(uplink_sample_start_));
@@ -2595,6 +2604,39 @@ void MemoriaProtocol::SendStopListening() {
     SendText(RenderJson(event.value));
 }
 
+void MemoriaProtocol::TrackUplinkVadFrame() {
+    std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+    const uint64_t now_ms = DeviceMonotonicMs();
+    const float floor = ConfiguredVadStartRmsFloor();
+    const float rms = uplink_frame_rms.load(std::memory_order_relaxed);
+    const VadEdgeAction edge = vad_gate_.Frame(rms, floor, now_ms);
+    if (edge == VadEdgeAction::kReport) {
+        SendVadState(true, vad_gate_.peak());
+    } else if (edge == VadEdgeAction::kSuppressStart) {
+        LogVadStartSuppressed(rms, vad_gate_.peak(), floor);
+        vad_gate_.Reset();
+        vad_onset_valid_ = false;
+        vad_frames_since_log_ = 0;
+        vad_quiet_peak_ = 0.0f;
+    }
+    if (vad_active_) {
+        vad_frames_since_log_ = 0;
+        vad_quiet_peak_ = 0.0f;
+        return;
+    }
+    if (rms > vad_quiet_peak_) {
+        vad_quiet_peak_ = rms;
+    }
+    if (++vad_frames_since_log_ < kVadQuietLogFrames) {
+        return;
+    }
+    ESP_LOGI(kTag, "vad.idle rms=%.4f peak=%.4f floor=%.4f frames=%u",
+             static_cast<double>(rms), static_cast<double>(vad_quiet_peak_),
+             static_cast<double>(floor), static_cast<unsigned int>(vad_frames_since_log_));
+    vad_frames_since_log_ = 0;
+    vad_quiet_peak_ = 0.0f;
+}
+
 void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms) {
     // VAD is emitted from Application's main task while playback receipts and
     // profile acknowledgements can originate on audio/receive tasks. Allocate
@@ -2610,7 +2652,7 @@ void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms) {
         }
         const float floor = ConfiguredVadStartRmsFloor();
         const VadEdgeAction vad_edge =
-            ClassifyVadEdge(vad_active_, speaking, near_end_rms, floor);
+            vad_gate_.Edge(vad_active_, speaking, near_end_rms, floor, DeviceMonotonicMs());
         if (vad_edge == VadEdgeAction::kIgnore) {
             return;
         }
@@ -2620,13 +2662,32 @@ void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms) {
         if (speaking && HasActivePlaybackGeneration() && !voice_barge_in_allowed_) {
             ESP_LOGW(kTag,
                        "Suppressing playback-window VAD start: voice barge-in not allowed");
+            vad_gate_.Reset();
+            vad_onset_valid_ = false;
+            return;
+        }
+        if (vad_edge == VadEdgeAction::kAwaitPeak) {
+            vad_onset_sample_ = uplink_sample_start_;
+            vad_onset_valid_ = true;
+            vad_frames_since_log_ = 0;
+            vad_quiet_peak_ = near_end_rms;
             return;
         }
         if (vad_edge == VadEdgeAction::kSuppressStart) {
-            ESP_LOGW(kTag, "vad.start suppressed rms=%.4f floor=%.4f",
-                     static_cast<double>(near_end_rms), static_cast<double>(floor));
+            LogVadStartSuppressed(near_end_rms, vad_gate_.peak(), floor);
+            vad_gate_.Reset();
+            vad_onset_valid_ = false;
+            vad_frames_since_log_ = 0;
+            vad_quiet_peak_ = 0.0f;
             return;
         }
+        // A start confirmed by the window keeps the sample where the AFE first
+        // reported it, not where the window closed.
+        const uint64_t edge_sample =
+            (speaking && vad_onset_valid_) ? vad_onset_sample_ : uplink_sample_start_;
+        vad_onset_valid_ = false;
+        vad_frames_since_log_ = 0;
+        vad_quiet_peak_ = 0.0f;
         if (protocol_version_ == kProtocolVersionV2) {
             ++control_sequence_;
             ScopedJson root{cJSON_CreateObject()};
@@ -2639,7 +2700,7 @@ void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms) {
             cJSON_AddNumberToObject(root.value, "control_sequence", control_sequence_);
             cJSON_AddNumberToObject(root.value, "device_monotonic_ms", DeviceMonotonicMs());
             cJSON_AddNumberToObject(root.value, "sample_position",
-                                    static_cast<double>(uplink_sample_start_));
+                                    static_cast<double>(edge_sample));
             if (!speaking) {
                 const uint64_t hangover_start =
                     uplink_sample_start_ > kAfeVadHangoverSamples
@@ -2656,17 +2717,17 @@ void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms) {
             cJSON_AddNumberToObject(root.value, "near_end_rms", near_end_rms);
             if (QueueTransportText(RenderJson(root.value))) {
                 vad_active_ = speaking;
-                vad_started_sample_ = speaking ? uplink_sample_start_ : 0;
+                vad_started_sample_ = speaking ? edge_sample : 0;
                 ESP_LOGI(kTag, "Device VAD %s at sample=%llu rms=%.4f",
                          speaking ? "start" : "end",
-                         static_cast<unsigned long long>(uplink_sample_start_),
+                         static_cast<unsigned long long>(edge_sample),
                          static_cast<double>(near_end_rms));
             }
             return;
         }
         legacy_attempt = websocket_attempt_id_.load();
         legacy_stream_epoch = stream_epoch_;
-        legacy_sample_position = uplink_sample_start_;
+        legacy_sample_position = speaking ? edge_sample : uplink_sample_start_;
     }
     // The legacy gateway also validates an exact key set. Build the event as
     // JSON instead of concatenating a wire string so quotes/escaping cannot
@@ -3021,6 +3082,10 @@ void MemoriaProtocol::ResetSessionState() {
     uplink_sample_start_ = 0;
     vad_active_ = false;
     vad_started_sample_ = 0;
+    vad_gate_.Reset();
+    vad_onset_valid_ = false;
+    vad_frames_since_log_ = 0;
+    vad_quiet_peak_ = 0.0f;
     transport_ping_due_us_ = 0;
     transport_pong_deadline_us_ = 0;
     transport_pong_pending_ = false;

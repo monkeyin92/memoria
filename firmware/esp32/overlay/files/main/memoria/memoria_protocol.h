@@ -14,6 +14,7 @@
 #include "memoria_audio_frame.h"
 #include "memoria_activation_client.h"
 #include "memoria_stop_keyword.h"
+#include "memoria_vad_start.h"
 #include "protocol.h"
 
 #include <freertos/FreeRTOS.h>
@@ -220,6 +221,11 @@ private:
     uint64_t uplink_sample_start_ = 0;
     bool vad_active_ = false;
     uint64_t vad_started_sample_ = 0;
+    VadStartGate vad_gate_;
+    uint64_t vad_onset_sample_ = 0;
+    bool vad_onset_valid_ = false;
+    uint32_t vad_frames_since_log_ = 0;
+    float vad_quiet_peak_ = 0.0f;
     bool downlink_started_ = false;
     uint32_t downlink_sequence_ = 0;
     uint64_t downlink_sample_start_ = 0;
@@ -321,6 +327,9 @@ private:
     void FinalizePlaybackEnded();
     void MarkTransportAlive(uint32_t websocket_attempt);
     bool RetireTransportAttempt(uint32_t websocket_attempt);
+    // One uplink frame: resolves an armed vad.start peak window and reports
+    // the idle heartbeat when no VAD edge was logged for a while.
+    void TrackUplinkVadFrame();
     void ResetSessionState();
 };
 
