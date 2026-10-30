@@ -162,8 +162,6 @@ class MediaVoiceSessionState:
     listening_capture_deadline: float | None = None
     listening_capture_hold: bool = False
     listening_capture_resume_sample: int | None = None
-    # A bare VAD edge released the standby hold; only heard text may keep it open.
-    listening_capture_vad_rewake_pending: bool = False
     owner_silence_remaining_s: float | None = None
     owner_silence_grace_used: bool = False
     owner_silence_grace_deadline: float | None = None

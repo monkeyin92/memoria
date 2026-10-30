@@ -153,6 +153,63 @@ async def test_held_capture_ignores_vad_end_without_opening_an_empty_turn(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("hold_reason", ["expired", "reclaimed"])
+async def test_vad_start_cannot_reopen_a_held_capture(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    hold_reason: str,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        if hold_reason == "expired":
+            clock["now"] = 1_031.0
+            await registry._audio_ingress.accept(context, _frame(identity, 1, 48_000))
+        else:
+            registry.hold_listening_capture_until_tap(context)
+        assert context.listening_capture_hold is True
+        assert context.runtime.interaction_phase is InteractionPhase.CONNECTING
+        published = _spy_states(monkeypatch, context.runtime)
+        session = registry.bridge._connections[identity.session_id].session
+
+        with caplog.at_level(logging.INFO):
+            await registry.on_speech_segment(
+                session,
+                replace(
+                    _connect_vad_segment(identity, sample=64_000, segment_id="held-rewake"),
+                    capture_end_sample=65_280,
+                ),
+            )
+
+        assert context.listening_capture_hold is True
+        assert context.runtime.interaction_phase is InteractionPhase.CONNECTING
+        assert context.listening_capture_deadline is None
+        assert context.pending.turn_start_sample is None
+        assert "listening" not in published
+        assert provider.frames == []
+        assert [
+            record for record in caplog.records if "during listening capture hold" in record.message
+        ]
+
+        await registry.on_client_event(
+            session,
+            MediaEnvelope.create(
+                type="listening.resume",
+                event_id="tap-after-noise",
+                session_id=identity.session_id,
+                stream_epoch=identity.stream_epoch,
+                sequence=2,
+                payload={"wake_sample": 80_000},
+            ),
+            0,
+        )
+        assert context.listening_capture_hold is False
+        assert published[-1] == "listening"
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_capture_hold_preserves_an_already_open_pending_turn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -497,11 +554,9 @@ async def test_capture_window_does_not_close_on_a_child_mid_sentence(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("already_latched", [False, True])
-async def test_empty_asr_retire_admits_the_next_vad_after_the_capture_window(
+async def test_empty_asr_retire_reopens_a_capture_held_by_tap(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
-    already_latched: bool,
 ) -> None:
     clock = _clock()
     registry, context, provider, identity = await _open(monkeypatch, clock)
@@ -535,9 +590,8 @@ async def test_empty_asr_retire_admits_the_next_vad_after_the_capture_window(
             context.pending.turn_endpoint_timeout_handle = None
 
         clock["now"] = 1_031.0
-        if already_latched:
-            registry.hold_listening_capture_until_tap(context)
-            assert context.listening_capture_hold is True
+        registry.hold_listening_capture_until_tap(context)
+        assert context.listening_capture_hold is True
         with caplog.at_level(logging.INFO):
             await registry._expire_endpoint_tail(
                 identity.session_id,
@@ -568,6 +622,68 @@ async def test_empty_asr_retire_admits_the_next_vad_after_the_capture_window(
             for record in caplog.records
             if "during listening capture hold" in record.message
         ]
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_capture_window_expiring_during_an_empty_turn_closes_listening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        session = registry.bridge._connections[identity.session_id].session
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=48_000, segment_id="expiring-start"),
+                capture_end_sample=49_280,
+            ),
+        )
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=64_000, segment_id="expiring-end"),
+                final=True,
+                voiced_end_sample=64_000,
+            ),
+        )
+        endpoint = context.pending.turn_endpoint_sample
+        assert endpoint == 64_000
+        grace = context.turn_endpoint_task
+        if grace is not None:
+            grace.cancel()
+            await asyncio.gather(grace, return_exceptions=True)
+        timeout_handle = context.pending.turn_endpoint_timeout_handle
+        if timeout_handle is not None:
+            timeout_handle.cancel()
+            context.pending.turn_endpoint_timeout_handle = None
+
+        published = _spy_states(monkeypatch, context.runtime)
+        clock["now"] = 1_031.0
+        await registry._expire_endpoint_tail(
+            identity.session_id,
+            identity.stream_epoch,
+            endpoint,
+        )
+        for _ in range(10):
+            await asyncio.sleep(0)
+        assert context.listening_capture_hold is True
+        assert published[-1] == "listening_closed"
+
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=80_000, segment_id="after-close"),
+                capture_end_sample=81_280,
+            ),
+        )
+
+        assert context.listening_capture_hold is True
+        assert context.runtime.interaction_phase is InteractionPhase.CONNECTING
+        assert context.pending.turn_start_sample is None
+        assert provider.frames == []
     finally:
         await registry.finalize_session(identity.session_id)
 
@@ -623,39 +739,6 @@ async def test_long_playout_opens_a_fresh_capture_window_for_the_next_vad(
         await registry._audio_ingress.accept(context, _frame(identity, 1, next_sample + 1))
         await _ingested(provider, 1)
         assert context.listening_capture_hold is False
-    finally:
-        await registry.finalize_session(identity.session_id)
-
-
-@pytest.mark.asyncio
-async def test_speech_after_the_capture_window_reopens_capture(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    clock = _clock()
-    registry, context, provider, identity = await _open(monkeypatch, clock)
-    try:
-        clock["now"] = 1_031.0
-        await registry._audio_ingress.accept(context, _frame(identity, 1, 48_000))
-        assert context.listening_capture_hold is True
-        assert context.runtime.interaction_phase is InteractionPhase.CONNECTING
-        published = _spy_states(monkeypatch, context.runtime)
-
-        session = registry.bridge._connections[identity.session_id].session
-        rewake_sample = 64_000
-        await registry.on_speech_segment(
-            session,
-            replace(
-                _connect_vad_segment(identity, sample=rewake_sample, segment_id="rewake"),
-                capture_end_sample=rewake_sample + 1_280,
-            ),
-        )
-
-        assert context.listening_capture_hold is False
-        assert "listening" in published
-        assert context.pending.turn_start_sample == rewake_sample
-        await registry._audio_ingress.accept(context, _frame(identity, 2, rewake_sample + 1))
-        await _ingested(provider, 1)
-        assert provider.frames[-1].capture_start_sample == rewake_sample + 1
     finally:
         await registry.finalize_session(identity.session_id)
 
@@ -763,7 +846,6 @@ async def test_noise_after_listening_closed_leaves_the_device_on_standby(
                 capture_end_sample=49_280,
             ),
         )
-        assert published[-1] != "listening_closed"
         clock["now"] += 1.0
         await registry.on_speech_segment(
             session,
@@ -773,15 +855,11 @@ async def test_noise_after_listening_closed_leaves_the_device_on_standby(
                 voiced_end_sample=64_000,
             ),
         )
-        endpoint = context.pending.turn_endpoint_sample
-        assert endpoint == 64_000
-        clock["now"] += 6.0
-        await registry._expire_endpoint_tail(identity.session_id, identity.stream_epoch, endpoint)
-        for _ in range(10):
-            await asyncio.sleep(0)
 
-        assert context.pending.turn_start_sample is None
-        assert published[-1] == "listening_closed"
         assert context.listening_capture_hold is True
+        assert context.runtime.interaction_phase is InteractionPhase.CONNECTING
+        assert context.pending.turn_start_sample is None
+        assert context.pending.turn_endpoint_sample is None
+        assert published[-1] == "listening_closed"
     finally:
         await registry.finalize_session(identity.session_id)
