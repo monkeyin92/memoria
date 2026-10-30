@@ -234,15 +234,31 @@ async def _declared_guardian_ids(request: Request, *, subject_person_id: str) ->
         return ()
 
 
-async def _route_crisis_with_bounded_evidence(request: Request, query: str) -> CrisisRoute:
-    deterministic = route_crisis(query)
+def _prior_self_crisis_hits(query: str, recall_context: list[str]) -> int:
+    texts = [text.strip() for text in recall_context if text.strip()]
+    if texts and texts[-1] == query:
+        texts.pop()
+    return sum(1 for text in texts if route_crisis(text).action == "crisis_support")
+
+
+async def _route_crisis_with_bounded_evidence(
+    request: Request,
+    query: str,
+    *,
+    prior_self_crisis_hits: int = 0,
+) -> CrisisRoute:
+    deterministic = route_crisis(query, prior_self_crisis_hits=prior_self_crisis_hits)
     classifier = getattr(request.app.state, "crisis_semantic_classifier", None)
     if deterministic.action != "none" or not crisis_semantic_candidate(query):
         return deterministic
     if classifier is None:
         return deterministic
     semantic_evidence = await classifier.classify(current_text=query)
-    return route_crisis(query, semantic_evidence=semantic_evidence)
+    return route_crisis(
+        query,
+        semantic_evidence=semantic_evidence,
+        prior_self_crisis_hits=prior_self_crisis_hits,
+    )
 
 
 def _response_plan_key(
@@ -2116,7 +2132,11 @@ async def response_plan(
     )
     # Safety reads only the current utterance. Run it before the cache, scope,
     # recall and companion context: none may delay it or answer a crisis turn.
-    crisis = await _route_crisis_with_bounded_evidence(request, body.query)
+    crisis = await _route_crisis_with_bounded_evidence(
+        request,
+        body.query,
+        prior_self_crisis_hits=_prior_self_crisis_hits(body.query, body.recall_context),
+    )
     script = crisis.script
     if script is not None:
         log_fixed_safety_reply(logger, crisis)

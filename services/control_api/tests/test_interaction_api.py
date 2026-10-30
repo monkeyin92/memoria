@@ -1485,6 +1485,36 @@ async def test_control_api_tier_matches_local_tier_for_the_nine_device_sentences
 
 
 @pytest.mark.asyncio
+async def test_second_self_crisis_in_recall_context_uses_escalation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        _, user_headers = await _identity(client)
+        session_id = (
+            await client.post("/v1/sessions", headers=user_headers, json={})
+        ).json()["session_id"]
+        body = _response_plan_body(session_id)
+        body["query"] = "我不想活了"
+        body["recall_context"] = ["我不想活了"]
+        body["fence"]["turn_id"] = 2
+        body["fence"]["generation_id"] = 2
+        response = await client.post(
+            "/v1/interaction/response-plan",
+            headers=token,
+            json=body,
+        )
+
+    assert response.status_code == 200, response.text
+    planned = script_for_display(response.json()["direct_text"])
+    assert planned is not None
+    assert planned.template_id == "crisis-self-escalation"
+
+
+@pytest.mark.asyncio
 async def test_response_plan_consumes_bounded_crisis_semantic_evidence(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

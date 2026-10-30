@@ -52,6 +52,8 @@ def test_first_hit_with_explicit_method_or_imminent_action_escalates() -> None:
     for query in (
         "我准备跳楼",
         "我马上要自杀",
+        "我现在就去死",
+        "我正在自杀",
         "我已经割腕了",
         "我不想活了，我买了安眠药",
     ):
@@ -63,6 +65,10 @@ def test_first_hit_without_method_keeps_the_first_round_script() -> None:
     for query in (
         "我不想活了",
         "我不想活了，我同学跳楼了",
+        "我现在好想死",
+        "我今天烦死了，不想活了",
+        "我已经很想死了",
+        "我没有准备自杀",
     ):
         route = route_crisis(query)
         assert route.script is CRISIS_SELF_SCRIPT, query

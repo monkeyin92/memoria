@@ -26,6 +26,7 @@ from services.common.fixed_safety_scripts import (
     CRISIS_SELF_SCRIPT,
     SUPPORT_RELAY_SCRIPT,
     SUPPORT_VICTIM_SCRIPT,
+    script_for_display,
 )
 from services.control_api.app.device_binding_token import mint_device_binding_token
 from services.control_api.app.main import create_app
@@ -384,8 +385,10 @@ async def test_support_tier_and_crisis_behavior_matrix(
             assert "危机" not in reply
             assert "伙伴" not in reply
             assert "家人" not in reply
-            assert "我是你的好朋友" not in reply
-            assert "你是我最好的朋友" not in reply
+            approved = script_for_display(reply)
+            assert approved is not None
+            if approved.template_id != "support-other-v1":
+                assert "好朋友" not in reply
             log_lines = [
                 record.getMessage()
                 for record in caplog.records
