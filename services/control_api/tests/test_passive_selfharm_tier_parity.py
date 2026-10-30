@@ -10,8 +10,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from services.common.crisis_policy import route_crisis
 from services.common.fixed_safety_scripts import script_for_display
+from services.control_api.app.crisis_routing import route_crisis_with_bounded_evidence
 from services.control_api.app.main import create_app
-from services.control_api.app.routes.interaction import _route_crisis_with_bounded_evidence
 
 _PASSIVE_SELF_HARM = (
     "我觉得活着一点意思都没有，大家没有我会更好",
@@ -105,7 +105,7 @@ def _response_plan_body(session_id: str) -> dict[str, Any]:
 @pytest.mark.parametrize("query", _PASSIVE_SELF_HARM)
 @pytest.mark.asyncio
 async def test_control_api_passive_self_harm_is_the_self_tier(query: str) -> None:
-    control_api = await _route_crisis_with_bounded_evidence(_request(), query)
+    control_api = await route_crisis_with_bounded_evidence(_request(), query)
     local = route_crisis(query)
 
     assert control_api.script is not None
@@ -122,7 +122,7 @@ async def test_control_api_passive_self_harm_is_the_self_tier(query: str) -> Non
 @pytest.mark.parametrize("query", _NOT_CRISIS)
 @pytest.mark.asyncio
 async def test_control_api_ordinary_death_and_meaninglessness_stay_out(query: str) -> None:
-    control_api = await _route_crisis_with_bounded_evidence(_request(), query)
+    control_api = await route_crisis_with_bounded_evidence(_request(), query)
     local = route_crisis(query)
 
     assert control_api.script is None or control_api.script.template_id != "crisis-self-v1"
@@ -142,7 +142,7 @@ async def test_location_absence_never_reaches_the_semantic_classifier(query: str
             state=SimpleNamespace(crisis_semantic_classifier=_UnexpectedSemanticCall())
         )
     )
-    route = await _route_crisis_with_bounded_evidence(request, query)
+    route = await route_crisis_with_bounded_evidence(request, query)
 
     assert route.action == "none"
     assert route.script is None
@@ -159,7 +159,7 @@ async def test_location_absence_never_reaches_the_semantic_classifier(query: str
 async def test_control_api_and_local_agree_on_every_crisis_tier(
     query: str, expected: str | None
 ) -> None:
-    control_api = await _route_crisis_with_bounded_evidence(_request(), query)
+    control_api = await route_crisis_with_bounded_evidence(_request(), query)
     local = route_crisis(query)
     control_tier = control_api.script.template_id if control_api.script else None
     local_tier = local.script.template_id if local.script else None

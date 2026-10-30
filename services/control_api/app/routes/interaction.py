@@ -30,12 +30,7 @@ from services.common.companions import (
     CompanionDefinition,
     companion_definition,
 )
-from services.common.crisis_policy import (
-    CrisisRoute,
-    crisis_semantic_candidate,
-    log_fixed_safety_reply,
-    route_crisis,
-)
+from services.common.crisis_policy import log_fixed_safety_reply
 from services.common.failure_log import failure_log
 from services.common.realtime_information import (
     current_local_time,
@@ -53,6 +48,7 @@ from services.control_api.app.bound_subject import (
 )
 from services.control_api.app.companion_context import gather_companion_context
 from services.control_api.app.config import ControlSettings
+from services.control_api.app.crisis_routing import route_crisis_with_bounded_evidence
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_control import RuntimeProfileLedger
 from services.control_api.app.mode_policy import (
@@ -232,33 +228,6 @@ async def _declared_guardian_ids(request: Request, *, subject_person_id: str) ->
             subject_person_id,
         )
         return ()
-
-
-def _prior_self_crisis_hits(query: str, recall_context: list[str]) -> int:
-    texts = [text.strip() for text in recall_context if text.strip()]
-    if texts and texts[-1] == query:
-        texts.pop()
-    return sum(1 for text in texts if route_crisis(text).action == "crisis_support")
-
-
-async def _route_crisis_with_bounded_evidence(
-    request: Request,
-    query: str,
-    *,
-    prior_self_crisis_hits: int = 0,
-) -> CrisisRoute:
-    deterministic = route_crisis(query, prior_self_crisis_hits=prior_self_crisis_hits)
-    classifier = getattr(request.app.state, "crisis_semantic_classifier", None)
-    if deterministic.action != "none" or not crisis_semantic_candidate(query):
-        return deterministic
-    if classifier is None:
-        return deterministic
-    semantic_evidence = await classifier.classify(current_text=query)
-    return route_crisis(
-        query,
-        semantic_evidence=semantic_evidence,
-        prior_self_crisis_hits=prior_self_crisis_hits,
-    )
 
 
 def _response_plan_key(
@@ -2132,10 +2101,8 @@ async def response_plan(
     )
     # Safety reads only the current utterance. Run it before the cache, scope,
     # recall and companion context: none may delay it or answer a crisis turn.
-    crisis = await _route_crisis_with_bounded_evidence(
-        request,
-        body.query,
-        prior_self_crisis_hits=_prior_self_crisis_hits(body.query, body.recall_context),
+    crisis = await route_crisis_with_bounded_evidence(
+        request, body.query, recall_context=body.recall_context
     )
     script = crisis.script
     if script is not None:

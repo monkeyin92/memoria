@@ -136,6 +136,13 @@ def route_crisis(
     )
 
 
+def prior_self_crisis_hits(query: str, recall_context: list[str]) -> int:
+    texts = [text.strip() for text in recall_context if text.strip()]
+    if texts[-1:] == [query]:
+        texts.pop()
+    return sum(route_crisis(text).action == "crisis_support" for text in texts)
+
+
 _PROTECTION_RANK: Final[dict[FixedSafetyTemplateId, int]] = {
     "support-other-v1": 1,
     "victim-support-v1": 2,
