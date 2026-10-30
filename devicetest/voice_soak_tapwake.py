@@ -51,6 +51,7 @@ import serial  # pyserial, from the ESP-IDF python env
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from tapwake_gate import TimeoutStreak, bridge_size, wait_gate  # noqa: E402
+
 from voice_soak_evidence import assess_interruption  # noqa: E402
 from voice_soak_serial_command import SerialCommandError, send_command  # noqa: E402
 from voice_soak_serial_logger import open_port  # noqa: E402
