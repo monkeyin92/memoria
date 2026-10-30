@@ -19,6 +19,7 @@ import pytest
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.state_machine import ConversationState
+from services.agent.src.prompts import FAREWELL_STANDBY_PHRASE
 from services.agent.src.voice_core import media_session_projection
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.media_protocol import (
@@ -1231,6 +1232,50 @@ class _TaskScriptProvider(_LongStoryProvider):
         return (scripted,)
 
 
+class _FarewellStoryProvider(_TaskScriptProvider):
+    """Story provider whose output seam speaks only the approved farewell."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.output_texts: list[str] = []
+
+    def generate_output(
+        self,
+        _identity: SessionIdentity,
+        intent: Any,
+        _fence: GenerationFence,
+        *,
+        work_id: str,
+        source_start_sample: int,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        _ = work_id
+        text = str(intent.tts_source)
+        if text != FAREWELL_STANDBY_PHRASE:
+            async def silent() -> AsyncIterator[MediaReplyChunk]:
+                for _ in ():
+                    yield MediaReplyChunk(
+                        pcm_s16le=b"",
+                        source_start_sample=0,
+                        text="",
+                        first=True,
+                        final=True,
+                    )
+
+            return silent()
+        self.output_texts.append(text)
+
+        async def chunks() -> AsyncIterator[MediaReplyChunk]:
+            yield MediaReplyChunk(
+                pcm_s16le=_REPLY_PCM,
+                source_start_sample=source_start_sample,
+                text=text,
+                first=True,
+                final=True,
+            )
+
+        return chunks()
+
+
 async def _frames_to(harness: _StoryHarness, end_sample: int) -> None:
     await harness.audio_frames((end_sample - harness.sample) // 320)
 
@@ -1606,7 +1651,7 @@ async def test_device_rescue_farewell_during_story_is_held() -> None:
     owner's own 「再见」 still ends the session on its own interval.
     """
 
-    provider = _TaskScriptProvider()
+    provider = _FarewellStoryProvider()
     harness = _StoryHarness(_device_identity("rescue-farewell-during-story"), provider)
     await harness.start()
     try:
@@ -1627,7 +1672,19 @@ async def test_device_rescue_farewell_during_story_is_held() -> None:
         await harness.assert_story_still_playing(story)
         _assert_session_open(harness, context)
 
+        audio_before = harness.count("audio")
         await harness.audio_frames(15, final_text="再见")
+        await harness.wait_for(
+            lambda: context.output.output_owner is not None
+            and str(
+                getattr(context.output.output_owner.intent, "tts_source", "")
+            )
+            == FAREWELL_STANDBY_PHRASE
+        )
+        assert harness.count("audio") > audio_before
+        assert not context.standby_requested
+        assert not harness.closed()
+        await harness.playback_ended()
         await harness.wait_for(harness.closed)
         assert context.standby_reason == "conversation_end_explicit"
     finally:

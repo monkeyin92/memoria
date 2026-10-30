@@ -1088,6 +1088,10 @@ class MediaSessionCommitMixin:
         context = self._sessions.get(session_id)
         if context is None or context.closed or context.standby_requested:
             return None, "session_closed" if context is not None else "session_not_found"
+        farewell_task = context.output.farewell_task
+        if farewell_task is not None and not farewell_task.done():
+            # The approved farewell owns the floor until it has played.
+            return None, "farewell_pending"
         if start_sample < 0 or end_sample <= start_sample:
             return None, "invalid_media_range"
         commit_started = time.monotonic()
