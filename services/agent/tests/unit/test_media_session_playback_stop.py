@@ -62,6 +62,8 @@ class _LongStoryProvider(_ScriptedProvider):
         self.story_call = story_call
         self.partials: dict[int, tuple[str, int]] = {}
         self.release = asyncio.Event()
+        self.first_frame_gate: asyncio.Event | None = None
+        self.gate_call: int | None = None
 
     async def ingest_audio(
         self,
@@ -96,8 +98,11 @@ class _LongStoryProvider(_ScriptedProvider):
         self.reply_calls += 1
         opening = self.opening if self.reply_calls == self.story_call else "好的。"
         release = self.release if self.reply_calls == self.story_call else None
+        gate = self.first_frame_gate if self.reply_calls == self.gate_call else None
 
         async def chunks() -> AsyncIterator[MediaReplyChunk]:
+            if gate is not None:
+                await gate.wait()
             yield MediaReplyChunk(
                 pcm_s16le=_REPLY_PCM,
                 source_start_sample=0,
@@ -288,8 +293,12 @@ async def _run_story(
     *,
     opening: str = _STORY_OPENING,
     story_call: int = 1,
+    gate_call: int | None = None,
 ) -> None:
     provider = _LongStoryProvider(opening, story_call=story_call)
+    if gate_call is not None:
+        provider.gate_call = gate_call
+        provider.first_frame_gate = asyncio.Event()
     harness = _StoryHarness(identity, provider)
     await harness.start()
     try:
@@ -474,6 +483,88 @@ async def test_device_question_mid_story_stops_the_reply_and_answers_it() -> Non
         assert not harness.closed()
 
     await _run_story(_device_identity("content-barge-in-question"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_question_starting_before_the_first_frame_still_barges() -> None:
+    """A question already under way when the reply starts may still stop it.
+
+    Product line: a content question begun before the first frame is allowed to
+    barge.  Only a tail that ends at the reply's edge is refused.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        await harness.audio_frames(20, final_text="云是怎么变出来的？")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        await harness.audio_frames(20)
+        harness.story.first_frame_gate.set()
+        await harness.wait_for(
+            lambda: harness.context.output.playback_started is not None
+        )
+        started = harness.context.output.playback_started[1]
+        reply = harness.runtime.fence
+
+        # The question began 0.1 s before the first frame and is still being
+        # spoken 2 s into the reply.
+        await harness.audio_frames(100)
+        harness.provider.finals[harness._audio_sequence] = (
+            "为什么天是蓝的",
+            started - 1_600,
+        )
+        await harness.audio_frames(1)
+        await harness.wait_for(lambda: harness.story.reply_calls == 3)
+        assert not harness.runtime.fence.matches(reply)
+        assert not harness.closed()
+
+    await _run_story(_device_identity("pre-first-frame-question"), script, gate_call=2)
+
+
+@pytest.mark.asyncio
+async def test_device_final_recorded_before_the_reply_started_does_not_barge() -> None:
+    """Soak 2026-10-30 t017: pre-playback finals cancelled each reply they never heard.
+
+    Five finals decoded from audio the device captured before the reply's first
+    frame each stopped it milliseconds later; the replacement reply repeated the
+    loop until real speech arrived.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        await harness.audio_frames(20, final_text="云是怎么变出来的？")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        # The reply is still synthesizing while the uplink keeps moving: t017
+        # had 1.9 s between the commit and the first frame.
+        await harness.audio_frames(20)
+        harness.story.first_frame_gate.set()
+        await harness.wait_for(
+            lambda: harness.context.output.playback_started is not None
+        )
+        started = harness.context.output.playback_started[1]
+        reply = harness.runtime.fence
+        assert harness.runtime.assistant_speaking
+        cancels = len(harness.cancel_effects())
+
+        harness.provider.finals[harness._audio_sequence] = (
+            "我们下午几点出发",
+            started - 3_200,
+        )
+        await harness.audio_frames(1)
+        await asyncio.sleep(0.05)
+        await harness.settle()
+        assert harness.context.pending.content_barge_in is False
+        assert len(harness.cancel_effects()) == cancels
+        assert harness.runtime.fence.matches(reply)
+        assert harness.story.reply_calls == 2
+
+        # A question heard while the reply plays still stops it and is answered.
+        await harness.audio_frames(10, final_text="那我们明天出门要带伞吗")
+        await harness.wait_for(lambda: harness.story.reply_calls == 3)
+        assert not harness.runtime.fence.matches(reply)
+        assert "我们下午几点出发" not in _user_turn_texts(harness.context)
+        assert not harness.closed()
+
+    await _run_story(_device_identity("pre-playback-tail"), script, gate_call=2)
 
 
 @pytest.mark.asyncio

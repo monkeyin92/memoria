@@ -63,6 +63,11 @@ class OutputState:
     delegation_output_claims: dict[GenerationFence, DelegationOutputClaim] = field(
         default_factory=dict
     )
+    # Uplink-capture position when a reply's first frame reached the device,
+    # with the fence it belongs to.  A final recorded before it cannot be the
+    # owner answering that reply; it is a tail from audio the previous turn
+    # already consumed.
+    playback_started: tuple[GenerationFence, int] | None = None
 
     def begin_turn_output(self, fence: GenerationFence) -> bool:
         """Make ``fence`` the playback generation and zero the per-response counters.

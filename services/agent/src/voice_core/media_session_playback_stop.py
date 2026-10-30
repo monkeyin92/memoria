@@ -62,6 +62,10 @@ _PLAYBACK_STOP_CAUSE = "media_voice_stop"
 # question was dropped.  Content endpoints the reply when it is not a backchannel, not the
 # reply's own echo, and either four characters long or carrying a question/command word.
 CONTENT_BARGE_IN_CAUSE = "media_content_barge_in"
+# Soak 2026-10-30 t017: tail finals from pre-playback audio overlapped the
+# fresh reply by at most 0.64 s, while the shortest genuine question that
+# began before a first frame ran 2.16 s into it.  1.5 s separates the two.
+_PRE_PLAYBACK_BARGE_MIN_OVERLAP_SAMPLES = 24_000
 _CONTENT_MIN_CJK = 4
 _BACKCHANNEL_FILLERS = tuple(
     sorted(
@@ -1098,6 +1102,30 @@ class MediaPlaybackStopMixin:
         return result.capture_start_sample < end and result.capture_end_sample > start
 
     @staticmethod
+    def _final_is_pre_playback_tail(
+        context: _MediaVoiceSession,
+        result: ASRResult,
+    ) -> bool:
+        """True when this final's audio ended as the reply started playing.
+
+        A question the owner began before the first frame may still stop the
+        reply when it keeps running into it.  A tail from the audio the
+        previous turn already consumed overlaps the new reply only at its
+        edge.  Soak 2026-10-30 t017: five such tails overlapped by at most
+        0.64 s each and cancelled every reply they never heard.
+        """
+
+        started = getattr(context.output, "playback_started", None)
+        if started is None or not started[0].matches(context.runtime.fence):
+            return False
+        if result.capture_start_sample >= started[1]:
+            return False
+        return (
+            result.capture_end_sample
+            < started[1] + _PRE_PLAYBACK_BARGE_MIN_OVERLAP_SAMPLES
+        )
+
+    @staticmethod
     def _pinned_turn_holds_no_words(
         context: _MediaVoiceSession,
         result: ASRResult,
@@ -1234,7 +1262,10 @@ class MediaPlaybackStopMixin:
         tail_final = content_barge_in and self._final_overlaps_handled_turn(
             result, handled_range
         )
-        if tail_final:
+        pre_playback_final = content_barge_in and self._final_is_pre_playback_tail(
+            context, result
+        )
+        if tail_final or pre_playback_final:
             content_barge_in = False
         in_flight = self._reply_in_flight(context)
         diagnosis = self._playback_stop_diagnosis(context, result)
@@ -1245,6 +1276,8 @@ class MediaPlaybackStopMixin:
             reason = "session_closing"
         elif tail_final:
             reason = "overlapping_turn_final"
+        elif pre_playback_final:
+            reason = "pre_playback_final"
         elif replaced_endpoint is not None and not (
             (stop_word or content_barge_in)
             and self._pinned_turn_holds_no_words(
