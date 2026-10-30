@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 from services.agent.src.observability.metrics import MetricsRegistry
+from services.agent.src.providers import asr_failover
 from services.agent.src.providers.asr_failover import (
     ASRFailoverConfig,
     FailoverASRSession,
@@ -463,6 +464,38 @@ async def test_healthy_primary_empty_retries_backup_with_the_same_pcm() -> None:
         if event.event == "result-generated"
     )
     assert len(sensevoice.requests) == 1
+    assert session.last_segment_had_speech is True
+    assert session.last_segment_provider_failed is False
+    assert session.last_segment_backup_retried is True
+
+
+@pytest.mark.asyncio
+async def test_healthy_primary_empty_retry_stops_at_its_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    class SlowSenseVoice(FakeSenseVoice):
+        async def transcribe(
+            self, pcm: bytes, *, sample_rate: int, language: str
+        ) -> str | None:
+            await asyncio.sleep(0.2)
+            return "太晚的结果"
+
+    monkeypatch.setattr(asr_failover, "_HEALTHY_EMPTY_RETRY_BUDGET_S", 0.02)
+    sensevoice = SlowSenseVoice()
+    session = FailoverASRSession(
+        config=_config(),
+        primary_factory=lambda: FakeSession(),
+        sensevoice=sensevoice,
+    )
+    await session.connect()
+    await session.send_pcm(_pcm())
+
+    started = asyncio.get_running_loop().time()
+    await session.rotate_task(require_consumed=False)
+    elapsed = asyncio.get_running_loop().time() - started
+
+    assert elapsed < 0.15
+    assert not any(
+        event.event == "result-generated" for event in _drain(session.events)
+    )
     assert session.last_segment_had_speech is True
     assert session.last_segment_provider_failed is False
     assert session.last_segment_backup_retried is True

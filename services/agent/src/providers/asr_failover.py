@@ -41,6 +41,12 @@ logger = logging.getLogger(__name__)
 # field read from ASR_PRIMARY, which could only ever hold this value.
 _PRIMARY_PROVIDER = "volc"
 
+# A healthy primary that returned no text gets one backup re-read before the
+# PCM is dropped. That re-read runs inside the ingress finalize lock, so it is
+# capped well below the 6 s media tail deadline; the audible fallback covers
+# whatever the cap cuts off.
+_HEALTHY_EMPTY_RETRY_BUDGET_S = 2.0
+
 _FAILOVER_REASONS = frozenset(
     {
         "connect_failed",
@@ -724,7 +730,17 @@ class FailoverASRSession:
                 await self._emit_backup_result()
         elif not self._primary_final_seen:
             self._last_segment_backup_retried = True
-            await self._emit_backup_result(emit_finished=False)
+            budget_s = min(self.config.backup_timeout_s, _HEALTHY_EMPTY_RETRY_BUDGET_S)
+            try:
+                await asyncio.wait_for(
+                    self._emit_backup_result(emit_finished=False),
+                    timeout=budget_s,
+                )
+            except TimeoutError:
+                logger.info(
+                    "asr failover empty retry timed out budget_s=%s",
+                    budget_s,
+                )
         self._rotation_pending = True
         self._finalize_at = None
         self._reset_segment_evidence()
