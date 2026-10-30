@@ -113,6 +113,8 @@ class MediaTurnEndpointMixin:
             result: ASRResult,
         ) -> ASRAcceptDecision: ...
 
+        async def _commit_final_after_endpoint(self, context: _MediaVoiceSession) -> bool: ...
+
         async def _discard_projection(
             self,
             context: _MediaVoiceSession,
@@ -915,9 +917,7 @@ class MediaTurnEndpointMixin:
                 or self._turn_commit_retry_matches(context, stream_epoch, endpoint_sample)
             )
         ):
-            # Backoff count is not an I/O bound. Revoke admission before
-            # cancellation/lock acquisition so even a late provider result
-            # cannot publish or start output after the absolute deadline.
+            # Revoke admission before the deadline can pass, even for a late provider result.
             await self._request_device_standby(
                 context, reason="turn_prepare_timeout",
                 expected_endpoint=(stream_epoch, endpoint_sample),
@@ -945,10 +945,8 @@ class MediaTurnEndpointMixin:
             and partial.text.strip()
             and self._asr_covers_endpoint(context, partial.capture_end_sample, endpoint_sample)
         ):
-            # A stable partial is safer than silently dropping a complete user
-            # utterance when the provider's final marker is lost.  Re-submit it
-            # as a low-confidence final on the same sample interval; the ASR
-            # supervisor still owns all revision and watermark checks.
+            # A stable partial is safer than dropping a complete utterance when
+            # the provider's final marker is lost; re-submit it as a low-confidence final.
             fallback_confidence = (
                 0.35
                 if partial.confidence is None
@@ -966,12 +964,12 @@ class MediaTurnEndpointMixin:
                     decision.accepted.capture_end_sample,
                     context.pending.turn_end_sample or 0,
                 )
-                await self._commit_pending_turn(
-                    context,
-                    provider_final_missing=True,
-                )
+                await self._commit_pending_turn(context, provider_final_missing=True)
                 if context.pending.turn_endpoint_sample != endpoint_sample:
                     return
+
+        if await self._commit_final_after_endpoint(context):
+            return
 
         discarded: ProjectionPatch | None = None
         resume_owned_output = False
@@ -1373,20 +1371,21 @@ class MediaTurnEndpointMixin:
             or retire_sample < endpoint_sample
         ):
             return "invalid_pending_media_turn"
-        # Direct/fallback commits share the same absolute deadline as the
-        # scheduled endpoint. Rearming never grants a new retry interval.
+        # Rescues commit the turn's last evidence; other commits stop at the VAD endpoint.
+        commit_end = max(end_sample, endpoint_sample) if provider_final_missing else endpoint_sample
+        retire_sample = max(retire_sample, commit_end)
+        # Direct/fallback commits share the endpoint deadline; rearming never extends it.
         self._arm_endpoint_tail_timeout(context, endpoint_sample)
         previous_fence = context.output.playback.current_fence or context.runtime.fence
         fence, reason = await self.commit_user_turn(
             context.identity.session_id,
             stream_epoch=context.stream_epoch,
             start_sample=start_sample,
-            end_sample=endpoint_sample,
+            end_sample=commit_end,
             retire_sample=retire_sample,
             provider_final_missing=provider_final_missing,
         )
-        # The range was consumed even when Router turns it into a low-risk
-        # control action rather than a chat generation.
+        # The range is consumed even when Router routes it to a low-risk control action.
         prepare_retryable = (
             reason == "provider_prepare_failed" and context.projection.provisional is not None
         )

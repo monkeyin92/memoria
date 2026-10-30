@@ -14,6 +14,7 @@ from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
 from services.agent.src.voice_core.speech_timeline import SegmentKind, SpeechSegment
 from services.agent.tests.unit.media_session_support import (
     FakeMediaProvider,
+    _accept_media_asr_final,
     _connect_vad_segment,
     _device_identity,
     open_bridge_connection,
@@ -94,6 +95,17 @@ def _spy_states(monkeypatch: pytest.MonkeyPatch, runtime: object) -> list[str]:
 
     monkeypatch.setattr(runtime, "publish_assistant_state", _publish)
     return published
+
+
+async def _cancel_scheduled_endpoint(context: object) -> None:
+    task = context.turn_endpoint_task
+    if task is not None:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    handle = context.pending.turn_endpoint_timeout_handle
+    if handle is not None:
+        handle.cancel()
+        context.pending.turn_endpoint_timeout_handle = None
 
 
 async def _ingested(provider: _CaptureProvider, count: int) -> None:
@@ -622,6 +634,72 @@ async def test_empty_asr_retire_reopens_a_capture_held_by_tap(
             for record in caplog.records
             if "during listening capture hold" in record.message
         ]
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_tail_timeout_rescues_the_final_that_arrived_after_the_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Soak 20261030-134232 t003: the final landed past the endpoint.
+
+    The endpoint commit projected nothing, then the tail timeout discarded the turn.
+    """
+
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        session = registry.bridge._connections[identity.session_id].session
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=618_240, segment_id="t003-start"),
+                capture_end_sample=619_520,
+            ),
+        )
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=843_520, segment_id="t003-end"),
+                final=True,
+                voiced_end_sample=843_520,
+            ),
+        )
+        endpoint = context.pending.turn_endpoint_sample
+        assert endpoint == 843_520
+        await _cancel_scheduled_endpoint(context)
+
+        await _accept_media_asr_final(
+            registry,
+            identity,
+            sentence_id="t003-final",
+            start_sample=865_632,
+            end_sample=907_712,
+            text="天空为什么是蓝色的？",
+        )
+        assert context.pending.turn_end_sample == 907_712
+        await _cancel_scheduled_endpoint(context)
+        assert await registry._commit_pending_turn(context) == "empty_media_turn"
+
+        await _cancel_scheduled_endpoint(context)
+        published = _spy_states(monkeypatch, context.runtime)
+        clock["now"] = 1_031.0
+        await registry._expire_endpoint_tail(
+            identity.session_id,
+            identity.stream_epoch,
+            endpoint,
+        )
+        for _ in range(10):
+            await asyncio.sleep(0)
+
+        assert [
+            turn.content
+            for turn in context.runtime.orchestrator.context.turns
+            if turn.role == "user"
+        ] == ["天空为什么是蓝色的？"]
+        assert context.listening_capture_hold is False
+        assert "listening_closed" not in published
     finally:
         await registry.finalize_session(identity.session_id)
 

@@ -228,6 +228,14 @@ class MediaSessionCommitMixin:
 
         async def _discard_projection(self, context: _MediaVoiceSession, reason: str) -> None: ...
 
+        async def _commit_pending_turn(
+            self,
+            context: _MediaVoiceSession,
+            *,
+            provider_final_missing: bool = False,
+            schedule_prepare_retry: bool = True,
+        ) -> str | None: ...
+
         def _event_versions(
             self, context: _MediaVoiceSession, fence: GenerationFence
         ) -> tuple[int, int]: ...
@@ -1008,6 +1016,25 @@ class MediaSessionCommitMixin:
         if result.is_final:
             self._log_asr_rejection(session_id, result, reason, stage=stage)
         return ASRAcceptDecision(None, reason)
+
+    async def _commit_final_after_endpoint(self, context: _MediaVoiceSession) -> bool:
+        """Commit a final past the endpoint before the tail timeout drops it."""
+
+        endpoint_sample = context.pending.turn_endpoint_sample
+        tail_end = context.pending.turn_end_sample
+        if endpoint_sample is None or tail_end is None or tail_end <= endpoint_sample:
+            return False
+        if not any(
+            segment.final and segment.text.strip()
+            for segment in context.runtime.speech_timeline.segments_in_range(
+                stream_epoch=context.stream_epoch,
+                start_sample=endpoint_sample,
+                end_sample=tail_end,
+            )
+        ):
+            return False
+        await self._commit_pending_turn(context, provider_final_missing=True)
+        return context.pending.turn_endpoint_sample != endpoint_sample
 
     async def commit_user_turn(
         self,
