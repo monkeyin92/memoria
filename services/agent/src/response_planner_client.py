@@ -147,7 +147,7 @@ _CONTEXT_PREFETCH_KEYS = frozenset(
 class ResponsePlannerClientConfig:
     endpoint: str
     internal_token: str
-    timeout_s: float = 0.8
+    timeout_s: float = 0.3
 
     def __post_init__(self) -> None:
         url = httpx.URL(self.endpoint)

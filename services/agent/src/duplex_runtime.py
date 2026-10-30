@@ -462,7 +462,7 @@ class DuplexRuntime(
     def pending_realtime_request(self) -> PendingRealtimeRequest | None:
         return self._pending_realtime_request
 
-    def resolve_realtime_request(
+    async def resolve_realtime_request(
         self,
         *,
         fence: GenerationFence,
@@ -499,7 +499,7 @@ class DuplexRuntime(
                 and is_incomplete_realtime_reply(direct_text, query=query)
             )
         )
-        if static_reply_is_fallback and self.live_lookup_needed(query):
+        if static_reply_is_fallback and await self.resolve_live_lookup_needed(query):
             request = PendingRealtimeRequest(query, speaker_scope, fence)
             self._pending_realtime_request = request
             return request, False

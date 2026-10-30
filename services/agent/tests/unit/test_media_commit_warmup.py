@@ -136,6 +136,29 @@ async def test_a_vad_flow_commit_asks_the_close_verdict_before_the_grace_runs_ou
 
 
 @pytest.mark.asyncio
+async def test_the_commit_starts_both_verdicts_before_it_waits_for_either(
+    device_media_session: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The VAD flow commits after its grace: close and live start together, not one after the other."""
+
+    window = await _open(device_media_session, "vad-warm-verdicts-together")
+    # Isolate the commit gate: the final's early verdicts and the endpoint warm-up must not start them.
+    monkeypatch.setattr(window.registry, "_warm_endpoint_commit", lambda _context: None)
+    monkeypatch.setattr(window.registry, "_maybe_early_commit_live_lookup", lambda *_args: None)
+    monkeypatch.setattr(
+        window.registry, "_maybe_early_commit_conversation_close", lambda *_args: None
+    )
+
+    await _end_the_utterance(window, _final("q-1", 40_000, 58_000, _QUESTION), vad_start=40_000)
+    await _wait_until(lambda: window.close_verdict.calls == [_QUESTION], timeout=2.0)
+    await _let_tasks_run()
+
+    assert window.live_verdict.calls == [_QUESTION], "live starts while close is still waiting"
+    _release(window)
+    await _wait_until(lambda: window.provider.prepared == [_QUESTION], timeout=3.0)
+
+
+@pytest.mark.asyncio
 async def test_a_vad_flow_commit_names_its_sentence_to_the_provider_before_the_grace_runs_out(
     device_media_session: Any,
 ) -> None:

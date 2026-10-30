@@ -39,6 +39,7 @@ from services.agent.src.voice_core.interruption import (
     evidence_from_speech_segment,
 )
 from services.agent.src.voice_core.media_protocol import should_pause_asr_for_playback
+from services.agent.src.voice_core.media_session_pending_turn import open_turn_verdict_scope
 from services.agent.src.voice_core.media_session_playback_stop import (
     CONTENT_BARGE_IN_CAUSE,
     PLAYBACK_STOP_ROUTE_REASON,
@@ -376,6 +377,7 @@ class MediaSessionCommitMixin:
                 stage="pending_turn_boundary",
             )
             return ASRAcceptDecision(None, ASRDecisionReason.INTERVAL_CONFLICT)
+        open_turn_verdict_scope(context.pending, context.runtime)
         preview = context.asr.preview_result(result)
         candidate = preview.accepted
         if candidate is None:
@@ -688,8 +690,10 @@ class MediaSessionCommitMixin:
                 reason=reason,
             )
             return
-        close_needed = await context.runtime.resolve_conversation_close_needed(text)
-        live_lookup_needed = await context.runtime.resolve_live_lookup_needed(text)
+        close_needed, live_lookup_needed = await asyncio.gather(
+            context.runtime.resolve_conversation_close_needed(text),
+            context.runtime.resolve_live_lookup_needed(text),
+        )
         if (
             not self._stream_epoch_is_current(context, result.stream_epoch)
             or self._asr_precedes_pending_turn(context, result)
@@ -792,8 +796,10 @@ class MediaSessionCommitMixin:
         text = result.text.strip()
         if not text:
             return
-        close_needed = await context.runtime.resolve_conversation_close_needed(text)
-        live_lookup_needed = await context.runtime.resolve_live_lookup_needed(text)
+        close_needed, live_lookup_needed = await asyncio.gather(
+            context.runtime.resolve_conversation_close_needed(text),
+            context.runtime.resolve_live_lookup_needed(text),
+        )
         if (
             not self._stream_epoch_is_current(context, result.stream_epoch)
             or self._asr_precedes_pending_turn(context, result)
@@ -1342,6 +1348,11 @@ class MediaSessionCommitMixin:
             # returns it.  Arming it here would close the session early.
             self._pause_owner_silence_timer(context)
             return None, "duplicate_media_turn"
+        # Both semantic verdicts start before the projection and route work. The commit joins the close
+        # verdict below; the live verdict only fills its cache and must not hold the reply.
+        context.runtime.start_conversation_close_verdict(text)
+        if not self._reply_in_flight(context):
+            context.runtime.live_lookup_needed(text, start_verdict=True)
         aligned = context.projection.align_provisional_text(text)
         if aligned is not None:
             logger.info(

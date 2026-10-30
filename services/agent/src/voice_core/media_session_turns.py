@@ -862,7 +862,6 @@ class MediaTurnEndpointMixin:
     @staticmethod
     def _clear_pending_turn_state(context: _MediaVoiceSession) -> None:
         context.pending.reset()
-        context.runtime.begin_turn_verdicts()
         context.missed_hearing_nudge_count = 0
         context.last_missed_hearing_nudge_at = None
 

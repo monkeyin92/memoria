@@ -835,6 +835,34 @@ async def test_realtime_lookup_overrides_a_natural_unknown_weather_fallback() ->
 
 
 @pytest.mark.asyncio
+async def test_a_semantic_realtime_request_waits_for_its_inflight_verdict() -> None:
+    query = "明天从南京去上海，哪种交通方式最快"
+    runtime = DuplexRuntime.create(session_id="realtime-semantic-verdict-wait")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def live(_text: str) -> bool:
+        started.set()
+        await release.wait()
+        return True
+
+    runtime.set_live_lookup_semantic_resolver(live)
+    fence = await runtime.on_turn_committed(query)
+    runtime.live_lookup_needed(query, start_verdict=True)
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    resolve = asyncio.create_task(runtime.resolve_realtime_request(fence=fence, direct_text=None))
+    await asyncio.sleep(0)
+
+    assert not resolve.done(), "the resolver waits for the semantic verdict instead of an empty cache"
+    release.set()
+    request, resumed = await resolve
+    assert request is not None and request.query == query
+    assert resumed is False
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "query",
     (
@@ -846,7 +874,7 @@ async def test_realtime_lookup_does_not_bypass_safety_fixed_reply(query: str) ->
     runtime = DuplexRuntime.create(session_id="realtime-safety-boundary")
     fence = await runtime.on_turn_committed(query)
 
-    request, resumed = runtime.resolve_realtime_request(fence=fence, direct_text="我不知道。")
+    request, resumed = await runtime.resolve_realtime_request(fence=fence, direct_text="我不知道。")
 
     assert request is None
     assert resumed is False
@@ -859,7 +887,7 @@ async def test_realtime_lookup_preserves_non_fallback_direct_text() -> None:
     runtime = DuplexRuntime.create(session_id="realtime-fixed-direct-text")
     fence = await runtime.on_turn_committed("你是谁，南京天气怎么样")
 
-    request, resumed = runtime.resolve_realtime_request(
+    request, resumed = await runtime.resolve_realtime_request(
         fence=fence,
         direct_text="我是你的陪伴伙伴。",
     )
@@ -927,7 +955,7 @@ async def test_committed_realtime_delegation_starts_early_and_is_reused() -> Non
     )
     fence = await runtime.on_turn_committed("今天南京天气怎么样")
     await asyncio.wait_for(started.wait(), timeout=1)
-    request, _ = runtime.resolve_realtime_request(fence=fence, direct_text=None)
+    request, _ = await runtime.resolve_realtime_request(fence=fence, direct_text=None)
     assert request is not None
 
     output_task = asyncio.create_task(
@@ -1254,7 +1282,7 @@ async def test_realtime_buffered_reply_respects_the_voice_budget(
 async def test_realtime_pending_request_stops_at_owner_scope_boundary() -> None:
     runtime = DuplexRuntime.create(session_id="realtime-public-owner-boundary")
     await runtime.on_turn_committed("今天南京天气怎么样")
-    request, resumed = runtime.resolve_realtime_request(
+    request, resumed = await runtime.resolve_realtime_request(
         fence=runtime.fence,
         direct_text=None,
     )
