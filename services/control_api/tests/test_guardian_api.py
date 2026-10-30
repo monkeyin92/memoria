@@ -337,7 +337,7 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
             headers=parent_headers,
         )
         assert crisis.status_code == 200
-        assert "心疼" in crisis.json()["direct_text"]
+        assert "幺二三五六" in crisis.json()["direct_text"]
         assert "12356" not in crisis.json()["direct_text"]
         assert "【导师话轮约束】" not in crisis.json()["instructions"]
         assert notifications.status_code == 200
@@ -393,7 +393,7 @@ async def test_guardian_binding_consent_revocation_and_summary_are_end_to_end(
             },
         )
         assert semantic_crisis.status_code == 200
-        assert "心疼" in semantic_crisis.json()["direct_text"]
+        assert "幺二三五六" in semantic_crisis.json()["direct_text"]
         assert "12356" not in semantic_crisis.json()["direct_text"]
         assert "【导师话轮约束】" not in semantic_crisis.json()["instructions"]
 

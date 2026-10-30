@@ -99,9 +99,9 @@ from services.control_api.app.session_termination import (
 )
 from services.control_api.app.subject_session_recall import wire_subject_session_recall_store
 from services.control_api.app.text_models import (
-    build_crisis_semantic_classifier,
     build_persona_extractor,
     build_persona_structurer,
+    install_crisis_models,
 )
 from services.control_api.app.unconfigured_store import UnconfiguredStore, _unconfigured
 from services.control_api.app.voice_services import voice_profile_services
@@ -601,10 +601,10 @@ async def _wire_services(w: Wiring) -> None:
 
     app, settings = w.app, w.settings
     production = settings.environment == "production"
-    crisis_semantic_classifier = build_crisis_semantic_classifier(settings)
-    app.state.crisis_semantic_classifier = crisis_semantic_classifier
-    if crisis_semantic_classifier is not None:
-        w.on_close(crisis_semantic_classifier.aclose)
+    install_crisis_models(
+        app, settings,
+        w.on_close,
+    )
     if w.live:
         media_stop_dispatcher = _build_media_stop_dispatcher(settings)
         if media_stop_dispatcher is not None:

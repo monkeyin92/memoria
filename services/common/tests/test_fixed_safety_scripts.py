@@ -25,20 +25,17 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
         (
             CRISIS_SELF_SCRIPT,
             "crisis-self-v1",
-            "听到你这么说，我很心疼。你现在一定特别难受，我就在这里陪着你，哪儿也不去。"
-            "愿意的话，跟我说说发生了什么事。",
+            "现在马上去找身边的大人。可以请大人拨幺二三五六；已受伤请打幺二零。",
         ),
         (
             SUPPORT_VICTIM_SCRIPT,
             "victim-support-v1",
-            "你说的事情很重要。现在马上去找身边的大人，爸爸妈妈、老师都可以。"
-            "如果有危险，请大人帮你打110。",
+            "现在马上去找身边的大人。有危险请大人打幺幺零。",
         ),
         (
             SUPPORT_RELAY_SCRIPT,
             "support-other-v1",
-            "谢谢你告诉我，你是个关心别人的好孩子。"
-            "这件事要请大人帮忙，现在就去告诉爸爸妈妈或者老师吧。",
+            "请去告诉身边的大人或老师，让大人来帮忙。",
         ),
     ),
 )
@@ -51,46 +48,20 @@ def test_display_copy_matches_approved_copy_character_by_character(
     assert list(script.display) == list(display)
 
 
-def test_crisis_script_soothes_and_accompanies() -> None:
-    assert CRISIS_SELF_SCRIPT.phrases == (
-        SpokenPhrase(
-            "听到你这么说，我很心疼。",
-            "听到你这么说，我很心疼。",
-        ),
-        SpokenPhrase(
-            "你现在一定特别难受，我就在这里陪着你，哪儿也不去。",
-            "你现在一定特别难受，我就在这里陪着你，哪儿也不去。",
-        ),
-        SpokenPhrase(
-            "愿意的话，跟我说说发生了什么事。",
-            "愿意的话，跟我说说发生了什么事。",
-        ),
-    )
-    assert list(CRISIS_SELF_SCRIPT.spoken) == list(
-        "听到你这么说，我很心疼。你现在一定特别难受，我就在这里陪着你，哪儿也不去。"
-        "愿意的话，跟我说说发生了什么事。"
-    )
-    assert CRISIS_SELF_SCRIPT.spoken == CRISIS_SELF_SCRIPT.display
-
-
-def test_victim_script_speaks_the_police_number_digit_by_digit() -> None:
+def test_fallback_scripts_speak_the_approved_short_lines() -> None:
+    assert [phrase.spoken for phrase in CRISIS_SELF_SCRIPT.phrases] == [
+        "现在马上去找身边的大人。",
+        "可以请大人拨幺二三五六；已受伤请打幺二零。",
+    ]
     assert [phrase.spoken for phrase in SUPPORT_VICTIM_SCRIPT.phrases] == [
-        "你说的事情很重要。",
-        "现在马上去找身边的大人，爸爸妈妈、老师都可以。",
-        "如果有危险，请大人帮你打幺幺零。",
+        "现在马上去找身边的大人。",
+        "有危险请大人打幺幺零。",
     ]
-    assert list(SUPPORT_VICTIM_SCRIPT.spoken) == list(
-        "你说的事情很重要。现在马上去找身边的大人，爸爸妈妈、老师都可以。"
-        "如果有危险，请大人帮你打幺幺零。"
-    )
-
-
-def test_relay_script_has_no_number_so_it_speaks_its_display_copy() -> None:
-    assert [phrase.spoken for phrase in SUPPORT_RELAY_SCRIPT.phrases] == [
-        "谢谢你告诉我，你是个关心别人的好孩子。",
-        "这件事要请大人帮忙，现在就去告诉爸爸妈妈或者老师吧。",
+    assert [phrase.display for phrase in SUPPORT_RELAY_SCRIPT.phrases] == [
+        "请去告诉身边的大人或老师，让大人来帮忙。",
     ]
-    assert SUPPORT_RELAY_SCRIPT.spoken == SUPPORT_RELAY_SCRIPT.display
+    for script in (CRISIS_SELF_SCRIPT, SUPPORT_VICTIM_SCRIPT, SUPPORT_RELAY_SCRIPT):
+        assert script.spoken == script.display
 
 
 def test_scripts_resolve_by_decision_and_exact_display_copy_only() -> None:
@@ -100,14 +71,14 @@ def test_scripts_resolve_by_decision_and_exact_display_copy_only() -> None:
     assert script_for_decision("prohibited_request") is None
     for script in (CRISIS_SELF_SCRIPT, SUPPORT_VICTIM_SCRIPT, SUPPORT_RELAY_SCRIPT):
         assert script_for_display(script.display) is script
-    assert script_for_display(CRISIS_SELF_SCRIPT.spoken) is CRISIS_SELF_SCRIPT
-    assert script_for_display(SUPPORT_VICTIM_SCRIPT.spoken) is None
+    for script in (CRISIS_SELF_SCRIPT, SUPPORT_VICTIM_SCRIPT, SUPPORT_RELAY_SCRIPT):
+        assert script_for_display(script.spoken) is script
     assert script_for_display(CRISIS_SELF_SCRIPT.phrases[0].display) is None
     assert script_for_display(None) is None
 
 
 def test_announced_display_maps_to_spoken_copy_only_at_phrase_boundaries() -> None:
-    first, second, third = CRISIS_SELF_SCRIPT.phrases
+    first, second = CRISIS_SELF_SCRIPT.phrases
 
     assert spoken_prefix_for_display(first.display) == first.spoken
     assert (
@@ -145,6 +116,8 @@ def test_spoken_phone_readings_and_digit_rewrites_live_only_in_the_registry() ->
     )
 
     assert sorted(path for path, text in sources.items() if readings.search(text)) == [
-        "services/common/fixed_safety_scripts.py"
+        "services/agent/src/providers/crisis_reply_model.py",
+        "services/common/crisis_reply.py",
+        "services/common/fixed_safety_scripts.py",
     ]
     assert sorted(path for path, text in sources.items() if rewrites.search(text)) == []

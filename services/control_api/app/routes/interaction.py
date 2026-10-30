@@ -33,9 +33,9 @@ from services.common.companions import (
 from services.common.crisis_policy import (
     CrisisRoute,
     crisis_semantic_candidate,
-    log_fixed_safety_reply,
     route_crisis,
 )
+from services.common.crisis_reply import CRISIS_GUARD_PASSED, speak_routed_script
 from services.common.failure_log import failure_log
 from services.common.realtime_information import (
     current_local_time,
@@ -1847,6 +1847,7 @@ def _response_plan_payload(
     evolution_protocol: str = "",
     tutor_directive: str | None = None,
     custom_persona: CompanionDefinition | None = None,
+    crisis_guard_passed: bool = False,
 ) -> dict[str, Any]:
     source_refs = [
         _source_ref_payload(ref) for ref in plan.provenance.source_refs[:16] if ref.source_event_ids
@@ -1891,7 +1892,7 @@ def _response_plan_payload(
             "model": frozen.fallback_voice_model,
         }
     )
-    reason_codes = _epistemic_reason_codes(plan)
+    reason_codes = _epistemic_reason_codes(plan) + ([CRISIS_GUARD_PASSED] if crisis_guard_passed else [])
     instructions, included_evolution_artifacts = _instruction_text(
         frozen=frozen,
         plan=plan,
@@ -2114,12 +2115,10 @@ async def response_plan(
     evolution_protocol = (
         _EVOLUTION_PROTOCOL_V1 if evolution_protocol_header == _EVOLUTION_PROTOCOL_V1 else ""
     )
-    # Safety reads only the current utterance. Run it before the cache, scope,
-    # recall and companion context: none may delay it or answer a crisis turn.
     crisis = await _route_crisis_with_bounded_evidence(request, body.query)
     script = crisis.script
-    if script is not None:
-        log_fixed_safety_reply(logger, crisis)
+    spoken = await speak_routed_script(logger, crisis, body.query, getattr(
+        request.app.state, "crisis_reply_model", None))
     cache = _response_plan_cache(request)
     # Resolve the subject before the cache key.  A plan computed for the
     # previous person must not answer after the device switches subject, even
@@ -2168,7 +2167,7 @@ async def response_plan(
         except AccountDeletingError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         now = _local_now(settings)
-        fixed_reply = script.display if script is not None else fixed_reply_for_query(
+        fixed_reply = spoken.text if spoken is not None else fixed_reply_for_query(
             query=body.query, frozen=frozen, now=now, settings=settings,
             request=request, session_id=body.session_id,
         )
@@ -2343,6 +2342,7 @@ async def response_plan(
                     evolution_protocol=evolution_protocol,
                     tutor_directive=tutor_directive,
                     custom_persona=custom_persona,
+                    crisis_guard_passed=spoken is not None and spoken.kind == "dynamic",
                 )
                 cached_payload = await cache.put(key, fingerprint, payload)
         except AccountDeletingError as exc:

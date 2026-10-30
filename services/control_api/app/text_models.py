@@ -8,8 +8,14 @@ DeepSeek models, so there every task uses ``DEEPSEEK_FAST_MODEL``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
+from services.agent.src.providers.crisis_reply_model import (
+    CrisisReplyModel,
+    CrisisReplyModelConfig,
+)
 from services.agent.src.providers.crisis_semantic_classifier import (
     CrisisSemanticClassifier,
     CrisisSemanticClassifierConfig,
@@ -114,6 +120,37 @@ def build_crisis_semantic_classifier(
             base_url=endpoint.base_url,
             model=endpoint.model(settings.crisis_semantic_model),
             timeout_s=settings.crisis_semantic_timeout_s,
+            thinking_mode=endpoint.thinking_mode,
+        )
+    )
+
+
+def install_crisis_models(
+    app: Any,
+    settings: ControlSettings,
+    on_close: Callable[[Callable[[], object]], None],
+) -> None:
+    for name, build in (
+        ("crisis_semantic_classifier", build_crisis_semantic_classifier),
+        ("crisis_reply_model", build_crisis_reply_model),
+    ):
+        model = build(settings)
+        setattr(app.state, name, model)
+        if model is not None:
+            on_close(model.aclose)
+
+
+def build_crisis_reply_model(settings: ControlSettings) -> CrisisReplyModel | None:
+    """The fast model that drafts and reviews a crisis line. None keeps the short script."""
+
+    endpoint = text_model_endpoint(settings)
+    if endpoint is None or not settings.crisis_semantic_enabled:
+        return None
+    return CrisisReplyModel(
+        CrisisReplyModelConfig(
+            api_key=endpoint.api_key,
+            base_url=endpoint.base_url,
+            model=endpoint.model(settings.crisis_semantic_model),
             thinking_mode=endpoint.thinking_mode,
         )
     )

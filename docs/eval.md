@@ -187,13 +187,13 @@ Note: broader CHAT / INTERRUPT routing is rule-based in `utterance_router.py`, n
 | --- | --- |
 | Deterministic front door | `services/common/companion_response_safety.py` → `companion_safety_decision` |
 | Execution policy | `services/common/crisis_policy.py` → `route_crisis` (model cannot execute alone) |
-| Fixed scripts (soothing + parent alert) | `services/common/fixed_safety_scripts.py` (`crisis-self-v1` soothes child; parent notification includes **12356**) |
+| Fixed scripts (fallback only) | `services/common/fixed_safety_scripts.py` (short lines when the guarded draft fails; parent notification still includes **12356**) |
 | Bounded semantic evidence | `services/agent/src/providers/crisis_semantic_classifier.py` (`qwen-flash`, 1.2 s, enum only) |
 | Call site | `services/control_api/app/routes/interaction.py` `_route_crisis_with_bounded_evidence` |
 | Build | `services/control_api/app/text_models.py` `build_crisis_semantic_classifier` (flag `crisis_semantic_enabled`) |
 | Candidate gate | `crisis_semantic_candidate` (first-person risk anchor + deterministic miss) |
 
-Latency path: awaited inside Control API `POST /response-plan` only when deterministic is `none` and `crisis_semantic_candidate` is true. It is **not** on the voice `prepare_turn` gather with close/live. Timeout / error → `UNSURE` → no crisis action. On device sessions the spoken line can still come from the regex script while the background response-plan POST may enqueue a guardian alert from semantic evidence.
+Latency path: awaited inside Control API `POST /response-plan` only when deterministic is `none` and `crisis_semantic_candidate` is true. It is **not** on the voice `prepare_turn` gather with close/live. Timeout / error → `UNSURE` → no crisis action. On a crisis hit the device waits for this response plan. The plan speaks a guarded draft, or the short script when that draft fails or the wait runs out. The same request still records the guardian alert.
 
 Parent notify today is **not** tied to classifier confidence. The three production classifiers return enums, not scores. `UNSURE` / timeout never notifies. Guardian notify runs only from `CrisisRoute.notify_guardian` inside response-plan (`interaction.py`). A future “low confidence → parent notify” idea would be new product behavior, not a drop-in for this adapter.
 
