@@ -593,7 +593,7 @@ class AgentSettings(BaseSettings):
         alias="MEMORIA_RESPONSE_PLAN_URL",
     )
     response_plan_timeout_s: float = Field(
-        default=0.8,
+        default=0.3,
         ge=0.05,
         le=2.0,
         alias="MEMORIA_RESPONSE_PLAN_TIMEOUT_S",

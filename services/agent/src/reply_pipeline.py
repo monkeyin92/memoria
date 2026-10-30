@@ -124,10 +124,8 @@ AUDIENCE_REPLY_LIMITS: dict[str, tuple[tuple[int, int], tuple[int, int]]] = {
 }
 _SENTENCE_ENDINGS = frozenset("。！？；!?")
 # The bound person's memory is fetched while the response plan is.  The call itself is bounded like the
-# plan's tool, and once the plan is in, a memory that is still outstanding gets only this long: a late
-# memory means a reply without memory, never a slower one.
+# plan's tool; a memory that is still outstanding when the plan is in is dropped, never waited for.
 _DEVICE_MEMORY_TIMEOUT_S = 2.0
-_DEVICE_MEMORY_GRACE_S = 0.6
 DEVICE_MEMORY_TASK_NAME = "device-memory-prefetch"
 # A fetch started for a sentence whose turn is about to be committed (``warm_committed_turn``) is only ever
 # taken by that commit; one that nobody took within this long belonged to a turn that never committed.
@@ -1212,11 +1210,17 @@ class ReplyPipeline:
         # The plan request needs nothing the steps up to the commit decide, so it goes out first and runs
         # beside them; the commit below takes it only if it is still the request it would send.
         self._start_early_plan(text, speaker)
-        # Two independent cloud classifiers: one after the other they cost ~0.6 s of the turn's budget.
-        await asyncio.gather(
-            self._runtime.resolve_live_lookup_needed(text),
-            self._runtime.resolve_conversation_close_needed(text),
-        )
+        # Both classifiers start together. Live lookup only fills its cache and never holds the reply;
+        # the close verdict is joined after the voice refresh because the commit's route needs it.
+        self._runtime.start_conversation_close_verdict(text)
+        self._runtime.live_lookup_needed(text, start_verdict=True)
+        warmed_memory = self._take_warmed_memory(text, speaker)
+        memory_fetch: asyncio.Task[Any] | None = warmed_memory
+        if memory_fetch is None and self._device_memory_in_scope(speaker, self._runtime.fence):
+            memory_fetch = self._runtime._spawn(
+                self._fetch_device_memory(text=text, speaker=speaker),
+                name=DEVICE_MEMORY_TASK_NAME,
+            )
         # Live lookup starts inside on_turn_committed. A voice-bind failure after
         # that point leaves filler on a new generation and drops the weather
         # result as stale. Refresh and reject before the lookup task is created.
@@ -1244,6 +1248,7 @@ class ReplyPipeline:
                     self._runtime.fence.generation_id,
                 )
                 raise StopResponse()
+        await self._runtime.resolve_conversation_close_needed(text)
         fence = await self._runtime.on_turn_committed(
             text,
             input_modality=input_modality,
@@ -1267,7 +1272,6 @@ class ReplyPipeline:
                 final=True,
                 fence=fence,
             )
-        warmed_memory = self._take_warmed_memory(text, speaker)
         classification_started = time.perf_counter()
         local_crisis = route_crisis(text).script
         logger.info(
@@ -1279,17 +1283,19 @@ class ReplyPipeline:
             self._runtime.session_id,
             fence.turn_id,
         )
-        memory_fetch: asyncio.Task[MemoryCapsule | None] | None = None
         if local_crisis is not None:
-            if warmed_memory is not None:
-                warmed_memory.cancel()
-        elif self._device_memory_in_scope(speaker, fence):
-            memory_fetch = warmed_memory or asyncio.create_task(
+            if memory_fetch is not None:
+                memory_fetch.cancel()
+                memory_fetch = None
+        elif not self._device_memory_in_scope(speaker, fence):
+            if memory_fetch is not None:
+                memory_fetch.cancel()
+                memory_fetch = None
+        elif memory_fetch is None:
+            memory_fetch = self._runtime._spawn(
                 self._fetch_device_memory(text=text, speaker=speaker),
                 name=DEVICE_MEMORY_TASK_NAME,
             )
-        elif warmed_memory is not None:
-            warmed_memory.cancel()
         try:
             if local_crisis is not None:
                 self._drop_early_plan()
@@ -1315,10 +1321,11 @@ class ReplyPipeline:
                     plan = None
                     fetch_reason = "request_exception"
             device_memory = None
-            if memory_fetch is not None:
-                await asyncio.wait({memory_fetch}, timeout=_DEVICE_MEMORY_GRACE_S)
-                if memory_fetch.done() and not memory_fetch.cancelled():
+            if memory_fetch is not None and memory_fetch.done() and not memory_fetch.cancelled():
+                try:
                     device_memory = memory_fetch.result()
+                except Exception:
+                    device_memory = None
         finally:
             if memory_fetch is not None and not memory_fetch.done():
                 memory_fetch.cancel()

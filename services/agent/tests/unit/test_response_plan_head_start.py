@@ -143,15 +143,15 @@ async def test_the_request_sent_before_the_commit_is_the_one_the_commit_uses(
 
 
 @pytest.mark.asyncio
-async def test_the_request_runs_while_the_commit_still_waits_for_its_verdicts() -> None:
+async def test_the_request_runs_while_the_commit_still_waits_for_the_close_verdict() -> None:
     runtime = _runtime("plan-head-start-overlaps")
     verdict = asyncio.Event()
 
-    async def live_lookup(_text: str) -> bool:
+    async def close_verdict(_text: str) -> bool:
         await verdict.wait()
         return False
 
-    runtime.set_live_lookup_semantic_resolver(live_lookup)
+    runtime.set_conversation_close_semantic_resolver(close_verdict)
     planner = _Planner()
     pipeline = _pipeline(runtime, planner)
 
@@ -163,6 +163,30 @@ async def test_the_request_runs_while_the_commit_still_waits_for_its_verdicts() 
     verdict.set()
     fence = await prepare
     assert len(planner.requests) == 1 and planner.requests[0]["fence"] == fence
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_slow_live_verdict_does_not_hold_the_prepared_turn() -> None:
+    runtime = _runtime("plan-head-start-live-off-path")
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def live_lookup(_text: str) -> bool:
+        started.set()
+        await release.wait()
+        return False
+
+    runtime.set_live_lookup_semantic_resolver(live_lookup)
+    planner = _Planner()
+    pipeline = _pipeline(runtime, planner)
+
+    fence = await asyncio.wait_for(pipeline.prepare_committed_turn(QUESTION), timeout=0.5)
+
+    assert started.is_set(), "the live verdict still starts"
+    assert pipeline.response_plans.get(fence) is not None
+    release.set()
+    await _let_tasks_run()
     await runtime.close()
 
 
@@ -189,12 +213,12 @@ async def test_a_fence_that_moves_before_the_commit_gets_its_own_request(
     caplog.set_level(logging.INFO, logger="services.agent.src.reply_pipeline")
     runtime = _runtime("plan-head-start-fence-moved")
 
-    async def live_lookup(_text: str) -> bool:
+    async def close_verdict(_text: str) -> bool:
         # A tool-condition change while the commit waits gives it another fence than the one predicted.
         await runtime.orchestrator.bump_tool_epoch_on_condition_change()
         return False
 
-    runtime.set_live_lookup_semantic_resolver(live_lookup)
+    runtime.set_conversation_close_semantic_resolver(close_verdict)
     planner = _Planner()
     pipeline = _pipeline(runtime, planner)
     predicted = runtime.fence.bump_turn()

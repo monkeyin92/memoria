@@ -277,12 +277,9 @@ async def test_a_slow_memory_fetch_is_cut_off_at_its_bound(monkeypatch: pytest.M
 
 
 @pytest.mark.asyncio
-async def test_a_memory_that_is_late_after_the_plan_does_not_slow_the_reply(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_memory_that_is_late_after_the_plan_does_not_slow_the_reply() -> None:
     """The plan request is in, the memory is not: the reply goes out now, without memory."""
 
-    monkeypatch.setattr(reply_pipeline, "_DEVICE_MEMORY_GRACE_S", 0.05)
     runtime = _runtime("device-memory-late")
     planner = _Planner((_memory(),))
 
@@ -297,6 +294,35 @@ async def test_a_memory_that_is_late_after_the_plan_does_not_slow_the_reply(
 
     assert loop.time() - started < 0.4
     assert plan["DATA"]["grounded_items"] == []
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_pending_memory_fetch_does_not_hold_the_prepared_turn() -> None:
+    """The memory is still running when the plan lands: the turn is ready, the memory is dropped."""
+
+    runtime = _runtime("device-memory-pending")
+    planner = _Planner((_memory(),))
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def hold() -> None:
+        started.set()
+        await release.wait()
+
+    planner.on_prefetch = hold
+    pipeline = ReplyPipeline(
+        instructions=SYSTEM_PROMPT,
+        runtime=runtime,
+        response_planner_client=planner,  # type: ignore[arg-type]
+    )
+
+    prepare = asyncio.create_task(pipeline.prepare_committed_turn(QUESTION))
+    await asyncio.wait_for(started.wait(), timeout=0.5)
+    fence = await asyncio.wait_for(prepare, timeout=0.3)
+
+    assert fence.turn_id >= 1
+    release.set()
     await runtime.close()
 
 
@@ -561,10 +587,8 @@ async def test_announcing_the_same_sentence_again_starts_nothing_new() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_warmed_fetch_cancelled_while_the_commit_waits_for_it_costs_the_reply_nothing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The runtime closing (or anything else) cancels the background task just as the commit starts waiting."""
+async def test_a_warmed_fetch_still_running_at_prepare_end_costs_the_reply_nothing() -> None:
+    """The runtime closing (or anything else) cancels the background task once the plan is in."""
 
     runtime = _runtime("device-memory-warmed-cancelled-midway")
     planner = _Planner((_memory(),))
@@ -579,21 +603,14 @@ async def test_a_warmed_fetch_cancelled_while_the_commit_waits_for_it_costs_the_
         runtime=runtime,
         response_planner_client=planner,  # type: ignore[arg-type]
     )
-    real_wait = asyncio.wait
-
-    async def cancelling_wait(fs: Any, **kwargs: Any) -> Any:
-        for task in fs:
-            if task.get_name() == reply_pipeline.DEVICE_MEMORY_TASK_NAME:
-                task.cancel()
-        return await real_wait(fs, **kwargs)
 
     pipeline.warm_committed_turn(QUESTION)
     await _let_tasks_run()
     warmed = pipeline._warmed_memory
     assert warmed is not None and not warmed.task.done()
-    monkeypatch.setattr(asyncio, "wait", cancelling_wait)
 
     fence = await asyncio.wait_for(pipeline.prepare_committed_turn(QUESTION), timeout=2.0)
+    await _let_tasks_run()
 
     assert fence.turn_id >= 1
     assert warmed.task.cancelled()

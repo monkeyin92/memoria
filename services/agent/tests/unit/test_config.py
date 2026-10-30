@@ -66,7 +66,7 @@ def test_valid_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.tts_provider == "doubao"
     assert s.voice_profile_enabled is False
     assert s.response_plan_url.endswith("/v1/interaction/response-plan")
-    assert s.response_plan_timeout_s == 0.8
+    assert s.response_plan_timeout_s == 0.3
     assert s.live_lookup_semantic_model == "qwen-flash"
     assert s.conversation_close_semantic_model == "qwen-flash"
     assert s.llm_provider == "qwen"
