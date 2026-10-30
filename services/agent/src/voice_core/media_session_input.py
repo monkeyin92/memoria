@@ -127,6 +127,10 @@ class MediaSessionInputMixin:
 
         def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None: ...
 
+        def _adaptive_endpoint_grace(
+            self, context: _MediaVoiceSession, *, text: str | None = None
+        ) -> float: ...
+
         def _arm_evidence_less_floor_hold(self, context: _MediaVoiceSession) -> None: ...
 
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
@@ -744,12 +748,17 @@ class MediaSessionInputMixin:
                     if context.pending.final_vad_end_wait_handle is not None:
                         context.pending.final_vad_end_wait_handle.cancel()
                         context.pending.final_vad_end_wait_handle = None
-                    context.pending.turn_endpoint_grace_deadline = None
                     context.pending.turn_endpoint_tail_deadline = None
                     context.pending.child_speech_ended_mono = speech_end_monotonic(
                         received_at=received_at,
                         event_sample=segment.capture_start_sample,
                         voiced_end_sample=segment.voiced_end_sample,
+                    )
+                    # Arm the grace when the VAD end arrived, not after the ASR final returns:
+                    # finalization then runs inside the grace instead of before it. The grace
+                    # measured from the VAD end is unchanged.
+                    context.pending.turn_endpoint_grace_deadline = (
+                        received_at + self._adaptive_endpoint_grace(context)
                     )
                     score = context.ingress.denoiser.speech_end_score()
                     endpoint = context.pending.turn_endpoint_sample
