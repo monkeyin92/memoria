@@ -135,6 +135,9 @@ def assess_interruption(bridge: str, serial: str, attempt: Mapping[str, Any]) ->
     terminal_at, terminal = terminals[0]
     result["reply_terminal_reason"] = terminal.get("terminal_reason", "")
     if terminal.get("terminal_reason") == "playback_completed":
+        interrupt_start = attempt.get("interrupt_start_ts")
+        if isinstance(interrupt_start, (int, float)) and interrupt_start >= terminal_at:
+            return finish("interrupt_started_after_playback")
         return finish("playback_completed", False)
     if terminal["terminal"] != "preempted":
         return finish("non_interrupt_terminal", False)

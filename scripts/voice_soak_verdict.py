@@ -94,7 +94,10 @@ def judge(
 
     audited = audit_interruptions(rows, _text(run / "bridge.log"), _text(run / "serial.log"))
     for tag, assessment in audited.items():
-        if assessment.get("stopped") is not True:
+        if (
+            assessment.get("stopped") is not True
+            and assessment.get("stop_reason") != "interrupt_started_after_playback"
+        ):
             failures.append(f"stop_not_confirmed: {tag} {assessment.get('stop_verdict')}")
 
     observations = [row for row in rows if row.get("kind") == "post_scenario_observation"]
