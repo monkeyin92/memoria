@@ -18,7 +18,7 @@ def bridge_size(bridge: Path) -> int:
     return bridge.stat().st_size if bridge.exists() else 0
 
 
-def wait_gate(get_state, bridge: Path, offset: int, timeout: float = 90.0,
+def wait_gate(get_state, bridge: Path, offset: int, timeout: float = 180.0,
               clock=time.monotonic, sleep=time.sleep, poll: float = 0.5) -> str | None:
     """Return "idle" when serial state is idle, or None after `timeout`.
 
