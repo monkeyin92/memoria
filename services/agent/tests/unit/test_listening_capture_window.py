@@ -705,6 +705,67 @@ async def test_tail_timeout_rescues_the_final_that_arrived_after_the_endpoint(
 
 
 @pytest.mark.asyncio
+async def test_tail_timeout_keeps_the_final_of_a_rotated_provider_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Soak 20261030-202305 t022/t026: the next VAD edge already started a new
+    provider task, so the finished segment's final must not be dropped as stale
+    and take the whole turn with it."""
+
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        session = registry.bridge._connections[identity.session_id].session
+        context.asr.start_task()
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=618_240, segment_id="t026-start"),
+                capture_end_sample=619_520,
+            ),
+        )
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=843_520, segment_id="t026-end"),
+                final=True,
+                voiced_end_sample=843_520,
+            ),
+        )
+        endpoint = context.pending.turn_endpoint_sample
+        assert endpoint == 843_520
+        await _cancel_scheduled_endpoint(context)
+        context.asr.start_task()
+
+        await _accept_media_asr_final(
+            registry,
+            identity,
+            sentence_id="t026-final",
+            start_sample=700_000,
+            end_sample=800_000,
+            text="我好生气，妈妈不让我玩游戏。",
+            task_epoch=1,
+        )
+        await _cancel_scheduled_endpoint(context)
+        clock["now"] = 1_031.0
+        await registry._expire_endpoint_tail(
+            identity.session_id,
+            identity.stream_epoch,
+            endpoint,
+        )
+        for _ in range(10):
+            await asyncio.sleep(0)
+
+        assert [
+            turn.content
+            for turn in context.runtime.orchestrator.context.turns
+            if turn.role == "user"
+        ] == ["我好生气，妈妈不让我玩游戏。"]
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_capture_window_expiring_during_an_empty_turn_closes_listening(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

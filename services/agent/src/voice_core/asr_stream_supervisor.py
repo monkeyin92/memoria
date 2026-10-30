@@ -306,15 +306,14 @@ class ASRStreamSupervisor:
         return tuple(evicted)
 
     def preview_result(self, result: ASRResult) -> ASRAcceptDecision:
-        """Apply stream/task/watermark gates without mutating supervisor state."""
+        """Apply the stream gate and the committed watermark without mutating state."""
 
         if result.stream_epoch != self.stream_epoch:
             return ASRAcceptDecision(None, ASRDecisionReason.STALE_STREAM_EPOCH)
-        if (
-            self.latest_authoritative_task_epoch > 0
-            and result.task_epoch < self.latest_authoritative_task_epoch
-        ):
-            return ASRAcceptDecision(None, ASRDecisionReason.STALE_TASK_EPOCH)
+        # The task epoch advances with every VAD segment, so it cannot fence the
+        # previous segment's still in-flight final.  Older results are fenced by
+        # their audio range and by the per-sentence task lattice in
+        # ``accept_result``.
         return self._normalize_committed_result(result)
 
     def accept_result(self, result: ASRResult, *, session_id: str) -> ASRAcceptDecision:
@@ -324,9 +323,9 @@ class ASRStreamSupervisor:
         result = normalized.accepted
         # A provider task epoch is part of the revision identity. Providers
         # can restart within one media epoch and legitimately reuse a sentence
-        # id with an expanded absolute range; the stream-scoped fence above
-        # still rejects every result from a superseded task, regardless of
-        # sentence id or interval overlap.
+        # id with an expanded absolute range; a superseded task of the same
+        # sentence is fenced here, every other older task is fenced by the
+        # interval rules below.
         source_segment_id = result.sentence_id
         latest_task = self._latest_task_by_segment.get(source_segment_id)
         if latest_task is not None and result.task_epoch < latest_task:

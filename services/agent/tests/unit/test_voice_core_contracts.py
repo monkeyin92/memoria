@@ -843,12 +843,42 @@ def test_asr_supervisor_supersedes_cross_sentence_when_later_final_extends() -> 
     assert supervisor.accept_result(extended, session_id="session")
 
 
-def test_asr_supervisor_fences_old_task_with_a_different_sentence_id() -> None:
+def test_asr_supervisor_accepts_a_final_that_lands_after_the_next_task_starts() -> None:
+    """Soak 20261030-202305 t022/t026: VAD end starts the next provider task
+    while the finished segment's final is still in flight."""
+
     supervisor = ASRStreamSupervisor()
     supervisor.start_task()
     supervisor.record_audio(start_sample=0, frame_samples=960)
-    newer = ASRResult(2, "new-sentence", 1, 320, 640, "新话轮", True)
+    partial = ASRResult(1, "s1", 1, 0, 640, "我这次", False)
+    assert supervisor.accept_result(partial, session_id="session")
+    supervisor.start_task()
+    final = ASRResult(1, "s1", 2, 0, 640, "我这次考试没考好", True)
+
+    decision = supervisor.accept_result(final, session_id="session")
+
+    assert decision.reason is ASRDecisionReason.ACCEPTED
+
+
+def test_asr_supervisor_fences_an_old_task_final_over_accepted_audio() -> None:
+    supervisor = ASRStreamSupervisor()
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=960)
+    newer = ASRResult(2, "new-sentence", 1, 0, 320, "新话轮", True)
     older = ASRResult(1, "old-sentence", 1, 0, 320, "旧话轮", True)
+
+    assert supervisor.accept_result(newer, session_id="session")
+    decision = supervisor.accept_result(older, session_id="session")
+    assert not decision
+    assert decision.reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP
+
+
+def test_asr_supervisor_fences_an_old_task_revision_of_the_same_sentence() -> None:
+    supervisor = ASRStreamSupervisor()
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=960)
+    newer = ASRResult(2, "s1", 1, 0, 320, "新话轮", True)
+    older = ASRResult(1, "s1", 1, 0, 320, "旧话轮", True)
 
     assert supervisor.accept_result(newer, session_id="session")
     decision = supervisor.accept_result(older, session_id="session")

@@ -752,6 +752,7 @@ async def _accept_media_asr_final(
     end_sample: int,
     text: str,
     revision: int = 1,
+    task_epoch: int = 3,
 ) -> None:
     decision = await _accept_media_asr_decision(
         registry,
@@ -761,6 +762,7 @@ async def _accept_media_asr_final(
         end_sample=end_sample,
         text=text,
         revision=revision,
+        task_epoch=task_epoch,
     )
     assert decision.accepted is not None, decision.reason
 
@@ -775,13 +777,14 @@ async def _accept_media_asr_decision(
     text: str,
     revision: int = 1,
     is_final: bool = True,
+    task_epoch: int = 3,
 ) -> Any:
     """Feed one provider result through the production acceptance seam."""
 
     return await registry._accept_asr_result_decision(
         identity.session_id,
         ASRResult(
-            task_epoch=3,
+            task_epoch=task_epoch,
             sentence_id=sentence_id,
             revision=revision,
             capture_start_sample=start_sample,

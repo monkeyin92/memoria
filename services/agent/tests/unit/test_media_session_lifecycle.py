@@ -672,16 +672,20 @@ async def test_registry_rolls_back_supervisor_when_runtime_timeline_rejects() ->
     assert context.asr.timeline.pending == before
     assert context.asr.latest_authoritative_task_epoch == 2
 
-    another_old = ASRResult(1, "different-sentence", 1, 320, 640, "仍是旧任务", True)
+    newer_final = ASRResult(2, "fenced-sentence", 1, 320, 640, "新任务", True)
+    assert (
+        await registry._accept_asr_result_decision(identity.session_id, newer_final)
+    ).accepted is not None
     stale_decision = await registry._accept_asr_result_decision(
         identity.session_id,
-        another_old,
+        ASRResult(1, "old-sentence", 1, 320, 640, "旧任务", True),
     )
-    assert stale_decision.reason.value == "stale_task_epoch"
+    assert stale_decision.accepted is None
+    assert stale_decision.reason.value == "cross_sentence_overlap"
 
 
 @pytest.mark.asyncio
-async def test_registry_fences_old_result_as_soon_as_provider_switches_tasks() -> None:
+async def test_registry_keeps_the_finished_tasks_final_across_a_provider_switch() -> None:
     class ReconnectingASR:
         def __init__(self) -> None:
             self.task_id = "task-1"
@@ -760,8 +764,7 @@ async def test_registry_fences_old_result_as_soon_as_provider_switches_tasks() -
 
     context = registry.session_state(identity.session_id)
     assert context.asr.latest_authoritative_task_epoch == 2
-    assert bridge.transcripts == []
-    assert context.runtime.speech_timeline.pending == ()
+    assert [segment.text for segment in bridge.transcripts] == ["旧任务迟到结果"]
     await context.runtime.close()
     await provider.close(identity)
 
