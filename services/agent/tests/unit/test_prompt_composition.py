@@ -461,3 +461,65 @@ def test_custom_persona_requires_the_signed_persona_id_to_match() -> None:
     unknown = compose_production_prompt(profile=_custom_profile())
     assert unknown.persona_id == "default"
     assert "没有个人名字" in unknown.system
+
+
+def _student_minor_service_block() -> str:
+    return _full_prompt().section("service_mode") or ""
+
+
+def test_ordinary_emotion_prompt_gates_and_boundaries() -> None:
+    block = _student_minor_service_block()
+    for gate in (
+        "点出他刚说的那件事",
+        "贴着这件事的安慰",
+        "不要套同一句模板",
+        "一个他能做的下一步",
+        "散散心",
+        "轻量的小玩笑",
+        "一起想想怎么办",
+        "问问爸爸妈妈",
+        "这一轮最多三句",
+        "自称「小助手」",
+    ):
+        assert gate in block
+    for boundary in (
+        "不要替他决定",
+        "不要教他跟大人对着干",
+        "不要只让他继续跟你说",
+        "这类陪伴承诺",
+        "不要替他拟任何要说的话",
+        "马上告诉爸爸妈妈或老师，这样做是对的",
+    ):
+        assert boundary in block
+
+
+@pytest.mark.parametrize(
+    ("child_utterance", "next_step_marker"),
+    [
+        ("今天考试没考好", "透透气"),
+        ("橡皮找不到了", "问同桌或老师"),
+    ],
+)
+def test_ordinary_emotion_prompt_examples_cover_reported_cases(
+    child_utterance: str, next_step_marker: str
+) -> None:
+    block = _student_minor_service_block()
+    assert f"孩子说「{child_utterance}」" in block
+    assert next_step_marker in block
+
+
+@pytest.mark.parametrize(
+    ("anti_pattern", "gate"),
+    [
+        ("别难过了，你很棒", "别只说「别难过了」"),
+        ("我一直在这儿陪你", "这类陪伴承诺"),
+        ("我是AI助手", "自称「小助手」"),
+        ("我帮你跟妈妈说", "不要替他拟任何要说的话"),
+    ],
+)
+def test_ordinary_emotion_prompt_forbids_regression_phrases(
+    anti_pattern: str, gate: str
+) -> None:
+    block = _student_minor_service_block()
+    assert anti_pattern not in block
+    assert gate in block
