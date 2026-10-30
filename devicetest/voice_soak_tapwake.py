@@ -78,7 +78,6 @@ class SerialWatcher:
     state_since: float = field(default_factory=now)
     state_source: str = "unknown"
     events: list[tuple[float, str, str]] = field(default_factory=list)  # (t, kind, payload)
-    lines_seen: int = 0
     booted_at: float | None = None  # set when the ROM banner shows up: opening the port reset the board
     cond: threading.Condition = field(default_factory=threading.Condition)
     stop: threading.Event = field(default_factory=threading.Event)
@@ -110,7 +109,6 @@ class SerialWatcher:
     def _parse(self, t: float, line: str) -> None:
         match = STATE_RE.search(line)
         with self.cond:
-            self.lines_seen += 1
             if "ESP-ROM" in line:
                 self.booted_at = t
             if match:
@@ -127,10 +125,6 @@ class SerialWatcher:
             elif re.search(r"\b(E|W) \(\d+\)", line):
                 self.events.append((t, "log", line[:160]))
             self.cond.notify_all()
-
-    def alive(self) -> bool:
-        with self.cond:
-            return bool(self.lines_seen)
 
     def wake(self) -> None:
         """Wake the idle robot over USB, like a tap on the screen. Never by playing the wake word."""
@@ -156,12 +150,17 @@ class SerialWatcher:
                     return None
                 self.cond.wait(min(remaining, 0.25))
 
-    def wait_state(self, states: set[str], timeout: float, since: float | None = None) -> float | None:
-        """Return the time we were in one of `states` (after `since`), or None on timeout."""
+    def wait_state(self, states: set[str], timeout: float, since: float | None = None,
+                   require_source: str | None = None) -> float | None:
+        """Return the time we were in one of `states` (after `since`), or None on timeout.
+
+        `require_source` pins how the state was learned, e.g. "serial_transition" for a real State line.
+        """
         deadline = now() + timeout
         with self.cond:
             while True:
-                if self.state in states and (since is None or self.state_since >= since):
+                if (self.state in states and (since is None or self.state_since >= since)
+                        and (require_source is None or self.state_source == require_source)):
                     return self.state_since
                 remaining = deadline - now()
                 if remaining <= 0:
@@ -341,7 +340,7 @@ def main() -> int:
     ap.add_argument("--port", default=DEFAULT_PORT, help="the robot's USB serial port")
     ap.add_argument("--serial-log", default=None, help="follow this log (voice_soak_serial_logger.py) instead of opening the port")
     ap.add_argument("--wake-socket", default=None, help="the serial logger's command socket (default: derived from --port)")
-    ap.add_argument("--gate-timeout", type=float, default=90.0)
+    ap.add_argument("--gate-timeout", type=float, default=180.0)
     ap.add_argument("--remote", default=DEFAULT_REMOTE, help="ssh host that runs the production containers")
     args = ap.parse_args()
     if not 0 <= args.post_scenario_wait <= MAX_POST_SCENARIO_WAIT_S:
@@ -373,19 +372,12 @@ def main() -> int:
     previous_volume = set_volume(args.volume)
     record(kind="start", volume=args.volume, previous_volume=previous_volume, duration_min=args.duration_min)
     try:
-        # A board that was already idle prints no state line, only its periodic logs, so after a short
-        # wait trust "serial is alive and the display-profile poll is running" (it only runs while idle)
-        # instead of waiting for a line.
-        if watcher.wait_state({"idle", "listening"}, 15) is None:
-            if watcher.alive():
-                with watcher.cond:
-                    watcher.state = "idle"
-                    watcher.state_since = now()
-                    watcher.state_source = "assumed_idle"
-                record(kind="assume_idle", reason="no state line after the port open, serial is alive")
-            elif watcher.wait_state({"idle", "listening"}, 75) is None:
-                record(kind="abort", reason="device never reached idle after the port open")
-                return 2
+        # The gate needs a real State line: a port that opened but printed no State line proves nothing
+        # about the firmware state, so wait for the transition instead of assuming idle.
+        if watcher.wait_state({"idle"}, args.gate_timeout, require_source="serial_transition") is None:
+            record(kind="abort", verdict="ABORT_PRE_WAIT",
+                   reason="no State line reached idle before the run (idle-only gate)")
+            return 5
         if watcher.booted_at is not None:
             # A board reset by the port open prints idle ~11 s after the ROM banner, but the wake word engine and
             # the first display-profile poll finish ~5 s later; speaking before that is lost.
