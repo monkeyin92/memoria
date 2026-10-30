@@ -4830,7 +4830,7 @@ async def test_vad_endpoint_accepts_final_within_bounded_clock_skew() -> None:
 
 
 @pytest.mark.asyncio
-async def test_vad_endpoint_rejects_final_beyond_bounded_clock_skew() -> None:
+async def test_vad_endpoint_does_not_commit_a_final_beyond_bounded_clock_skew() -> None:
     provider = FakeMediaProvider()
     bridge = MediaBridgeGrpcServer()
     registry = MediaVoiceCoreRegistry(
@@ -4887,11 +4887,19 @@ async def test_vad_endpoint_rejects_final_beyond_bounded_clock_skew() -> None:
         ),
     )
 
-    await asyncio.sleep(0.05)
-
+    assert context.pending.turn_endpoint_sample == 40_001
+    await asyncio.sleep(0.005)
     assert [
         turn for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
     ] == []
+
+    await asyncio.sleep(0.05)
+
+    assert [
+        turn.content
+        for turn in context.runtime.orchestrator.context.turns
+        if turn.role == "user"
+    ] == ["过早终稿"]
     assert context.pending.turn_endpoint_sample is None
     assert context.asr.last_committed_sample == 40_001
     await context.runtime.close()

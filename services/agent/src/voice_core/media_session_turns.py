@@ -44,8 +44,10 @@ _PREPARE_RETRY_SUPERSEDED_REASON = "provider_prepare_retry_superseded_by_new_vad
 # later sentence can arrive, permit at most 1.5 seconds of tail skew after
 # firmware removes its known 900 ms AFE hangover. Real-device evidence still
 # showed 1.14 seconds between FunASR's last word and the device voiced end;
-# larger gaps remain fail-closed so an earlier provider sentence cannot commit
-# a later turn.
+# larger gaps keep the endpoint commit waiting for a covering final. The tail
+# timeout then commits this turn's accepted final instead of dropping it, and
+# the turn's own sample range is what stops an earlier sentence reaching a
+# later turn.
 _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES = 24_000
 _CLOCK_FACT_PARTIAL_STABLE_S = 0.6
 _CONVERSATION_CLOSE_PARTIAL_STABLE_S = 0.6
@@ -114,7 +116,7 @@ class MediaTurnEndpointMixin:
             result: ASRResult,
         ) -> ASRAcceptDecision: ...
 
-        async def _commit_final_after_endpoint(self, context: _MediaVoiceSession) -> bool: ...
+        async def _commit_final_before_tail(self, context: _MediaVoiceSession) -> bool: ...
 
         async def _discard_projection(
             self,
@@ -968,7 +970,7 @@ class MediaTurnEndpointMixin:
                 if context.pending.turn_endpoint_sample != endpoint_sample:
                     return
 
-        if await self._commit_final_after_endpoint(context):
+        if await self._commit_final_before_tail(context):
             return
 
         discarded: ProjectionPatch | None = None
