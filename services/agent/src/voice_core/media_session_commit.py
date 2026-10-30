@@ -328,7 +328,7 @@ class MediaSessionCommitMixin:
         ) -> bool: ...
 
         def _schedule_farewell_standby(
-            self, context: _MediaVoiceSession, *, reason: str
+            self, context: _MediaVoiceSession, *, reason: str, text: str
         ) -> None: ...
 
         def _observe_partial_asr_result(
@@ -1151,7 +1151,9 @@ class MediaSessionCommitMixin:
                 and is_explicit_farewell_text(close_text)
                 and callable(getattr(context.provider, "generate_output", None))
             ):
-                self._schedule_farewell_standby(context, reason=reason)
+                self._schedule_farewell_standby(
+                    context, reason=reason, text=close_text
+                )
             else:
                 await self._request_device_standby(context, reason=reason)
         else:

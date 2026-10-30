@@ -254,6 +254,16 @@ class MediaSessionProjectionMixin:
             finalize_audible: bool = ...,
         ) -> None: ...
 
+        async def _stop_reply_for_voice_command(
+            self,
+            context: _MediaVoiceSession,
+            text: str,
+            *,
+            cause: str = ...,
+            follow_up_reply: bool = ...,
+            event_source: str = ...,
+        ) -> bool: ...
+
         def _arm_owner_silence_timer(
             self, context: _MediaVoiceSession, *, reset: bool
         ) -> None: ...
@@ -706,7 +716,7 @@ class MediaSessionProjectionMixin:
         return True
 
     def _schedule_farewell_standby(
-        self, context: _MediaVoiceSession, *, reason: str
+        self, context: _MediaVoiceSession, *, reason: str, text: str
     ) -> None:
         """Speak the approved farewell, then stand by once it has played."""
 
@@ -714,24 +724,34 @@ class MediaSessionProjectionMixin:
         if task is not None and not task.done():
             return
         context.output.farewell_task = asyncio.create_task(
-            self._speak_farewell_then_standby(context, reason=reason),
+            self._speak_farewell_then_standby(context, reason=reason, text=text),
             name=f"media-farewell-standby-{context.identity.session_id}",
         )
 
     async def _speak_farewell_then_standby(
-        self, context: _MediaVoiceSession, *, reason: str
+        self, context: _MediaVoiceSession, *, reason: str, text: str
     ) -> None:
         task = asyncio.current_task()
         try:
             owner = context.output.output_owner
             if owner is not None:
                 # The farewell is the only thing the child should hear next.
-                await self._cancel_reply_task(
+                stopped = await self._stop_reply_for_voice_command(
                     context,
-                    owner.fence,
-                    reason="farewell_standby",
-                    finalize_audible=False,
+                    text,
+                    cause="farewell_standby",
+                    follow_up_reply=True,
+                    event_source="farewell_standby",
                 )
+                if not stopped and not context.runtime.floor.fixed_safety_audible:
+                    owner = context.output.output_owner
+                    if owner is not None:
+                        await self._cancel_reply_task(
+                            context,
+                            owner.fence,
+                            reason="farewell_standby",
+                            finalize_audible=False,
+                        )
             self._discard_output_work_for_farewell(context)
             context.runtime.open_assistant_floor(cause="farewell_standby")
             played = await self._speak_allowlisted_bridge_phrase(

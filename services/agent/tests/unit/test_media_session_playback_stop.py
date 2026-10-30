@@ -1681,6 +1681,10 @@ async def test_device_rescue_farewell_during_story_is_held() -> None:
             )
             == FAREWELL_STANDBY_PHRASE
         )
+        assert harness.cancel_effects()
+        owner = context.output.output_owner
+        assert owner is not None
+        assert owner.fence.generation_id > story.generation_id
         assert harness.count("audio") > audio_before
         assert not context.standby_requested
         assert not harness.closed()

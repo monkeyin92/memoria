@@ -1360,13 +1360,22 @@ class MediaPlaybackStopMixin:
         self._schedule_turn_commit(context)
 
     async def _stop_reply_for_voice_command(
-        self, context: _MediaVoiceSession, text: str, *, cause: str = _PLAYBACK_STOP_CAUSE
+        self,
+        context: _MediaVoiceSession,
+        text: str,
+        *,
+        cause: str = _PLAYBACK_STOP_CAUSE,
+        follow_up_reply: bool = False,
+        event_source: str = "voice_stop_command",
     ) -> bool:
         """Carry out a Router-accepted spoken stop like a keyword stop.
 
         ``accept_user_turn`` only suppresses the control turn; the reply task,
         the generation and the device playback must be stopped here.  The
         session stays open: this is never the END_SESSION path.
+
+        ``follow_up_reply`` keeps the replacement generation alive because the
+        caller speaks an approved line next (the farewell before standby).
         """
 
         if context.closed or context.standby_requested or not context.runtime.floor.interruptible:
@@ -1423,13 +1432,18 @@ class MediaPlaybackStopMixin:
             context,
             cancelled,
             heard_fence=previous_fence,
-            source_event_id="voice_stop_command",
-            payload={"reason": "voice_stop_command"},
+            source_event_id=event_source,
+            payload={"reason": event_source},
             playback_flush_required=flush_required,
         )
-        if flushed and flush_required and context.identity.client_type == "device":
+        if (
+            flushed
+            and flush_required
+            and context.identity.client_type == "device"
+            and not follow_up_reply
+        ):
             # No reply follows a stop: end the replacement generation the flush installed on the device.
-            await self._end_replacement_generation(context, cancelled, reason="voice_stop_command")
+            await self._end_replacement_generation(context, cancelled, reason=event_source)
         # A stop ends the speaker window like a finished or failed playback.
         # Without this boundary a session whose replies were all stopped had
         # none, so the post-playback follow-up endpoint skipped the owner's
@@ -1450,7 +1464,8 @@ class MediaPlaybackStopMixin:
             flush_required,
             cause,
         )
-        self._schedule_aigc_round_closing(context, close_reason=cause)
+        if not follow_up_reply:
+            self._schedule_aigc_round_closing(context, close_reason=cause)
         return True
 
 
