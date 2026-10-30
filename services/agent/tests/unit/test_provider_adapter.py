@@ -39,6 +39,8 @@ class FakeASR:
         self.events: asyncio.Queue[FunASRServerEvent] = asyncio.Queue()
         self.sent: list[tuple[bytes, int]] = []
         self.reconnect_calls = 0
+        self.reset_for_gap_calls = 0
+        self.vad_starts: list[int] = []
         self.committed_samples: list[int] = []
         self.closed = False
 
@@ -50,6 +52,12 @@ class FakeASR:
         self.task_epoch += 1
         self.task_id = f"task-{self.task_epoch}"
         self.task_sample_origin = 320
+
+    async def reset_for_gap(self) -> None:
+        self.reset_for_gap_calls += 1
+
+    def note_vad_start(self, sample: int) -> None:
+        self.vad_starts.append(sample)
 
     async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
         if not self.sent:
@@ -695,6 +703,66 @@ async def test_existing_provider_adapter_recovers_failed_session_at_absolute_sam
     assert sessions[1].committed_samples == [320]
     assert (second[0].capture_start_sample, second[0].capture_end_sample) == (320, 640)
     assert second[0].task_epoch > first[0].task_epoch
+
+
+@pytest.mark.parametrize("gap_s", [8.2, 16.2, 46.7])
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_rebuilds_after_a_capture_gap(gap_s: float) -> None:
+    asr = FakeASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("adapter-capture-gap", stream_epoch=1)
+    await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+    start = 320 + int(gap_s * 16_000)
+    await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 1, start, 320, b"\x01\x00" * 320),
+    )
+    assert asr.reset_for_gap_calls == 1
+    assert [start for _, start in asr.sent] == [0, start]
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_keeps_task_across_a_short_gap() -> None:
+    asr = FakeASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("adapter-short-gap", stream_epoch=1)
+    await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+    await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 1, 320 + 16_000, 320, b"\x01\x00" * 320),
+    )
+    assert asr.reset_for_gap_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_applies_vad_start_before_first_frame() -> None:
+    asr = FakeASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("adapter-vad-start", stream_epoch=1)
+    adapter.note_vad_start(identity, 1234)
+    await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 320, b"\x00\x00" * 320),
+    )
+    assert asr.vad_starts == [1234]
 
 
 @pytest.mark.asyncio
