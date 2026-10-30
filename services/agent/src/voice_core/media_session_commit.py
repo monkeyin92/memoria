@@ -340,6 +340,7 @@ class MediaSessionCommitMixin:
             result: ASRResult,
             *,
             source: str,
+            handled_range: tuple[int | None, int | None] | None = None,
         ) -> None: ...
 
         async def _stop_reply_for_voice_command(
@@ -461,9 +462,12 @@ class MediaSessionCommitMixin:
             )
         if accepted.is_final:
             self._release_empty_turn_pin_for_final(context, accepted)
+            handled_range = self._pending_turn_handled_range(context)
             self._observe_final_asr_result(context, accepted)
             self._arm_final_vad_end_wait(context, accepted)
-            self._maybe_pin_playback_stop(context, accepted, source="final")
+            self._maybe_pin_playback_stop(
+                context, accepted, source="final", handled_range=handled_range
+            )
         else:
             self._observe_partial_asr_result(context, accepted)
             self._maybe_early_commit_stable_clock_fact_partial(context)
@@ -630,6 +634,21 @@ class MediaSessionCommitMixin:
         context.pending.empty_turn_endpoint_pin = (
             source if MediaSessionCommitMixin._pending_turn_holds_no_words(context) else None
         )
+
+    @staticmethod
+    def _pending_turn_handled_range(
+        context: _MediaVoiceSession,
+    ) -> tuple[int | None, int | None]:
+        """The range this turn already held before the final being admitted.
+
+        ``turn_end_sample`` and ``turn_endpoint_sample`` are both endpoints the
+        turn has reached; the later one bounds the range.  ``None`` means the
+        turn has no endpoint yet, so only its start can bound it.
+        """
+
+        pending = context.pending
+        end = max(pending.turn_end_sample or 0, pending.turn_endpoint_sample or 0)
+        return pending.turn_start_sample, end or None
 
     @staticmethod
     def _pending_turn_holds_no_words(context: _MediaVoiceSession) -> bool:

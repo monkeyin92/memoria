@@ -477,6 +477,101 @@ async def test_device_question_mid_story_stops_the_reply_and_answers_it() -> Non
 
 
 @pytest.mark.asyncio
+async def test_device_tail_final_overlapping_the_open_turn_does_not_stop_the_reply() -> None:
+    """Soak 2026-10-30 t017: a final straddled the turn its wordless edge opened.
+
+    The reply had just sent its first frame when that final arrived with
+    question words, so it stopped the story; the next final stopped the answer,
+    seven stops in a row.  Its audio overlaps the range the open turn already
+    held: it is that turn's tail, not a new question.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(5)
+        turn_start = harness.sample
+        await harness.vad_start(turn_start)
+        assert harness.context.pending.turn_start_sample == turn_start
+        # The wordless edge held the prepared reply, so its floor was released
+        # without words before the final arrived (soak t017 15:15:55.167).
+        harness.runtime.open_assistant_floor(cause="textless_turn_released")
+        assert harness.runtime.floor.fresh_user_speech is False
+        await _accept_media_asr_final(
+            harness.registry,
+            harness.identity,
+            sentence_id="tail-final",
+            start_sample=turn_start - 1_600,
+            end_sample=turn_start + 8_000,
+            text="云是怎么变出来的？",
+        )
+        await harness.assert_story_still_playing(story)
+        assert harness.context.pending.content_barge_in is False
+        assert harness.story.reply_calls == 1
+
+    await _run_story(_device_identity("tail-final-overlap"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_question_starting_before_its_vad_edge_still_stops_the_reply() -> None:
+    """Live speech may begin a little before the VAD edge detects it.
+
+    The open turn holds fresh user speech, so a question final that starts
+    before the VAD start is still the owner's new question and must stop the
+    reply (soak turn 18: the ASR began 0.15 s before its VAD start).
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(5)
+        turn_start = harness.sample
+        await harness.vad_start(turn_start)
+        assert harness.runtime.floor.fresh_user_speech is True
+        question = "我们下午几点出发"
+        await _accept_media_asr_final(
+            harness.registry,
+            harness.identity,
+            sentence_id="early-final",
+            start_sample=turn_start - 320,
+            end_sample=turn_start + 6_400,
+            text=question,
+        )
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        [effect] = harness.cancel_effects()
+        assert effect.turn_id == story.turn_id
+        assert _user_turn_texts(harness.context) == ["给我讲个故事", question]
+        assert not harness.closed()
+
+    await _run_story(_device_identity("question-before-vad-edge"), script)
+
+
+@pytest.mark.asyncio
+async def test_device_question_replaces_a_wordless_pin_at_the_turn_start() -> None:
+    """Soak 2026-10-30 t019: a wordless VAD pinned its own start.
+
+    The owner's question then arrived after that pin and was refused as
+    ``endpoint_already_pinned`` until the ASR tail timeout discarded the turn,
+    so the story played on.  A pin whose range holds no words has nothing to
+    lose: the content question takes it over, as a stop word already does.
+    """
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(5)
+        await harness.vad_start(harness.sample)
+        pending = harness.context.pending
+        pending.turn_endpoint_sample = pending.turn_start_sample
+        question = "等一下，我想问另一个问题，云是怎么变出来的？"
+        await harness.audio_frames(30, final_text=question)
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        [effect] = harness.cancel_effects()
+        assert effect.turn_id == story.turn_id
+        assert _user_turn_texts(harness.context) == ["给我讲个故事", question]
+        assert not harness.closed()
+
+    await _run_story(_device_identity("wordless-pin-question"), script)
+
+
+@pytest.mark.asyncio
 async def test_device_backchannel_mid_story_does_not_stop() -> None:
     """Soak 2026-10-29 t018: 「嗯。」 is agreement, not a new question."""
 

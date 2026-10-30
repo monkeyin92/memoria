@@ -1075,7 +1075,43 @@ class MediaPlaybackStopMixin:
         )
 
     @staticmethod
-    def _pinned_turn_holds_no_words(context: _MediaVoiceSession, result: ASRResult) -> bool:
+    def _final_overlaps_handled_turn(
+        context: _MediaVoiceSession,
+        result: ASRResult,
+        handled_range: tuple[int | None, int | None] | None,
+    ) -> bool:
+        """True when this final overlaps the range the turn already handled.
+
+        ``_observe_final_asr_result`` merges the final into the pending turn
+        before this decision, so the range from before it is passed in.  A
+        final that starts inside a range with an end re-finalizes audio the
+        reply already answers.
+
+        A range with no end is bounded only by its start.  A final may begin a
+        little before the VAD edge that detects live speech (soak turn 18:
+        0.15 s), so only a turn whose floor was already released without words
+        (``fresh_user_speech`` false) owns a straddling final (t017).
+        """
+
+        if handled_range is None:
+            return False
+        start, end = handled_range
+        if start is None:
+            return False
+        if end is not None:
+            return result.capture_start_sample < end and result.capture_end_sample > start
+        floor = getattr(context.runtime, "floor", None)
+        if bool(getattr(floor, "fresh_user_speech", True)):
+            return False
+        return result.capture_start_sample < start < result.capture_end_sample
+
+    @staticmethod
+    def _pinned_turn_holds_no_words(
+        context: _MediaVoiceSession,
+        result: ASRResult,
+        *,
+        content_barge_in: bool = False,
+    ) -> bool:
         """True when the standing endpoint ends a turn with no words, before ``result``.
 
         Field 2026-10-02 (soak10): the device VAD ended on room noise while the
@@ -1106,11 +1142,12 @@ class MediaPlaybackStopMixin:
         # range was never asked whether it held words and the stop final
         # (stop_word=True, text_len=2) was refused as endpoint_already_pinned
         # until the ASR tail timeout threw the turn away.  An inverted range
-        # cannot hold a word, but only an explicit stop may take it: a wait or
-        # completion turn (「等等」) belongs to the empty tail being retired,
-        # not to a new turn.
+        # cannot hold a word, but only a final that brings words of its own may
+        # take it: a wait or completion turn (「等等」) belongs to the empty
+        # tail being retired, not to a new turn.  So does a content question
+        # (soak 2026-10-30 t019): the pin it replaces holds no words either.
         if start >= endpoint:
-            return is_stop_command_only(result.text)
+            return is_stop_command_only(result.text) or content_barge_in
         return not context.runtime.speech_timeline.projected_text(
             stream_epoch=result.stream_epoch, start_sample=start, end_sample=endpoint
         )
@@ -1167,14 +1204,21 @@ class MediaPlaybackStopMixin:
         result: ASRResult,
         *,
         source: str,
+        handled_range: tuple[int | None, int | None] | None = None,
     ) -> None:
         """Endpoint a device stop phrase or question heard while a reply holds the floor.
 
         Only the stop phrase's own interval is committed
         (``_scope_pending_turn_to``): earlier playback-window candidates would
         otherwise merge into 「……停」, route as chat and stay held.  A stop
-        phrase also replaces the endpoint of an earlier turn that holds no
-        words (``_pinned_turn_holds_no_words``), which has nothing to lose.
+        phrase or a content question also replaces the endpoint of an earlier
+        turn that holds no words (``_pinned_turn_holds_no_words``), which has
+        nothing to lose.
+
+        ``handled_range`` is the turn's range from before ``result`` was merged
+        into it.  A final that overlaps that range re-finalizes the turn the
+        reply already answers, so it never counts as a content barge
+        (``_final_overlaps_handled_turn``, soak 2026-10-30 t017).
 
         The committed turn is marked (``pending.playback_stop_text``) so its
         route cannot depend on the same text peeling twice: a stop stays the
@@ -1195,6 +1239,11 @@ class MediaPlaybackStopMixin:
             and not self._playback_text_is_echo(context, text)
             and self._playback_input_guard_reason(context, result) is None
         )
+        tail_final = content_barge_in and self._final_overlaps_handled_turn(
+            context, result, handled_range
+        )
+        if tail_final:
+            content_barge_in = False
         in_flight = self._reply_in_flight(context)
         diagnosis = self._playback_stop_diagnosis(context, result)
         replaced_endpoint = context.pending.turn_endpoint_sample
@@ -1202,8 +1251,13 @@ class MediaPlaybackStopMixin:
         reason = ""
         if context.closed or context.standby_requested:
             reason = "session_closing"
+        elif tail_final:
+            reason = "overlapping_turn_final"
         elif replaced_endpoint is not None and not (
-            stop_word and self._pinned_turn_holds_no_words(context, result)
+            (stop_word or content_barge_in)
+            and self._pinned_turn_holds_no_words(
+                context, result, content_barge_in=content_barge_in
+            )
         ):
             reason = "endpoint_already_pinned"
         elif not stop_word and not content_barge_in:
