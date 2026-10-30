@@ -101,10 +101,6 @@ class MediaSessionInputMixin:
 
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
 
-        def _restore_listening_capture_after_empty_turn(
-            self, context: _MediaVoiceSession
-        ) -> bool: ...
-
         def resume_listening_capture(
             self,
             context: _MediaVoiceSession,
@@ -453,20 +449,16 @@ class MediaSessionInputMixin:
         context = await self.open_session(session.identity)
         if context.closed or context.standby_requested or not session.accepts_uplink():
             return
+        # Only a tap (``listening.resume``) reopens a held capture; VAD edges
+        # are room noise once the microphone is closed.
         if segment.kind is SegmentKind.VAD and context.listening_capture_hold:
-            if segment.final:
-                logger.info(
-                    "media vad end ignored during listening capture hold session=%s sample=%s",
-                    context.identity.session_id,
-                    segment.capture_start_sample,
-                )
-                return
-            context.listening_capture_vad_rewake_pending = True
-            self.resume_listening_capture(
-                context,
-                wake_sample=segment.capture_start_sample,
-                cause="vad_rewake",
+            logger.info(
+                "media vad ignored during listening capture hold session=%s sample=%s final=%s",
+                context.identity.session_id,
+                segment.capture_start_sample,
+                segment.final,
             )
+            return
         if _is_spurious_connect_vad(segment, context):
             logger.info(
                 "media empty vad ignored session=%s sample=%s rms=%s final=%s pending_wake_ack=%s",
@@ -476,7 +468,6 @@ class MediaSessionInputMixin:
                 segment.final,
                 context.device_wake_ack_pending,
             )
-            self._restore_listening_capture_after_empty_turn(context)
             return
         if _vad_precedes_pending_turn(segment, context):
             logger.info(

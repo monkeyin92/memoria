@@ -1060,8 +1060,6 @@ class MediaTurnEndpointMixin:
 
         input_fence = context.pending.turn_input_fence
         empty_input = not self._pending_turn_has_fresh_text_evidence(context)
-        if not empty_input:
-            context.listening_capture_vad_rewake_pending = False
         if not await self._retire_pending_turn_input_range(
             context,
             stream_epoch=stream_epoch,

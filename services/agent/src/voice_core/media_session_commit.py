@@ -252,10 +252,6 @@ class MediaSessionCommitMixin:
 
         def _note_owner_speech_text(self, context: _MediaVoiceSession) -> None: ...
 
-        def _restore_listening_capture_after_empty_turn(
-            self, context: _MediaVoiceSession
-        ) -> bool: ...
-
         def _nudge_missed_hearing(
             self,
             context: _MediaVoiceSession,
@@ -1075,8 +1071,6 @@ class MediaSessionCommitMixin:
                     await self._abort_committed_turn(context, result[0], reason="session_closed")
                 return None, "session_closed"
         fence, reason = result
-        if reason == "empty_media_turn":
-            self._restore_listening_capture_after_empty_turn(context)
         self._log_commit_timing(
             context, stream_epoch, "committed" if fence is not None else reason,
             commit_started, since_endpoint_ms, timing,
@@ -1273,7 +1267,6 @@ class MediaSessionCommitMixin:
             await self._discard_projection(context, "empty_media_turn")
             self._nudge_missed_hearing(context)
             return None, "empty_media_turn"
-        context.listening_capture_vad_rewake_pending = False
         normalized_text = normalize_short(text)
         if self._same_text_turn_output_pending(context, normalized_text):
             logger.info(
