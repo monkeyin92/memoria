@@ -1498,7 +1498,7 @@ async def test_second_self_crisis_in_recall_context_uses_escalation(
             await client.post("/v1/sessions", headers=user_headers, json={})
         ).json()["session_id"]
         body = _response_plan_body(session_id)
-        body["query"] = "我不想活了"
+        body["query"] = "我有点难过，不想活了"
         body["recall_context"] = ["我不想活了"]
         body["fence"]["turn_id"] = 2
         body["fence"]["generation_id"] = 2
