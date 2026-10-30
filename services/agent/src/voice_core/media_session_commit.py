@@ -250,6 +250,8 @@ class MediaSessionCommitMixin:
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
 
+        def _open_turn_verdict_scope(self, context: _MediaVoiceSession) -> None: ...
+
         def _split_pending_turn_at_unvoiced_gap(
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
@@ -688,6 +690,7 @@ class MediaSessionCommitMixin:
                 reason=reason,
             )
             return
+        self._open_turn_verdict_scope(context)
         close_needed, live_lookup_needed = await asyncio.gather(
             context.runtime.resolve_conversation_close_needed(text),
             context.runtime.resolve_live_lookup_needed(text),

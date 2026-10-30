@@ -988,6 +988,7 @@ class MediaPlaybackStopMixin:
             stream_epoch=result.stream_epoch, sample=result.capture_start_sample
         )
         context.pending.turn_start_sample = None
+        context.pending.verdict_scope_open = False
         context.pending.turn_end_sample = None
         context.pending.pending_partial = None
         context.pending.clock_fact_partial_text = None

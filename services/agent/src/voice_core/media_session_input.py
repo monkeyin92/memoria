@@ -130,6 +130,8 @@ class MediaSessionInputMixin:
 
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
 
+        def _open_turn_verdict_scope(self, context: _MediaVoiceSession) -> None: ...
+
         def resume_listening_capture(
             self,
             context: _MediaVoiceSession,
@@ -244,6 +246,7 @@ class MediaSessionInputMixin:
             voice_decision = context.runtime.on_user_voice_started()
             if voice_decision is PlaybackInputDecision.IGNORE:
                 return False
+            self._open_turn_verdict_scope(context)
             context.pending.turn_input_fence = context.runtime.fence
         if pending_endpoint is not None and segment.capture_start_sample >= pending_endpoint:
             self._arm_reopen_evidence_window(context, pending_endpoint)

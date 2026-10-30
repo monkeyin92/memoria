@@ -91,6 +91,8 @@ class MediaSessionLifecycleMixin:
 
         def _clear_pending_turn_state(self, context: _MediaVoiceSession) -> None: ...
 
+        def _open_turn_verdict_scope(self, context: _MediaVoiceSession) -> None: ...
+
         def _finish_owner_silence_turn(
             self, context: _MediaVoiceSession, *, accepted: bool, refresh_owner_budget: bool = True
         ) -> None: ...
@@ -492,7 +494,7 @@ class MediaSessionLifecycleMixin:
                 device_wake_ack_pending=identity.client_type == "device",
             )
             runtime.set_device_conversation_controls(identity.client_type == "device")
-            runtime.begin_turn_verdicts()
+            self._open_turn_verdict_scope(current)
             runtime.orchestrator.delegation.queue_while_floor_blocked = True
             delegation_starter = getattr(provider, "start_delegation", None)
             output_intent_acceptor = getattr(provider, "accept_output_intent", None)

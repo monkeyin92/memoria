@@ -40,6 +40,8 @@ class PendingTurn:
         default_factory=OrderedDict
     )
     turn_start_sample: int | None = None
+    # One classifier scope per turn: opened by the turn's first speech, kept through its reply.
+    verdict_scope_open: bool = False
     turn_input_fence: GenerationFence | None = None
     turn_end_sample: int | None = None
     turn_endpoint_sample: int | None = None
@@ -173,6 +175,7 @@ class PendingTurn:
         self.final_vad_endpoint_pinned = None
         self.clear_commit_retry()
         self.turn_start_sample = None
+        self.verdict_scope_open = False
         self.turn_input_fence = None
         self.turn_end_sample = None
         self.turn_endpoint_sample = None
