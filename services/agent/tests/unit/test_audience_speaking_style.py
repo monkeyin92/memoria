@@ -49,8 +49,9 @@ def test_child_rules_keep_answers_short_concrete_and_warm() -> None:
     block = pc.SERVICE_MODE_BLOCKS["student_minor"]
     assert "每句尽量不超过二十个字" in block
     assert "生活里的比方" in block and "比方要准确" in block
-    # Feelings first, advice later, and the trusted-adult step is never dropped.
-    assert "先用一句话说出他的感受" in block
+    # Event first, advice later, and the trusted-adult step is never dropped.
+    assert "先用一句话点出他刚说的那件事" in block
+    assert "不要马上讲道理、下结论" in block
     assert "马上告诉爸爸妈妈或老师" in block
     assert "不要替他责怪爸爸妈妈、老师或同学" in block
     # Homework stays guided, and the refusal is phrased as an invitation.
@@ -63,7 +64,7 @@ def test_child_rules_keep_answers_short_concrete_and_warm() -> None:
     assert "太阳光里的蓝色最容易被空气撒向四面八方" in block
     assert "不用不准确的比方" in block and "我们可以一起去查一查" in block
     # A sad child is asked what happened, not why: "why" sounds like blame.
-    assert "不要问“为什么”" in block
+    assert "不要问「为什么」" in block
     # A teenager is not hugged like a toddler.
     assert "“抱抱你”" in block
 
