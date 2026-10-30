@@ -50,7 +50,7 @@ import serial  # pyserial, from the ESP-IDF python env
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-from tapwake_gate import TimeoutStreak, bridge_size, closed_since, wait_gate  # noqa: E402
+from tapwake_gate import TimeoutStreak, bridge_size, wait_gate  # noqa: E402
 
 from voice_soak_evidence import assess_interruption  # noqa: E402
 from voice_soak_serial_command import SerialCommandError, send_command  # noqa: E402
@@ -59,6 +59,7 @@ from voice_soak_serial_logger import open_port  # noqa: E402
 STATE_RE = re.compile(r"StateMachine: State: (\w+) -> (\w+)")
 USB_WAKE_RE = re.compile(r"usb wake (accepted|ignored)(?: reason=(\w+))?")
 USB_WAKE_ACTION_RE = re.compile(r"usb wake action=(\w+)")
+MIC_CLOSED_RE = re.compile(r"listening_closed closed=(true|false)")
 DEFAULT_PORT = "/dev/cu.usbmodem2101"
 DEFAULT_REMOTE = "memoria-prod"
 
@@ -78,6 +79,7 @@ class SerialWatcher:
     state: str = "unknown"
     state_since: float = field(default_factory=now)
     state_source: str = "unknown"
+    mic_closed: bool = False  # serial `listening_closed closed=...`: the hold mic is shut while state says listening
     events: list[tuple[float, str, str]] = field(default_factory=list)  # (t, kind, payload)
     booted_at: float | None = None  # set when the ROM banner shows up: opening the port reset the board
     cond: threading.Condition = field(default_factory=threading.Condition)
@@ -116,11 +118,17 @@ class SerialWatcher:
                 self.state = match.group(2)
                 self.state_since = t
                 self.state_source = "serial_transition"
+                if self.state == "idle":
+                    self.mic_closed = False
                 self.events.append((t, "state", f"{match.group(1)}->{match.group(2)}"))
             elif (usb := USB_WAKE_RE.search(line)) is not None:
                 self.events.append((t, "usb_wake", usb.group(1) + (f" {usb.group(2)}" if usb.group(2) else "")))
             elif (act := USB_WAKE_ACTION_RE.search(line)) is not None:
+                if act.group(1) == "resume_listening":
+                    self.mic_closed = False
                 self.events.append((t, "usb_wake_action", act.group(1)))
+            elif (closed := MIC_CLOSED_RE.search(line)) is not None:
+                self.mic_closed = closed.group(1) == "true"
             elif "Wake word detected" in line or "screen tap" in line or "screen off" in line or "screen on" in line:
                 self.events.append((t, "note", line.split(") ", 1)[-1][:120]))
             elif re.search(r"\b(E|W) \(\d+\)", line):
@@ -395,7 +403,8 @@ def main() -> int:
 
         def gate_wait(tag: str, mode: str = "turn", timeout: float | None = None) -> str | None:
             t0 = now()
-            got = wait_gate(lambda: watcher.state, bridge, gate["offset"], timeout, mode=mode)
+            got = wait_gate(lambda: watcher.state, bridge, gate["offset"], timeout, mode=mode,
+                            is_closed=lambda: watcher.mic_closed)
             record(kind="wait_gate", tag=tag, mode=mode, result=got or "timeout",
                    waited_s=round(now() - t0, 1))
             return got
@@ -430,7 +439,7 @@ def main() -> int:
         def ensure_listening(tag: str) -> bool:
             for attempt in range(5):
                 if watcher.state == "listening":
-                    if closed_since(bridge, gate["offset"]):
+                    if watcher.mic_closed:
                         t0 = now()
                         try:
                             watcher.wake()
