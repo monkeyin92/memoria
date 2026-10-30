@@ -44,6 +44,7 @@ from services.agent.src.orchestration.interruption_guard import (
 from services.agent.src.voice_core.media_protocol import should_pause_asr_for_playback
 from services.agent.src.voice_core.media_session_pending_turn import EndpointPinSource
 from services.agent.src.voice_core.speech_timeline import ASRResult
+from services.common.redaction import redact_pii
 
 if TYPE_CHECKING:
     from services.agent.src.observability.metrics import MetricsRegistry
@@ -455,13 +456,21 @@ class MediaPlaybackStopMixin:
 
     @staticmethod
     def _log_unpinned_final(
-        context: _MediaVoiceSession, *, reason: str, diagnosis: str, source: str
+        context: _MediaVoiceSession,
+        *,
+        reason: str,
+        diagnosis: str,
+        source: str,
+        text: str,
     ) -> None:
+        """The decision line carries the redacted final so soak can name a misheard 「停」."""
+
         logger.info(
-            "media playback-stop not taken session=%s reason=%s source=%s %s",
+            "media playback-stop not taken session=%s reason=%s source=%s asr_text=%s %s",
             context.identity.session_id,
             reason,
             source,
+            redact_pii(excerpt(text)) if text else "-",
             diagnosis,
         )
 
@@ -1304,7 +1313,13 @@ class MediaPlaybackStopMixin:
                 reason = "before_onset_floor"
         if reason:
             if in_flight or stop_word:
-                self._log_unpinned_final(context, reason=reason, diagnosis=diagnosis, source=source)
+                self._log_unpinned_final(
+                    context,
+                    reason=reason,
+                    diagnosis=diagnosis,
+                    source=source,
+                    text=text if reason == "not_stop_word" else "",
+                )
             return
         if self._playback_stop_is_echo(context, text):
             logger.info(

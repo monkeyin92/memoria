@@ -2,9 +2,10 @@
 
 2026-10-01 voice soak on DeepSeek: the owner's 「别说了」 reached the ASR clearly and a final
 followed, yet no stop ran and nothing was logged, because each guard of
-``_maybe_pin_playback_stop`` returned silently. These pin the diagnostics (never the text)
-and that the guards decide as before, except that a stop word takes the endpoint of an
-earlier turn that holds no words (soak10: a text-less VAD edge held the stop out for 3-6 s).
+``_maybe_pin_playback_stop`` returned silently. These pin the diagnostics, and the
+redacted final on the ``not_stop_word`` line, and that the guards decide as before,
+except that a stop word takes the endpoint of an earlier turn that holds no words
+(soak10: a text-less VAD edge held the stop out for 3-6 s).
 """
 
 from __future__ import annotations
@@ -273,7 +274,7 @@ def test_a_stop_word_the_later_guards_refuse_leaves_the_empty_pin_alone(
     assert context.pending.turn_endpoint_sample == 150_000 and session.commits == 0
 
 
-def test_the_replys_own_voice_heard_as_speech_is_logged_without_its_text(
+def test_the_not_stop_word_line_carries_the_redacted_final(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     session, context = _Session(), _context()
@@ -282,7 +283,19 @@ def test_the_replys_own_voice_heard_as_speech_is_logged_without_its_text(
 
     [line] = _lines(caplog, "media playback-stop not taken")
     assert "reason=not_stop_word" in line and "stop_word=False" in line and "in_flight=True" in line
-    assert "现在可" not in line and "text_len=4" in line
+    assert "asr_text=4:现在可。" in line and "text_len=4" in line
+
+
+def test_the_not_stop_word_line_redacts_pii_in_the_final(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session, context = _Session(), _context()
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        session._maybe_pin_playback_stop(context, _final("打13812345678"), source="final")
+
+    [line] = _lines(caplog, "media playback-stop not taken")
+    assert "reason=not_stop_word" in line and "asr_text=12:打[手机号]" in line
+    assert "13812345678" not in line
 
 
 def test_a_clear_stop_word_still_pins_the_stop(caplog: pytest.LogCaptureFixture) -> None:
