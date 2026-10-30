@@ -20,6 +20,7 @@ from services.agent.src.providers.provider_errors import (
     TTS_UNAVAILABLE_STANDBY_REASON,
     TTSUnavailableError,
 )
+from services.agent.src.reply_text_debug_log import log_reply_text
 from services.agent.src.voice_core.crisis_script_interrupt import (
     active_subject_id,
     publish_crisis_self_interrupt,
@@ -1695,6 +1696,11 @@ class MediaOutputStreamMixin:
             fence,
             ReplyDeliveryEvent.PLAYBACK_ENDED,
             "playback_completed",
+        )
+        log_reply_text(
+            context,
+            fence,
+            aigc_marker=self._is_aigc_marker_fence(context, fence),
         )
         if owner is not None:
             self._release_output_owner(context, fence, reason="playback_completed")

@@ -110,6 +110,9 @@ class MediaVoiceSessionState:
     pending: PendingTurn = field(default_factory=PendingTurn)
     stream_epoch: int = 0
     floor_epoch: int = 0
+    # Decided at session open from the reply-text switch and the test-subject
+    # whitelist. False for every real child session.
+    reply_text_debug: bool = False
     turn_started_ns: int | None = None
     # P0-04 D3: when the session began (monotonic) for a minor's time limit,
     # and whether it heard the crisis reply (never cut short afterwards).

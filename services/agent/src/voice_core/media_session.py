@@ -21,6 +21,7 @@ from services.agent.src.daily_chat import DailyChatClient
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.minor_limit_bypass import MinorLimitBypass
 from services.agent.src.observability.metrics import GLOBAL_METRICS, MetricsRegistry
+from services.agent.src.reply_text_debug_log import ReplyTextDebugLog
 from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.grpc_bridge import (
@@ -155,6 +156,9 @@ class MediaVoiceCoreRegistry(
     asr_text_debug_subjects: AsrTextDebugSubjects = field(
         default_factory=AsrTextDebugSubjects.from_env
     )
+    # Test-period reply text logging. Off by default, and only the whitelisted
+    # test subject above can write a line.
+    reply_text_debug_log: ReplyTextDebugLog = field(default_factory=ReplyTextDebugLog.from_env)
     _sessions: dict[str, _MediaVoiceSession] = field(default_factory=dict, init=False)
     _cleanup_tasks: dict[str, asyncio.Task[None]] = field(default_factory=dict, init=False)
     _creation_futures: dict[str, asyncio.Future[_MediaVoiceSession]] = field(

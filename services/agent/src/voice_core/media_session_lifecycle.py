@@ -18,6 +18,7 @@ from services.agent.src.orchestration.conversation_projection import (
 )
 from services.agent.src.orchestration.delegation_coordinator import SideEffectPolicy
 from services.agent.src.orchestration.task_manager import ToolSpec
+from services.agent.src.reply_text_debug_log import reply_text_debug_enabled
 from services.agent.src.voice_core.asr_stream_supervisor import (
     ASRAcceptDecision,
     ASRStreamSupervisor,
@@ -486,6 +487,7 @@ class MediaSessionLifecycleMixin:
                 ),
                 stream_epoch=identity.stream_epoch,
                 ingress=MediaAudioIngressState.create(self.audio_ingress_max_frames),
+                reply_text_debug=reply_text_debug_enabled(self, identity.subject_id),
                 device_wake_ack_pending=identity.client_type == "device",
             )
             runtime.set_device_conversation_controls(identity.client_type == "device")
