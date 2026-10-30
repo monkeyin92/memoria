@@ -261,6 +261,7 @@ class MediaSessionCommitMixin:
             context: _MediaVoiceSession,
             *,
             endpoint_sample: int | None = None,
+            require_owner_evidence: bool = True,
         ) -> None: ...
 
         def _schedule_turn_commit(self, context: _MediaVoiceSession) -> None: ...

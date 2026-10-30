@@ -92,8 +92,6 @@ class MediaTurnEndpointMixin:
         self.metrics.inc_funasr_empty_transcript(outcome)
         return outcome
 
-    """Own the bounded VAD/ASR endpoint state behind the registry interface."""
-
     if TYPE_CHECKING:
         bridge: MediaBridgeGrpcServer
         metrics: MetricsRegistry
@@ -175,6 +173,8 @@ class MediaTurnEndpointMixin:
             *,
             endpoint_sample: int | None = None,
         ) -> None: ...
+
+        def _nudge_empty_turn(self, context: _MediaVoiceSession, *, endpoint_sample: int) -> None: ...
 
         def _settle_listening_capture_after_empty_retire(self, context: _MediaVoiceSession, *, cause: str) -> None: ...
 
@@ -1005,7 +1005,7 @@ class MediaTurnEndpointMixin:
             self._classify_provider_final_missing(context),
         )
         if endpoint_sample > 0 and not resume_owned_output:
-            self._nudge_missed_hearing(context, endpoint_sample=endpoint_sample)
+            self._nudge_empty_turn(context, endpoint_sample=endpoint_sample)
 
     @staticmethod
     def _pending_turn_has_text_evidence(context: _MediaVoiceSession) -> bool:

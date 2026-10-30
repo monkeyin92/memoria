@@ -13,6 +13,7 @@ from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.state_machine import (
     ConversationState,
 )
+from services.agent.src.prompts import BRIDGE_PHRASES
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import (
@@ -25,6 +26,7 @@ from services.agent.src.voice_core.media_session import (
     MediaSessionResources,
     MediaVoiceCoreRegistry,
 )
+from services.agent.src.voice_core.media_session_types import ASREmptySegmentEvidence
 from services.agent.src.voice_core.playback_ledger import PlaybackSpan
 from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent
 from services.agent.src.voice_core.speech_timeline import (
@@ -40,6 +42,7 @@ from services.agent.tests.unit.media_session_support import (
     _finish_output_owner_playback,
     _seed_pending_media_turn,
     _verified_owner_decision,
+    _wait_until,
 )
 
 
@@ -204,6 +207,66 @@ async def test_missed_hearing_nudge_cooldown_blocks_back_to_back_prompts() -> No
         assert context.missed_hearing_nudge_count == 1
         registry._nudge_missed_hearing(context)
         assert context.missed_hearing_nudge_count == 1
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("evidence", "expected_nudges"),
+    [
+        (ASREmptySegmentEvidence(had_speech=True, provider_failed=False, retried=True), 1),
+        (ASREmptySegmentEvidence(had_speech=False, provider_failed=False, retried=True), 0),
+        (ASREmptySegmentEvidence(had_speech=True, provider_failed=True, retried=True), 0),
+    ],
+)
+async def test_empty_tail_discard_with_speech_gets_audible_fallback(
+    evidence: ASREmptySegmentEvidence,
+    expected_nudges: int,
+) -> None:
+    """Speech the vendor dropped must not become a silent turn.
+
+    Owner authority is deliberately left unverified: the retry already ran on
+    the same PCM, so the fallback rests on audio evidence, not speaker identity.
+    """
+
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = _device_identity(f"device-empty-tail-{evidence.had_speech}-{evidence.provider_failed}")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry.open_session(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        provider.texts.clear()
+
+        provider.last_empty_segment_evidence = evidence
+        context.pending.turn_start_sample = 0
+        context.pending.turn_endpoint_sample = 16_000
+        context.pending.turn_retire_sample = 16_640
+        context.pending.turn_endpoint_tail_deadline = None
+
+        await registry._expire_endpoint_tail(
+            identity.session_id,
+            context.stream_epoch,
+            16_000,
+        )
+
+        assert context.missed_hearing_nudge_count == expected_nudges
+        if expected_nudges:
+            await _wait_until(lambda: bool(provider.texts))
+            assert BRIDGE_PHRASES[2] in provider.texts
+        else:
+            await asyncio.sleep(0.05)
+            assert provider.texts == []
     finally:
         await registry.finalize_session(identity.session_id)
 

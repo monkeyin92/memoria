@@ -289,6 +289,9 @@ class FailoverASRSession:
         self._task_peak_abs = 0
         self._task_square_sum = 0.0
         self._backup_sentence_id = 0
+        self._last_segment_had_speech = False
+        self._last_segment_provider_failed = False
+        self._last_segment_backup_retried = False
 
     @property
     def task_epoch(self) -> int:
@@ -335,6 +338,18 @@ class FailoverASRSession:
     @property
     def last_sent_sample(self) -> int:
         return self._last_sent_sample
+
+    @property
+    def last_segment_had_speech(self) -> bool:
+        return self._last_segment_had_speech
+
+    @property
+    def last_segment_provider_failed(self) -> bool:
+        return self._last_segment_provider_failed
+
+    @property
+    def last_segment_backup_retried(self) -> bool:
+        return self._last_segment_backup_retried
 
     @property
     def degraded(self) -> bool:
@@ -569,6 +584,9 @@ class FailoverASRSession:
     def _start_segment_if_needed(self, start: int) -> None:
         if self._segment_start is not None:
             return
+        self._last_segment_had_speech = False
+        self._last_segment_provider_failed = False
+        self._last_segment_backup_retried = False
         self._segment_start = start
         self._segment_end = start
         self._segment_pcm_start = start
@@ -690,24 +708,34 @@ class FailoverASRSession:
                     # A connected primary that returned a task boundary is a
                     # healthy segment even when the transcript is empty.
                     self._record_primary_success()
+        # A healthy primary that returns an empty transcript still has real
+        # audio.  Re-recognise it on the backup chain before dropping the
+        # segment, otherwise a silent vendor final becomes a turn with no
+        # reply while the PCM is discarded here.
+        pcm, _ = self._voiced_segment_pcm()
+        self._last_segment_had_speech = bool(pcm) and self._has_speech_energy(pcm)
+        self._last_segment_provider_failed = self._degraded
+        self._last_segment_backup_retried = False
         if self._degraded or self._primary is None:
             if self._primary_final_seen:
                 self._emit_task_finished()
             else:
+                self._last_segment_backup_retried = True
                 await self._emit_backup_result()
+        elif not self._primary_final_seen:
+            self._last_segment_backup_retried = True
+            await self._emit_backup_result(emit_finished=False)
         self._rotation_pending = True
         self._finalize_at = None
         self._reset_segment_evidence()
 
-    async def _emit_backup_result(self) -> None:
+    async def _emit_backup_result(self, *, emit_finished: bool = True) -> bool:
         pcm, begin_ms = self._voiced_segment_pcm()
         samples = len(pcm) // 2
-        if not pcm:
-            self._emit_task_finished()
-            return
-        if not self._has_speech_energy(pcm):
-            self._emit_task_finished()
-            return
+        if not pcm or not self._has_speech_energy(pcm):
+            if emit_finished:
+                self._emit_task_finished()
+            return False
         text = await self._transcribe_backup(pcm)
         if text is None:
             if self.metrics is not None:
@@ -717,8 +745,9 @@ class FailoverASRSession:
                 round(samples * 1000 / 16_000),
                 self._degrade_reason or "unknown",
             )
-            self._emit_task_finished()
-            return
+            if emit_finished:
+                self._emit_task_finished()
+            return False
         self._backup_sentence_id += 1
         duration_ms = round(samples * 1000 / 16_000)
         self.events.put_nowait(
@@ -737,12 +766,14 @@ class FailoverASRSession:
                 ),
             )
         )
-        self._emit_task_finished()
+        if emit_finished:
+            self._emit_task_finished()
         if self.metrics is not None:
             self.metrics.inc_media_metric(
                 "asr_failover_total",
                 labels={"provider": "backup", "reason": "recovered"},
             )
+        return True
 
     def _voiced_segment_pcm(self) -> tuple[bytes, int]:
         """The utterance after VAD onset, capped to the backup budget.

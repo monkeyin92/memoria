@@ -443,6 +443,51 @@ async def test_healthy_primary_final_is_forwarded_without_backup() -> None:
 
 
 @pytest.mark.asyncio
+async def test_healthy_primary_empty_retries_backup_with_the_same_pcm() -> None:
+    primary = FakeSession()
+    sensevoice = FakeSenseVoice("重试听出的句子")
+    session = FailoverASRSession(
+        config=_config(),
+        primary_factory=lambda: primary,
+        sensevoice=sensevoice,
+    )
+    await session.connect()
+    await session.send_pcm(_pcm())
+
+    await session.rotate_task(require_consumed=False)
+
+    events = _drain(session.events)
+    assert any(
+        event.sentence is not None and event.sentence.text == "重试听出的句子"
+        for event in events
+        if event.event == "result-generated"
+    )
+    assert len(sensevoice.requests) == 1
+    assert session.last_segment_had_speech is True
+    assert session.last_segment_provider_failed is False
+    assert session.last_segment_backup_retried is True
+
+
+@pytest.mark.asyncio
+async def test_healthy_primary_empty_silence_skips_backup_and_fallback() -> None:
+    sensevoice = FakeSenseVoice("不应调用")
+    session = FailoverASRSession(
+        config=_config(),
+        primary_factory=lambda: FakeSession(),
+        sensevoice=sensevoice,
+    )
+    await session.connect()
+    await session.send_pcm(_silence())
+
+    await session.rotate_task(require_consumed=False)
+
+    assert sensevoice.requests == []
+    assert session.last_segment_had_speech is False
+    assert session.last_segment_provider_failed is False
+    assert session.last_segment_backup_retried is True
+
+
+@pytest.mark.asyncio
 async def test_provider_task_failure_uses_backup_without_raising() -> None:
     sensevoice = FakeSenseVoice("故障兜底")
     session = FailoverASRSession(
