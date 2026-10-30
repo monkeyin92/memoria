@@ -477,13 +477,12 @@ async def test_device_question_mid_story_stops_the_reply_and_answers_it() -> Non
 
 
 @pytest.mark.asyncio
-async def test_device_tail_final_overlapping_the_open_turn_does_not_stop_the_reply() -> None:
-    """Soak 2026-10-30 t017: a final straddled the turn its wordless edge opened.
+async def test_device_tail_final_inside_a_wordless_pin_does_not_stop_the_reply() -> None:
+    """A final that starts inside the turn already handled is that turn's tail.
 
-    The reply had just sent its first frame when that final arrived with
-    question words, so it stopped the story; the next final stopped the answer,
-    seven stops in a row.  Its audio overlaps the range the open turn already
-    held: it is that turn's tail, not a new question.
+    The pin holds no words, so the rule that lets a later question take it must
+    not reach audio the turn already covered: this would otherwise stop the
+    reply on a re-finalization of its own input.
     """
 
     async def script(harness: _StoryHarness) -> None:
@@ -491,17 +490,17 @@ async def test_device_tail_final_overlapping_the_open_turn_does_not_stop_the_rep
         await harness.audio_frames(5)
         turn_start = harness.sample
         await harness.vad_start(turn_start)
-        assert harness.context.pending.turn_start_sample == turn_start
-        # The wordless edge held the prepared reply, so its floor was released
-        # without words before the final arrived (soak t017 15:15:55.167).
-        harness.runtime.open_assistant_floor(cause="textless_turn_released")
-        assert harness.runtime.floor.fresh_user_speech is False
+        await harness.audio_frames(5)  # noise: the ASR hears no words
+        await harness.vad_end(harness.sample)
+        pending = harness.context.pending
+        assert pending.turn_start_sample == turn_start
+        assert pending.turn_endpoint_sample == harness.sample
         await _accept_media_asr_final(
             harness.registry,
             harness.identity,
             sentence_id="tail-final",
-            start_sample=turn_start - 1_600,
-            end_sample=turn_start + 8_000,
+            start_sample=turn_start + 800,
+            end_sample=turn_start + 2_400,
             text="云是怎么变出来的？",
         )
         await harness.assert_story_still_playing(story)

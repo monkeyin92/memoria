@@ -1076,34 +1076,26 @@ class MediaPlaybackStopMixin:
 
     @staticmethod
     def _final_overlaps_handled_turn(
-        context: _MediaVoiceSession,
         result: ASRResult,
         handled_range: tuple[int | None, int | None] | None,
     ) -> bool:
         """True when this final overlaps the range the turn already handled.
 
         ``_observe_final_asr_result`` merges the final into the pending turn
-        before this decision, so the range from before it is passed in.  A
-        final that starts inside a range with an end re-finalizes audio the
-        reply already answers.
-
-        A range with no end is bounded only by its start.  A final may begin a
-        little before the VAD edge that detects live speech (soak turn 18:
-        0.15 s), so only a turn whose floor was already released without words
-        (``fresh_user_speech`` false) owns a straddling final (t017).
+        before this decision, so the range from before it is passed in.  Only a
+        turn that already reached an end defines that range: a final that
+        starts inside it re-finalizes audio the reply already answers.  A turn
+        with no end yet is not bounded here, because live speech may begin
+        slightly before the VAD edge that detects it; the t017 tail final that
+        arrived on such a turn is therefore not covered by this rule.
         """
 
         if handled_range is None:
             return False
         start, end = handled_range
-        if start is None:
+        if start is None or end is None:
             return False
-        if end is not None:
-            return result.capture_start_sample < end and result.capture_end_sample > start
-        floor = getattr(context.runtime, "floor", None)
-        if bool(getattr(floor, "fresh_user_speech", True)):
-            return False
-        return result.capture_start_sample < start < result.capture_end_sample
+        return result.capture_start_sample < end and result.capture_end_sample > start
 
     @staticmethod
     def _pinned_turn_holds_no_words(
@@ -1216,9 +1208,9 @@ class MediaPlaybackStopMixin:
         nothing to lose.
 
         ``handled_range`` is the turn's range from before ``result`` was merged
-        into it.  A final that overlaps that range re-finalizes the turn the
-        reply already answers, so it never counts as a content barge
-        (``_final_overlaps_handled_turn``, soak 2026-10-30 t017).
+        into it.  A final that overlaps a range with a known end re-finalizes
+        the turn the reply already answers, so it never counts as a content
+        barge (``_final_overlaps_handled_turn``).
 
         The committed turn is marked (``pending.playback_stop_text``) so its
         route cannot depend on the same text peeling twice: a stop stays the
@@ -1240,7 +1232,7 @@ class MediaPlaybackStopMixin:
             and self._playback_input_guard_reason(context, result) is None
         )
         tail_final = content_barge_in and self._final_overlaps_handled_turn(
-            context, result, handled_range
+            result, handled_range
         )
         if tail_final:
             content_barge_in = False

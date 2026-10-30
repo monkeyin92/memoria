@@ -222,6 +222,25 @@ def test_a_content_question_takes_over_an_empty_pin(
     assert not _lines(caplog, "media playback-stop not taken")
 
 
+def test_a_content_question_inside_an_empty_pin_is_a_tail_not_a_barge(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The pin has no words, but the final starts inside the range it covers:
+    # that is the turn's own tail, not the later question that may take it.
+    session, context = _Session(), _context(endpoint=150_000, start=140_000)
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        session._maybe_pin_playback_stop(
+            context,
+            _final("我们下午几点出发", start=145_000, end=161_000),
+            source="final",
+            handled_range=(140_000, 150_000),
+        )
+
+    [line] = _lines(caplog, "media playback-stop not taken")
+    assert "reason=overlapping_turn_final" in line and "content_barge_in=True" in line
+    assert context.pending.turn_endpoint_sample == 150_000 and session.commits == 0
+
+
 def test_speech_with_no_content_still_leaves_an_empty_pin_alone(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
