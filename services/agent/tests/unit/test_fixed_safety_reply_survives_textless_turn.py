@@ -168,8 +168,7 @@ async def test_an_ordinary_reply_still_gives_way_to_a_user_turn_with_words() -> 
     scene = _scene("c1-ordinary-textless", text=ORDINARY, fixed_safety=False)
 
     async def body(current: _Scene) -> None:
-        fence = current.runtime_fence()
-        await current.prepare_reply()
+        fence = await current.prepare_reply()
         # An ordinary reply is held by the wordless turn exactly as before, and a
         # turn with words on it still supersedes the held reply.
         await current.vad_start(current.sample)
@@ -177,9 +176,44 @@ async def test_an_ordinary_reply_still_gives_way_to_a_user_turn_with_words() -> 
         current.gated.gate.set()
         await current.wait_for(lambda: bool(current.terminals()), timeout=8.0)
 
-        assert current.terminals() == ["preempted"]
+        assert [
+            delivery["terminal_event"]
+            for delivery in current.deliveries
+            if delivery["turn_id"] == fence.turn_id and delivery["terminal_event"]
+        ] == ["preempted"]
         assert not current.context().output.audio_sent_for(fence)
-        assert not current.first_frame_sent()
+        assert not any(
+            delivery["turn_id"] == fence.turn_id and delivery["first_frame_sent"]
+            for delivery in current.deliveries
+        )
+
+    await _run(scene, body)
+
+
+@pytest.mark.asyncio
+async def test_words_without_a_vad_edge_never_stop_the_crisis_script() -> None:
+    """The stop refuses fixed safety, so the words stay held instead of minting a turn."""
+
+    scene = _scene("c1-crisis-words-no-vad")
+
+    async def body(current: _Scene) -> None:
+        fence = await current.prepare_reply()
+        current.gated.gate.set()
+        await current.wait_for(current.first_frame_sent, timeout=2.0)
+        await current.audio_frames(10, final_text="我还想问一件事")
+        await current.settle()
+
+        assert current.runtime.fence.matches(fence)
+        assert not [
+            turn
+            for turn in current.context().runtime.orchestrator.context.turns
+            if turn.role == "user" and turn.content == "我还想问一件事"
+        ]
+        assert [
+            delivery["terminal_event"]
+            for delivery in current.deliveries
+            if delivery["turn_id"] == fence.turn_id and delivery["terminal_event"]
+        ] == []
 
     await _run(scene, body)
 
@@ -191,13 +225,20 @@ async def test_words_on_the_new_turn_still_take_the_floor_from_the_script() -> N
     scene = _scene("c1-crisis-words")
 
     async def body(current: _Scene) -> None:
-        await current.prepare_reply()
+        fence = await current.prepare_reply()
         await current.vad_start(current.sample)
         await current.audio_frames(10, final_text="我还想问一件事")
         current.gated.gate.set()
         await current.wait_for(lambda: bool(current.terminals()), timeout=8.0)
 
-        assert not current.first_frame_sent()
-        assert current.terminals() == ["preempted"]
+        assert not any(
+            delivery["turn_id"] == fence.turn_id and delivery["first_frame_sent"]
+            for delivery in current.deliveries
+        )
+        assert [
+            delivery["terminal_event"]
+            for delivery in current.deliveries
+            if delivery["turn_id"] == fence.turn_id and delivery["terminal_event"]
+        ] == ["preempted"]
 
     await _run(scene, body)

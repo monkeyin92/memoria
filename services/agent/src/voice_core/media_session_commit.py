@@ -40,6 +40,7 @@ from services.agent.src.voice_core.interruption import (
 )
 from services.agent.src.voice_core.media_protocol import should_pause_asr_for_playback
 from services.agent.src.voice_core.media_session_playback_stop import (
+    CONTENT_BARGE_IN_CAUSE,
     PLAYBACK_STOP_ROUTE_REASON,
 )
 from services.agent.src.voice_core.media_session_state import (
@@ -337,7 +338,7 @@ class MediaSessionCommitMixin:
         ) -> None: ...
 
         async def _stop_reply_for_voice_command(
-            self, context: _MediaVoiceSession, text: str
+            self, context: _MediaVoiceSession, text: str, *, cause: str = ...
         ) -> bool: ...
 
     async def accept_asr_result(self, session_id: str, result: ASRResult) -> bool:
@@ -1454,7 +1455,21 @@ class MediaSessionCommitMixin:
             await self._discard_projection(context, interaction.reason)
             context.runtime.publish_assistant_audio("restore", gain=1.0)
             return None, interaction.reason
-        if context.runtime.assistant_speaking and not interaction.cancel_generation:
+        content_barge_in = (
+            bool(context.pending.content_barge_in)
+            and context.runtime.assistant_speaking
+            and guarded_reason is None
+            and context.runtime.floor.interruptible
+            and not context.runtime.floor.fixed_safety_audible
+        )
+        # Consume the pin's intent here: a retry must not stop the reply twice, and a
+        # guarded or fixed-safety final must fall back to the old hold.
+        context.pending.content_barge_in = False
+        if (
+            context.runtime.assistant_speaking
+            and not interaction.cancel_generation
+            and not content_barge_in
+        ):
             await self._commit_media_input_range(
                 context,
                 stream_epoch=stream_epoch,
@@ -1484,6 +1499,14 @@ class MediaSessionCommitMixin:
             if context.runtime.assistant_speaking:
                 context.runtime.publish_assistant_audio("restore", gain=1.0)
             return None, reason or "user_turn_rejected"
+        if content_barge_in:
+            context.pending.content_barge_in = False
+            if await self._stop_reply_for_voice_command(
+                context, text, cause=CONTENT_BARGE_IN_CAUSE
+            ):
+                # The accepted turn already owns the floor: the stop's listen
+                # restore must not leave the answer queued behind user speech.
+                context.runtime.open_assistant_floor(cause=CONTENT_BARGE_IN_CAUSE)
         if context.runtime.assistant_speaking:
             context.runtime.publish_assistant_audio("restore", gain=1.0)
         before_prepare_fence = context.runtime.fence
