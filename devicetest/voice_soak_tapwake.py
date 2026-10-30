@@ -50,7 +50,7 @@ import serial  # pyserial, from the ESP-IDF python env
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-from tapwake_gate import TimeoutStreak, bridge_size, wait_gate  # noqa: E402
+from tapwake_gate import TimeoutStreak, bridge_size, closed_since, wait_gate  # noqa: E402
 
 from voice_soak_evidence import assess_interruption  # noqa: E402
 from voice_soak_serial_command import SerialCommandError, send_command  # noqa: E402
@@ -430,6 +430,23 @@ def main() -> int:
         def ensure_listening(tag: str) -> bool:
             for attempt in range(5):
                 if watcher.state == "listening":
+                    if closed_since(bridge, gate["offset"]):
+                        t0 = now()
+                        try:
+                            watcher.wake()
+                        except SerialCommandError as exc:
+                            record(kind="wake_failed", attempt=attempt, tag=tag, error=str(exc))
+                            return False
+                        record(kind="wake_try", attempt=attempt, tag=tag, via="usb", reason="closed_resume")
+                        resumed = watcher.wait_event("usb_wake_action", {"resume_listening"}, 9.0, since=t0)
+                        if resumed is None:
+                            record(kind="wake_refused", attempt=attempt, tag=tag,
+                                   reason=watcher.wake_refusal(t0, 1.0) or "no_resume_listening")
+                            return False
+                        gate["offset"] = bridge_size(bridge)
+                        time.sleep(0.8)
+                        record(kind="woke", attempt=attempt, state=watcher.state, via="closed_resume")
+                        return watcher.state == "listening"
                     return True
                 if watcher.state == "idle":
                     # Over the USB cable, like a tap on the screen. The wake word is never played: it
