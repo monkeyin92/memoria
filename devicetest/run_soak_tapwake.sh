@@ -11,7 +11,7 @@ PORT="/dev/cu.usbmodem101"
 {
   echo "start $(date -Iseconds)"
   echo "port=$PORT"
-  echo "gates MAX_NO_REPLY=0 P95<=2.0s; wait gate idle-only 180s (real State line, listening_closed log-only)"
+  echo "gates MAX_NO_REPLY=0 P95<=2.0s; pre gate idle-only 180s (real State line, no assume_idle); turn gate idle|listening|listening_closed 30s (listening window is product state, #453)"
 } | tee "$REPORT_DIR/meta.txt"
 ls -la "$PORT" || { echo "FAIL: serial missing"; exit 2; }
 python3 devicetest/clock_offset.py pre --remote memoria-prod | tee -a "$REPORT_DIR/clock.jsonl" | sed 's/^/clock=/' | tee -a "$REPORT_DIR/meta.txt" || echo "clock=pre_failed" | tee -a "$REPORT_DIR/meta.txt"
@@ -36,6 +36,7 @@ uv run --no-project --with pyserial python devicetest/voice_soak_tapwake.py \
   --remote memoria-prod \
   --serial-log "$SERIAL_RAW" \
   --gate-timeout 180 \
+  --turn-gate-timeout 30 \
   2>&1 | tee "$REPORT_DIR/stdout.log" || true
 python3 devicetest/clock_offset.py post --remote memoria-prod | tee -a "$REPORT_DIR/clock.jsonl" | sed 's/^/clock=/' | tee -a "$REPORT_DIR/meta.txt" || echo "clock=post_failed" | tee -a "$REPORT_DIR/meta.txt"
 ABORT=$(grep -ho '"verdict": "ABORT_[A-Z_0-9]*"' "$OUT/timeline.jsonl" 2>/dev/null | head -1 | cut -d'"' -f4 || true)

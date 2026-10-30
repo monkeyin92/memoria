@@ -1,9 +1,13 @@
-"""Wait gate before a USB wake: device must reach idle (listening_closed is log-only)."""
+"""Wait gate: "session" before a run needs idle, "turn" between utterances accepts a listening window."""
 import re
 import time
 from pathlib import Path
 
 CLOSED_RE = re.compile(r"listening[ _]closed")
+
+# The device stays in listening after a reply (#453 continuous conversation), so a turn gate must not
+# force idle. A session gate still does: resume_listening from idle at run start caused not_idle cascades.
+DEFAULT_TIMEOUT_S = {"session": 180.0, "turn": 30.0}
 
 
 def closed_since(bridge: Path, offset: int) -> bool:
@@ -18,18 +22,29 @@ def bridge_size(bridge: Path) -> int:
     return bridge.stat().st_size if bridge.exists() else 0
 
 
-def wait_gate(get_state, bridge: Path, offset: int, timeout: float = 180.0,
-              clock=time.monotonic, sleep=time.sleep, poll: float = 0.5) -> str | None:
-    """Return "idle" when serial state is idle, or None after `timeout`.
+def wait_gate(get_state, bridge: Path, offset: int, timeout: float | None = None,
+              mode: str = "session", clock=time.monotonic, sleep=time.sleep,
+              poll: float = 0.5) -> str | None:
+    """Return why the gate opened, or None after `timeout`.
 
-    `listening_closed` in bridge.log is recorded by the caller for diagnostics only;
-    it no longer releases the gate (resume_listening left the device in listening and
-    caused not_idle / no_greeting cascades).
+    session: only serial state idle opens it (cold start / between runs).
+    turn: idle, or a listening window (state listening, or `listening_closed` in bridge.log after
+    `offset`) opens it, so the next line can follow a reply without a forced idle.
     """
+    if mode not in DEFAULT_TIMEOUT_S:
+        raise ValueError(f"unknown gate mode: {mode}")
+    if timeout is None:
+        timeout = DEFAULT_TIMEOUT_S[mode]
     end = clock() + timeout
     while True:
-        if get_state() == "idle":
+        state = get_state()
+        if state == "idle":
             return "idle"
+        if mode == "turn":
+            if state == "listening":
+                return "listening"
+            if closed_since(bridge, offset):
+                return "listening_closed"
         if clock() >= end:
             return None
         sleep(poll)
