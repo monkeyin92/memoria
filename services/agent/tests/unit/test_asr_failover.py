@@ -126,6 +126,60 @@ class FakeSession:
         self.closed = True
 
 
+class RecoveringSession:
+    """Primary that loses its task once, then accepts a replay and answers."""
+
+    def __init__(self, *, fail_first_send: bool = False, text: str | None = None) -> None:
+        self.config = SimpleNamespace(post_finish_tail_grace_s=0.0)
+        self.events: asyncio.Queue[FunASRServerEvent] = asyncio.Queue()
+        self.task_id = "recovering-task"
+        self.task_epoch = 1
+        self.task_sample_origin = 0
+        self.rotation_pending = False
+        self.fail_next = fail_first_send
+        self.text = text
+        self.sent: list[bytes] = []
+        self.closed = False
+        self.rotated = 0
+
+    async def connect(self) -> None:
+        return None
+
+    async def send_pcm(self, pcm: bytes, *, capture_start_sample: int | None = None) -> None:
+        if self.fail_next:
+            self.fail_next = False
+            self.events.put_nowait(
+                FunASRServerEvent(
+                    event="task-failed",
+                    task_id=self.task_id,
+                    error_code="55000031",
+                    error_message="idle closed",
+                )
+            )
+            return
+        self.sent.append(pcm)
+        if self.text:
+            self.events.put_nowait(_sentence(self.text))
+
+    async def rotate_task(self, *, require_consumed: bool = True) -> None:
+        self.rotation_pending = True
+        self.rotated += 1
+        self.events.put_nowait(
+            FunASRServerEvent(event="task-finished", task_id=self.task_id)
+        )
+        self.task_epoch += 1
+        self.fail_next = True
+
+    def mark_committed_sample(self, sample: int) -> None:
+        return None
+
+    async def reconnect_with_replay(self) -> None:
+        return None
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 class FakeSenseVoice:
     def __init__(self, text: str | None = None, *, raises: bool = False) -> None:
         self.text = text
@@ -409,6 +463,169 @@ async def test_provider_task_failure_uses_backup_without_raising() -> None:
 
 
 @pytest.mark.asyncio
+async def test_provider_error_mid_segment_recovers_and_replays_before_vad_end() -> None:
+    primaries: list[RecoveringSession] = []
+
+    def primary_factory() -> RecoveringSession:
+        primary = RecoveringSession(
+            fail_first_send=not primaries,
+            text="恢复结果",
+        )
+        primaries.append(primary)
+        return primary
+
+    sensevoice = FakeSenseVoice("不应调用")
+    session = FailoverASRSession(
+        config=_config(),
+        primary_factory=primary_factory,
+        sensevoice=sensevoice,
+    )
+    await session.connect()
+    frame = _pcm(1600)
+    await session.send_pcm(frame, capture_start_sample=0)
+
+    assert session.degraded is False
+    assert [primary.closed for primary in primaries] == [True, False]
+    assert primaries[1].sent == [frame]
+    assert sensevoice.requests == []
+
+    await session.rotate_task(require_consumed=False)
+    events = _drain(session.events)
+    assert [
+        event.sentence.text
+        for event in events
+        if event.event == "result-generated" and event.sentence is not None
+    ] == ["恢复结果"]
+
+
+@pytest.mark.asyncio
+async def test_primary_text_resets_breaker_failures() -> None:
+    breaker = ProcessASRBreaker(failures=2, open_s=30)
+    breaker.record_failure()
+    primary = RecoveringSession(text="主用恢复")
+    session = FailoverASRSession(
+        config=_config(),
+        primary_factory=lambda: primary,
+        sensevoice=FakeSenseVoice("不应调用"),
+        breaker=breaker,
+    )
+    await session.connect()
+    await session.send_pcm(_pcm())
+    assert breaker.state == "closed"
+
+    breaker.record_failure()
+    assert breaker.state == "closed"
+
+    breaker.record_failure()
+    assert breaker.state == "open"
+
+
+@pytest.mark.asyncio
+async def test_three_idle_evictions_recover_without_opening_breaker() -> None:
+    breaker = ProcessASRBreaker(failures=3, open_s=30)
+    primaries: list[RecoveringSession] = []
+
+    def primary_factory() -> RecoveringSession:
+        primary = RecoveringSession(
+            fail_first_send=not primaries,
+            text="恢复结果",
+        )
+        primaries.append(primary)
+        return primary
+
+    session = FailoverASRSession(
+        config=_config(),
+        primary_factory=primary_factory,
+        sensevoice=FakeSenseVoice("不应调用"),
+        breaker=breaker,
+    )
+    await session.connect()
+    start = 0
+    for _ in range(3):
+        await session.send_pcm(_pcm(), capture_start_sample=start)
+        start += 1600
+        assert session.degraded is False
+        await session.rotate_task(require_consumed=False)
+        texts = [
+            event.sentence.text
+            for event in _drain(session.events)
+            if event.event == "result-generated" and event.sentence is not None
+        ]
+        assert texts == ["恢复结果"]
+    assert breaker.state == "closed"
+    assert len(primaries) == 4
+
+
+@pytest.mark.asyncio
+async def test_reset_for_gap_discards_the_old_task_and_arms_the_next() -> None:
+    primaries: list[FakeSession] = []
+
+    def primary_factory() -> FakeSession:
+        primary = FakeSession(text="下一句")
+        primaries.append(primary)
+        return primary
+
+    session = FailoverASRSession(
+        config=_config(),
+        primary_factory=primary_factory,
+        sensevoice=FakeSenseVoice("不应调用"),
+    )
+    await session.connect()
+    await session.send_pcm(_pcm(), capture_start_sample=0)
+    await session.reset_for_gap()
+    assert primaries[0].closed is True
+    assert session.degraded is False
+
+    await session.send_pcm(_pcm(), capture_start_sample=5 * 16_000)
+    assert len(primaries) == 2
+    assert primaries[1].sent == [_pcm()]
+    await session.rotate_task(require_consumed=False)
+    texts = [
+        event.sentence.text
+        for event in _drain(session.events)
+        if event.event == "result-generated" and event.sentence is not None
+    ]
+    assert texts == ["下一句"]
+
+
+@pytest.mark.asyncio
+async def test_task_failure_first_seen_at_vad_end_recovers_on_the_new_task() -> None:
+    primaries: list[RecoveringSession] = []
+
+    def primary_factory() -> RecoveringSession:
+        primary = RecoveringSession(text="句末恢复" if primaries else None)
+        primaries.append(primary)
+        return primary
+
+    session = FailoverASRSession(
+        config=_config(),
+        primary_factory=primary_factory,
+        sensevoice=FakeSenseVoice("不应调用"),
+    )
+    await session.connect()
+    await session.send_pcm(_pcm(), capture_start_sample=0)
+    primaries[0].events.put_nowait(
+        FunASRServerEvent(
+            event="task-failed",
+            task_id=primaries[0].task_id,
+            error_code="55000031",
+            error_message="idle closed",
+        )
+    )
+
+    await session.rotate_task(require_consumed=False)
+
+    assert primaries[0].rotated == 0
+    assert primaries[1].rotated == 1
+    texts = [
+        event.sentence.text
+        for event in _drain(session.events)
+        if event.event == "result-generated" and event.sentence is not None
+    ]
+    assert texts == ["句末恢复"]
+
+
+@pytest.mark.asyncio
 async def test_backup_receives_the_segment_from_its_first_speech_frame() -> None:
     """Leading silence must not push a normal utterance past the segment cap."""
 
@@ -429,6 +646,49 @@ async def test_backup_receives_the_segment_from_its_first_speech_frame() -> None
     await session.rotate_task(require_consumed=False)
     assert len(sensevoice.requests) == 1
     assert len(sensevoice.requests[0][0]) == 16_000 * 2
+
+
+@pytest.mark.asyncio
+async def test_backup_starts_at_vad_start_not_earlier_noise() -> None:
+    sensevoice = FakeSenseVoice("短句")
+    session = FailoverASRSession(
+        config=_config(),
+        primary_factory=lambda: FakeSession(fail_connect=True),
+        sensevoice=sensevoice,
+    )
+    await session.connect()
+    await session.send_pcm(_pcm(16_000, 100), capture_start_sample=0)
+    session.note_vad_start(16_000)
+    speech = _pcm(16_000, 200)
+    await session.send_pcm(speech, capture_start_sample=16_000)
+    await session.rotate_task(require_consumed=False)
+    assert sensevoice.requests[0][0] == speech
+
+
+@pytest.mark.asyncio
+async def test_backup_truncates_to_the_last_twelve_seconds() -> None:
+    sensevoice = FakeSenseVoice("截断兜底")
+    session = FailoverASRSession(
+        config=_config(),
+        primary_factory=lambda: FakeSession(fail_connect=True),
+        sensevoice=sensevoice,
+    )
+    await session.connect()
+    for second in range(15):
+        await session.send_pcm(
+            _pcm(16_000, 1000 + second),
+            capture_start_sample=second * 16_000,
+        )
+    await session.rotate_task(require_consumed=False)
+    pcm = sensevoice.requests[0][0]
+    assert len(pcm) == 12 * 16_000 * 2
+    assert int.from_bytes(pcm[:2], "little") == 1003
+    final = next(
+        event.sentence
+        for event in _drain(session.events)
+        if event.event == "result-generated" and event.sentence is not None
+    )
+    assert (final.begin_ms, final.end_ms) == (3_000, 15_000)
 
 
 @pytest.mark.asyncio
@@ -672,9 +932,9 @@ async def test_failover_logs_reason_without_transcript(caplog: pytest.LogCapture
 
 
 @pytest.mark.asyncio
-async def test_segment_too_long_is_not_sent_to_backup() -> None:
+async def test_segment_too_long_is_truncated_to_the_last_cap() -> None:
     config = replace(_config(), max_segment_s=0.01)
-    sensevoice = FakeSenseVoice("不应调用")
+    sensevoice = FakeSenseVoice("截断兜底")
     session = FailoverASRSession(
         config=config,
         primary_factory=lambda: FakeSession(fail_connect=True),
@@ -683,5 +943,5 @@ async def test_segment_too_long_is_not_sent_to_backup() -> None:
     await session.connect()
     await session.send_pcm(_pcm())
     await session.rotate_task(require_consumed=False)
-    assert sensevoice.requests == []
-    assert [event.event for event in _drain(session.events)] == ["task-finished"]
+    assert len(sensevoice.requests) == 1
+    assert len(sensevoice.requests[0][0]) == int(0.01 * 16_000) * 2

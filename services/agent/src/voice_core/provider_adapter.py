@@ -73,6 +73,11 @@ logger = logging.getLogger(__name__)
 # 1.9 s later).
 _FIXED_SAFETY_SYNTHESIS_ATTEMPTS = 2
 
+# A capture hold stops PCM while the device is idle. The provider task is
+# usually closed by then; rebuild it before the first frame after a gap this
+# long instead of sending that frame into a dead task.
+_RESUME_GAP_S = 3.0
+
 
 @dataclass(frozen=True, slots=True)
 class ExistingVoiceProviderConfig:
@@ -135,6 +140,9 @@ class ExistingVoiceProviderAdapter:
     # supervisor's already-observed epoch.
     _last_global_asr_task_epoch: int = field(default=0, init=False)
     _audio_since_finalize: bool = field(default=False, init=False)
+    _last_ingest_sample_end: int | None = field(default=None, init=False)
+    _pending_vad_start: tuple[int, int] | None = field(default=None, init=False)
+    _applied_vad_start: tuple[int, int] | None = field(default=None, init=False)
     _asr_task_contexts: dict[str, tuple[int, int, int]] = field(
         default_factory=dict,
         init=False,
@@ -373,6 +381,10 @@ class ExistingVoiceProviderAdapter:
         )
         self._asr_task_epoch_offset = self._asr_task_epoch_floor
         self._audio_since_finalize = False
+        self._last_ingest_sample_end = None
+        if self._pending_vad_start is not None and self._pending_vad_start[0] != stream_epoch:
+            self._pending_vad_start = None
+        self._applied_vad_start = None
         self._clear_asr_event_context()
 
     async def reset_for_stream_epoch(self, identity: SessionIdentity) -> None:
@@ -500,6 +512,29 @@ class ExistingVoiceProviderAdapter:
             while len(self._asr_task_order) > self.config.max_asr_task_history:
                 self._asr_task_contexts.pop(self._asr_task_order.popleft(), None)
 
+    def note_vad_start(self, identity: SessionIdentity, sample: int) -> None:
+        """Remember the bridge's VAD onset for backup slicing and replay."""
+
+        if sample < 0:
+            raise ValueError("VAD start sample must be non-negative")
+        self._pending_vad_start = (identity.stream_epoch, sample)
+        asr = self._asr
+        if asr is not None and self._stream_epoch == identity.stream_epoch:
+            self._apply_vad_start(asr)
+
+    def _apply_vad_start(self, asr: StreamingASRSession) -> None:
+        pending = self._pending_vad_start
+        if (
+            pending is None
+            or pending[0] != self._stream_epoch
+            or pending == self._applied_vad_start
+        ):
+            return
+        note = getattr(asr, "note_vad_start", None)
+        if callable(note):
+            note(pending[1])
+        self._applied_vad_start = pending
+
     async def ingest_audio(
         self,
         identity: SessionIdentity,
@@ -512,12 +547,26 @@ class ExistingVoiceProviderAdapter:
         if len(frame.payload) % 2:
             raise ValueError("provider input must be 16-bit PCM")
         asr = await self._ensure_asr(identity.stream_epoch, identity)
+        self._apply_vad_start(asr)
+        if (
+            self._last_ingest_sample_end is not None
+            and frame.capture_start_sample - self._last_ingest_sample_end
+            > _RESUME_GAP_S * self.config.sample_rate
+        ):
+            reset_for_gap = getattr(asr, "reset_for_gap", None)
+            if callable(reset_for_gap):
+                await reset_for_gap()
+            else:
+                await self._rotate_asr_task(identity, reason="upstream_gap")
+            self._applied_vad_start = None
+            self._apply_vad_start(asr)
         self._remember_asr_task(asr, identity.stream_epoch)
         await asr.send_pcm(
             frame.payload,
             capture_start_sample=frame.capture_start_sample,
         )
         self._audio_since_finalize = True
+        self._last_ingest_sample_end = frame.capture_start_sample + frame.frame_samples
         # ``send_pcm`` may transparently reconnect and advance the provider
         # task. Remember both sides so queued late events retain their own
         # task epoch and absolute sample origin.
@@ -592,6 +641,9 @@ class ExistingVoiceProviderAdapter:
         if not boundary_seen:
             raise RuntimeError("FunASR task boundary event was not available to the media adapter")
         self._audio_since_finalize = False
+        self._last_ingest_sample_end = None
+        self._pending_vad_start = None
+        self._applied_vad_start = None
         return tuple(results)
 
     async def reset_after_discontinuity(
@@ -613,6 +665,9 @@ class ExistingVoiceProviderAdapter:
         if had_active_asr:
             await asr.reconnect_with_replay()
         self._audio_since_finalize = False
+        self._last_ingest_sample_end = None
+        self._pending_vad_start = None
+        self._applied_vad_start = None
         self._clear_asr_event_context()
         self._remember_asr_task(asr, identity.stream_epoch)
 
@@ -624,6 +679,11 @@ class ExistingVoiceProviderAdapter:
         when capture resumes. interrupt_assist callers must not invoke this.
         """
 
+        self._pending_vad_start = None
+        self._applied_vad_start = None
+        await self._rotate_asr_task(identity, reason="playback_start")
+
+    async def _rotate_asr_task(self, identity: SessionIdentity, *, reason: str) -> None:
         if self._asr is None or not self._audio_since_finalize:
             return
         asr = await self._ensure_asr(identity.stream_epoch)
@@ -634,8 +694,11 @@ class ExistingVoiceProviderAdapter:
         await asr.rotate_task(require_consumed=False)
         self._remember_asr_task(asr, identity.stream_epoch)
         self._audio_since_finalize = False
+        self._last_ingest_sample_end = None
+        self._applied_vad_start = None
         logger.info(
-            "Rotated ASR task on playback start: task_id=%s stream_epoch=%s",
+            "Rotated ASR task reason=%s task_id=%s stream_epoch=%s",
+            reason,
             previous_task_id,
             identity.stream_epoch,
         )

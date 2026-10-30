@@ -236,12 +236,16 @@ class MediaSessionInputMixin:
             # Resumed VAD resets the tail timeout above, but may only nudge,
             # never lift, the cap on output waiting behind an empty turn.
             self._arm_evidence_less_floor_hold(context)
-        context.pending.turn_start_sample = min(
+        turn_start_sample = min(
             segment.capture_start_sample,
             context.pending.turn_start_sample
             if context.pending.turn_start_sample is not None
             else segment.capture_start_sample,
         )
+        context.pending.turn_start_sample = turn_start_sample
+        note_vad_start = getattr(context.provider, "note_vad_start", None)
+        if callable(note_vad_start):
+            note_vad_start(context.identity, turn_start_sample)
         self._admit_owner_silence_vad(context, segment.capture_start_sample)
         logger.info(
             "media vad start admitted session=%s stream_epoch=%s sample=%s "

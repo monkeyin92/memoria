@@ -280,6 +280,8 @@ class FailoverASRSession:
         self._segment_pcm = bytearray()
         self._segment_pcm_start: int | None = None
         self._segment_voiced_start: int | None = None
+        self._vad_start_sample: int | None = None
+        self._recovering = False
         self._task_start_sample: int | None = None
         self._task_end_sample: int | None = None
         self._task_send_count = 0
@@ -351,6 +353,13 @@ class FailoverASRSession:
         if self._primary is not None:
             self._primary.mark_committed_sample(sample)
 
+    def note_vad_start(self, sample: int) -> None:
+        """Record the bridge's VAD onset for backup slicing and replay."""
+
+        if sample < 0:
+            raise ValueError("VAD start sample must be non-negative")
+        self._vad_start_sample = sample
+
     async def connect(self) -> None:
         if self._closed:
             raise RuntimeError("ASR failover session is closed")
@@ -415,6 +424,10 @@ class FailoverASRSession:
         if lease is not None:
             self._probe_lease = None
             self._breaker.release_probe(lease)
+
+    def _record_primary_success(self) -> None:
+        self._breaker.record_success()
+        self._probe_lease = None
 
     async def _degrade(self, reason: str, *, count_failure: bool = True) -> None:
         if self._degraded:
@@ -484,12 +497,74 @@ class FailoverASRSession:
                 raise
             except Exception:
                 await self._degrade("provider_error")
+                await self._recover_primary_mid_segment()
             else:
                 await self._drain_primary()
                 if self._primary is not None:
                     self._task_epoch = max(self._task_epoch, self._primary.task_epoch)
                     self.task_id = self._primary.task_id or self.task_id
                     self._task_sample_origin = self._primary.task_sample_origin
+
+    async def _recover_primary_mid_segment(self) -> bool:
+        """Reopen the primary inside a live segment and replay its audio.
+
+        A provider task can die between two VAD edges. Waiting for ``rotate_task``
+        sends the rest of the sentence to a dead task, so recover on the first
+        failure and replay everything not yet committed. The segment buffer is
+        not appended to here; only the adapter's ingest path owns it.
+        """
+
+        if self._closed or self._recovering or self._rotation_pending:
+            return False
+        start = self._segment_pcm_start
+        if start is None or not self._segment_pcm:
+            self._rotation_pending = True
+            return False
+        end = start + len(self._segment_pcm) // 2
+        vad_start = self._vad_start_sample if self._vad_start_sample is not None else start
+        replay_start = max(start, vad_start, self._last_committed_sample)
+        if replay_start >= end:
+            self._rotation_pending = True
+            return False
+        replay_pcm = bytes(self._segment_pcm[(replay_start - start) * 2 :])
+        self._recovering = True
+        try:
+            self._degraded = False
+            self._degrade_reason = None
+            self._rotation_pending = False
+            self._task_epoch += 1
+            self._task_sample_origin = replay_start
+            self._reset_task_evidence()
+            if not await self._open_primary(segment_is_healthy=True):
+                self._rotation_pending = True
+                return False
+            primary = self._primary
+            assert primary is not None
+            try:
+                await primary.send_pcm(replay_pcm, capture_start_sample=replay_start)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                await self._degrade("provider_error")
+                self._rotation_pending = True
+                return False
+            await self._drain_primary()
+            primary = self._primary
+            if self._degraded or primary is None:
+                self._rotation_pending = True
+                return False
+            self.task_id = primary.task_id or self.task_id
+            self._task_epoch = max(self._task_epoch, primary.task_epoch)
+            self._task_sample_origin = primary.task_sample_origin
+            self._record_task_pcm(replay_pcm, start=replay_start, end=end)
+            logger.info(
+                "asr failover primary recovered task_epoch=%s replay_samples=%s",
+                self._task_epoch,
+                len(replay_pcm) // 2,
+            )
+            return True
+        finally:
+            self._recovering = False
 
     def _start_segment_if_needed(self, start: int) -> None:
         if self._segment_start is not None:
@@ -509,12 +584,7 @@ class FailoverASRSession:
         self._task_epoch += 1
         self._segment_epoch += 1
         self._task_sample_origin = start
-        self._task_start_sample = None
-        self._task_end_sample = None
-        self._task_send_count = 0
-        self._task_samples = 0
-        self._task_peak_abs = 0
-        self._task_square_sum = 0.0
+        self._reset_task_evidence()
         if self._primary is not None and not self._degraded:
             self.task_id = self._primary.task_id or self.task_id
             self._task_epoch = max(self._task_epoch, self._primary.task_epoch)
@@ -532,6 +602,14 @@ class FailoverASRSession:
             self._task_sample_origin = start
         else:
             self.task_id = f"failover-{uuid.uuid4()}"
+
+    def _reset_task_evidence(self) -> None:
+        self._task_start_sample = None
+        self._task_end_sample = None
+        self._task_send_count = 0
+        self._task_samples = 0
+        self._task_peak_abs = 0
+        self._task_square_sum = 0.0
 
     def _record_task_pcm(self, pcm: bytes, *, start: int, end: int) -> None:
         if self._task_start_sample is None:
@@ -561,11 +639,14 @@ class FailoverASRSession:
     async def _handle_primary_event(self, event: FunASRServerEvent) -> bool:
         if event.event == "task-failed":
             await self._degrade("provider_error")
+            await self._recover_primary_mid_segment()
             return True
         if self._degraded:
             return False
         sentence = event.sentence
         if event.event == "result-generated" and sentence is not None:
+            if sentence.text.strip():
+                self._record_primary_success()
             if sentence.sentence_end and sentence.text.strip():
                 self._primary_final_seen = True
                 if self.metrics is not None and self._finalize_at is not None:
@@ -584,6 +665,7 @@ class FailoverASRSession:
         primary = self._primary
         if primary is not None and not self._degraded:
             await self._drain_primary()
+            primary = self._primary
         if primary is not None and not self._degraded:
             # The budget runs from the negative packet, not from speech onset.
             # The backup re-recognises the whole segment and cannot start until
@@ -607,8 +689,7 @@ class FailoverASRSession:
                 if not self._degraded:
                     # A connected primary that returned a task boundary is a
                     # healthy segment even when the transcript is empty.
-                    self._breaker.record_success()
-                    self._probe_lease = None
+                    self._record_primary_success()
         if self._degraded or self._primary is None:
             if self._primary_final_seen:
                 self._emit_task_finished()
@@ -622,19 +703,6 @@ class FailoverASRSession:
         pcm, begin_ms = self._voiced_segment_pcm()
         samples = len(pcm) // 2
         if not pcm:
-            self._emit_task_finished()
-            return
-        if samples > int(self.config.max_segment_s * 16_000):
-            logger.info(
-                "asr failover backup skipped: segment too long samples=%s cap_s=%s",
-                samples,
-                self.config.max_segment_s,
-            )
-            if self.metrics is not None:
-                self.metrics.inc_media_metric(
-                    "asr_failover_total",
-                    labels={"provider": "backup", "reason": "segment_too_long"},
-                )
             self._emit_task_finished()
             return
         if not self._has_speech_energy(pcm):
@@ -677,25 +745,36 @@ class FailoverASRSession:
             )
 
     def _voiced_segment_pcm(self) -> tuple[bytes, int]:
-        """The segment from its first speech frame, not from the task start.
+        """The utterance after VAD onset, capped to the backup budget.
 
         A degraded segment spans the whole provider task, which begins before
-        the child speaks. Sending that leading silence to the offline decoder
-        both wastes the budget and can push a normal utterance past
-        ``max_segment_s``, where it would be dropped without any reply. The
-        returned begin offset keeps the synthetic final on the absolute clock.
+        the child speaks. Prefer the bridge's VAD onset, fall back to the first
+        speech-energy frame, then keep only the last ``max_segment_s`` seconds.
+        The returned begin offset keeps the synthetic final on the absolute
+        clock.
         """
 
         start = self._segment_pcm_start
         if start is None:
             return b"", 0
-        voiced = self._segment_voiced_start
-        if voiced is None or voiced <= start:
-            return bytes(self._segment_pcm), 0
-        return (
-            bytes(self._segment_pcm[(voiced - start) * 2 :]),
-            round((voiced - start) * 1000 / 16_000),
-        )
+        voiced = self._vad_start_sample
+        if voiced is None:
+            voiced = self._segment_voiced_start
+        speech_start = start if voiced is None else max(start, voiced)
+        offset = speech_start - start
+        pcm = self._segment_pcm[offset * 2 :]
+        max_samples = int(self.config.max_segment_s * 16_000)
+        if len(pcm) // 2 > max_samples:
+            dropped = len(pcm) // 2 - max_samples
+            pcm = pcm[dropped * 2 :]
+            offset += dropped
+            logger.info(
+                "asr failover backup truncated from_samples=%s to_samples=%s cap_s=%s",
+                len(self._segment_pcm) // 2 - (speech_start - start),
+                max_samples,
+                self.config.max_segment_s,
+            )
+        return bytes(pcm), round(offset * 1000 / 16_000)
 
     def _has_speech_energy(self, pcm: bytes) -> bool:
         rms = audioop.rms(pcm, 2)
@@ -779,6 +858,29 @@ class FailoverASRSession:
         self._segment_end = None
         self._segment_pcm_start = None
         self._segment_voiced_start = None
+        self._vad_start_sample = None
+
+    async def reset_for_gap(self) -> None:
+        """Drop an idle primary task before the first frame after a capture gap.
+
+        The next ``send_pcm`` arms a fresh task. No backup result is emitted:
+        the audio before the gap belongs to an earlier utterance or silence.
+        """
+
+        if self._closed:
+            return
+        self._release_probe()
+        primary = self._primary
+        self._primary = None
+        if primary is not None:
+            with contextlib.suppress(Exception):
+                await primary.aclose()
+        self._degraded = False
+        self._degrade_reason = None
+        self._rotation_pending = True
+        self._finalize_at = None
+        self._reset_segment_evidence()
+        logger.info("asr failover reset for upstream gap task_epoch=%s", self._task_epoch)
 
     async def reconnect_with_replay(self) -> None:
         if self._closed or self._degraded or self._primary is None:
