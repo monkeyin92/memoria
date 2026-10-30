@@ -129,7 +129,8 @@ class ExistingVoiceProviderAdapter:
     owns_speech_synthesis: bool = False
     owns_language_model: bool = False
     # Test-period transcript logging, off unless ASR_TEXT_DEBUG_LOG_SUBJECTS
-    # lists the session's subject or device. Never changes what is committed.
+    # lists the session's subject or device, or MEMORIA_ASR_TEXT_TRACE is set.
+    # Never changes what is committed.
     asr_text_debug_subjects: AsrTextDebugSubjects | None = None
     _asr: StreamingASRSession | None = field(default=None, init=False)
     _asr_text_debug: AsrTextDebugSubjects | None = field(default=None, init=False)
