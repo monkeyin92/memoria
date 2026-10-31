@@ -34,6 +34,7 @@ from google.protobuf.json_format import MessageToDict
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.prompts import FAREWELL_STANDBY_PHRASE
+from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import (
@@ -634,6 +635,20 @@ class _FarewellProvider(_ScriptedProvider):
         source_start_sample: int,
     ) -> AsyncIterator[MediaReplyChunk]:
         _ = work_id
+        source = intent.WhichOneof("source")
+        if source == "pcm_s16le":
+            pcm = bytes(intent.pcm_s16le)
+
+            async def pcm_chunks() -> AsyncIterator[MediaReplyChunk]:
+                yield MediaReplyChunk(
+                    pcm_s16le=pcm,
+                    source_start_sample=source_start_sample,
+                    text="",
+                    first=True,
+                    final=True,
+                )
+
+            return pcm_chunks()
         text = str(intent.tts_source)
         if text != FAREWELL_STANDBY_PHRASE:
             # The hello-time greeting must not compete with the turn under test.
@@ -797,6 +812,32 @@ async def test_farewell_speaks_the_approved_line_without_an_llm_turn() -> None:
         await harness.playback_ended()
         await harness.wait_for(lambda: harness.count("state", _is_closed_state) >= 1)
         assert harness.last("state").reason == "conversation_end_explicit"
+    finally:
+        await harness.close()
+
+
+@pytest.mark.asyncio
+async def test_farewell_plays_the_aigc_closing_marker_before_standby() -> None:
+    provider = _FarewellProvider()
+    harness = _Harness(
+        _device_identity("farewell-aigc-close"),
+        provider,
+        aigc_notice_config=AigcNoticeConfig(
+            enabled=True,
+            opening_enabled=False,
+            closing_enabled=True,
+        ),
+    )
+    await harness.start()
+    try:
+        await _start_past_wake_sample(harness)
+        await harness.utterance("好的，再见", frames=25)
+        await harness.wait_for(lambda: bool(provider.output_texts))
+        farewell_audio = harness.count("audio")
+        await harness.playback_ended()
+        await harness.wait_for(lambda: harness.count("audio") > farewell_audio)
+        await harness.playback_ended()
+        await harness.wait_for(lambda: harness.count("state", _is_closed_state) >= 1)
     finally:
         await harness.close()
 
