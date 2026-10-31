@@ -180,18 +180,25 @@ class MediaAudioIngress:
         runtime = getattr(context, "runtime", None)
         if getattr(runtime, "interaction_phase", None) is not InteractionPhase.LISTENING:
             return False
-        pending = getattr(context, "pending", None)
-        if pending is None:
-            return False
-        commit_task = getattr(context, "turn_commit_task", None)
-        if (
+        return not MediaAudioIngress._input_turn_open(context)
+
+    @staticmethod
+    def _input_turn_open(context: _MediaVoiceSession) -> bool:
+        """True while uplink audio still belongs to a turn that is not retired.
+
+        The interaction phase can read LISTENING while a turn is open: a VAD
+        start that joins an existing pending turn does not move the phase to
+        USER_SPEAKING, and a playback ack restores LISTENING over it.
+        """
+
+        pending = context.pending
+        commit_task = context.turn_commit_task
+        return (
             pending.turn_start_sample is not None
             or pending.active_vad_stream_epoch == context.stream_epoch
             or pending.admitted_input_stream_epoch == context.stream_epoch
             or (commit_task is not None and not commit_task.done())
-        ):
-            return False
-        return True
+        )
 
     def _listening_capture_refused(
         self,
@@ -203,7 +210,7 @@ class MediaAudioIngress:
         resume_sample = getattr(context, "listening_capture_resume_sample", None)
         if isinstance(resume_sample, int) and frame.capture_start_sample <= resume_sample:
             return True
-        if not self._listening_capture_expired(context):
+        if not self.listening_capture_expired(context):
             return False
         latch = getattr(self._host, "_latch_listening_capture", None)
         if callable(latch):
@@ -213,7 +220,7 @@ class MediaAudioIngress:
         return True
 
     @staticmethod
-    def _listening_capture_expired(context: _MediaVoiceSession) -> bool:
+    def listening_capture_expired(context: _MediaVoiceSession) -> bool:
         if getattr(context, "listening_capture_hold", False):
             return False
         runtime = getattr(context, "runtime", None)
@@ -223,7 +230,9 @@ class MediaAudioIngress:
         deadline = getattr(context, "listening_capture_deadline", None)
         if isinstance(deadline, bool) or not isinstance(deadline, (int, float)):
             return False
-        return time.monotonic() > deadline
+        if time.monotonic() <= deadline:
+            return False
+        return not MediaAudioIngress._input_turn_open(context)
 
     @staticmethod
     def _is_silent_pcm(payload: bytes) -> bool:
