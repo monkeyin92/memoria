@@ -393,7 +393,7 @@ class MediaOutputDispatchMixin:
                 OutputDispatchStatus.SKIPPED,
                 "stale_fence",
             )
-        live_lookup = await context.runtime.resolve_live_lookup_needed(user_text)
+        live_lookup = await context.runtime.resolve_lookup_owns_reply(user_text)
         claim = context.output.delegation_output_claims.get(fence)
         if claim is None and live_lookup:
             loop = asyncio.get_running_loop()

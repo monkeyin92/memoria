@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from services.agent.src.weather_thread import WeatherThread
 from services.common.redaction import redact_pii
 
 Role = Literal["system", "user", "assistant"]
@@ -26,8 +27,10 @@ class ContextManager:
     turns: list[ChatMessage] = field(default_factory=list)
     max_turns: int = 16  # 8 user + 8 assistant pairs ≈ 16 messages
     max_rolling_summary_chars: int = 1_200
+    weather: WeatherThread = field(default_factory=WeatherThread)
 
     def add_user(self, text: str, *, speaker_scope: SpeakerScope = "public") -> None:
+        self.weather = self.weather.after(text)
         self.turns.append(
             ChatMessage(
                 role="user",
@@ -112,6 +115,7 @@ class ContextManager:
         """Drop the whole working context (subject-switch fence, PR-08)."""
 
         self.turns = []
+        self.weather = WeatherThread()
 
     def reset_identity(self) -> None:
         """Atomic identity reset: turns and both summaries belong to the old
@@ -120,6 +124,7 @@ class ContextManager:
         self.turns = []
         self.rolling_summary = ""
         self.business_summary = ""
+        self.weather = WeatherThread()
 
     def context_summary(self) -> str:
         parts = []
