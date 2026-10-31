@@ -193,3 +193,87 @@ async def test_each_classifier_answers_once_for_the_turn(device_media_session: A
     assert window.provider.prepared == [committed]
     assert window.live_verdict.calls == [_HEAD]
     assert window.close_verdict.calls == [_HEAD]
+@pytest.mark.asyncio
+async def test_the_endpoint_grace_absorbs_the_provider_finalize(
+    device_media_session: Any,
+) -> None:
+    """Soak 20261031-012237: the Doubao task finalize ran before the grace, not inside it.
+
+    The grace is the child's silence after the device VAD end. Time the bridge spends waiting for the
+    provider's last packet is its own cost, so it comes out of that silence instead of being added.
+    """
+
+    window = await _open(device_media_session, "commit-grace-under-finalize", grace_s=0.5)
+    window.registry.turn_endpoint_grace_complete_s = 0.6  # keep the neutral 0.5 s grace
+    window.registry.turn_endpoint_grace_incomplete_s = 0.6
+    await _device_vad(window, "vad-start", _START, final=False)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="f-1",
+        start_sample=_START,
+        end_sample=_START + 16_000,
+        text=_HEAD,
+    )
+
+    async def slow_finalize(_identity: Any) -> tuple[Any, ...]:
+        await asyncio.sleep(0.3)
+        return ()
+
+    window.provider.finalize_speech_segment = slow_finalize
+    window.context.asr.last_sent_sample = _START + 20_000
+    started = time.monotonic()
+    await _device_vad(window, "vad-end", _START + 16_000, final=True)
+    await _wait_until(lambda: bool(window.provider.prepared), timeout=2.0)
+    elapsed = time.monotonic() - started
+
+    assert window.provider.prepared == [_HEAD]
+    assert 0.45 <= elapsed < 0.7  # 0.5 s grace with the 0.3 s finalize inside it, not after it
+
+
+@pytest.mark.parametrize("resume_after_s", [0.1, 0.4])
+@pytest.mark.asyncio
+async def test_a_resumed_utterance_still_cancels_the_pending_commit(
+    device_media_session: Any,
+    resume_after_s: float,
+) -> None:
+    """A child who speaks again inside the grace never gets the first half committed alone.
+
+    0.1 s resumes while the provider task is still being finalized, 0.4 s after it and still inside
+    the 0.5 s grace, which now runs from the VAD end rather than from the end of the finalize.
+    """
+
+    window = await _open(
+        device_media_session, f"commit-grace-resume-{resume_after_s}", grace_s=0.5
+    )
+    registry, context = window.registry, window.context
+    registry.turn_endpoint_grace_complete_s = 0.6
+    registry.turn_endpoint_grace_incomplete_s = 0.6
+    await _device_vad(window, "vad-start", _START, final=False)
+    await _accept_media_asr_final(
+        registry,
+        window.identity,
+        sentence_id="f-1",
+        start_sample=_START,
+        end_sample=_START + 16_000,
+        text=_HEAD,
+    )
+
+    async def slow_finalize(_identity: Any) -> tuple[Any, ...]:
+        await asyncio.sleep(0.3)
+        return ()
+
+    window.provider.finalize_speech_segment = slow_finalize
+    context.asr.last_sent_sample = _START + 16_000
+
+    pending_end = asyncio.create_task(
+        _device_vad(window, "vad-end", _START + 16_000, final=True)
+    )
+    await asyncio.sleep(resume_after_s)
+    assert window.provider.prepared == []
+    await _device_vad(window, "vad-start-2", _START + 20_000, final=False)
+    await pending_end
+    await asyncio.sleep(0.6)
+
+    assert window.provider.prepared == []
+    assert context.pending.turn_endpoint_sample is None
