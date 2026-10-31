@@ -15,6 +15,7 @@ from services.agent.src.voice_core.speech_timeline import SegmentKind, SpeechSeg
 from services.agent.tests.unit.media_session_support import (
     FakeMediaProvider,
     _accept_media_asr_final,
+    _CapturingMediaBridge,
     _connect_vad_segment,
     _device_identity,
     open_bridge_connection,
@@ -60,14 +61,18 @@ async def _skip(*_args, **_kwargs) -> None:
     return None
 
 
-async def _open(monkeypatch: pytest.MonkeyPatch, clock: dict[str, float]):
+async def _open(
+    monkeypatch: pytest.MonkeyPatch,
+    clock: dict[str, float],
+    bridge: MediaBridgeGrpcServer | None = None,
+):
     _patch_clock(monkeypatch, clock)
     monkeypatch.setattr(MediaVoiceCoreRegistry, "_speak_device_wake_ack", _skip)
     monkeypatch.setattr(MediaVoiceCoreRegistry, "_speak_aigc_opening_marker", _skip)
     monkeypatch.setattr(MediaVoiceCoreRegistry, "_wait_aigc_opening_lead_in", _skip)
     identity = _device_identity("listening-capture")
     provider = _CaptureProvider()
-    bridge = MediaBridgeGrpcServer()
+    bridge = bridge or MediaBridgeGrpcServer()
     open_bridge_connection(bridge, identity)
     registry = MediaVoiceCoreRegistry(
         bridge=bridge,
@@ -561,6 +566,71 @@ async def test_capture_window_does_not_close_on_a_child_mid_sentence(
         await _ingested(provider, 1)
         assert context.listening_capture_hold is False
         assert context.runtime.interaction_phase is InteractionPhase.USER_SPEAKING
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_capture_window_does_not_close_on_an_open_turn_while_listening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        published = _spy_states(monkeypatch, context.runtime)
+        session = registry.bridge._connections[identity.session_id].session
+        clock["now"] = 1_028.0
+        await registry.on_speech_segment(
+            session,
+            replace(
+                _connect_vad_segment(identity, sample=48_000, segment_id="open-in-listening"),
+                capture_end_sample=49_280,
+            ),
+        )
+        assert context.pending.turn_start_sample == 48_000
+
+        clock["now"] = 1_031.0
+        context.runtime.set_interaction_phase(
+            InteractionPhase.LISTENING,
+            cause="media_playback_ack",
+        )
+        for _ in range(8):
+            await asyncio.sleep(0)
+        await registry._audio_ingress.accept(context, _frame(identity, 1, 49_281))
+        await _ingested(provider, 1)
+
+        assert context.listening_capture_hold is False
+        assert context.pending.turn_start_sample == 48_000
+        assert "listening_closed" not in published
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_reply_that_ends_under_a_capture_hold_leaves_the_device_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _clock()
+    bridge = _CapturingMediaBridge()
+    registry, context, _provider, identity = await _open(monkeypatch, clock, bridge)
+    try:
+        await context.runtime.on_assistant_speaking("reply")
+        registry.hold_listening_capture_until_tap(context)
+        assert context.listening_capture_hold is True
+
+        context.runtime._voice_floor.update(assistant_speaking=False)
+        context.runtime.set_interaction_phase(
+            InteractionPhase.LISTENING,
+            cause="media_playback_ack",
+        )
+        for _ in range(8):
+            await asyncio.sleep(0)
+
+        device_states = [
+            payload["state"] for kind, payload in bridge.events if kind == "assistant_state"
+        ]
+        assert device_states[-1] == "listening_closed"
+        assert context.runtime.interaction_phase is InteractionPhase.CONNECTING
     finally:
         await registry.finalize_session(identity.session_id)
 
