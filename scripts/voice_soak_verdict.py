@@ -5,7 +5,8 @@ The tail-idle verdict, silence steps, and spoken-stop audit follow the rules the
 driver and voice_soak_evidence.py already use.
 
     python scripts/voice_soak_verdict.py outputs/acceptance/run-<stamp>-soak
-    python scripts/voice_soak_verdict.py RUN --max-no-reply N --max-reply-latency-p95 SECONDS
+    python scripts/voice_soak_verdict.py RUN --max-no-reply N \
+        --max-reply-latency-p90 SECONDS --max-reply-latency-max SECONDS
 """
 
 from __future__ import annotations
@@ -24,7 +25,8 @@ else:
     from voice_soak_evidence import audit_interruptions
 
 MAX_NO_REPLY: int | None = 0
-MAX_REPLY_LATENCY_P95_S: float | None = 2.0
+MAX_REPLY_LATENCY_P90_S: float | None = 2.0
+MAX_REPLY_LATENCY_MAX_S: float | None = 3.0
 
 
 @dataclass(frozen=True)
@@ -32,19 +34,23 @@ class SoakVerdict:
     passed: bool
     failures: tuple[str, ...]
     no_reply: int
-    reply_latency_p95_s: float | None
+    reply_latency_p90_s: float | None
+    reply_latency_max_s: float | None
     max_no_reply: int | None
-    max_reply_latency_p95_s: float | None
+    max_reply_latency_p90_s: float | None
+    max_reply_latency_max_s: float | None
 
     def as_dict(self) -> dict[str, object]:
         return {
             "passed": self.passed,
             "failures": list(self.failures),
             "no_reply": self.no_reply,
-            "reply_latency_p95_s": self.reply_latency_p95_s,
+            "reply_latency_p90_s": self.reply_latency_p90_s,
+            "reply_latency_max_s": self.reply_latency_max_s,
             "gates": {
                 "max_no_reply": self.max_no_reply,
-                "max_reply_latency_p95_s": self.max_reply_latency_p95_s,
+                "max_reply_latency_p90_s": self.max_reply_latency_p90_s,
+                "max_reply_latency_max_s": self.max_reply_latency_max_s,
             },
         }
 
@@ -74,13 +80,23 @@ def judge(
     run: Path,
     *,
     max_no_reply: int | None = MAX_NO_REPLY,
-    max_reply_latency_p95_s: float | None = MAX_REPLY_LATENCY_P95_S,
+    max_reply_latency_p90_s: float | None = MAX_REPLY_LATENCY_P90_S,
+    max_reply_latency_max_s: float | None = MAX_REPLY_LATENCY_MAX_S,
 ) -> SoakVerdict:
     """Read one run directory and return the pass/fail result."""
     try:
         rows = _rows(run / "timeline.jsonl")
     except ValueError as exc:
-        return SoakVerdict(False, (str(exc),), 0, None, max_no_reply, max_reply_latency_p95_s)
+        return SoakVerdict(
+            False,
+            (str(exc),),
+            0,
+            None,
+            None,
+            max_no_reply,
+            max_reply_latency_p90_s,
+            max_reply_latency_max_s,
+        )
 
     failures: list[str] = []
     for row in rows:
@@ -115,18 +131,25 @@ def judge(
         for row in rows
         if row.get("kind") == "reply" and isinstance(row.get("latency_s"), int | float)
     ]
-    p95 = pct(latencies, 0.95) if latencies else None
-    if max_reply_latency_p95_s is not None and (p95 is None or p95 > max_reply_latency_p95_s):
-        shown = "missing" if p95 is None else p95
-        failures.append(f"reply_latency_p95_s: {shown} > {max_reply_latency_p95_s}")
+    p90 = pct(latencies, 0.90) if latencies else None
+    slowest = max(latencies) if latencies else None
+    for name, value, limit in (
+        ("reply_latency_p90_s", p90, max_reply_latency_p90_s),
+        ("reply_latency_max_s", slowest, max_reply_latency_max_s),
+    ):
+        if limit is not None and (value is None or value > limit):
+            shown = "missing" if value is None else value
+            failures.append(f"{name}: {shown} > {limit}")
 
     return SoakVerdict(
         not failures,
         tuple(failures),
         no_reply,
-        p95,
+        p90,
+        slowest,
         max_no_reply,
-        max_reply_latency_p95_s,
+        max_reply_latency_p90_s,
+        max_reply_latency_max_s,
     )
 
 
@@ -140,7 +163,7 @@ def _optional_int(value: str) -> int:
 def _optional_latency(value: str) -> float:
     number = float(value)
     if number < 0:
-        raise argparse.ArgumentTypeError("max-reply-latency-p95 must be >= 0")
+        raise argparse.ArgumentTypeError("latency gate must be >= 0")
     return number
 
 
@@ -149,7 +172,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("run", type=Path)
     parser.add_argument("--max-no-reply", type=_optional_int, default=MAX_NO_REPLY)
     parser.add_argument(
-        "--max-reply-latency-p95", type=_optional_latency, default=MAX_REPLY_LATENCY_P95_S
+        "--max-reply-latency-p90", type=_optional_latency, default=MAX_REPLY_LATENCY_P90_S
+    )
+    parser.add_argument(
+        "--max-reply-latency-max", type=_optional_latency, default=MAX_REPLY_LATENCY_MAX_S
     )
     args = parser.parse_args(argv)
     timeline = args.run / "timeline.jsonl"
@@ -159,7 +185,8 @@ def main(argv: list[str] | None = None) -> int:
     result = judge(
         args.run,
         max_no_reply=args.max_no_reply,
-        max_reply_latency_p95_s=args.max_reply_latency_p95,
+        max_reply_latency_p90_s=args.max_reply_latency_p90,
+        max_reply_latency_max_s=args.max_reply_latency_max,
     )
     print(json.dumps(result.as_dict(), ensure_ascii=False))
     return 0 if result.passed else 1
