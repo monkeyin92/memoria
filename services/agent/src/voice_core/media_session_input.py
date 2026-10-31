@@ -33,7 +33,7 @@ from services.agent.src.voice_core.media_session_state import (
 )
 from services.agent.src.voice_core.speech_end_denoise import SpeechEndDenoiseLatch
 from services.agent.src.voice_core.speech_timeline import SegmentKind, SpeechSegment
-from services.common.llm_thinking_filler import speech_end_monotonic
+from services.common.speech_end import speech_end_monotonic
 
 if TYPE_CHECKING:
     from services.agent.src.observability.metrics import MetricsRegistry

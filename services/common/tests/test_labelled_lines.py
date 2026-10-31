@@ -17,7 +17,6 @@ from services.common.labelled_lines import (
     override_labelled_catalogue,
 )
 from services.common.llm_failover import LLM_UNAVAILABLE_LINE_ID, LLM_UNAVAILABLE_TEXT
-from services.common.llm_thinking_filler import LLM_THINKING_LINE_ID, LLM_THINKING_TEXT
 
 
 def test_shipped_provenance_matches_catalogue_playability() -> None:
@@ -28,16 +27,18 @@ def test_shipped_provenance_matches_catalogue_playability() -> None:
             assert is_synthetic_render_tool(entry["tool"])
             assert entry.get("playable") is False
             assert catalogue.get(str(entry["id"])) is None
-        assert catalogue.get(LLM_THINKING_LINE_ID) is None
         assert catalogue.get(LLM_UNAVAILABLE_LINE_ID) is None
-        assert catalogue.by_text(LLM_THINKING_TEXT) is None
         assert catalogue.by_text(LLM_UNAVAILABLE_TEXT) is None
     else:
         assert provenance.get("status") == "playable"
-        assert catalogue.get(LLM_THINKING_LINE_ID) is not None
         assert catalogue.get(LLM_UNAVAILABLE_LINE_ID) is not None
-        assert catalogue.by_text(LLM_THINKING_TEXT) is not None
         assert catalogue.by_text(LLM_UNAVAILABLE_TEXT) is not None
+
+
+def test_retired_thinking_line_never_enters_the_play_catalogue() -> None:
+    catalogue = load_catalogue()
+    assert catalogue.get("llm_thinking") is None
+    assert catalogue.by_text("嗯，我想一想。") is None
 
 
 def test_catalogue_excludes_synthetic_tone_even_when_ogg_and_pcm_exist(
@@ -54,12 +55,6 @@ def test_catalogue_excludes_synthetic_tone_even_when_ogg_and_pcm_exist(
                 "tool": "ffmpeg-libopus-scaffold",
                 "lines": [
                     {
-                        "id": LLM_THINKING_LINE_ID,
-                        "prompt": LLM_THINKING_TEXT,
-                        "tool": "ffmpeg-libopus-scaffold",
-                        "playable": False,
-                    },
-                    {
                         "id": LLM_UNAVAILABLE_LINE_ID,
                         "prompt": LLM_UNAVAILABLE_TEXT,
                         "tool": "ffmpeg-libopus-scaffold",
@@ -71,7 +66,7 @@ def test_catalogue_excludes_synthetic_tone_even_when_ogg_and_pcm_exist(
         ),
         encoding="utf-8",
     )
-    for line_id in (LLM_THINKING_LINE_ID, LLM_UNAVAILABLE_LINE_ID):
+    for line_id in (LLM_UNAVAILABLE_LINE_ID,):
         ogg = tmp_path / f"{line_id}.ogg"
         pcm = tmp_path / f"{line_id}.s16le"
         subprocess.run(
@@ -110,7 +105,6 @@ def test_catalogue_excludes_synthetic_tone_even_when_ogg_and_pcm_exist(
     catalogue = load_catalogue(tmp_path)
     assert set(SYNTHETIC_RENDER_TOOLS) == {"ffmpeg-libopus-scaffold"}
     assert "doubao-seed-tts-2.0" in PLAYABLE_RENDER_TOOLS
-    assert catalogue.get(LLM_THINKING_LINE_ID) is None
     assert catalogue.get(LLM_UNAVAILABLE_LINE_ID) is None
 
 
@@ -124,12 +118,6 @@ def test_doubao_provenance_loads_labelled_speech(tmp_path: Path) -> None:
                 "tool": "doubao-seed-tts-2.0",
                 "lines": [
                     {
-                        "id": LLM_THINKING_LINE_ID,
-                        "prompt": LLM_THINKING_TEXT,
-                        "tool": "doubao-seed-tts-2.0",
-                        "playable": True,
-                    },
-                    {
                         "id": LLM_UNAVAILABLE_LINE_ID,
                         "prompt": LLM_UNAVAILABLE_TEXT,
                         "tool": "doubao-seed-tts-2.0",
@@ -141,7 +129,7 @@ def test_doubao_provenance_loads_labelled_speech(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    for line_id in (LLM_THINKING_LINE_ID, LLM_UNAVAILABLE_LINE_ID):
+    for line_id in (LLM_UNAVAILABLE_LINE_ID,):
         ogg = tmp_path / f"{line_id}.ogg"
         pcm = tmp_path / f"{line_id}.s16le"
         subprocess.run(
@@ -177,27 +165,27 @@ def test_doubao_provenance_loads_labelled_speech(tmp_path: Path) -> None:
         assert not title_is_placeholder(ogg.read_bytes()[:64_000])
 
     catalogue = load_catalogue(tmp_path)
-    assert catalogue.require(LLM_THINKING_LINE_ID).pcm_s16le == b"\x02\x00" * 960
+    assert catalogue.require(LLM_UNAVAILABLE_LINE_ID).pcm_s16le == b"\x02\x00" * 960
     assert catalogue.by_text(LLM_UNAVAILABLE_TEXT) is not None
 
 
 def test_override_catalogue_is_restored() -> None:
     fake = LabelledLine(
-        line_id=LLM_THINKING_LINE_ID,
-        text=LLM_THINKING_TEXT,
+        line_id=LLM_UNAVAILABLE_LINE_ID,
+        text=LLM_UNAVAILABLE_TEXT,
         aigc={
-            "content_id": LLM_THINKING_LINE_ID,
+            "content_id": LLM_UNAVAILABLE_LINE_ID,
             "service_provider": "Memoria",
             "ai_generated": True,
         },
         pcm_s16le=b"\x01\x00" * 480,
         sample_rate_hz=24_000,
-        ogg_path=DEFAULT_ASSETS_ROOT / f"{LLM_THINKING_LINE_ID}.ogg",
+        ogg_path=DEFAULT_ASSETS_ROOT / f"{LLM_UNAVAILABLE_LINE_ID}.ogg",
     )
-    override_labelled_catalogue(LabelledLineCatalogue({LLM_THINKING_LINE_ID: fake}))
+    override_labelled_catalogue(LabelledLineCatalogue({LLM_UNAVAILABLE_LINE_ID: fake}))
     try:
         from services.common.labelled_lines import labelled_catalogue
 
-        assert labelled_catalogue().require(LLM_THINKING_LINE_ID).pcm_s16le == fake.pcm_s16le
+        assert labelled_catalogue().require(LLM_UNAVAILABLE_LINE_ID).pcm_s16le == fake.pcm_s16le
     finally:
         override_labelled_catalogue(None)

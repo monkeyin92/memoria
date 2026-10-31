@@ -1950,7 +1950,6 @@ class _FixedLineLLM:
     ("line_id", "text"),
     [
         ("llm_unavailable", "我现在有点卡住了，等一会儿再来找我聊吧。"),
-        ("llm_thinking", "嗯，我想一想。"),
     ],
 )
 async def test_labelled_line_reply_skips_streaming_tts_and_keeps_aigc(
