@@ -484,6 +484,9 @@ _REPORTED_HARM_RE = re.compile(
     rf"{_PASSIVE_HARM_VERBS}|"
     r"被(?:打|揍|踢|掐|推倒|骗|欺负))"
 )
+_PEER_SUBJECT_RE = re.compile(
+    r"(?:同桌|同学|朋友|同伴|小伙伴|家人|妹妹|弟弟|哥哥|姐姐)"
+)
 _REPORTED_PEER_HARM_RE = re.compile(
     r"(?:"
     r"(?:同桌|朋友|同学|家人).{0,24}(?:说|告诉我|跟我说).{0,24}"
@@ -657,11 +660,23 @@ def companion_safety_decision(query: str) -> SafetyDecision:
     # Harm keeps clause punctuation so 打/被 in one clause cannot pair with an
     # object or verb in the next one.
     harm_surface = re.sub(r"\s+", "", query).lower()
-    if (
+    # ASR / playback echo can append a peer harm clause to the previous turn's
+    # victim line. A peer as passive subject outranks that residue; explicit
+    # harm to the child still wins below.
+    child_harmed = (
         _FIRST_PERSON_HARM_RE.search(harm_surface)
         or _SELF_PASSIVE_HARM_RE.search(harm_surface)
         or _SUBJECTLESS_PASSIVE_HARM_RE.search(harm_surface)
+    )
+    if not child_harmed and (
+        _REPORTED_PEER_HARM_RE.search(full_normalized)
+        or (
+            _PEER_SUBJECT_RE.search(full_normalized)
+            and _passive_harm_targets_another_person(harm_surface)
+        )
     ):
+        return "support_relay"
+    if child_harmed:
         return "support_victim"
     if _VICTIM_SUPPORT_RE.search(full_normalized):
         return "support_victim"
