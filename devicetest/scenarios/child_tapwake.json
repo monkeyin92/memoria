@@ -88,7 +88,7 @@
   "say": "介绍一下大熊猫。",
   "rate": 175,
   "interrupt": {
-   "after": 8,
+   "after": 4,
    "say": "停。",
    "rate": 170,
    "settle": 8,

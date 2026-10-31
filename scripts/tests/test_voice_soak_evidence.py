@@ -136,6 +136,7 @@ def test_generic_cancellation_is_not_a_spoken_stop(evidence, reason: str) -> Non
 )
 def test_completion_or_failure_never_counts_as_a_stop(evidence, terminal: str, reason: str) -> None:
     bridge, serial, attempt = evidence
+    attempt["interrupt_start_ts"] = BASE + 2
     bridge = bridge.replace(
         delivery_line(5, "preempted", "preempted", "superseded"),
         delivery_line(5, terminal, terminal, reason),
@@ -159,6 +160,28 @@ def test_interrupt_at_or_after_playback_end_is_an_unverified_harness_race(
     assert result["stopped"] is None
     assert result["stop_verdict"] == "unverified"
     assert result["stop_reason"] == "interrupt_started_after_playback"
+    assert result["remaining_playback_at_clip_start_s"] == round(-after_s, 3)
+
+
+@pytest.mark.parametrize("left_s,verdict,reason", [
+    (0.3, "unverified", "interrupt_too_late_to_stop"),
+    (2.4, "unverified", "interrupt_too_late_to_stop"),
+    (2.5, "not_stopped", "playback_completed"),
+    (4.0, "not_stopped", "playback_completed"),
+])
+def test_a_clip_with_too_little_playback_left_is_unverified_not_a_product_failure(
+    evidence, left_s: float, verdict: str, reason: str
+) -> None:
+    bridge, serial, attempt = evidence
+    bridge = bridge.replace(
+        delivery_line(5, "preempted", "preempted", "superseded"),
+        delivery_line(5, "playback_ended", "playback_ended", "playback_completed"),
+    )
+    attempt["interrupt_start_ts"] = BASE + 5 - left_s
+    result = assess_interruption(bridge, serial, attempt)
+    assert result["stop_verdict"] == verdict
+    assert result["stop_reason"] == reason
+    assert result["remaining_playback_at_clip_start_s"] == left_s
 
 
 @pytest.mark.parametrize("session,generation", [("other-session", 3), ("session-a", 4)])

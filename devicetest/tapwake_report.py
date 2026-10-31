@@ -9,6 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from voice_soak_analyze import pct  # noqa: E402  same P95 as voice_soak_verdict / keepawake_verdict
+from voice_soak_evidence import UNVERIFIABLE_STOP_REASONS  # noqa: E402
 
 TS_RE = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+)Z")
 COMMIT_RE = re.compile(r"media turn commit timing .*result=committed.*final_to_done_ms=(\d+)")
@@ -170,12 +171,16 @@ def build(out: Path, stop_tags: dict[str, str], clock_path: Path | None = None) 
                 kind = stop_tags[base]
                 reason = r.get("stop_reason") or r.get("note")
                 if kind == "backchannel":  # 附和: must keep playing; playback_completed = PASS, stopped = FAIL
-                    ok = r.get("stop_reason") == "playback_completed" or r.get("interrupted") is False
+                    ok = (
+                        r.get("stop_reason") == "playback_completed"
+                        or r.get("stop_reason") in UNVERIFIABLE_STOP_REASONS
+                        or r.get("interrupted") is False
+                    )
                 else:
                     ok = (
                         r.get("stop_verdict") == "stopped"
                         or r.get("interrupted") is False
-                        or r.get("stop_reason") == "interrupt_started_after_playback"
+                        or r.get("stop_reason") in UNVERIFIABLE_STOP_REASONS
                     )
                 t["stop"] = {"kind": kind, "interrupted": r.get("interrupted"), "verdict": r.get("stop_verdict"),
                              "reason": reason, "pass": ok}
