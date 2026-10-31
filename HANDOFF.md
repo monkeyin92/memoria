@@ -44,6 +44,13 @@
 - **2026-10-13 软件 AEC 参考与三窗复测**：板无硬件 loopback（README）；注入 `software_post_gain_pre_i2s`（`memoria_software_aec_ref.h` / patch 0037）。复测相对修复前：只播 `pre_afe_ref` −78→−20 dBFS，粗 ERLE 5→23 dB；安静近端保留；双讲停止词仍不可分。收据 [复测](docs/acceptance.md)。已刷回产品；`aec_reference_verified` 仍 false。N-5 / N-10 / P1-07 保持开放。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks.md)、[空间治理运维基线](docs/runbooks.md)、[删除域与 seal 契约](docs/compliance.md)；历史归档 [2026-09-24 至 2026-10-03](docs/handoff-archive.md)、[2026-09-16 至 2026-09-23](docs/handoff-archive.md)、[2026-09-20 及更早](docs/handoff-archive.md)。下面各节里写着「2026-10-03 …」「2026-09-2x …」一节的引用，都到这些归档里找。
 
+## 2026-10-29 整栈发布 `20261029-plan-head-start-v1`（PR #445 回复计划请求提前发）
+
+- **范围**：线上 `20261028-assistant-emotion-v1`（`3e42b95d`）只加 #445，发布提交 `2c6ff2cc`（tag 已推送），不含当时 main 上的 #437、#441/#443 等改动（用户选择只发 #445：隔离时延对比，且 #441 合规勾选为空）。#445 本身已合入 main（`d389e0e2`）。
+- **步骤**：本机全量构建（无缓存，约 1.5 min）→ 增量上传（seeded，基座 10-28 包，发送 132 MB）→ verify-load 14:18 PASS → freeze 14:18 PASS（PREV `20261028-assistant-emotion-v1@3e42b95d`，无 overrides）→ env 14:29 PASS（VolcASR、DeepSeek、Doubao）→ schema PASS → cutover 14:29:49 PASS → finish 14:31 PASS；readiness `ready`。
+- **CI 收据**：分支 `deploy/20261029-plan-head-start-v1-ci-receipt`，run 40827962401，仅 `media-edge-image` 失败：Trivy 报 Debian 12 基础镜像 `libssl3` HIGH（CVE-2026-84782），main 已由 #439 换到 Debian 13；media-edge 不在本次整栈切流内，线上仍是 `20261023-edge-fix-v1`。
+- **之后**：bridge 于 10-30、10-31 被其他会话换成 agent-source-overlay 组件（10-31 为 `20261031-batch-140855c3`），control-api 仍是本版本；整栈回滚目标为 `20261028-assistant-emotion-v1`。时延验收数字见 TODOLIST N-14 ⑪。主机磁盘 10-31 为 80%（剩 7.6 GB）。
+
 ## 2026-10-22/23 整栈发布 `20261022-wake-closing-v2`（PR #393 冒烟门跟随 TTS 配置）
 
 目标：把 main `443d3f02`（#386 男声本地音频 + #382 wake 后 speaking 卡死修复）整栈发布到生产，并把挡了发布与 readiness 的豆包 403 在门里处理掉。授权依据：DECISIONS 2026-10-22 晚「该部署的部署，该烧固件的烧固件」与随后「按你说的换 tag，继续」。
