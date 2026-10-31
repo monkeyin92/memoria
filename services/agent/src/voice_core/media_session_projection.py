@@ -88,10 +88,10 @@ _LIVE_LOOKUP_FILLER_ACK_REPEAT_S = 5.0
 # must report the end of its playback before standby closes the conversation.
 # The owner wait ends at START_GRACE if synthesis never starts; the playback
 # cap starts when the farewell owner appears, covering 2.78 s of audio plus a
-# cold first packet measured at 0.82 s.  A fixed safety script gets much longer.
+# cold first packet measured at 0.82 s.  A fixed safety script is bounded by
+# its own speaking watchdog, not by a local farewell timer.
 _FAREWELL_PLAYBACK_START_GRACE_S = 2.5
 _FAREWELL_PLAYBACK_CAP_S = 5.0
-_FAREWELL_FIXED_SAFETY_WAIT_S = 60.0
 media_pb2: Any = _media_pb2
 
 
@@ -247,11 +247,13 @@ class MediaSessionProjectionMixin:
             self, context: _MediaVoiceSession, *, reason: str
         ) -> bool: ...
 
-        def _schedule_aigc_round_closing(
+        def _aigc_closing_marker_pending(self, context: _MediaVoiceSession) -> bool: ...
+
+        async def _play_aigc_closing_marker(self, context: _MediaVoiceSession) -> bool: ...
+
+        def _finish_aigc_round(
             self, context: _MediaVoiceSession, *, close_reason: str
         ) -> None: ...
-
-        async def _wait_aigc_round_closed(self, context: _MediaVoiceSession) -> bool: ...
 
         async def _cancel_reply_task(
             self,
@@ -766,10 +768,16 @@ class MediaSessionProjectionMixin:
             )
         finally:
             if not hold_standby and not context.closed and not context.standby_requested:
-                # This task owns the round's end now: the stop path skipped the
-                # closing hook, so play the AIGC END marker before idle.
-                self._schedule_aigc_round_closing(context, close_reason=reason)
-                await self._wait_aigc_round_closed(context)
+                # Same sequence as owner-silence close: admit the END marker,
+                # close the round, then stand by.  The cue is detached, so
+                # nothing waits for it to finish playing on the device.
+                # The farewell owner may still be releasing its slot here.
+                await self._wait_for_output_idle(context, timeout_s=1.0)
+                if self._aigc_closing_marker_pending(context):
+                    if not context.runtime.output_floor_allows_assistant:
+                        context.runtime.open_assistant_floor(cause="aigc_closing_marker")
+                    await self._play_aigc_closing_marker(context)
+                self._finish_aigc_round(context, close_reason=reason)
                 if not context.closed and not context.standby_requested:
                     await self._request_device_standby(context, reason=reason)
             if context.output.farewell_task is task:
@@ -778,15 +786,12 @@ class MediaSessionProjectionMixin:
     async def _wait_for_fixed_safety_end(self, context: _MediaVoiceSession) -> bool:
         """Wait out a fixed safety script; never interrupt or outlive it."""
 
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + _FAREWELL_FIXED_SAFETY_WAIT_S
-        while loop.time() < deadline:
+        while True:
             if context.closed or context.standby_requested:
                 return False
             if not context.runtime.floor.fixed_safety_audible:
                 return True
             await asyncio.sleep(0.05)
-        return not context.runtime.floor.fixed_safety_audible
 
     def _discard_output_work_for_farewell(self, context: _MediaVoiceSession) -> None:
         """Retire queued output so no greeting or answer follows the farewell."""

@@ -833,11 +833,24 @@ async def test_farewell_plays_the_aigc_closing_marker_before_standby() -> None:
         await _start_past_wake_sample(harness)
         await harness.utterance("好的，再见", frames=25)
         await harness.wait_for(lambda: bool(provider.output_texts))
+        assert provider.output_texts == [FAREWELL_STANDBY_PHRASE]
+        context = harness.registry.session_state(harness.identity.session_id)
         farewell_audio = harness.count("audio")
         await harness.playback_ended()
-        await harness.wait_for(lambda: harness.count("audio") > farewell_audio)
-        await harness.playback_ended()
         await harness.wait_for(lambda: harness.count("state", _is_closed_state) >= 1)
+        # The END cue is admitted and played before standby.  The transport's
+        # critical lane may still hand CLOSED to the client ahead of a queued
+        # reliable audio frame, exactly as owner-silence close does, so the
+        # session state is the ordering signal here.
+        assert context.aigc_closing_marker_state == "done"
+        audio_positions = [
+            index
+            for index, message in enumerate(harness.outputs)
+            if message.WhichOneof("event") == "audio"
+        ]
+        farewell_position = audio_positions[farewell_audio - 1]
+        marker_positions = [index for index in audio_positions if index > farewell_position]
+        assert marker_positions, "the closing marker never reached the device"
     finally:
         await harness.close()
 
