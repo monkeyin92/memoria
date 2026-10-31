@@ -238,6 +238,96 @@ void MemoriaMascotDisplay::BenchLogLvgl() {
     ESP_LOGI(kTag, "%s", text);
 }
 
+namespace {
+
+constexpr int kFaceBenchFrames = 30;
+// Step 0 settles on calm; 1..30 blink; 31 switches to the speaking face (a whole-panel repaint, not counted);
+// 32..61 move its mouth; starting step 62 logs and ends.
+constexpr int kFaceBenchMouthStart = kFaceBenchFrames + 1;
+constexpr int kFaceBenchSteps = 2 * kFaceBenchFrames + 2;
+constexpr uint32_t kFaceBenchStepMs = 100;
+constexpr uint32_t kFaceBenchLitMs = 3000;
+
+memoria::LvglStats LvglSnapshot() {
+    memoria::LvglStats copy;
+    portENTER_CRITICAL(&g_lvgl_lock);
+    copy = g_lvgl;
+    portEXIT_CRITICAL(&g_lvgl_lock);
+    return copy;
+}
+
+}  // namespace
+
+bool MemoriaMascotDisplay::BenchFaceFrame(memoria::FaceFrame* frame, bool idle_lit, uint32_t now_ms) {
+    FaceBench& b = face_bench_;
+    if (b.step > kFaceBenchSteps) {
+        return false;
+    }
+    if (b.step < 0) {
+        if (!idle_lit) {
+            b.lit_since_ms = now_ms;
+            return false;
+        }
+        if (now_ms - b.lit_since_ms < kFaceBenchLitMs) {
+            return false;
+        }
+        b.step = 0;
+        b.next_ms = now_ms;
+    }
+    if (static_cast<int32_t>(now_ms - b.next_ms) >= 0) {
+        if (b.step == 1 || b.step == kFaceBenchMouthStart + 1) {
+            b = FaceBench{b.step, b.lit_since_ms, b.next_ms, LvglSnapshot()};
+        } else if (b.step == kFaceBenchMouthStart || b.step == kFaceBenchSteps) {
+            const memoria::LvglStats now = LvglSnapshot();
+            const uint64_t n = b.frames != 0 ? b.frames : 1;
+            ESP_LOGI(kTag,
+                     "facebench %s frames=%lu px=%llu paint_us=%llu busy_us=%llu refreshes=%llu refresh_us=%llu "
+                     "flushes=%llu flush_us=%llu flush_px=%llu (per frame)",
+                     b.step == kFaceBenchMouthStart ? "eye" : "mouth", static_cast<unsigned long>(b.frames),
+                     static_cast<unsigned long long>(b.pixels / n), static_cast<unsigned long long>(b.paint_us / n),
+                     static_cast<unsigned long long>(b.busy_us / n),
+                     static_cast<unsigned long long>(now.refreshes - b.at.refreshes),
+                     static_cast<unsigned long long>((now.refresh_us - b.at.refresh_us) / n),
+                     static_cast<unsigned long long>(now.flushes - b.at.flushes),
+                     static_cast<unsigned long long>((now.flush_us - b.at.flush_us) / n),
+                     static_cast<unsigned long long>((now.flush_px - b.at.flush_px) / n));
+        }
+        ++b.step;
+        b.next_ms = now_ms + kFaceBenchStepMs;
+    }
+    const int step = b.step - 1;  // the step whose frame is showing
+    if (step >= kFaceBenchSteps) {
+        return false;
+    }
+    using memoria::EyeShape;
+    using memoria::MouthShape;
+    static constexpr EyeShape kEyes[] = {EyeShape::kHalf, EyeShape::kShut, EyeShape::kHalf, EyeShape::kOpen};
+    static constexpr MouthShape kMouths[] = {MouthShape::kHalf, MouthShape::kOpen, MouthShape::kHalf,
+                                             MouthShape::kShut};
+    *frame = memoria::FaceFrame{};
+    if (step >= 1 && step < kFaceBenchMouthStart) {
+        frame->eyes = kEyes[(step - 1) % 4];
+    } else if (step >= kFaceBenchMouthStart) {
+        frame->face = memoria::FaceId::kSpeak;
+        frame->mouth = step == kFaceBenchMouthStart ? MouthShape::kShut : kMouths[(step - kFaceBenchMouthStart - 1) % 4];
+    }
+    return true;
+}
+
+void MemoriaMascotDisplay::BenchFaceNote(int64_t render_us, uint64_t pixels, int64_t busy_us) {
+    FaceBench& b = face_bench_;
+    const int step = b.step - 1;
+    const bool counted = (step >= 1 && step < kFaceBenchMouthStart) ||
+                         (step > kFaceBenchMouthStart && step < kFaceBenchSteps);
+    if (!counted) {
+        return;
+    }
+    ++b.frames;
+    b.paint_us += static_cast<uint64_t>(render_us);
+    b.pixels += pixels;
+    b.busy_us += static_cast<uint64_t>(busy_us);
+}
+
 void MemoriaMascotDisplay::BenchLogProfile(const memoria::RenderProfile& profile) {
     static char text[memoria::kBenchProfileCapacity];
     if (memoria::BenchProfileLine(text, sizeof(text), profile) == 0) {

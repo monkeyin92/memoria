@@ -463,11 +463,13 @@ uv run python firmware/esp32/scripts/publish_firmware_release.py withdraw --remo
 | --- | --- | --- |
 | 平静 | `calm` | 待机、未知、致命错误、任何危机，以及说话时回复表情是 `sad` |
 | 聆听 | `listen` | 聆听、音频测试 |
-| 思考 | `think` | 聆听中孩子已经说完、回复还没开始；或说话时回复表情是 `curious`、`thinking` |
+| 思考 | `think` | 聆听中设备自己的 VAD 判定孩子已经说完（`Device VAD end`）、回复还没开始；或说话时回复表情是 `curious`、`thinking`。服务端关掉收音窗口（`listening_closed`，等轻点）时回到平静脸 |
 | 说话 | `speak` | 说话，且这一句可以打断；回复表情是 `happy`、`caring`、`loving`、`neutral`，或者名字没读懂时 |
 | 连接 | `connect` | 开机、配网、连接、恢复、激活、升级 |
 | 问好 | `greet` | 开机动画还在走，或说话时回复表情是 `surprised` |
 | 配对 | `pair` | 未绑定，二维码卡片在画面上 |
+
+**会动的部分（`FaceAnimator`，`memoria_dot_face.{h,cc}`）。** 待机、聆听、说话时每 2.4–5.6 s 随机眨一次眼（半闭→闭→半闭→睁，约 160 ms，不双眨：方案 v0.2 第 6.6 条要求两次眨眼间隔 ≥2 s）；闭眼就是已批准的闭眼平静脸的眼睑线，按每张脸的眼位平移，脸颊等其它点不动。说话脸的嘴跟扬声器电平走（场景的口型检测器）：静音是平静脸的一字嘴，小声是聆听脸的小圆嘴，响是说话脸原本的大嘴，半开与全开之间至少隔 80 ms；其它脸的嘴不动。进入说话后最多 200 ms 保持原来的脸，等回复表情到了再换，避免先闪说话脸再跳；说话结束后回复的脸再停 800 ms，嘴闭上。危机话术只有原来的慢眨眼，不张嘴、不换脸、不等待。眨眼和嘴形只重画眼睛和嘴的矩形（`FaceDirtyRects` + `lv_obj_invalidate_area`，都在 AI 角标 y 48 以下），换脸仍整屏重画。输入只有设备状态、设备 VAD 起止、危机播放标志、回复表情名和播放电平，不读识别文本和音频内容。
 
 几何在 `memoria_dot_face.cc`。13×11 的黄点，方点之间留空。待机时脸在圆屏正中。联网阶段脸在字幕带上方的圆里居中，最上排黄点落在 y 18 到 46。常驻 AI 角标已经从固件删除。点阵脸亮着时不跑吉祥物合成器。二维码卡片、字幕和背光策略不变。小程序里选的伙伴仍然只改下一轮的声音，屏幕不换装。`mascot_*.mmp` 只留在 `firmware/esp32/tests/fixtures/mascots/`，不进镜像。`firmware/esp32/scripts/preview_memoria_mascot.py` 只在主机上预览旧合成器，读的是这批夹具，不是设备画面。
 
@@ -477,7 +479,7 @@ uv run pytest firmware/esp32/tests/test_memoria_dot_face.py -q
 
 真机先不要刷。刷之后看：开机是问好脸，待机是平静脸，唤醒后聆听，说完一句进入思考再说话，危机话术全程平静脸。串口对应 `face=greet`、`face=calm`、`face=listen`、`face=think`、`face=speak`。配网或未绑定是连接脸或配对脸，画面上没有吉祥物，也没有方框。待合规复核（T-23）。
 
-**bench 构建（调试用，不发布）**：`./scripts/build.sh --bench` 在产品配置之上只多开 `CONFIG_MEMORIA_BENCH_SERIAL` 与 `CONFIG_LV_USE_SNAPSHOT`（patch `0035`，`config.bench.json`），让 USB 串口多认两条命令：`snap` 把屏幕当前内容按 `SNAP <id> <w>x<h> <seq>/<total> <crc> <base64>` 行分块吐出（约 6–8 s），`status` 吐一行 `MemoriaBench: status up_ms=… frames= drawn= render_us= busy_us= heap_free= …`（帧率、渲染耗时、堆余量）。电脑侧：`scripts/voice_soak_serial_command.py snap|status --log <串口记录>`，`scripts/snap_to_png.py` 把 SNAP 行还原成 PNG，`scripts/bench_status.py` 解析 `status` 行。刷入用 `./scripts/flash.sh --bench`，量完必须刷回产品镜像：bench 镜像文件名带 `-bench`、内嵌标记 `MEMORIA_BENCH_BUILD=1;`，`publish_firmware_release.py` 拒绝签名与上传它，产品镜像里没有这两条命令。
+**bench 构建（调试用，不发布）**：`./scripts/build.sh --bench` 在产品配置之上只多开 `CONFIG_MEMORIA_BENCH_SERIAL` 与 `CONFIG_LV_USE_SNAPSHOT`（patch `0035`，`config.bench.json`），让 USB 串口多认两条命令：`snap` 把屏幕当前内容按 `SNAP <id> <w>x<h> <seq>/<total> <crc> <base64>` 行分块吐出（约 6–8 s），`status` 吐一行 `MemoriaBench: status up_ms=… frames= drawn= render_us= busy_us= heap_free= …`（帧率、渲染耗时、堆余量）。bench 镜像开机后屏幕第一次亮着待机满 3 s，会自动跑一次点阵脸局部重画测量：平静脸 30 帧眨眼、说话脸 30 帧嘴形，各 100 ms 一帧，替换正常画面约 6 s，然后各打一行 `MemoriaBench: facebench eye|mouth frames= px= paint_us= busy_us= refreshes= refresh_us= flushes= flush_us= flush_px=`（除 refreshes/flushes 外都是每帧平均）。电脑侧：`scripts/voice_soak_serial_command.py snap|status --log <串口记录>`，`scripts/snap_to_png.py` 把 SNAP 行还原成 PNG，`scripts/bench_status.py` 解析 `status` 行。刷入用 `./scripts/flash.sh --bench`，量完必须刷回产品镜像：bench 镜像文件名带 `-bench`、内嵌标记 `MEMORIA_BENCH_BUILD=1;`，`publish_firmware_release.py` 拒绝签名与上传它，产品镜像里没有这两条命令。
 
 **临时不深睡构建（远程测试，默认关，不发布）。** 产品构建和 bench 构建仍在 WifiHold 到期或夜间安抚结束后调用 `esp_deep_sleep_start()`。`CONFIG_MEMORIA_KEEP_AWAKE` 在 patch `0039` 里是 `default n`。只有下面的命令改用 `config.keep-awake.json`，在产品 `sdkconfig_append` 上加一行 `CONFIG_MEMORIA_KEEP_AWAKE=y`。
 

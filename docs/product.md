@@ -21,7 +21,7 @@
 
 #### 现状
 
-- **固件。** [`MemoriaMascotDisplay::SetEmotion()`](../firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/memoria_mascot_display.cc:445) 把服务端的表情名存进一个定长缓冲，动画任务读进说话帧，由 `FaceForExpression()` 在现有七张脸里挑一张（happy/caring/loving 和 neutral 用说话脸，curious/thinking 用思考脸，surprised 用招呼脸，sad 用平静脸；没收到名字或名字不认识时也保持说话脸）。危机脚本仍固定平静脸。不说话的状态仍跟设备状态和音频电平走（[M-7](../TODOLIST.md:M-7)），没有新增表情。
+- **固件。** [`MemoriaMascotDisplay::SetEmotion()`](../firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/memoria_mascot_display.cc:445) 把服务端的表情名存进一个定长缓冲，动画任务读进说话帧，由 `FaceForExpression()` 在现有七张脸里挑一张（happy/caring/loving 和 neutral 用说话脸，curious/thinking 用思考脸，surprised 用招呼脸，sad 用平静脸；没收到名字或名字不认识时也保持说话脸）。危机脚本仍固定平静脸。不说话的状态仍跟设备状态走：思考脸来自设备自己的 VAD 结束，不读识别文本。眨眼、说话脸的嘴形、进入说话的 200 ms 等待和说话后 800 ms 保持见 README「屏幕：黄色点阵脸」。没有新增表情。
 - **服务端。** 回复开头可以带一个内部标签 `[emotion:neutral|happy|caring|curious]`。`PhraseSegmenter` 在进入 TTS 前剥离标签，并把值写入当前 turn 的 `SpeechPlan.assistant_emotion`。豆包 TTS 只有开启 `DOUBAO_TTS_STYLE_CONTROL_ENABLED` 时才把情绪追加到 `context_texts`；表情走 `assistant_expression`，不依赖这个开关。
 
 ---
