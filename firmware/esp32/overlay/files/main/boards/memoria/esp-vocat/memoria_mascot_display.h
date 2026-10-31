@@ -56,6 +56,10 @@ public:
     void SetCompanion(const char* companion_id);
     void SetOfflineMenuActive(bool active);
     void SetListeningClosed(bool closed) { listening_closed_.store(closed, std::memory_order_relaxed); }
+    // The device's VAD edges (memoria::SetVoiceActivityHandler). The child stopping while the device
+    // listens shows the thinking face until the state moves on; VAD edges in other states (barge-in while
+    // speaking) change nothing. Atomics only: it may run under the protocol's state lock.
+    void NoteVoiceActivity(bool speaking);
     // Body gestures from the IMU.
     void Pat();
     void Shake();
@@ -115,6 +119,11 @@ private:
     static void BenchLogLvgl();
     // One-shot sampler microbenchmark 20 s after boot (memoria_mascot_sampler_bench.h).
     static void BenchStartSamplerBench();
+    // One-shot cost of the dot face's partial repaints: after the first 3 s of a lit idle panel, 30 blink
+    // frames on calm, then 30 mouth frames on the speaking face, 100 ms apart, each set logged as one
+    // `facebench` line (paint, task busy and LVGL refresh/flush per frame). It replaces the frame while it runs.
+    bool BenchFaceFrame(memoria::FaceFrame* frame, bool idle_lit, uint32_t now_ms);
+    void BenchFaceNote(int64_t render_us, uint64_t pixels, int64_t busy_us);
 #endif
 
     uint16_t* framebuffer_ = nullptr;
@@ -147,21 +156,30 @@ private:
     // The last painted frame's inputs: an equal frame is already on the panel.
     memoria::FaceFrame shown_frame_{};
     bool frame_shown_ = false;
-    // Anchor of the crisis-round slow blink (CrisisEyesClosed), set anew each
-    // time a round begins.
-    bool crisis_blink_on_ = false;
-    uint32_t crisis_blink_started_ms_ = 0;
+    // The blink, the speaking mouth, and the face held around speaking (memoria_dot_face.h).
+    memoria::FaceAnimator face_animator_;
     bool pat_pending_ = false;
     bool shake_pending_ = false;
     std::atomic<uint32_t> error_until_ms_{0};
-    std::atomic<bool> user_spoke_{false};
+    std::atomic<bool> voice_ended_{false};
     std::atomic<bool> qr_visible_{false};
     // The reply expression the server last sent, one byte per slot so the
     // animation task can read it without sharing the string. Empty until one
     // arrives, and a speaking frame reads it; every other state ignores it.
     std::atomic<char> expression_[memoria::kExpressionNameMax] = {};
+    std::atomic<uint32_t> expression_seq_{0};
 #if CONFIG_MEMORIA_BENCH_SERIAL
     std::atomic<bool> bench_status_requested_{false};
+    struct FaceBench {
+        int step = -1;  // -1 waiting for a lit idle panel, kFaceBenchSteps done
+        uint32_t lit_since_ms = 0;
+        uint32_t next_ms = 0;
+        memoria::LvglStats at;
+        uint64_t paint_us = 0;
+        uint64_t busy_us = 0;
+        uint64_t pixels = 0;
+        uint32_t frames = 0;
+    } face_bench_;
 #endif
 };
 
