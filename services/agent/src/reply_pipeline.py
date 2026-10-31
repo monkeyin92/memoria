@@ -573,11 +573,11 @@ class ReplyPipeline:
         resolver = self._realtime_search_resolver
         if resolver is None:
             return False
-        if not hasattr(resolver, "weather") and not hasattr(resolver, "qwen"):
+        if not hasattr(resolver, "weather") and not hasattr(resolver, "web"):
             return True
         return (
             getattr(resolver, "weather", None) is not None
-            or getattr(resolver, "qwen", None) is not None
+            or getattr(resolver, "web", None) is not None
         )
 
     def _prior_user_texts(self, query: str) -> list[str]:
