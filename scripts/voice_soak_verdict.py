@@ -109,7 +109,14 @@ def judge(
             failures.append(f"silence_not_idle: {row.get('tag')}")
 
     audited = audit_interruptions(rows, _text(run / "bridge.log"), _text(run / "serial.log"))
+    interrupt_kinds = {
+        row.get("tag"): row.get("interrupt_kind", "stop") for row in rows if row.get("kind") == "reply"
+    }
     for tag, assessment in audited.items():
+        if interrupt_kinds.get(tag) == "backchannel":
+            if assessment.get("stopped") is True:
+                failures.append(f"backchannel_stopped: {tag}")
+            continue
         if (
             assessment.get("stopped") is not True
             and assessment.get("stop_reason") not in UNVERIFIABLE_STOP_REASONS

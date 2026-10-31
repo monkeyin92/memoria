@@ -595,6 +595,7 @@ def main() -> int:
                         settle = float(interrupt.get("settle", 8))
                         returned = watcher.wait_state({"listening", "idle"}, settle, since=i0)
                         outcome.update(interrupted=True, interrupt_text=interrupt["say"],
+                                       interrupt_kind=interrupt.get("kind", "stop"),
                                        interrupt_start_ts=i0, interrupt_end_ts=i1,
                                        interrupt_deadline_ts=i1 + settle, device_returned_ts=returned)
                     else:
