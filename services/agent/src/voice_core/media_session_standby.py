@@ -390,6 +390,9 @@ class MediaSessionStandbyMixin:
                     cause="listening_capture_hold",
                     publish=False,
                 )
+                # The device was just told "listening"; without this it keeps
+                # the mic open while every frame is dropped here.
+                context.runtime.publish_assistant_state("listening_closed")
             return
         if phase == "listening":
             # Resume the owner's remaining budget; do not mint a fresh window
