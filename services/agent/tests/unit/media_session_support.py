@@ -19,6 +19,7 @@ from services.agent.src.orchestration.state_machine import (
     ConversationState,
     InteractionPhase,
 )
+from services.agent.src.voice_core import media_session_projection
 from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
@@ -47,6 +48,9 @@ from services.agent.src.voice_core.speech_timeline import (
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.agent.tests.unit.runtime_state_helpers import set_floor
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
+
+# A slow lookup's filler starts only after the fast-answer grace.
+_ACK_WAIT_S = media_session_projection._LIVE_LOOKUP_FILLER_GRACE_S + 1
 
 
 class FakeMediaProvider(MediaVoiceProvider):
@@ -427,7 +431,7 @@ async def _finish_device_wake_ack_if_any(
     if identity.client_type != "device":
         return
     try:
-        await asyncio.wait_for(provider.ack_started.wait(), timeout=1)
+        await asyncio.wait_for(provider.ack_started.wait(), timeout=_ACK_WAIT_S)
     except TimeoutError:
         return
     await asyncio.wait_for(provider.ack_completed.wait(), timeout=1)
@@ -467,7 +471,7 @@ async def _ack_owned_filler_then_wait(
     context = await registry.open_session(identity)
     await _finish_device_wake_ack_if_any(registry, identity, provider, bridge, session)
     committed = await context.runtime.on_turn_committed("今天南京天气怎么样")
-    await asyncio.wait_for(provider.ack_started.wait(), timeout=1)
+    await asyncio.wait_for(provider.ack_started.wait(), timeout=_ACK_WAIT_S)
     ack_owner = context.output.output_owner
     assert ack_owner is not None
     ack_fence = ack_owner.fence
