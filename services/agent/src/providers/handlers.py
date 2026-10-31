@@ -8,6 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from services.agent.src.providers.deepseek_live_search import (
+    DeepSeekLiveSearch,
+    DeepSeekLiveSearchConfig,
+)
 from services.agent.src.providers.domestic_weather import DomesticWeather, build_domestic_weather
 from services.agent.src.providers.llm_failover import FailoverChatModel
 from services.agent.src.providers.qwen_realtime_search import (
@@ -27,26 +31,26 @@ class PublicRealtimeSearch:
         self,
         *,
         weather: DomesticWeather | None,
-        qwen: QwenRealtimeSearch | None,
+        web: DeepSeekLiveSearch | QwenRealtimeSearch | None,
     ) -> None:
         self.weather = weather
-        self.qwen = qwen
-        self.model = "+".join(source.model for source in (weather, qwen) if source is not None)
+        self.web = web
+        self.model = "+".join(source.model for source in (weather, web) if source is not None)
 
     async def resolve(self, *, query: str) -> str | None:
         if self.weather is not None:
             answer = await self.weather.resolve(query=query)
             if answer is not None:
                 return answer
-        if self.qwen is None:
+        if self.web is None:
             return None
-        return await self.qwen.resolve(query=query)
+        return await self.web.resolve(query=query)
 
     async def aclose(self) -> None:
         if self.weather is not None:
             await self.weather.aclose()
-        if self.qwen is not None:
-            await self.qwen.aclose()
+        if self.web is not None:
+            await self.web.aclose()
 
 
 def _reply_extra_body(*, llm_provider: str) -> dict[str, Any]:
@@ -121,8 +125,31 @@ def build_language_model_handler(
 
 
 def build_realtime_search_resolver(*, settings: AgentSettings) -> PublicRealtimeSearch:
-    """Build public live lookup without changing the conversational LLM."""
+    """Build public live lookup without changing the conversational LLM.
 
+    DeepSeek search wins when both web sources are switched on.
+    """
+
+    return PublicRealtimeSearch(
+        weather=build_domestic_weather(settings),
+        web=_deepseek_live_search(settings) or _qwen_realtime_search(settings),
+    )
+
+
+def _deepseek_live_search(settings: AgentSettings) -> DeepSeekLiveSearch | None:
+    api_key = str(getattr(settings, "deepseek_api_key", "") or "").strip()
+    if not api_key or not bool(getattr(settings, "live_search_deepseek_enabled", False)):
+        return None
+    return DeepSeekLiveSearch(
+        DeepSeekLiveSearchConfig(
+            api_key=api_key,
+            base_url=str(getattr(settings, "deepseek_base_url", "https://api.deepseek.com")),
+            model=str(getattr(settings, "deepseek_fast_model", "deepseek-flash")),
+        )
+    )
+
+
+def _qwen_realtime_search(settings: AgentSettings) -> QwenRealtimeSearch | None:
     api_key = str(getattr(settings, "dashscope_api_key", "") or "").strip()
     qwen = None
     if api_key and bool(getattr(settings, "live_search_qwen_enabled", False)):
@@ -139,4 +166,4 @@ def build_realtime_search_resolver(*, settings: AgentSettings) -> PublicRealtime
                 model=str(getattr(settings, "qwen_deep_model", "qwen-plus")),
             )
         )
-    return PublicRealtimeSearch(weather=build_domestic_weather(settings), qwen=qwen)
+    return qwen

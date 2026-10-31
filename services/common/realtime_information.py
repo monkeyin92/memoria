@@ -230,9 +230,11 @@ def weekday_lookup_query(query: str) -> str:
 
 
 def weather_lookup_configured(settings: object) -> bool:
-    """True when Qwen live search or a configured domestic weather source can answer."""
+    """True when a web search or a configured domestic weather source can answer."""
 
-    if bool(getattr(settings, "live_search_qwen_enabled", False)):
+    if bool(getattr(settings, "live_search_deepseek_enabled", False)) or bool(
+        getattr(settings, "live_search_qwen_enabled", False)
+    ):
         return True
     provider = str(getattr(settings, "weather_lookup_provider", "off") or "off")
     if provider != "domestic":

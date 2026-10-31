@@ -30,6 +30,9 @@ class ProviderFields(BaseModel):
     live_search_qwen_enabled: bool = Field(
         default=False, alias="LIVE_SEARCH_QWEN_ENABLED"
     )
+    live_search_deepseek_enabled: bool = Field(
+        default=False, alias="LIVE_SEARCH_DEEPSEEK_ENABLED"
+    )
     weather_lookup_provider: Literal["off", "domestic"] = Field(
         default="off", alias="WEATHER_LOOKUP_PROVIDER"
     )
