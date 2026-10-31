@@ -38,6 +38,7 @@ from services.agent.tests.unit.test_media_session_golden import (
 )
 from services.agent.tests.unit.test_media_session_playback_stop import (
     _device_identity,
+    _FarewellStoryProvider,
     _run_story,
     _StoryHarness,
 )
@@ -170,6 +171,38 @@ async def test_device_farewell_waits_for_the_crisis_script_to_end() -> None:
         scenario,
         opening=CRISIS_SELF_SCRIPT.display,
     )
+
+
+@pytest.mark.asyncio
+async def test_device_farewell_after_a_speaking_safety_script_plays_the_line() -> None:
+    """A provider that can speak still never cuts the safety script."""
+
+    provider = _FarewellStoryProvider()
+    provider.opening = CRISIS_SELF_SCRIPT.display
+    harness = _StoryHarness(_device_identity("safety-farewell-speaking"), provider)
+    await harness.start()
+    try:
+        playing = await harness.start_story()
+        context = harness.context
+        assert harness.runtime.floor.fixed_safety_audible
+
+        await harness.audio_frames(15, final_text="再见")
+        await harness.assert_story_still_playing(playing)
+        assert harness.cancel_effects() == []
+        assert not harness.closed()
+
+        await _finish_script(harness)
+        await harness.wait_for(lambda: bool(provider.output_texts))
+        assert provider.output_texts == ["好呀，再见，下次见～"]
+        assert not context.standby_requested
+        assert not harness.closed()
+
+        await harness.playback_ended()
+        await harness.wait_for(harness.closed)
+        assert context.standby_reason == "conversation_end_explicit"
+    finally:
+        provider.release.set()
+        await harness.close()
 
 
 @pytest.mark.asyncio

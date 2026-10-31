@@ -86,9 +86,12 @@ _LIVE_LOOKUP_FILLER_MEMORY_S = 30.0
 _LIVE_LOOKUP_FILLER_ACK_REPEAT_S = 5.0
 # A farewell must reach the child quickly (2 s product budget) and the device
 # must report the end of its playback before standby closes the conversation.
-# The line is 2.78 s of 24 kHz audio and a cold first packet measured 0.82 s.
+# The owner wait ends at START_GRACE if synthesis never starts; the playback
+# cap starts when the farewell owner appears, covering 2.78 s of audio plus a
+# cold first packet measured at 0.82 s.  A fixed safety script gets much longer.
 _FAREWELL_PLAYBACK_START_GRACE_S = 2.5
 _FAREWELL_PLAYBACK_CAP_S = 5.0
+_FAREWELL_FIXED_SAFETY_WAIT_S = 60.0
 media_pb2: Any = _media_pb2
 
 
@@ -243,6 +246,12 @@ class MediaSessionProjectionMixin:
         async def _request_device_standby(
             self, context: _MediaVoiceSession, *, reason: str
         ) -> bool: ...
+
+        def _schedule_aigc_round_closing(
+            self, context: _MediaVoiceSession, *, close_reason: str
+        ) -> None: ...
+
+        async def _wait_aigc_round_closed(self, context: _MediaVoiceSession) -> bool: ...
 
         async def _cancel_reply_task(
             self,
@@ -645,26 +654,14 @@ class MediaSessionProjectionMixin:
         tail_pcm_s16le: bytes = b"",
     ) -> bool:
         if context.closed or context.standby_requested:
-            logger.info(
-                "media bridge phrase skipped session=%s reason=session_closed",
-                context.identity.session_id,
-            )
             return False
         if context.identity.client_type != "device":
             return False
         if not callable(getattr(context.provider, "generate_output", None)):
-            logger.info(
-                "media bridge phrase skipped session=%s reason=no_output_seam",
-                context.identity.session_id,
-            )
             return False
         if require_idle_input and (
             context.pending.turn_start_sample is not None or context.output.output_owner is not None
         ):
-            logger.info(
-                "media bridge phrase skipped session=%s reason=input_busy",
-                context.identity.session_id,
-            )
             return False
         runtime = context.runtime
         if runtime.interaction_phase in {
@@ -696,24 +693,11 @@ class MediaSessionProjectionMixin:
             floor_allows_output=runtime.output_floor_allows_assistant,
             now_ms=now_ms,
         ):
-            logger.info(
-                "media bridge phrase skipped session=%s reason=intent_inactive "
-                "floor_open=%s phase=%s",
-                context.identity.session_id,
-                runtime.output_floor_allows_assistant,
-                runtime.interaction_phase,
-            )
             return False
-        if not await self._enqueue_output_work(
+        return await self._enqueue_output_work(
             context,
             _OutputWork(acknowledgement, fence, tail_pcm_s16le=tail_pcm_s16le),
-        ):
-            logger.info(
-                "media bridge phrase skipped session=%s reason=enqueue_rejected",
-                context.identity.session_id,
-            )
-            return False
-        return True
+        )
 
     def _schedule_farewell_standby(
         self, context: _MediaVoiceSession, *, reason: str, text: str
@@ -732,7 +716,19 @@ class MediaSessionProjectionMixin:
         self, context: _MediaVoiceSession, *, reason: str, text: str
     ) -> None:
         task = asyncio.current_task()
+        hold_standby = False
         try:
+            # A fixed safety script is never interruptible.  Let it finish
+            # before the farewell; if it does not, leave the session to its
+            # own watchdog instead of cutting a safety line.
+            if context.runtime.floor.fixed_safety_audible:
+                if not await self._wait_for_fixed_safety_end(context):
+                    logger.warning(
+                        "media farewell held for fixed safety session=%s",
+                        context.identity.session_id,
+                    )
+                    hold_standby = True
+                    return
             owner = context.output.output_owner
             if owner is not None:
                 # The farewell is the only thing the child should hear next.
@@ -769,11 +765,28 @@ class MediaSessionProjectionMixin:
                 context.identity.session_id,
             )
         finally:
-            # A failed or refused line must still end the conversation.
-            if not context.closed and not context.standby_requested:
-                await self._request_device_standby(context, reason=reason)
+            if not hold_standby and not context.closed and not context.standby_requested:
+                # This task owns the round's end now: the stop path skipped the
+                # closing hook, so play the AIGC END marker before idle.
+                self._schedule_aigc_round_closing(context, close_reason=reason)
+                await self._wait_aigc_round_closed(context)
+                if not context.closed and not context.standby_requested:
+                    await self._request_device_standby(context, reason=reason)
             if context.output.farewell_task is task:
                 context.output.farewell_task = None
+
+    async def _wait_for_fixed_safety_end(self, context: _MediaVoiceSession) -> bool:
+        """Wait out a fixed safety script; never interrupt or outlive it."""
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _FAREWELL_FIXED_SAFETY_WAIT_S
+        while loop.time() < deadline:
+            if context.closed or context.standby_requested:
+                return False
+            if not context.runtime.floor.fixed_safety_audible:
+                return True
+            await asyncio.sleep(0.05)
+        return not context.runtime.floor.fixed_safety_audible
 
     def _discard_output_work_for_farewell(self, context: _MediaVoiceSession) -> None:
         """Retire queued output so no greeting or answer follows the farewell."""
@@ -795,21 +808,25 @@ class MediaSessionProjectionMixin:
         """Return once the device reports the farewell's own playback ended."""
 
         loop = asyncio.get_running_loop()
-        started = loop.time()
-        farewell_seen = False
-        while loop.time() - started < _FAREWELL_PLAYBACK_CAP_S:
+        entered = loop.time()
+        owner_seen_at: float | None = None
+        while True:
             if context.closed or context.standby_requested:
                 return
             owner = context.output.output_owner
             if owner is not None and (
                 str(getattr(owner.intent, "tts_source", "")) == FAREWELL_STANDBY_PHRASE
             ):
-                farewell_seen = True
+                if owner_seen_at is None:
+                    # The cap covers playback, not a cold synthesis wait.
+                    owner_seen_at = loop.time()
                 if context.output.playback.terminal_received(owner.fence):
                     return
-            elif farewell_seen:
+                if loop.time() - owner_seen_at >= _FAREWELL_PLAYBACK_CAP_S:
+                    return
+            elif owner_seen_at is not None:
                 return
-            elif loop.time() - started >= _FAREWELL_PLAYBACK_START_GRACE_S:
+            elif loop.time() - entered >= _FAREWELL_PLAYBACK_START_GRACE_S:
                 return
             await asyncio.sleep(0.02)
 
