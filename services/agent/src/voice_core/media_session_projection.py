@@ -981,7 +981,6 @@ class MediaSessionProjectionMixin:
                     now_ms=now_ms,
                 ):
                     _remember_live_lookup_filler(context, fence)
-                    context.llm_thinking_filler.note_reply_spoken(turn_id=fence.turn_id)
                     played_lookup_filler = await self._enqueue_output_work(
                         context,
                         _OutputWork(acknowledgement, fence),
