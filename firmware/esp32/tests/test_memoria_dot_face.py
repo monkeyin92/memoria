@@ -908,10 +908,10 @@ def test_idle_blinks_top_down_at_a_calm_random_pace(report: dict) -> None:
     for _, shapes in blinks:
         assert shapes == ["half", "shut", "half", "open"]
     ends = {int(r[0]) for r in rows if r[1] == "open"}
-    for (start, _), end in zip(blinks, sorted(ends)):
+    for (start, _), end in zip(blinks, sorted(ends), strict=True):
         assert 140 <= end - start <= 170  # spec 6.6: about 150 ms
     starts = [start for start, _ in blinks]
-    gaps = [b - a for a, b in zip(starts, starts[1:])]
+    gaps = [b - a for a, b in zip(starts, starts[1:], strict=False)]
     assert min(gaps) >= 2400  # spec 6.6: at least 2 s apart, so no double blink
     assert max(gaps) <= 5600 + 200
     assert len(set(gaps)) > 3  # not a metronome
@@ -948,7 +948,7 @@ def test_speaking_mouth_follows_the_playback_level(report: dict) -> None:
     rows = [(int(r[0]), r[1] == "1", r[2] == "1", r[3]) for r in report["events"]["mouth"]]
     last_change = {}
     previous = None
-    for t, opened, wide, shape in rows:
+    for t, opened, _wide, shape in rows:
         if not opened:
             assert shape == "shut", t  # shutting is never held back
         if previous is not None and shape != previous:
