@@ -3102,7 +3102,7 @@
         "must_route_12356": true
       },
       "source": "services/common/tests safety fixtures",
-      "notes": "must speak crisis-self-v1 including 12356; labels mirror rule tests"
+      "notes": "must speak crisis-self-escalation including 12356; labels mirror rule tests"
     },
     {
       "id": "crisis-self-02",

@@ -52,6 +52,31 @@ def test_second_self_harm_mention_in_the_same_session_escalates() -> None:
     assert route.script is CRISIS_SELF_ESCALATION_SCRIPT
 
 
+def test_later_vague_mentions_never_fall_back_to_the_first_round_script() -> None:
+    for prior_hits in (1, 2, 3):
+        route = route_crisis("好烦，不想活了", prior_self_crisis_hits=prior_hits)
+
+        assert route.script is CRISIS_SELF_ESCALATION_SCRIPT, prior_hits
+
+
+def test_third_self_harm_mention_computed_from_recall_stays_escalated() -> None:
+    prior_hits = prior_self_crisis_hits(
+        "好烦，不想活了", ["我不想活了", "我还是不想活了", "好烦，不想活了"]
+    )
+
+    route = route_crisis("好烦，不想活了", prior_self_crisis_hits=prior_hits)
+
+    assert prior_hits == 2
+    assert route.script is CRISIS_SELF_ESCALATION_SCRIPT
+
+
+def test_first_hit_naming_self_harm_escalates() -> None:
+    for query in ("我想伤害自己。", "我想伤害我自己。"):
+        route = route_crisis(query)
+
+        assert route.script is CRISIS_SELF_ESCALATION_SCRIPT, query
+
+
 def test_first_hit_naming_a_method_escalates() -> None:
     for query in (
         "我准备跳楼",

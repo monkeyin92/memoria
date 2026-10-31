@@ -339,7 +339,7 @@ _NEGATED_SELF_HARM_INTENT_RE = re.compile(
     r"(?:不|没|没有|别)(?:再)?(?:准备|打算|想|要|会)(?!(?:再|继续)?活)"
 )
 _SELF_HARM_METHOD_OR_IMMINENT_RE = re.compile(
-    r"(?:割腕|跳楼|跳下去|从楼上跳|吞药|服药过量|安眠药|"
+    r"(?:伤害(?:我)?自己|割腕|跳楼|跳下去|从楼上跳|吞药|服药过量|安眠药|"
     r"(?:拿着|握着|手握).{0,6}(?:刀|小刀|剪刀|玻璃)|"
     r"(?:拿|用).{0,6}(?:刀|小刀|剪刀|玻璃).{0,6}(?:割|划|捅)|"
     r"(?:割|划)(?:伤|破)?(?:自己|手腕)|站在楼顶)"
@@ -748,6 +748,9 @@ def fixed_companion_reply(
     del display_name, style_description, audience
     decision = companion_safety_decision(query)
     script = script_for_decision(decision)
+    # Same first-hit rule as crisis_policy._crisis_self_script; this path has no prior turn.
+    if decision == "crisis_self" and self_harm_method_or_imminent(query):
+        script = CRISIS_SELF_ESCALATION_SCRIPT
     if script is not None:
         return script.display
     if decision == "prohibited_request":

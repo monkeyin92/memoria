@@ -9,6 +9,7 @@ from services.common.companion_response_safety import (
 )
 from services.common.crisis_policy import route_crisis
 from services.common.fixed_safety_scripts import (
+    CRISIS_SELF_ESCALATION_SCRIPT,
     CRISIS_SELF_SCRIPT,
     SUPPORT_RELAY_SCRIPT,
     SUPPORT_VICTIM_SCRIPT,
@@ -20,7 +21,7 @@ from services.common.fixed_safety_scripts import (
     ("query", "decision", "script"),
     (
         ("我不想活了。", "crisis_self", CRISIS_SELF_SCRIPT),
-        ("我想伤害自己。", "crisis_self", CRISIS_SELF_SCRIPT),
+        ("我想伤害自己。", "crisis_self", CRISIS_SELF_ESCALATION_SCRIPT),
         ("我不想或了。", "crisis_self", CRISIS_SELF_SCRIPT),
         (
             "有个大人老是打我，还不让我告诉妈妈。",
