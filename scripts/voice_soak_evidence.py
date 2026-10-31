@@ -23,6 +23,12 @@ DELIVERY = re.compile(
     r"/generation-(?P<generation>\d+)/tool-\d+"
 )
 START_TOLERANCE_S = 2.0
+# Fastest observed spoken stop: ~1.4 s clip, final ~0.33 s later, then the stop.
+# A clip that starts with less playback left cannot win the race against the end.
+MIN_PLAYBACK_LEFT_FOR_STOP_S = 2.5
+UNVERIFIABLE_STOP_REASONS = frozenset(
+    {"interrupt_started_after_playback", "interrupt_too_late_to_stop"}
+)
 
 
 def _bridge_rows(text: str) -> list[tuple[float, str, dict[str, str]]]:
@@ -136,8 +142,13 @@ def assess_interruption(bridge: str, serial: str, attempt: Mapping[str, Any]) ->
     result["reply_terminal_reason"] = terminal.get("terminal_reason", "")
     if terminal.get("terminal_reason") == "playback_completed":
         interrupt_start = attempt.get("interrupt_start_ts")
-        if isinstance(interrupt_start, (int, float)) and interrupt_start >= terminal_at:
-            return finish("interrupt_started_after_playback")
+        if isinstance(interrupt_start, (int, float)):
+            remaining = terminal_at - interrupt_start
+            result["remaining_playback_at_clip_start_s"] = round(remaining, 3)
+            if remaining <= 0:
+                return finish("interrupt_started_after_playback")
+            if remaining < MIN_PLAYBACK_LEFT_FOR_STOP_S:
+                return finish("interrupt_too_late_to_stop")
         return finish("playback_completed", False)
     if terminal["terminal"] != "preempted":
         return finish("non_interrupt_terminal", False)

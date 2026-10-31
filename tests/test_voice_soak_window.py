@@ -129,6 +129,25 @@ def test_a_claimed_stop_without_log_evidence_fails(tmp_path: Path, capsys: pytes
     assert report["failures"] == ["stop_not_confirmed: t001 unverified"]
 
 
+@pytest.mark.parametrize("left_s,failures", [
+    (2.0, []),
+    (3.0, ["stop_not_confirmed: t001 not_stopped"]),
+])
+def test_a_stop_clip_too_late_to_win_does_not_fail_the_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], left_s: float, failures: list[str]
+) -> None:
+    _, serial = _confirmed_stop_logs()
+    bridge = _delivery(-0.1, "first_frame_sent") + _delivery(
+        5, "playback_ended", "playback_ended", "playback_completed"
+    )
+    rows = _passing_rows()
+    rows[1]["interrupt_start_ts"] = BASE + 5 - left_s
+    run = tmp_path / "run-late-clip"
+    _write(run, rows, bridge, serial)
+    voice_soak_verdict.main([str(run)])
+    assert json.loads(capsys.readouterr().out)["failures"] == failures
+
+
 def test_abort_silence_and_tail_each_fail_the_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run = tmp_path / "run-bad"
     _write(

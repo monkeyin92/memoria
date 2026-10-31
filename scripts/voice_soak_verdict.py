@@ -19,10 +19,10 @@ from pathlib import Path
 
 if __package__:
     from .voice_soak_analyze import pct
-    from .voice_soak_evidence import audit_interruptions
+    from .voice_soak_evidence import UNVERIFIABLE_STOP_REASONS, audit_interruptions
 else:
     from voice_soak_analyze import pct
-    from voice_soak_evidence import audit_interruptions
+    from voice_soak_evidence import UNVERIFIABLE_STOP_REASONS, audit_interruptions
 
 MAX_NO_REPLY: int | None = 0
 MAX_REPLY_LATENCY_P90_S: float | None = 2.0
@@ -112,7 +112,7 @@ def judge(
     for tag, assessment in audited.items():
         if (
             assessment.get("stopped") is not True
-            and assessment.get("stop_reason") != "interrupt_started_after_playback"
+            and assessment.get("stop_reason") not in UNVERIFIABLE_STOP_REASONS
         ):
             failures.append(f"stop_not_confirmed: {tag} {assessment.get('stop_verdict')}")
 
