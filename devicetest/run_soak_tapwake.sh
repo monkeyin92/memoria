@@ -11,7 +11,7 @@ PORT="/dev/cu.usbmodem101"
 {
   echo "start $(date -Iseconds)"
   echo "port=$PORT"
-  echo "gates MAX_NO_REPLY=0 P95<=2.0s; pre gate idle-only 180s (real State line, no assume_idle); turn gate idle|listening|listening_closed 30s (listening window is product state, #453)"
+  echo "gates MAX_NO_REPLY=0 P90<=2.0s max<=3.0s; pre gate idle-only 180s (real State line, no assume_idle); turn gate idle|listening|listening_closed 30s (listening window is product state, #453)"
 } | tee "$REPORT_DIR/meta.txt"
 ls -la "$PORT" || { echo "FAIL: serial missing"; exit 2; }
 python3 devicetest/clock_offset.py pre --remote memoria-prod | tee -a "$REPORT_DIR/clock.jsonl" | sed 's/^/clock=/' | tee -a "$REPORT_DIR/meta.txt" || echo "clock=pre_failed" | tee -a "$REPORT_DIR/meta.txt"
@@ -48,7 +48,7 @@ if [[ -n "$ABORT" ]]; then
 fi
 set +e
 uv run --no-project python scripts/voice_soak_verdict.py "$OUT" \
-  --max-no-reply 0 --max-reply-latency-p95 2.0 \
+  --max-no-reply 0 --max-reply-latency-p90 2.0 --max-reply-latency-max 3.0 \
   2>&1 | tee "$REPORT_DIR/verdict.txt"
 VC=$?
 set -e
@@ -60,7 +60,7 @@ summary = {
   "out": "$OUT",
   "report_dir": str(rd),
   "verdict_exit": $VC,
-  "gates": {"max_no_reply": 0, "max_reply_latency_p95_s": 2.0},
+  "gates": {"max_no_reply": 0, "max_reply_latency_p90_s": 2.0, "max_reply_latency_max_s": 3.0},
   "firmware": {"elf_sha256": "$ELF"},
 }
 import subprocess

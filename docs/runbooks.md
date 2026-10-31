@@ -905,7 +905,7 @@ uv run --no-project --with pyserial python scripts/voice_soak_serial_logger.py o
 
 拨测句表是 `scripts/voice_soak_scenarios/child.json`。不要另建一份。`voice_soak.py --scenario` 读这一份。
 
-窗口结束后用 run 目录算通过或失败。命令只读本地文件。尾窗必须是 `verified_idle`。静音步必须看到 idle。打断由 `voice_soak_evidence.py` 用 bridge 和 serial 日志重算。timeline 里旧的 `stopped` 字段不算数。没复核成停止就不通过。`scripts/voice_soak_verdict.py` 的 `MAX_NO_REPLY` 是 0。`MAX_REPLY_LATENCY_P95_S` 是 2.0。漏答 `no_reply` 必须为 0。回复时延 `reply_latency_p95_s` 不超过 2.0 秒。`reply_latency_p95_s` 缺失时脚本判失败。判失败时脚本以退出码 1 结束。
+窗口结束后用 run 目录算通过或失败。命令只读本地文件。尾窗必须是 `verified_idle`。静音步必须看到 idle。打断由 `voice_soak_evidence.py` 用 bridge 和 serial 日志重算。timeline 里旧的 `stopped` 字段不算数。没复核成停止就不通过。`scripts/voice_soak_verdict.py` 的 `MAX_NO_REPLY` 是 0。`MAX_REPLY_LATENCY_P90_S` 是 2.0，`MAX_REPLY_LATENCY_MAX_S` 是 3.0（2026-10-31 Monkey 定的内测首字门禁）。漏答 `no_reply` 必须为 0。首字时延 `reply_latency_p90_s` 不超过 2.0 秒，最慢一轮 `reply_latency_max_s` 不超过 3.0 秒。时延缺失时脚本判失败。判失败时脚本以退出码 1 结束。
 
 ```bash
 python scripts/voice_soak_verdict.py outputs/acceptance/run-<stamp>-soak
