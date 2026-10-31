@@ -537,15 +537,18 @@ class VolcASRSession:
         sentence_end = final or transcript.definite
         if sentence_end and transcript.text == self._last_final_text:
             return
+        # Partials and the final of one sentence share its id, so the timeline
+        # replaces the partial instead of committing both texts.
+        sentence_id = self._sentence_id + 1
         if sentence_end:
-            self._sentence_id += 1
+            self._sentence_id = sentence_id
             self._last_final_text = transcript.text
         await self.events.put(
             FunASRServerEvent(
                 event="result-generated",
                 task_id=self.task_id or "",
                 sentence=FunASRSentence(
-                    sentence_id=self._sentence_id,
+                    sentence_id=sentence_id,
                     text=transcript.text,
                     begin_ms=transcript.begin_ms,
                     end_ms=transcript.end_ms,
