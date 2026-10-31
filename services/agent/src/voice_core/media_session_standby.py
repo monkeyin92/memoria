@@ -366,13 +366,8 @@ class MediaSessionStandbyMixin:
             context.runtime.publish_assistant_state("listening")
 
     def _expire_listening_capture(self, context: _MediaVoiceSession) -> None:
-        deadline = context.listening_capture_deadline
-        if context.listening_capture_hold or deadline is None or time.monotonic() <= deadline:
-            return
-        phase = context.runtime.interaction_phase
-        if phase is not InteractionPhase.LISTENING:
-            return
-        self._latch_listening_capture(context)
+        if self._audio_ingress.listening_capture_expired(context):
+            self._latch_listening_capture(context)
 
     def _pause_owner_silence_timer(self, context: _MediaVoiceSession) -> None:
         if not self._owner_silence_enabled(context):
