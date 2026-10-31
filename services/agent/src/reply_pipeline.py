@@ -77,6 +77,7 @@ from services.agent.src.response_planner_client import (
 )
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_profile_client import VoiceProfileClient
+from services.agent.src.weather_thread import AskCity, WeatherSearch
 from services.common.companion_response_safety import (
     assistant_text_repeats_or_dilutes_safety,
     strip_soothing_from_follow_up,
@@ -85,6 +86,7 @@ from services.common.crisis_policy import more_protective_local_script, route_cr
 from services.common.fixed_safety_scripts import FixedSafetyScript
 from services.common.llm_failover import LLM_UNAVAILABLE_TEXT
 from services.common.realtime_information import (
+    ASK_WEATHER_CITY_REPLY,
     is_incomplete_realtime_reply,
     mentions_weather,
     realtime_unavailable_reply,
@@ -369,15 +371,18 @@ class ReplyPipeline:
         """Resolve one fenced public query for the MediaSession-owned task."""
 
         query = text.strip() if isinstance(text, str) else ""
-        if not query or not await self._runtime.resolve_live_lookup_needed(query):
+        if not query or not await self._runtime.resolve_lookup_owns_reply(query):
             return None
         if not self._can_start_realtime_delegation(fence):
             return None
+        weather = self._runtime.weather_turn(query)
+        if isinstance(weather, WeatherSearch):
+            query = weather.query
         resolver = self._realtime_search_resolver
-        if resolver is None:
+        if resolver is None or not self._realtime_sources_available():
             return realtime_unavailable_reply(query)
-        if not self._realtime_sources_available():
-            return realtime_unavailable_reply(query)
+        if isinstance(weather, AskCity):
+            return ASK_WEATHER_CITY_REPLY
         try:
             result = await resolver.resolve(query=query)
         except asyncio.CancelledError:

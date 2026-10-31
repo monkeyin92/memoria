@@ -1344,6 +1344,12 @@ def is_city_name_report(text: str) -> bool:
     return bool(compact) and compact in _ALIASES
 
 
+def names_no_place(text: str) -> bool:
+    """True when only stopwords stand before 天气, so the question names no place."""
+
+    return not _cleaned_prefix(text)
+
+
 def find_city(text: str) -> City | None:
     clean = _cleaned_prefix(text)
     found: set[City] = set()
@@ -1370,4 +1376,4 @@ def find_city(text: str) -> City | None:
     return next(iter(found))
 
 
-__all__ = ["City", "find_city", "is_city_name_report"]
+__all__ = ["City", "find_city", "is_city_name_report", "names_no_place"]
