@@ -905,7 +905,7 @@ uv run --no-project --with pyserial python scripts/voice_soak_serial_logger.py o
 
 拨测句表是 `scripts/voice_soak_scenarios/child.json`。不要另建一份。`voice_soak.py --scenario` 读这一份。
 
-窗口结束后用 run 目录算通过或失败。命令只读本地文件。尾窗必须是 `verified_idle`。静音步必须看到 idle。打断由 `voice_soak_evidence.py` 用 bridge 和 serial 日志重算。timeline 里旧的 `stopped` 字段不算数。没复核成停止就不通过。`scripts/voice_soak_verdict.py` 的 `MAX_NO_REPLY` 是 0。`MAX_REPLY_LATENCY_P90_S` 是 2.0，`MAX_REPLY_LATENCY_MAX_S` 是 3.0（2026-10-31 Monkey 定的内测首字门禁）。漏答 `no_reply` 必须为 0。首字时延 `reply_latency_p90_s` 不超过 2.0 秒，最慢一轮 `reply_latency_max_s` 不超过 3.0 秒。时延缺失时脚本判失败。判失败时脚本以退出码 1 结束。
+窗口结束后用 run 目录算通过或失败。命令只读本地文件。尾窗必须是 `verified_idle`。静音步必须看到 idle。打断由 `voice_soak_evidence.py` 用 bridge 和 serial 日志重算。timeline 里旧的 `stopped` 字段不算数。没复核成停止就不通过。`scripts/voice_soak_verdict.py` 的 `MAX_NO_REPLY` 是 0。`MAX_REPLY_LATENCY_P90_S` 是 2.0，`MAX_REPLY_LATENCY_MAX_S` 是 3.0（2026-10-31 Monkey 定的内测首字门禁）。漏答 `no_reply` 必须为 0。首字时延 `reply_latency_p90_s` 不超过 2.0 秒，最慢一轮 `reply_latency_max_s` 不超过 3.0 秒。时延缺失时脚本判失败。判失败时脚本以退出码 1 结束。打断按 `interrupt_kind` 分开判（2026-10-31，#496 #499）：附和（`backchannel`，如「嗯」）只有确认把回复停了才失败，继续播放算通过；「停」这类 `stop` 打断开始时回复只剩不到 2.5 s，记 `interrupt_too_late_to_stop`，算无法判定，不记产品失败。专测「停」用 `devicetest/scenarios/stop_focus.json`（6 次「停」、2 次「别说了」、2 次「嗯」）；Mac 音量 30 时「停」会被机器人自己的声音盖住，专测需用户同意后用 50，测完恢复 30。共享 checkout 停在旧分支时，用 `origin/main` 的 worktree 跑测试脚本（参考 `devicetest/run_soak_9e6082c3.sh` 的路径改写），否则拿到的是旧的插入时机和判定参数。
 
 ```bash
 python scripts/voice_soak_verdict.py outputs/acceptance/run-<stamp>-soak
