@@ -33,6 +33,7 @@ import pytest
 from google.protobuf.json_format import MessageToDict
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.prompts import FAREWELL_STANDBY_PHRASE
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_protocol import (
@@ -616,6 +617,51 @@ class _DelegatingProvider(_ScriptedProvider):
         return chunks()
 
 
+class _FarewellProvider(_ScriptedProvider):
+    """Scripted provider whose output seam speaks whatever phrase it is given."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.output_texts: list[str] = []
+
+    def generate_output(
+        self,
+        _identity: SessionIdentity,
+        intent: Any,
+        _fence: GenerationFence,
+        *,
+        work_id: str,
+        source_start_sample: int,
+    ) -> AsyncIterator[MediaReplyChunk]:
+        _ = work_id
+        text = str(intent.tts_source)
+        if text != FAREWELL_STANDBY_PHRASE:
+            # The hello-time greeting must not compete with the turn under test.
+            async def silent() -> AsyncIterator[MediaReplyChunk]:
+                for _ in ():
+                    yield MediaReplyChunk(
+                        pcm_s16le=b"",
+                        source_start_sample=0,
+                        text="",
+                        first=True,
+                        final=True,
+                    )
+
+            return silent()
+        self.output_texts.append(text)
+
+        async def chunks() -> AsyncIterator[MediaReplyChunk]:
+            yield MediaReplyChunk(
+                pcm_s16le=_REPLY_PCM,
+                source_start_sample=source_start_sample,
+                text=text,
+                first=True,
+                final=True,
+            )
+
+        return chunks()
+
+
 async def _scenario_delegation_filler() -> dict[str, Any]:
     provider = _DelegatingProvider()
 
@@ -630,6 +676,18 @@ async def _scenario_delegation_filler() -> dict[str, Any]:
         await harness.playback_ended()
 
     return await _run(_Harness(_h5_identity("golden-delegation"), provider), script)
+
+
+async def _start_past_wake_sample(harness: _Harness) -> int:
+    """Start the turn past sample zero so no greeting plays for it."""
+
+    harness.sample = 640
+    await harness.settle()
+    return harness.count("audio")
+
+
+def _is_closed_state(state: Any) -> bool:
+    return state.state == media_pb2.CONVERSATION_STATE_CLOSED
 
 
 async def _scenario_farewell_standby() -> dict[str, Any]:
@@ -715,3 +773,45 @@ async def test_media_session_matches_golden(name: str) -> None:
         f"{name} diverged from {path.name}; if the change is intended, "
         f"regenerate with {UPDATE_ENV}=1"
     )
+
+
+@pytest.mark.asyncio
+async def test_farewell_speaks_the_approved_line_without_an_llm_turn() -> None:
+    provider = _FarewellProvider()
+    harness = _Harness(_device_identity("farewell-line"), provider)
+    await harness.start()
+    loop = asyncio.get_running_loop()
+    try:
+        baseline = await _start_past_wake_sample(harness)
+        started = loop.time()
+        await harness.utterance("好的，再见", frames=25)
+        await harness.wait_for(
+            lambda: FAREWELL_STANDBY_PHRASE in provider.output_texts
+        )
+        assert loop.time() - started < 2.0
+        assert provider.output_texts[-1] == "好呀，再见，下次见～"
+        assert provider.output_texts[-1] == FAREWELL_STANDBY_PHRASE
+        assert provider.reply_calls == 0
+        assert harness.count("audio") > baseline
+        assert harness.count("state", _is_closed_state) == 0
+        await harness.playback_ended()
+        await harness.wait_for(lambda: harness.count("state", _is_closed_state) >= 1)
+        assert harness.last("state").reason == "conversation_end_explicit"
+    finally:
+        await harness.close()
+
+
+@pytest.mark.asyncio
+async def test_a_dismissal_close_still_stands_by_without_audio() -> None:
+    provider = _FarewellProvider()
+    harness = _Harness(_device_identity("dismissal-standby"), provider)
+    await harness.start()
+    try:
+        baseline = await _start_past_wake_sample(harness)
+        await harness.utterance("退下吧", frames=25)
+        await harness.wait_for(lambda: harness.count("state", _is_closed_state) >= 1)
+        assert FAREWELL_STANDBY_PHRASE not in provider.output_texts
+        assert harness.count("audio") == baseline
+        assert harness.last("state").reason == "conversation_end_explicit"
+    finally:
+        await harness.close()

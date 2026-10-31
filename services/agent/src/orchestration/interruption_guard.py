@@ -278,6 +278,16 @@ _CONVERSATION_CLOSE_FAREWELL_SUFFIXES = (
     "退下吧",
 )
 
+# The farewell half of the close phrases: words that say goodbye.  A dismissal
+# such as「退下吧」also closes the device but gets no spoken goodbye.
+_FAREWELL_STANDBY_WORDS = (
+    "再见",
+    "拜拜",
+    "拜拜了",
+    "下次见",
+    "回头见",
+)
+
 # Short acknowledgement stems that may precede a farewell in one utterance,
 # e.g.「知道了，再见」.  Keep this separate from exact close phrases so
 # sentences such as「下次见到小明要说再见」stay in chat.
@@ -397,6 +407,21 @@ def user_turn_suggests_conversation_close(text: str) -> bool:
     """Whether a committed user turn should end the device conversation."""
 
     return is_conversation_close_only(text)
+
+
+def is_explicit_farewell_text(text: str) -> bool:
+    """Whether a close turn says goodbye rather than dismissing the device.
+
+    ``conversation_end_explicit`` covers both (「再见」and「退下吧」).  Only the
+    goodbye half plays the spoken farewell.
+    """
+
+    compact = _conversation_close_compact(text)
+    if not compact:
+        return False
+    if compact in _ENGLISH_CONVERSATION_CLOSE_ONLY:
+        return True
+    return any(compact.endswith(word) for word in _FAREWELL_STANDBY_WORDS)
 
 
 def is_short_assistant_farewell_reply(text: str) -> bool:
