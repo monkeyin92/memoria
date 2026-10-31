@@ -296,3 +296,29 @@ def test_pack_refuses_a_missing_timeline_and_a_dest_inside_the_run(
     assert voice_soak_pack.main([str(run), "--dest", str(run / "inside.tar.gz")]) == 2
     assert "outside" in capsys.readouterr().err
     assert not (run / "inside.tar.gz").exists()
+
+
+def _backchannel_rows() -> list[dict[str, object]]:
+    rows = _passing_rows()
+    rows[0] = {**rows[0], "text": "嗯"}
+    rows[1] = {**rows[1], "interrupt_kind": "backchannel"}
+    return rows
+
+
+def test_a_backchannel_that_keeps_the_reply_playing_passes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run = tmp_path / "run-backchannel-continues"
+    _write(run, _backchannel_rows())
+    assert voice_soak_verdict.main([str(run)]) == 0
+    assert json.loads(capsys.readouterr().out)["failures"] == []
+
+
+def test_a_backchannel_that_stops_the_reply_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bridge, serial = _confirmed_stop_logs()
+    run = tmp_path / "run-backchannel-stopped"
+    _write(run, _backchannel_rows(), bridge, serial)
+    assert voice_soak_verdict.main([str(run)]) == 1
+    assert json.loads(capsys.readouterr().out)["failures"] == ["backchannel_stopped: t001"]

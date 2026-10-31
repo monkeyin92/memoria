@@ -1,0 +1,127 @@
+[
+ {
+  "tag": "hello",
+  "say": "你好呀，你叫什么名字？",
+  "rate": 165
+ },
+ {
+  "tag": "long-stop",
+  "say": "介绍一下大熊猫。",
+  "rate": 175,
+  "interrupt": {
+   "after": 4,
+   "say": "停。",
+   "rate": 170,
+   "settle": 8,
+   "kind": "stop"
+  }
+ },
+ {
+  "tag": "long-stop",
+  "say": "介绍一下大熊猫。",
+  "rate": 175,
+  "interrupt": {
+   "after": 4,
+   "say": "停。",
+   "rate": 170,
+   "settle": 8,
+   "kind": "stop"
+  }
+ },
+ {
+  "tag": "long-stop",
+  "say": "介绍一下大熊猫。",
+  "rate": 175,
+  "interrupt": {
+   "after": 4,
+   "say": "停。",
+   "rate": 170,
+   "settle": 8,
+   "kind": "stop"
+  }
+ },
+ {
+  "tag": "long-stop",
+  "say": "介绍一下大熊猫。",
+  "rate": 175,
+  "interrupt": {
+   "after": 4,
+   "say": "停。",
+   "rate": 170,
+   "settle": 8,
+   "kind": "stop"
+  }
+ },
+ {
+  "tag": "long-stop",
+  "say": "介绍一下大熊猫。",
+  "rate": 175,
+  "interrupt": {
+   "after": 4,
+   "say": "停。",
+   "rate": 170,
+   "settle": 8,
+   "kind": "stop"
+  }
+ },
+ {
+  "tag": "long-stop",
+  "say": "介绍一下大熊猫。",
+  "rate": 175,
+  "interrupt": {
+   "after": 4,
+   "say": "停。",
+   "rate": 170,
+   "settle": 8,
+   "kind": "stop"
+  }
+ },
+ {
+  "tag": "story-stop",
+  "say": "给我讲一个故事吧。",
+  "rate": 165,
+  "interrupt": {
+   "after": 6,
+   "say": "别说了。",
+   "rate": 170,
+   "settle": 8,
+   "kind": "stop"
+  }
+ },
+ {
+  "tag": "story-stop",
+  "say": "给我讲一个故事吧。",
+  "rate": 165,
+  "interrupt": {
+   "after": 6,
+   "say": "别说了。",
+   "rate": 170,
+   "settle": 8,
+   "kind": "stop"
+  }
+ },
+ {
+  "tag": "backchannel",
+  "say": "讲讲长颈鹿为什么脖子那么长。",
+  "rate": 165,
+  "interrupt": {
+   "after": 3,
+   "say": "嗯。",
+   "rate": 165,
+   "settle": 4,
+   "kind": "backchannel"
+  }
+ },
+ {
+  "tag": "backchannel",
+  "say": "讲讲长颈鹿为什么脖子那么长。",
+  "rate": 165,
+  "interrupt": {
+   "after": 3,
+   "say": "嗯。",
+   "rate": 165,
+   "settle": 4,
+   "kind": "backchannel"
+  }
+ }
+]
