@@ -83,6 +83,10 @@ _LIVE_LOOKUP_FILLER_MEMORY_S = 30.0
 # predecessor's answer has been spoken.  Reusing the 30s burst window here
 # swallowed the next question's acknowledgement (epoch 1900).
 _LIVE_LOOKUP_FILLER_ACK_REPEAT_S = 5.0
+# A lookup answer that lands inside this grace is spoken without the filler:
+# on the robot the filler held the answer back by its own ~2.3 s of audio
+# while DeepSeek search answered in 1.05-1.86 s (2026-10-31 runs).
+_LIVE_LOOKUP_FILLER_GRACE_S = 1.5
 media_pb2: Any = _media_pb2
 
 
@@ -772,7 +776,7 @@ class MediaSessionProjectionMixin:
             played_lookup_filler = False
             task_done, _pending = await asyncio.wait(
                 {handle.record.task},
-                timeout=0.02,
+                timeout=_LIVE_LOOKUP_FILLER_GRACE_S,
             )
             if (
                 not task_done
@@ -876,7 +880,8 @@ class MediaSessionProjectionMixin:
             if filler_started:
                 intent.tts_source = _strip_leading_live_lookup_filler(spoken)
             elif (
-                spoken
+                not task_done
+                and spoken
                 and spoken != realtime_unavailable_reply(text)
                 and not spoken.startswith(LIVE_LOOKUP_FILLER)
             ):
