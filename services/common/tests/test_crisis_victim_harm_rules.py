@@ -40,6 +40,7 @@ _VICTIM_SENTENCES = (
     "他打了我",
     "他把我打了",
     "我被他打了",
+    "我被别人打了",
     "我刚刚被打了",
     "我被爸爸打了",
     "我被同学打了",
@@ -122,6 +123,9 @@ def test_cutting_self_harm_uses_the_escalation_script(query: str) -> None:
         "我同桌被别人欺负了",
         "我听说有人打小朋友",
         "我看见有人欺负同学",
+        # ASR / playback echo carries the previous victim line into this turn.
+        "有个叔叔摸我不让我告诉妈妈我同学被别人打了",
+        "有个叔叔摸我不让我告诉妈妈我同学被人打了",
     ),
 )
 def test_an_explicit_other_person_as_subject_stays_support_other(query: str) -> None:
