@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from services.agent.src.clock_fact_queries import is_clock_fact_query
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.duplex_runtime import POST_PLAYBACK_ECHO_GUARD_MS
 from services.agent.src.orchestration.conversation_projection import (
     CommitEvidence,
     CommittedTurn,
@@ -86,6 +87,7 @@ _CLOSE_RECOVERY_MIN_RESCUE_PEAK_ABS = 8_000
 # 20261029-200043: the slow turns spent 1.0-2.0 s there while ASR already had the sentence.
 _FINAL_VAD_END_WAIT_S = 0.3
 _FINAL_VAD_END_WAIT_SAMPLES = 4_800  # 300 ms of 16 kHz uplink past the final
+UNVOICED_SHORT_FINAL_REASON = "unvoiced_short_final"
 
 
 def _elapsed_ms(started: float) -> int:
@@ -1558,13 +1560,18 @@ class MediaSessionCommitMixin:
             await self._discard_projection(context, interaction.reason)
             context.runtime.publish_assistant_audio("restore", gain=1.0)
             return None, interaction.reason
-        accepted, reason = context.runtime.accept_user_turn(
-            text,
-            input_modality="audio",
-            speech_anchored=True,
-            canonical_speech_epoch=context.runtime.consumed_canonical_speech_epoch,
-            canonical_snapshot_bound=True,
-        )
+        reason: str | None
+        if self._unvoiced_short_final_after_playback(context, text):
+            context.runtime.orchestrator.metrics.inc_guarded_user_input(UNVOICED_SHORT_FINAL_REASON)
+            accepted, reason = False, UNVOICED_SHORT_FINAL_REASON
+        else:
+            accepted, reason = context.runtime.accept_user_turn(
+                text,
+                input_modality="audio",
+                speech_anchored=True,
+                canonical_speech_epoch=context.runtime.consumed_canonical_speech_epoch,
+                canonical_snapshot_bound=True,
+            )
         if not accepted:
             if reason == "conversation_end_explicit":
                 context.pending.conversation_close_text = text
@@ -1808,6 +1815,18 @@ class MediaSessionCommitMixin:
         return fence, None
 
     @staticmethod
+    def _unvoiced_short_final_after_playback(context: _MediaVoiceSession, text: str) -> bool:
+        """A device segment with no voiced sample cannot hold a spoken word: one character over it, heard
+        inside the post-playback echo window, is echo or room noise, whatever character ASR made of it."""
+
+        if context.pending.device_voiced_samples != 0 or sum(ch.isalnum() for ch in text) > 1:
+            return False
+        completed_ns = context.runtime._voice_floor.last_playback_completed_ns
+        if completed_ns is None:
+            return False
+        return (time.monotonic_ns() - completed_ns) // 1_000_000 <= POST_PLAYBACK_ECHO_GUARD_MS
+
+    @staticmethod
     def _log_media_turn_committed(
         context: _MediaVoiceSession, fence: GenerationFence, stream_epoch: int,
     ) -> None:
@@ -1815,7 +1834,8 @@ class MediaSessionCommitMixin:
         # the full runtime fence; transport epochs are a different namespace.
         logger.info(
             "media turn committed session=%s session_epoch=%s stream_epoch=%s "
-            "turn_id=%s generation_id=%s tool_epoch=%s",
+            "turn_id=%s generation_id=%s tool_epoch=%s voiced_samples=%s",
             context.identity.session_id, fence.session_epoch, stream_epoch,
             fence.turn_id, fence.generation_id, fence.tool_epoch,
+            context.pending.device_voiced_samples,
         )

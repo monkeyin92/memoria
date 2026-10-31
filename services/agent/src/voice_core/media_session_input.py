@@ -726,6 +726,11 @@ class MediaSessionInputMixin:
                         len(context.pending.live_query_forced_text),
                     )
                     return
+                segment_start = context.pending.active_vad_start_sample
+                if segment.voiced_end_sample is not None and segment_start is not None:
+                    context.pending.device_voiced_samples = (
+                        context.pending.device_voiced_samples or 0
+                    ) + max(0, segment.voiced_end_sample - segment_start)
                 # This synchronous handoff follows the post-await fences and
                 # pin checks. Only the current endpoint may release the speech
                 # watchdog; _schedule_turn_commit below arms the existing tail.
