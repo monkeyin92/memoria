@@ -7245,3 +7245,74 @@ async def test_question_final_after_a_pinned_noise_turn_commits_the_question() -
     assert context.pending.turn_start_sample == 523_520
     assert context.pending.turn_end_sample == 529_280
     assert context.pending.turn_endpoint_sample == 529_280
+
+
+async def _one_char_final_after_playback(
+    window: Any, *, voiced_end: int
+) -> None:
+    """2026-10-31 16:09 soak t023: 0.2 s after the reply ended the device VAD fired on the room,
+    ended 1.0 s later with no voiced sample (``voiced_end_sample == vad start``), and ASR made one
+    acknowledgement-shaped character of it.  The commit runs about 3 s after the playback ended,
+    past the 0.8 s backchannel guard."""
+
+    set_floor(
+        window.context.runtime,
+        played_assistant_text="小兔子最后找到了回家的路，你喜欢这个故事吗？",
+        last_playback_completed_ns=time.monotonic_ns() - 3_000_000_000,
+    )
+    await _device_vad(window, "room-vad", 320_000, final=False)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="room",
+        start_sample=318_400,
+        end_sample=324_000,
+        text="嗯",
+    )
+    await window.registry.on_speech_segment(
+        window.session,
+        SpeechSegment(
+            session_id=window.identity.session_id,
+            stream_epoch=window.identity.stream_epoch,
+            provider_task_epoch=0,
+            segment_id="room-vad-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=336_000,
+            capture_end_sample=336_001,
+            final=True,
+            voiced_end_sample=voiced_end,
+            near_end_rms=0.0035,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_media_unvoiced_one_char_final_after_playback_is_not_a_turn(
+    device_media_session: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A one-character final over a device segment with no voiced sample is echo or noise: it must
+    not commit as a turn and take the floor from the child's real question."""
+
+    caplog.set_level(logging.INFO)
+    window = await device_media_session("unvoiced-one-char", during_playback=False)
+    await _one_char_final_after_playback(window, voiced_end=320_000)
+    await _wait_until(lambda: bool(_commit_timing_fields(caplog)), timeout=3.0)
+
+    [fields] = _commit_timing_fields(caplog)
+    assert fields["result"] != "committed"
+    assert window.provider.prepared == []
+    assert "嗯" not in _user_turn_texts(window.context)
+
+
+@pytest.mark.asyncio
+async def test_media_voiced_one_char_final_after_playback_still_commits(
+    device_media_session: Any,
+) -> None:
+    """The same 「嗯」 with voiced device samples is the child answering the robot's question."""
+
+    window = await device_media_session("voiced-one-char", during_playback=False)
+    await _one_char_final_after_playback(window, voiced_end=324_000)
+    await _wait_until(lambda: window.provider.prepared == ["嗯"], timeout=3.0)
+    assert "嗯" in _user_turn_texts(window.context)
