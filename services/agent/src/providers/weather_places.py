@@ -1296,6 +1296,7 @@ _ALIAS_KEYS = tuple(sorted(_ALIASES, key=len, reverse=True))
 _STRIP = re.compile(r"[\s，,。！？!?；;：:、]")
 _STOPWORDS = (
     "帮我查一下",
+    "你知道",
     "想知道",
     "告诉我",
     "查一下",
