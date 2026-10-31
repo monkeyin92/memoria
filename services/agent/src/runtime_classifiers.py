@@ -9,10 +9,16 @@ when the ASR final arrived instead of asking the cloud classifier a second time.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from services.agent.src.orchestration.orchestrator import Orchestrator
+    from services.agent.src.weather_thread import WeatherTurn
 
 
 class DuplexRuntimeClassifierMixin:
     session_id: str
+    orchestrator: Orchestrator
     _live_lookup_cache: dict[str, bool]
     _live_lookup_semantic_resolver: Callable[[str], Awaitable[bool]] | None
     _conversation_close_cache: dict[str, bool]
@@ -39,6 +45,21 @@ class DuplexRuntimeClassifierMixin:
         resolver: Callable[[str], Awaitable[bool]] | None,
     ) -> None:
         self._live_lookup_semantic_resolver = resolver
+
+    def weather_turn(self, query: str) -> WeatherTurn | None:
+        """The session weather thread's reading of ``query``."""
+
+        return self.orchestrator.context.weather.read(query)
+
+    async def resolve_lookup_owns_reply(self, query: str) -> bool:
+        """Whether a live lookup answers this committed turn.
+
+        A weather follow-up such as 「那明天呢」 counts here only. Endpoint pinning
+        and rejected-final recovery keep the text-only verdict, so a short
+        fragment is never cut early or merged into a neighbouring turn.
+        """
+
+        return self.weather_turn(query) is not None or await self.resolve_live_lookup_needed(query)
 
     async def resolve_live_lookup_needed(self, query: str) -> bool:
         from services.agent.src.live_lookup_router import resolve_live_lookup_needed

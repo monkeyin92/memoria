@@ -555,7 +555,7 @@ class MediaSessionLifecycleMixin:
                     text: str,
                     fence: GenerationFence,
                 ) -> None:
-                    if not await current.runtime.resolve_live_lookup_needed(text):
+                    if not await current.runtime.resolve_lookup_owns_reply(text):
                         return
                     if not current.runtime.fence.matches(fence):
                         return

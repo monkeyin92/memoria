@@ -56,13 +56,13 @@ async def test_cityless_weather_asks_for_the_city_then_follow_ups_inherit_it() -
     assert await _say(runtime, pipeline, "今天天气怎么样？") == ASK_WEATHER_CITY_REPLY
     assert search.queries == []
 
-    assert runtime.live_lookup_needed("杭州"), "the city answer is routed as a live lookup"
+    assert await runtime.resolve_lookup_owns_reply("杭州"), "the city answer routes as a live lookup"
     answer = await _say(runtime, pipeline, "杭州")
     assert len(search.queries) == 1
     assert _names(search.queries[0], "杭州", "今天", "天气")
     assert answer == f"查到了：{search.queries[0]}"
 
-    assert runtime.live_lookup_needed("那明天呢？")
+    assert await runtime.resolve_lookup_owns_reply("那明天呢？")
     answer = await _say(runtime, pipeline, "那明天呢？")
     assert len(search.queries) == 2
     assert _names(search.queries[1], "杭州", "明天", "天气")
@@ -100,7 +100,7 @@ async def test_a_non_weather_question_is_unaffected() -> None:
 
     await _say(runtime, pipeline, "杭州明天天气怎么样")
     assert await _say(runtime, pipeline, "你最喜欢什么颜色？") is None
-    assert not runtime.live_lookup_needed("那你喜欢小狗吗")
+    assert not await runtime.resolve_lookup_owns_reply("那你喜欢小狗吗")
     assert len(search.queries) == 1
     await runtime.close()
 
