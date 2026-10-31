@@ -58,6 +58,8 @@ class PendingTurn:
     turn_input_fence: GenerationFence | None = None
     turn_end_sample: int | None = None
     turn_endpoint_sample: int | None = None
+    # Voiced samples the device VAD reported across this turn's segments; ``None`` until a device VAD end.
+    device_voiced_samples: int | None = None
     # Only set while ``turn_endpoint_sample`` came from a source that a later
     # final of the turn's own speech may take back (see media_session_commit).
     empty_turn_endpoint_pin: EndpointPinSource | None = None
@@ -195,6 +197,7 @@ class PendingTurn:
         self.turn_input_fence = None
         self.turn_end_sample = None
         self.turn_endpoint_sample = None
+        self.device_voiced_samples = None
         self.empty_turn_endpoint_pin = None
         self.child_speech_ended_mono = None
         self.speech_end_denoise_latch = None
