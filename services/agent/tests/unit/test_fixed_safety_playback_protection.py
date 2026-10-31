@@ -239,7 +239,7 @@ def test_protection_ends_when_the_script_is_no_longer_audible() -> None:
 
 
 _PLAYBACK_TEXT = {
-    CRISIS_SELF_SCRIPT.template_id: "我想伤害自己。",
+    CRISIS_SELF_SCRIPT.template_id: "我不想活了",
     SUPPORT_VICTIM_SCRIPT.template_id: "有人正在打我",
     SUPPORT_RELAY_SCRIPT.template_id: "我朋友说他不想活了",
 }

@@ -403,7 +403,7 @@ async def test_four_consecutive_rounds_keep_reply_audio_on_its_own_plan(
         fence, frames, reply_audio = await run_round(
             _CRISIS_TEXT, expected_engine_count=0, spoken=""
         )
-        crisis_audio = catalog.get("crisis-self-v1")
+        crisis_audio = catalog.get("crisis-self-escalation")
         assert crisis_audio is not None and crisis_audio.pcm
         assert bytes(crisis_audio.pcm) in reply_audio
         assert primary.received == []
@@ -461,7 +461,7 @@ async def test_crisis_stop_plays_the_whole_script_then_the_closing_tone(
     notice = _notice_config()
     speech, primary, _backup = _speech("audio", "audio")
     catalog = load_fixed_safety_audio_catalog(_DEFAULT_FIXED_SAFETY_DIR)
-    crisis = catalog.get("crisis-self-v1")
+    crisis = catalog.get("crisis-self-escalation")
     assert crisis is not None and crisis.pcm
     crisis_pcm = bytes(crisis.pcm)
     tone = notice.tone_pcm()

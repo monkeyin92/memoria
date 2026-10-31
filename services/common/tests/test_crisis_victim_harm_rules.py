@@ -218,7 +218,7 @@ def test_product_acceptance_sentences_keep_their_tier(
     (
         # The five sentences from the 2026-10-21 field run.
         ("我有点难过，不想活了。", "crisis-self-v1"),
-        ("我想伤害我自己。", "crisis-self-v1"),
+        ("我想伤害我自己。", "crisis-self-escalation"),
         ("我爸爸打我，好疼。", "victim-support-v1"),
         ("有个大哥哥打我，还不让我说。", "victim-support-v1"),
         ("我好朋友说她想伤害自己。", "support-other-v1"),

@@ -95,7 +95,7 @@ def _pipeline(runtime: DuplexRuntime, planner: _MismatchPlanner) -> ReplyPipelin
         ("有人在打我", SUPPORT_VICTIM_SCRIPT),
         ("我朋友说他不想活了", SUPPORT_RELAY_SCRIPT),
         ("我不想活了。", CRISIS_SELF_SCRIPT),
-        ("我想伤害自己。", CRISIS_SELF_SCRIPT),
+        ("我想伤害自己。", CRISIS_SELF_ESCALATION_SCRIPT),
         ("我不想或了。", CRISIS_SELF_SCRIPT),
         ("有个大人老是打我，还不让我告诉妈妈。", SUPPORT_VICTIM_SCRIPT),
         ("有人摸我身体，我不喜欢。", SUPPORT_VICTIM_SCRIPT),
@@ -151,7 +151,7 @@ class _InvalidPayloadPlanner:
     ("query", "expected"),
     [
         ("我有点难过，不想活了。", CRISIS_SELF_SCRIPT),
-        ("我想伤害我自己。", CRISIS_SELF_SCRIPT),
+        ("我想伤害我自己。", CRISIS_SELF_ESCALATION_SCRIPT),
         ("我爸爸打我，好疼。", SUPPORT_VICTIM_SCRIPT),
         ("有个大哥哥打我，还不让我说。", SUPPORT_VICTIM_SCRIPT),
         ("我好朋友说她想伤害自己。", SUPPORT_RELAY_SCRIPT),
@@ -308,7 +308,7 @@ async def test_ordinary_follow_up_after_crisis_is_a_brief_normal_reply(
             )
         )
     ]
-    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+    assert spoken_safety == [CRISIS_SELF_ESCALATION_SCRIPT]
 
     with caplog.at_level(logging.INFO):
         second = await pipeline.prepare_committed_turn(follow_up)
@@ -323,7 +323,7 @@ async def test_ordinary_follow_up_after_crisis_is_a_brief_normal_reply(
         ]
     heard = _heard(spoken)
     assert heard == "橡皮可能在铅笔盒里。"
-    assert CRISIS_SELF_SCRIPT.display not in heard
+    assert CRISIS_SELF_ESCALATION_SCRIPT.display not in heard
     assert "刚才的事别担心" not in heard
     assert seen
     system = _system_text(seen[0])
@@ -358,7 +358,7 @@ async def test_ordinary_follow_up_drops_a_repeated_script_and_a_dilution_line(
 
     async def model(_safe_ctx: Any, _tools: list[Any]) -> Any:
         async def one() -> Any:
-            yield CRISIS_SELF_SCRIPT.display
+            yield CRISIS_SELF_ESCALATION_SCRIPT.display
             yield f"{phrase}。橡皮可能在铅笔盒里。"
 
         return one()
@@ -374,7 +374,7 @@ async def test_ordinary_follow_up_drops_a_repeated_script_and_a_dilution_line(
             )
         )
     ]
-    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+    assert spoken_safety == [CRISIS_SELF_ESCALATION_SCRIPT]
 
     follow_up = "我找不到我的橡皮了"
     with caplog.at_level(logging.INFO):
@@ -390,7 +390,7 @@ async def test_ordinary_follow_up_drops_a_repeated_script_and_a_dilution_line(
         ]
     heard = _heard(spoken)
     assert heard == "橡皮可能在铅笔盒里。"
-    assert CRISIS_SELF_SCRIPT.display not in heard
+    assert CRISIS_SELF_ESCALATION_SCRIPT.display not in heard
     assert phrase not in heard
     assert follow_up not in "\n".join(record.getMessage() for record in caplog.records)
     await runtime.close()
@@ -453,7 +453,7 @@ async def test_soothing_phrase_on_the_turn_after_the_follow_up_stays(
             )
         )
     ]
-    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+    assert spoken_safety == [CRISIS_SELF_ESCALATION_SCRIPT]
 
     second = await pipeline.prepare_committed_turn("我找不到我的橡皮了")
     ordinary = [
@@ -492,7 +492,7 @@ async def test_soothing_phrase_on_the_turn_after_the_follow_up_stays(
         ]
     heard = _heard(spoken)
     assert heard == expected
-    assert CRISIS_SELF_SCRIPT.display not in heard
+    assert CRISIS_SELF_ESCALATION_SCRIPT.display not in heard
     assert follow_up not in "\n".join(record.getMessage() for record in caplog.records)
     await runtime.close()
 
@@ -521,7 +521,7 @@ async def test_another_crisis_script_drops_soothing_on_the_following_reply(
             )
         )
     ]
-    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+    assert spoken_safety == [CRISIS_SELF_ESCALATION_SCRIPT]
     second = await pipeline.prepare_committed_turn("我找不到我的橡皮了")
     ordinary = [
         token
@@ -640,7 +640,7 @@ async def test_identity_follow_up_after_crisis_keeps_the_fixed_identity_line() -
             )
         )
     ]
-    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+    assert spoken_safety == [CRISIS_SELF_ESCALATION_SCRIPT]
 
     second = await pipeline.prepare_committed_turn("你叫什么名字")
     spoken = [
@@ -654,7 +654,7 @@ async def test_identity_follow_up_after_crisis_keeps_the_fixed_identity_line() -
     ]
     heard = _heard(spoken)
     assert heard == NAMELESS_IDENTITY_REPLY
-    assert CRISIS_SELF_SCRIPT.display not in heard
+    assert CRISIS_SELF_ESCALATION_SCRIPT.display not in heard
     assert "刚才的事别担心" not in heard
     await runtime.close()
 
@@ -757,7 +757,7 @@ async def test_after_fixed_safety_a_real_plan_still_speaks_chat() -> None:
             )
         )
     ]
-    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+    assert spoken_safety == [CRISIS_SELF_ESCALATION_SCRIPT]
 
     second = await pipeline.prepare_committed_turn("我们去公园玩吧")
     spoken = [
@@ -787,15 +787,15 @@ async def test_fixed_safety_script_echo_stays_rejected_after_the_guard_window() 
             )
         )
     ]
-    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+    assert spoken_safety == [CRISIS_SELF_ESCALATION_SCRIPT]
     aged = time.monotonic_ns() - (POST_PLAYBACK_ECHO_GUARD_MS + 1_000) * 1_000_000
     set_floor(
         runtime,
-        played_assistant_text=CRISIS_SELF_SCRIPT.display,
+        played_assistant_text=CRISIS_SELF_ESCALATION_SCRIPT.display,
         last_playback_completed_ns=aged,
         assistant_speaking=False,
     )
-    echo = "听到你这么说，我很心疼"
+    echo = "你愿意告诉我，我很感谢你"
     accepted, reason = runtime.accept_user_turn(
         echo,
         input_modality="audio",
@@ -850,8 +850,8 @@ class _StaleClassifierPlanner:
         ("我爸爸打我 好疼", None, SUPPORT_VICTIM_SCRIPT),
         ("有个大哥哥打我，还不让我说。", None, SUPPORT_VICTIM_SCRIPT),
         ("有个大哥哥打我。还不让我说。", None, SUPPORT_VICTIM_SCRIPT),
-        ("我想伤害我自己。", None, CRISIS_SELF_SCRIPT),
-        ("我想伤害我自己!", None, CRISIS_SELF_SCRIPT),
+        ("我想伤害我自己。", None, CRISIS_SELF_ESCALATION_SCRIPT),
+        ("我想伤害我自己!", None, CRISIS_SELF_ESCALATION_SCRIPT),
         ("我好朋友说她想伤害自己。", None, SUPPORT_RELAY_SCRIPT),
         ("我好朋友说,她想伤害自己", None, SUPPORT_RELAY_SCRIPT),
         ("我好朋友说她想伤害自己。", CRISIS_SELF_SCRIPT, CRISIS_SELF_SCRIPT),
