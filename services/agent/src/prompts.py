@@ -4,7 +4,6 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from services.common.companion_response_safety import NAMELESS_IDENTITY_REPLY
-from services.common.llm_thinking_filler import LLM_THINKING_TEXT
 from services.tutor.prompts import TUTOR_STYLE
 
 EMOTION_TAG_RULE = (
@@ -88,7 +87,6 @@ BRIDGE_PHRASES = (
     "稍等，我查查。",
     "刚才没有听清，可以再说一遍吗？",
     "现在连接不太稳定，我们再试一次。",
-    LLM_THINKING_TEXT,
 )
 LIVE_LOOKUP_FILLER = BRIDGE_PHRASES[1]
 CONNECTION_RETRY_PHRASE = BRIDGE_PHRASES[3]

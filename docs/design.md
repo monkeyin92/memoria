@@ -917,6 +917,8 @@ Hidden tags only. Voice: `zh_female_tianmeitaozi_uranus_bigtts`.
 
 定稿 v2，产品部 2026-10-15 确认
 
+2026-10-31：产品决定去掉 LLM 思考垫话。服务端不再播放 `llm_thinking`，也不再把它载入在线标注台词目录；`services/common/assets/labelled_lines/` 和固件 `offline_lines/` 里的音频与索引条目保留为数据，没有任何播放路径。
+
 ### Pack gate
 
 `firmware/esp32/scripts/build_offline_stories.py` fails CI when any shipped

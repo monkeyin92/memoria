@@ -43,8 +43,6 @@ class MediaReplyChunk:
     text_audio_start_sample: int | None = None
     text_audio_end_sample: int | None = None
     text_spans: tuple[MediaTextSpan, ...] = ()
-    # Audio that covers a slow reply; it is not the reply, so it never ends reply latency.
-    thinking_filler: bool = False
     # The AIGC opening cue plays as the head of the reply's own work: same
     # fence, same output intent, no generation bump. It carries no reply text.
     aigc_marker: bool = False

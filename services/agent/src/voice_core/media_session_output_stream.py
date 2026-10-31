@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import inspect
 import logging
 import time
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -44,12 +43,10 @@ from services.agent.src.voice_core.media_session_types import (
 )
 from services.agent.src.voice_core.playback_ledger import PlaybackSpan
 from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent
-from services.common.labelled_lines import labelled_catalogue
 from services.common.llm_failover import (
     LLM_UNAVAILABLE_STANDBY_REASON,
     LLM_UNAVAILABLE_TEXT,
 )
-from services.common.llm_thinking_filler import LLM_THINKING_LINE_ID, LLM_THINKING_TEXT
 
 if TYPE_CHECKING:
     from services.agent.src.orchestration.conversation_projection import TurnPhase
@@ -114,9 +111,7 @@ def _next_pcm_send_slot(
     )
 
 
-def _shift_reply_chunk(
-    chunk: MediaReplyChunk, offset: int, *, after_filler: bool
-) -> MediaReplyChunk:
+def _shift_reply_chunk(chunk: MediaReplyChunk, offset: int) -> MediaReplyChunk:
     """Place a reply chunk after audio this generation already carried."""
 
     if not offset:
@@ -124,7 +119,6 @@ def _shift_reply_chunk(
     return replace(
         chunk,
         source_start_sample=chunk.source_start_sample + offset,
-        first=chunk.first and not after_filler,
         text_audio_start_sample=(
             None
             if chunk.text_audio_start_sample is None
@@ -1078,11 +1072,7 @@ class MediaOutputStreamMixin:
                     ReplyDeliveryEvent.FIRST_FRAME_SENT,
                     "downlink_frame_accepted",
                 )
-                if (
-                    not chunk.thinking_filler
-                    and not chunk.aigc_marker
-                    and context.output.tts_started_ns is not None
-                ):
+                if not chunk.aigc_marker and context.output.tts_started_ns is not None:
                     self.metrics.observe_voice_latency(
                         "tts_first_frame",
                         (time.monotonic_ns() - context.output.tts_started_ns) / 1_000_000_000,
@@ -1091,8 +1081,7 @@ class MediaOutputStreamMixin:
                 emitted_audio = True
                 _bump_output_stall_deadline(stall_deadline, self.output_generation_timeout_s)
                 if (
-                    not chunk.thinking_filler
-                    and not context.output.first_audio_observed
+                    not context.output.first_audio_observed
                     and context.turn_started_ns is not None
                 ):
                     self.metrics.observe_voice_latency(
@@ -1227,188 +1216,9 @@ class MediaOutputStreamMixin:
         text: str,
         source_start_sample: int,
     ) -> AsyncIterator[MediaReplyChunk]:
-        """Stream the reply, led by the thinking filler if the reply is still silent when it is due.
-
-        The filler rides this stream instead of its own output intent: a fast
-        acknowledgement outranks the pending reply, and preempting the reply cancels it.
-        """
-
-        filler = context.llm_thinking_filler
-        replies = aiter(context.provider.generate_reply(context.identity, text, fence))
-        offset = source_start_sample
-        context.output.reply_audio_origin = (fence, offset)
-        lead: MediaReplyChunk | None = None
-        wait_s = filler.seconds_until_due(turn_id=fence.turn_id, now=time.monotonic())
-        if wait_s is not None and self._llm_thinking_filler_supported(context):
-            first_reply = asyncio.ensure_future(anext(replies))
-            try:
-                await asyncio.wait((first_reply,), timeout=wait_s)
-                if not first_reply.done() and self._llm_thinking_filler_may_play(context, fence):
-                    async for chunk in self._llm_thinking_filler_before(
-                        context, fence, offset, first_reply
-                    ):
-                        offset = chunk.source_start_sample + chunk.frame_samples
-                        context.output.reply_audio_origin = (fence, offset)
-                        yield chunk
-                try:
-                    lead = await first_reply
-                except StopAsyncIteration:
-                    return
-            finally:
-                if not first_reply.done():
-                    first_reply.cancel()
-                    await asyncio.gather(first_reply, return_exceptions=True)
-            filler.note_reply_spoken(turn_id=fence.turn_id)
-        after_filler = offset != source_start_sample
-        if lead is not None:
-            yield _shift_reply_chunk(lead, offset, after_filler=after_filler)
-        async for reply in replies:
-            yield _shift_reply_chunk(reply, offset, after_filler=after_filler)
-
-    def _llm_thinking_filler_supported(self, context: _MediaVoiceSession) -> bool:
-        if context.identity.client_type != "device":
-            return False
-        if labelled_catalogue().get(LLM_THINKING_LINE_ID) is not None:
-            return True
-        return callable(getattr(context.provider, "generate_output", None))
-
-    def _llm_thinking_filler_may_play(
-        self, context: _MediaVoiceSession, fence: GenerationFence
-    ) -> bool:
-        return (
-            not context.closed
-            and not context.standby_requested
-            and not self._fixed_safety_reply_active(context)
-            and context.llm_thinking_filler.should_play(turn_id=fence.turn_id, now=time.monotonic())
-        )
-
-    async def _llm_thinking_filler_before(
-        self,
-        context: _MediaVoiceSession,
-        fence: GenerationFence,
-        source_start_sample: int,
-        reply: asyncio.Future[MediaReplyChunk],
-    ) -> AsyncIterator[MediaReplyChunk]:
-        """Play the filler only if its first frame is ready before the reply's; a tie goes to the reply."""
-
-        async with contextlib.aclosing(
-            self._llm_thinking_filler_chunks(context, fence, source_start_sample)
-        ) as chunks:
-            lead = asyncio.ensure_future(anext(chunks))
-            try:
-                await asyncio.wait((reply, lead), return_when=asyncio.FIRST_COMPLETED)
-            finally:
-                if not lead.done():
-                    lead.cancel()
-                    await asyncio.gather(lead, return_exceptions=True)
-            if reply.done():
-                logger.info(
-                    "llm thinking filler dropped; reply ready first session=%s turn=%s",
-                    fence.session_id,
-                    fence.turn_id,
-                )
-                return
-            try:
-                chunk = lead.result()
-            except StopAsyncIteration:
-                return
-            context.llm_thinking_filler.mark_played(turn_id=fence.turn_id)
-            yield chunk
-            async for chunk in chunks:
-                yield chunk
-
-    async def _llm_thinking_filler_chunks(
-        self,
-        context: _MediaVoiceSession,
-        fence: GenerationFence,
-        source_start_sample: int,
-    ) -> AsyncGenerator[MediaReplyChunk, None]:
-        """Play labelled speech when present; otherwise stream TTS. History stays reply-only."""
-
-        line = labelled_catalogue().get(LLM_THINKING_LINE_ID)
-        if line is not None:
-            frame_samples = int(getattr(context.provider, "output_frame_samples", 480) or 480)
-            logger.info(
-                "llm thinking filler labelled session=%s turn=%s generation=%s "
-                "content_id=%s ai_generated=%s",
-                fence.session_id,
-                fence.turn_id,
-                fence.generation_id,
-                line.aigc["content_id"],
-                line.aigc["ai_generated"],
-            )
-            try:
-                for pcm, start, first, _final, _text in line.frame_pcm(
-                    source_start_sample=source_start_sample,
-                    frame_samples=frame_samples,
-                    announce_text=False,
-                ):
-                    yield MediaReplyChunk(
-                        pcm_s16le=pcm,
-                        source_start_sample=start,
-                        text="",
-                        assistant_text_delta="",
-                        first=first,
-                        final=False,
-                        text_audio_start_sample=None,
-                        text_audio_end_sample=None,
-                        text_spans=(),
-                        thinking_filler=True,
-                    )
-            except Exception:
-                logger.warning(
-                    "llm thinking filler labelled failed session=%s turn=%s",
-                    fence.session_id,
-                    fence.turn_id,
-                    exc_info=True,
-                )
-            return
-
-        coordinator = context.runtime.orchestrator.delegation
-        now_ms = int(time.time() * 1_000)
-        intent = coordinator.bridge_acknowledgement(
-            LLM_THINKING_TEXT,
-            fence=fence,
-            context_version=coordinator.current_context_version(fence.session_id),
-            expires_at_ms=now_ms + 8_000,
-            now_ms=now_ms,
-        )
-        logger.info(
-            "llm thinking filler tts session=%s turn=%s generation=%s",
-            fence.session_id,
-            fence.turn_id,
-            fence.generation_id,
-        )
-        provider: Any = context.provider
-        try:
-            produced = provider.generate_output(
-                context.identity,
-                intent,
-                fence,
-                work_id=str(intent.intent_id),
-                source_start_sample=source_start_sample,
-            )
-            if inspect.isawaitable(produced):
-                produced = await produced
-            async with contextlib.aclosing(produced):
-                async for chunk in produced:
-                    yield replace(
-                        chunk,
-                        text="",
-                        assistant_text_delta="",
-                        final=False,
-                        text_audio_start_sample=None,
-                        text_audio_end_sample=None,
-                        text_spans=(),
-                        thinking_filler=True,
-                    )
-        except Exception:
-            logger.warning(
-                "llm thinking filler tts failed session=%s turn=%s",
-                fence.session_id,
-                fence.turn_id,
-                exc_info=True,
-            )
+        context.output.reply_audio_origin = (fence, source_start_sample)
+        async for reply in context.provider.generate_reply(context.identity, text, fence):
+            yield _shift_reply_chunk(reply, source_start_sample)
 
     async def _output_chunks(
         self,

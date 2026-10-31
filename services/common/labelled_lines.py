@@ -27,11 +27,6 @@ from services.common.llm_failover import (
     LLM_UNAVAILABLE_LINE_ID,
     LLM_UNAVAILABLE_TEXT,
 )
-from services.common.llm_thinking_filler import (
-    LLM_THINKING_AIGC,
-    LLM_THINKING_LINE_ID,
-    LLM_THINKING_TEXT,
-)
 
 ONLINE_SAMPLE_RATE_HZ: Final = 24_000
 DEFAULT_ASSETS_ROOT: Final = (
@@ -41,7 +36,6 @@ PLAYABLE_RENDER_TOOLS: Final = frozenset({"doubao-seed-tts-2.0"})
 SYNTHETIC_RENDER_TOOLS: Final = frozenset({"ffmpeg-libopus-scaffold"})
 
 LINE_SPECS: Final[tuple[tuple[str, str, Mapping[str, object]], ...]] = (
-    (LLM_THINKING_LINE_ID, LLM_THINKING_TEXT, LLM_THINKING_AIGC),
     (LLM_UNAVAILABLE_LINE_ID, LLM_UNAVAILABLE_TEXT, LLM_UNAVAILABLE_AIGC),
 )
 
