@@ -42,6 +42,7 @@
 - `docs/acceptance/run-20261015-llm-thinking/design.md`
 - `docs/acceptance/run-20261019-n10-vocab/findings.md`
 - `docs/acceptance/run-20261026-entry-round/RUNBOOK.md`
+- `docs/acceptance/run-20261031-entry-gate/findings.md`
 
 ---
 
@@ -3735,3 +3736,38 @@ N-10 的验收口径是真机「停」识别率 ≥ 80%（10 次）。本轮 0 /
 3. **签字归档**：演练结束后，由测试执行人、硬件负责人、产品经理联合签署本次测试报告，归档至 `docs/acceptance/run-20261026-entry-round/FINDINGS.md`。
 
 ---
+
+---
+
+## 来源：`docs/acceptance/run-20261031-entry-gate/findings.md`
+
+## 内测准入门禁 2026-10-31 真机结果
+
+门禁全文与竞品对标在 Notion「内测准入：对话体验门禁 v1」。真机都是 Mac 喇叭放语音、USB 唤醒，原始数据在 `devicetest/run-20261031-*`。
+
+### 联网查询
+
+- 生产 bridge 从 `20261031-batch-7ab0ee17` 起开 `LIVE_SEARCH_DEEPSEEK_ENABLED=true`（#491，DeepSeek `POST /v1/tools/search` + `deepseek-flash` 整理，2026-11-01 起每千次成功搜索 $0.75）。
+- 三轮 11 题：答案首字中位 5.9 s（3.5 s 垫话）→ 4.41 s（垫话改「稍等，我查查。」，#494）→ 3.13 s（1.5 s 内有结果就跳过垫话，#495，9/11 直接答，4 s 内 8/11）。搜索加整理 0.85–1.86 s。
+- 设备实际说的联网答案不进 transcript 归档，内容正确性以生产容器里跑同一代码的离线探测为准。
+
+### 每句必回
+
+- run-20261031-160928（`140855c3`）8 次漏回复：30 s 收音期限在回合开着时关麦（6 次，`media listening closed silence_since_reply_s=30.0` 落在孩子说话中途，之后 `media vad ignored during listening capture hold`）；零有声（`segment_samples=0`）单字回声提交成一轮（1 次）；测试竞态（1 次）。
+- #498（回合开着不关麦，收麦后重发 `listening_closed`）与 #497（播放后 10 s 内零有声单字不提交）随 `20261031-batch-9e6082c3` 上线；run-20261031-204642 漏回复 0，34/34 有回复。
+
+### 打断
+
+- 10-30 起 t016「停」全失败，主因是 #468 把插入时间从 4 s 推到 8 s，「停」落在回复最后 0.3–2.4 s；#496 改回 4 s 并把剩余不足 2.5 s 的记为无法判定。
+- 改回后音量 30 下「停」仍不停，`asr_text=1:嗯`：火山 ASR 把「停」识别成「嗯」（热词表 `stop_world` 已生效）。音量 50 专测 run-20261031-212333：「停」5/6，「别说了」2/2，「嗯」2/2 正确继续。
+
+### 时延
+
+- run-20261031-204642：P50 2.5 s、P90 3.51 s、最慢 4.42 s，门禁（P90 ≤ 2.0 s、最慢 ≤ 3.0 s，#490）未过。分段见 TODOLIST N-14。
+
+### 未验证与边界
+
+- 「每句必回」只有 1 轮通过，门禁要求连续 3 轮。
+- 安全评测（自伤 1/5、升级 4/5、其他 0/5）仍 FAIL，main 上 #483–#489 未上线，今天的发布都是叠在线上版上的 overlay。
+- dot face 固件（#493）已 USB 刷入并验证 USB 唤醒，表情肉眼效果未验。
+
