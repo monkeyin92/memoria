@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 
 from services.agent.src.clock_fact_queries import is_clock_fact_query
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.duplex_runtime import POST_PLAYBACK_ECHO_GUARD_MS
 from services.agent.src.orchestration.conversation_projection import (
     CommitEvidence,
     CommittedTurn,
@@ -32,6 +31,7 @@ from services.agent.src.orchestration.interruption_guard import (
     is_explicit_farewell_text,
     normalize_short,
 )
+from services.agent.src.runtime_post_playback_guard import POST_PLAYBACK_ECHO_GUARD_MS
 from services.agent.src.voice_core.asr_stream_supervisor import (
     ASRAcceptDecision,
     ASRDecisionReason,
@@ -512,6 +512,16 @@ class MediaSessionCommitMixin:
             # The last clause is the playback echo margin: a final there may be the reply's own tail.
             return
         self._schedule_final_vad_end_wait(context)
+
+    @staticmethod
+    def _recorded_after_playback_echo(context: _MediaVoiceSession, start_sample: int) -> bool:
+        """The turn's audio starts past the last reply's echo tail, so the reply cannot be heard in it.
+
+        ``last_playback_end_sample`` already carries the echo-tail margin past the playback end.
+        """
+
+        playback_end = context.last_playback_end_sample
+        return playback_end is not None and start_sample >= int(playback_end)
 
     def _schedule_final_vad_end_wait(self, context: _MediaVoiceSession) -> None:
         pending = context.pending
@@ -1573,6 +1583,9 @@ class MediaSessionCommitMixin:
                 speech_anchored=True,
                 canonical_speech_epoch=context.runtime.consumed_canonical_speech_epoch,
                 canonical_snapshot_bound=True,
+                post_playback_echo_possible=not self._recorded_after_playback_echo(
+                    context, start_sample
+                ),
             )
         if not accepted:
             if reason == "conversation_end_explicit":
