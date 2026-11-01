@@ -1377,7 +1377,7 @@ class MediaTurnEndpointMixin:
                 )
             return reason
         owner = context.output.output_owner
-        cancel_previous = True
+        cancel_previous = owner is None or not owner.fence.matches(fence)  # not this turn's own answer
         if owner is not None and owner.fence.turn_id == fence.turn_id:
             delivery = context.output.reply_delivery.get(owner.fence)
             if delivery is not None and delivery.first_frame_sent:
