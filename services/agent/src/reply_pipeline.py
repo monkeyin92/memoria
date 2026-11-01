@@ -92,7 +92,12 @@ from services.common.realtime_information import (
     realtime_unavailable_reply,
     strip_realtime_bridge_prefix,
 )
-from services.common.response_depth import SHORT_REPLY_AUDIENCES, ResponseDepth, response_depth_for
+from services.common.response_depth import (
+    SHORT_REPLY_AUDIENCES,
+    ResponseDepth,
+    ResponseDepthPolicy,
+    response_depth_for,
+)
 from services.common.story_grounding import (
     build_grounded_story_system_instruction,
     build_ip_story_search_query,
@@ -222,6 +227,26 @@ def _memory_capsule(items: Iterable[ResponseGroundedItem]) -> MemoryCapsule:
             if item.kind != "persona_trait"
         )
     )
+
+
+def _plan_capsules(
+    plan: ResponsePlan, device_memory: MemoryCapsule | None
+) -> tuple[MemoryCapsule, PersonaCapsule]:
+    """The memory and persona capsules a turn's context snapshot is frozen with under ``plan``."""
+
+    memory = (
+        device_memory
+        if device_memory is not None and plan_is_local_safe(plan)
+        else _memory_capsule(plan.grounded_items)
+    )
+    persona = PersonaCapsule(
+        version_id=plan.provenance.persona_version_id,
+        version_number=plan.provenance.persona_version_number,
+        prompt_fragment="\n".join(
+            item.content for item in plan.grounded_items if item.kind == "persona_trait"
+        ),
+    )
+    return memory, persona
 
 
 def reply_limits_for(
@@ -355,13 +380,109 @@ class ReplyPipeline:
     async def stream(self, request: LanguageModelRequest) -> AsyncGenerator[ReplyItem, None]:
         if not request.cancellation.is_current(self._runtime.fence):
             return
+        async for item in self.stream_reply(
+            self._chat_context(self._runtime.orchestrator.context.turns)
+        ):
+            yield item
+
+    def _chat_context(self, turns: Iterable[ChatMessage]) -> ChatContext:
+        """The session prompt and its turns, as ``stream`` hands them to ``stream_reply``."""
+
         chat_ctx = ChatContext.empty()
         chat_ctx.add_message(role="system", content=self._instructions)
-        for turn in self._runtime.orchestrator.context.turns:
+        for turn in turns:
             if turn.role in {"user", "assistant"} and turn.content:
                 chat_ctx.add_message(role=turn.role, content=turn.content)
-        async for item in self.stream_reply(chat_ctx):
-            yield item
+        return chat_ctx
+
+    @staticmethod
+    def _last_user_text(turns: Iterable[ChatMessage], *, resume: bool) -> str:
+        user_turns = [turn.content for turn in turns if turn.role == "user" and turn.content]
+        if resume and len(user_turns) >= 2:
+            return user_turns[-2]
+        return user_turns[-1] if user_turns else ""
+
+    def _reply_chat_context(
+        self,
+        chat_ctx: Any,
+        *,
+        response_plan: ResponsePlan,
+        policy: ModePolicy,
+        snapshot: ContextSnapshot,
+        speech_instruction: str,
+        last_user: str,
+        resume: bool,
+        realtime: bool,
+    ) -> tuple[Any, ResponseDepthPolicy]:
+        """The messages one reply request sends, and the depth they ask for.
+
+        ``stream_reply`` builds the committed turn's request here and the speculative reply builds the
+        predicted one, so the two requests are equal exactly when their inputs are.
+        """
+
+        speaker_class = response_plan.provenance.speaker_class
+        frozen_session_turns = [
+            ChatMessage(turn.role, turn.content, turn.speaker_scope)
+            for turn in snapshot.recent_committed_turns
+        ]
+        heard_assistant = [
+            turn.content for turn in frozen_session_turns if turn.role == "assistant"
+        ]
+        owner_salutation = policy.owner_salutation if speaker_class == "owner" else None
+        device_bound_owner = (
+            speaker_class == "owner"
+            and response_plan.provenance.speaker_reason_code == DEVICE_BOUND_SUBJECT_REASON
+        )
+        profile = policy.runtime_profile
+        depth_policy = response_depth_for(
+            last_user,
+            realtime=realtime,
+            controlled=(not self._runtime.barge_in_enabled or self._runtime.fixed_safety_heard),
+            audience=profile.profile.service_mode if profile is not None else None,
+        )
+        delivery_instruction = speech_instruction.strip()
+        if delivery_instruction:
+            delivery_instruction += "\n"
+        delivery_instruction += depth_policy.instruction
+        anonymous_public = policy.allows_anonymous_public_conversation(speaker_class)
+        safe_chat_ctx = self._context_assembler.assemble(
+            chat_ctx=chat_ctx,
+            heard_assistant=heard_assistant,
+            speaker_class="guest" if anonymous_public else speaker_class,
+            response_plan=response_plan,
+            owner_salutation=owner_salutation,
+            resume_interrupted_reply=resume,
+            force_current_user_only=(
+                plan_is_local_safe(response_plan)
+                and not anonymous_public
+                and (speaker_class == "owner" or resume)
+                # The bound person's own turns of this session are not another speaker's.
+                and not device_bound_owner
+            ),
+            session_turns=frozen_session_turns,
+            delivery_instruction=delivery_instruction,
+            after_fixed_safety=(
+                self._runtime.fixed_safety_heard and response_plan.fixed_safety_script is None
+            ),
+            context_snapshot=(
+                snapshot
+                if not plan_is_local_safe(response_plan)
+                or (
+                    device_bound_owner
+                    and policy.allows_private_context(speaker_class)
+                    and snapshot.memory_capsule.entries
+                )
+                else None
+            ),
+        )
+        if not realtime and extract_story_ip(last_user) is None and is_story_request(last_user):
+            matched_local = match_local_story(last_user, prioritize_generic=True)
+            if matched_local is not None:
+                safe_chat_ctx.add_message(
+                    role="system",
+                    content=build_local_story_prompt_instruction(matched_local),
+                )
+        return safe_chat_ctx, depth_policy
 
     async def resolve_media_delegation(
         self,
@@ -1418,20 +1539,9 @@ class ReplyPipeline:
             )
             raise StopResponse()
         try:
+            memory_capsule, persona_capsule = _plan_capsules(plan, device_memory)
             snapshot = await self._runtime.freeze_context_capsules_for_generation(
-                fence,
-                memory_capsule=(
-                    device_memory
-                    if device_memory is not None and plan_is_local_safe(plan)
-                    else _memory_capsule(plan.grounded_items)
-                ),
-                persona_capsule=PersonaCapsule(
-                    version_id=plan.provenance.persona_version_id,
-                    version_number=plan.provenance.persona_version_number,
-                    prompt_fragment="\n".join(
-                        item.content for item in plan.grounded_items if item.kind == "persona_trait"
-                    ),
-                ),
+                fence, memory_capsule=memory_capsule, persona_capsule=persona_capsule
             )
         except Exception:
             logger.warning(
@@ -1752,7 +1862,6 @@ class ReplyPipeline:
                 fence.generation_id,
             )
             return
-        speaker_class = response_plan.provenance.speaker_class
         script = response_plan.fixed_safety_script
         late_plan = self._late_crisis.get(fence)
         if script is None and late_plan is not None and late_plan.script is not None:
@@ -1989,71 +2098,18 @@ class ReplyPipeline:
                     async for item in _play_late_crisis(late_crisis_script):
                         yield item
                 return
-            context_snapshot = self._runtime.context_snapshot_for_fence(fence)
-            frozen_session_turns = [
-                ChatMessage(turn.role, turn.content, turn.speaker_scope)
-                for turn in context_snapshot.recent_committed_turns
-            ]
-            heard_assistant = [
-                turn.content for turn in frozen_session_turns if turn.role == "assistant"
-            ]
-            owner_salutation = policy.owner_salutation if speaker_class == "owner" else None
-            device_bound_owner = (
-                speaker_class == "owner"
-                and response_plan.provenance.speaker_reason_code == DEVICE_BOUND_SUBJECT_REASON
+            last_user = self._last_user_text(
+                self._runtime.orchestrator.context.turns, resume=resume_interrupted_reply
             )
-            user_turns = [
-                turn.content
-                for turn in self._runtime.orchestrator.context.turns
-                if turn.role == "user" and turn.content
-            ]
-            last_user = (
-                user_turns[-2]
-                if resume_interrupted_reply and len(user_turns) >= 2
-                else user_turns[-1]
-                if user_turns
-                else ""
-            )
-            depth_policy = response_depth_for(
-                last_user,
-                realtime=realtime_request is not None,
-                controlled=(
-                    not self._runtime.barge_in_enabled or self._runtime.fixed_safety_heard
-                ),
-                audience=audience,
-            )
-            delivery_instruction = speech_plan.llm_instruction.strip()
-            if delivery_instruction:
-                delivery_instruction += "\n"
-            delivery_instruction += depth_policy.instruction
-            anonymous_public = policy.allows_anonymous_public_conversation(speaker_class)
-            safe_chat_ctx = self._context_assembler.assemble(
-                chat_ctx=chat_ctx,
-                heard_assistant=heard_assistant,
-                speaker_class="guest" if anonymous_public else speaker_class,
+            safe_chat_ctx, depth_policy = self._reply_chat_context(
+                chat_ctx,
                 response_plan=response_plan,
-                owner_salutation=owner_salutation,
-                resume_interrupted_reply=resume_interrupted_reply,
-                force_current_user_only=(
-                    plan_is_local_safe(response_plan)
-                    and not anonymous_public
-                    and (speaker_class == "owner" or resume_interrupted_reply)
-                    # The bound person's own turns of this session are not another speaker's.
-                    and not device_bound_owner
-                ),
-                session_turns=frozen_session_turns,
-                delivery_instruction=delivery_instruction,
-                after_fixed_safety=self._runtime.fixed_safety_heard and script is None,
-                context_snapshot=(
-                    context_snapshot
-                    if not plan_is_local_safe(response_plan)
-                    or (
-                        device_bound_owner
-                        and policy.allows_private_context(speaker_class)
-                        and context_snapshot.memory_capsule.entries
-                    )
-                    else None
-                ),
+                policy=policy,
+                snapshot=self._runtime.context_snapshot_for_fence(fence),
+                speech_instruction=speech_plan.llm_instruction,
+                last_user=last_user,
+                resume=resume_interrupted_reply,
+                realtime=realtime_request is not None,
             )
             if resume_realtime_request and realtime_request is not None:
                 safe_chat_ctx.add_message(
@@ -2086,13 +2142,6 @@ class ReplyPipeline:
                 if realtime_request is not None
                 else extract_story_ip(last_user)
             )
-            if story_ip is None and is_story and realtime_request is None:
-                matched_local = match_local_story(last_user, prioritize_generic=True)
-                if matched_local is not None:
-                    safe_chat_ctx.add_message(
-                        role="system",
-                        content=build_local_story_prompt_instruction(matched_local),
-                    )
 
             if realtime_request is not None and not resume_realtime_request:
                 delegated_search_query = (
