@@ -39,16 +39,6 @@ logger = logging.getLogger(__name__)
 _PREPARE_RETRY_DELAYS_S = (0.05, 0.15)
 _PREPARE_RETRY_EXHAUSTED_REASON = "provider_prepare_retries_exhausted"
 _PREPARE_RETRY_SUPERSEDED_REASON = "provider_prepare_retry_superseded_by_new_vad"
-# Device VAD and provider word timestamps are independent clocks around the
-# same 16 kHz capture. After the provider task-finished boundary proves no
-# later sentence can arrive, permit at most 1.5 seconds of tail skew after
-# firmware removes its known 900 ms AFE hangover. Real-device evidence still
-# showed 1.14 seconds between FunASR's last word and the device voiced end;
-# larger gaps keep the endpoint commit waiting for a covering final. The tail
-# timeout then commits this turn's accepted final instead of dropping it, and
-# the turn's own sample range is what stops an earlier sentence reaching a
-# later turn.
-_ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES = 24_000
 _CLOCK_FACT_PARTIAL_STABLE_S = 0.6
 _CONVERSATION_CLOSE_PARTIAL_STABLE_S = 0.6
 _LIVE_LOOKUP_PARTIAL_STABLE_S = 0.6
@@ -114,6 +104,15 @@ class MediaTurnEndpointMixin:
         def _turn_commit_retry_matches(
             self, context: _MediaVoiceSession, stream_epoch: int, endpoint_sample: int
         ) -> bool: ...
+
+        @staticmethod
+        def _asr_covers_endpoint(
+            context: _MediaVoiceSession, result_end_sample: int | None, endpoint_sample: int
+        ) -> bool: ...
+
+        def _restart_tail_for_words_past_endpoint(
+            self, context: _MediaVoiceSession, result: ASRResult
+        ) -> None: ...
 
         def _words_wait_past_endpoint(
             self, context: _MediaVoiceSession, endpoint_sample: int, *, provider_final_missing: bool
@@ -256,6 +255,7 @@ class MediaTurnEndpointMixin:
         floor = context.pending.pending_turn_onset_floor
         if floor is not None and result.capture_start_sample < floor:
             return
+        self._restart_tail_for_words_past_endpoint(context, result)
         key = (
             result.stream_epoch,
             result.sentence_id,
@@ -787,21 +787,9 @@ class MediaTurnEndpointMixin:
         previous = context.pending.pending_partial
         if previous is None or result.logical_version >= previous.logical_version:
             context.pending.pending_partial = result
+        self._restart_tail_for_words_past_endpoint(context, result)
         if maybe_rearm_grace_on_evidence(self, context, result.text):
             self._schedule_turn_commit(context)
-
-    @staticmethod
-    def _asr_covers_endpoint(
-        context: _MediaVoiceSession,
-        result_end_sample: int | None,
-        endpoint_sample: int,
-    ) -> bool:
-        if result_end_sample is None:
-            return False
-        return result_end_sample >= endpoint_sample or (
-            context.ingress.last_finalized_audio_watermark >= endpoint_sample
-            and endpoint_sample - result_end_sample <= _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES
-        )
 
     def _adaptive_endpoint_grace(
         self, context: _MediaVoiceSession, *, text: str | None = None
