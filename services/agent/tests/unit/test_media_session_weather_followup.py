@@ -315,3 +315,28 @@ async def test_device_named_city_carries_to_day_follow_up_and_a_cityless_questio
         assert "你知道" not in device.search.queries[2]
     finally:
         await device.close()
+
+
+@pytest.mark.asyncio
+async def test_device_day_follow_up_before_any_city_is_answered() -> None:
+    """Device soaks 2026-11-01 (run 172746 t056, run 190839 t011): 「那明天呢？」 right after the city
+    question, with no city given, got no reply at all."""
+
+    device = _Device(
+        "device-weather-followup-no-city",
+        [
+            (("今天", "今天天气", "今天天气怎么样"), "今天天气怎么样？"),
+            (("那明天", "那明天呢"), "那明天呢？"),
+        ],
+    )
+    await device.open()
+    try:
+        await device.say()
+        assert device.provider.spoken[-1] == ASK_WEATHER_CITY_REPLY
+
+        spoken_before = len(device.provider.spoken)
+        await device.say()
+        assert device._user_turns()[-1] == "那明天呢？"
+        assert len(device.provider.spoken) > spoken_before, "the follow-up got no reply"
+    finally:
+        await device.close()
