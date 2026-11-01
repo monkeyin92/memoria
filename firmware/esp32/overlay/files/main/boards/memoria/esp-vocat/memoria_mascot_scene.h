@@ -130,6 +130,10 @@ public:
     // How far the captioned layout has progressed, 0 (full) .. 255 (captioned).
     uint8_t caption_mix(uint32_t now_ms) const;
     bool sleeping() const { return sleeping_; }
+    // The mouth detector's reading of the playback level (SetOutputLevel), for the dot face: open on a
+    // syllable, wide when that syllable is as loud as the phrase around it.
+    bool speech_mouth_open() const { return out_open_; }
+    bool speech_mouth_wide() const { return out_open_ && out_.fast >= out_.slow; }
     // Redraw the whole screen on the next Render (e.g. after LVGL lost it).
     void Invalidate() { full_redraw_ = true; }
 
