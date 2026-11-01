@@ -1141,6 +1141,8 @@ class MediaSessionCommitMixin:
                     await self._abort_committed_turn(context, result[0], reason="session_closed")
                 return None, "session_closed"
         fence, reason = result
+        if fence is None:
+            self._discard_speculative_reply(context, reason or "user_turn_rejected")
         self._log_commit_timing(
             context, stream_epoch, "committed" if fence is not None else reason,
             commit_started, since_endpoint_ms, timing,
@@ -1809,6 +1811,23 @@ class MediaSessionCommitMixin:
                 context.stream_epoch,
             )
         return fence, None
+
+    @staticmethod
+    def _discard_speculative_reply(context: _MediaVoiceSession, reason: str) -> None:
+        """The reply request sent ahead for this commit's sentence is not needed: the commit rejected it."""
+
+        discard = getattr(context.provider, "discard_speculative_reply", None)
+        if not callable(discard):
+            return
+        try:
+            discard(context.identity, reason)
+        except Exception:
+            logger.warning(
+                "media commit speculative reply discard failed session=%s reason=%s",
+                context.identity.session_id,
+                reason,
+                exc_info=True,
+            )
 
     @staticmethod
     def _unvoiced_short_final_after_playback(context: _MediaVoiceSession, text: str) -> bool:

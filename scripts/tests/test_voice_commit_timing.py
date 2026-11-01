@@ -76,3 +76,25 @@ def test_main_reads_a_log_file(tmp_path: Path, capsys: object) -> None:
 
     assert timing.main([str(log)]) == 0
     assert "turn commits n=1" in capsys.readouterr().out  # type: ignore[attr-defined]
+
+
+def _speculative(session: str, outcome: str, lead_ms: int | str) -> str:
+    return (
+        "2026-10-03T08:00:00Z INFO:services.agent.src.speculative_reply:"
+        f"speculative reply session_id={session} turn_id=4 outcome={outcome} lead_ms={lead_ms}"
+    )
+
+
+def test_speculative_reply_outcomes_and_their_lead() -> None:
+    lines = [
+        _speculative("aaaa1111", "used", 610),
+        _speculative("aaaa1111", "used", 840),
+        _speculative("aaaa1111", "other_text", 300),
+        _speculative("aaaa1111", "close", "-"),
+        _speculative("bbbb2222", "used", 90),
+    ]
+
+    report = timing.summarize(lines, session="aaaa")
+
+    assert "== speculative replies n=4  outcomes: used=2, other_text=1, close=1" in report
+    assert "used lead_ms        n=2 p50=610 p90=840 max=840" in report

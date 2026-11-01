@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 from services.agent.src.weather_thread import WeatherThread
@@ -39,6 +39,13 @@ class ContextManager:
             )
         )
         self._trim()
+
+    def after_user(self, text: str, *, speaker_scope: SpeakerScope = "public") -> ContextManager:
+        """This context as ``add_user`` would leave it; this one stays as it is."""
+
+        successor = replace(self, turns=list(self.turns))
+        successor.add_user(text, speaker_scope=speaker_scope)
+        return successor
 
     def commit_assistant_heard(
         self,
