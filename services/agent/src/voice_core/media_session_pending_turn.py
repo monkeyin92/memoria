@@ -69,6 +69,8 @@ class PendingTurn:
     turn_endpoint_grace_deadline: float | None = None
     turn_endpoint_tail_deadline: float | None = None
     turn_endpoint_timeout_handle: asyncio.TimerHandle | None = None
+    # Commits the stable partial when the provider final is late (media_session_final_fallback).
+    final_missing_fallback_handle: asyncio.TimerHandle | None = None
     # Armed by the first final with no device VAD end: the commit waits at most this long for that signal.
     final_vad_end_wait_handle: asyncio.TimerHandle | None = None
     # The endpoint the final wait committed at; a later device VAD end must not move it.
@@ -145,6 +147,12 @@ class PendingTurn:
             self.turn_endpoint_timeout_handle.cancel()
         self.turn_endpoint_timeout_handle = None
         self.turn_endpoint_tail_deadline = None
+        self.cancel_final_missing_fallback()
+
+    def cancel_final_missing_fallback(self) -> None:
+        if self.final_missing_fallback_handle is not None:
+            self.final_missing_fallback_handle.cancel()
+            self.final_missing_fallback_handle = None
 
     def clear_commit_retry(self) -> None:
         """Drop the retry state; never cancel the retry task that is running."""
@@ -187,6 +195,7 @@ class PendingTurn:
         if self.turn_endpoint_timeout_handle is not None:
             self.turn_endpoint_timeout_handle.cancel()
             self.turn_endpoint_timeout_handle = None
+        self.cancel_final_missing_fallback()
         if self.final_vad_end_wait_handle is not None:
             self.final_vad_end_wait_handle.cancel()
             self.final_vad_end_wait_handle = None
