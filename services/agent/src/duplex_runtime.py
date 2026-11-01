@@ -37,6 +37,7 @@ from services.agent.src.identity_state import (
 )
 from services.agent.src.mode_policy_client import ModePolicy, mode_policy_after_identity_rotation
 from services.agent.src.observability.tracing import LatencyTrace
+from services.agent.src.orchestration.context_manager import ContextManager
 from services.agent.src.orchestration.context_snapshot_manager import (
     ContextSnapshot,
     ContextSnapshotDraft,
@@ -518,7 +519,16 @@ class DuplexRuntime(
             raise RuntimeError("frozen context snapshot is no longer retained")
         return snapshot
 
-    def _context_snapshot_draft(self) -> ContextSnapshotDraft:
+    def _context_snapshot_draft(
+        self,
+        context: ContextManager | None = None,
+        *,
+        speaker_class: Literal["owner", "guest", "uncertain"] | None = None,
+    ) -> ContextSnapshotDraft:
+        """The session context as a snapshot draft; ``context`` and ``speaker_class`` default to the current ones."""
+
+        if context is None:
+            context = self.orchestrator.context
         current = self.orchestrator.context_snapshots.current(self.session_id)
         turns = tuple(
             ContextTurn(
@@ -526,7 +536,7 @@ class DuplexRuntime(
                 turn.content,
                 turn.speaker_scope,
             )
-            for turn in self.orchestrator.context.turns
+            for turn in context.turns
             if turn.role in {"user", "assistant"}
         )
         policy = self._mode_policy
@@ -542,8 +552,8 @@ class DuplexRuntime(
                 persona_capsule=current.persona_capsule,
                 relationship_policy=policy,
                 tool_permission=outputs_allowed,
-                speaker_class=self.current_speaker_class,
-                summary=self.orchestrator.context.context_summary(),
+                speaker_class=speaker_class or self.current_speaker_class,
+                summary=context.context_summary(),
             )
         )
 

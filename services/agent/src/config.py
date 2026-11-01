@@ -601,6 +601,10 @@ class AgentSettings(BaseSettings):
         le=2.0,
         alias="MEMORIA_RESPONSE_PLAN_TIMEOUT_S",
     )
+    speculative_reply_enabled: bool = Field(
+        default=True,
+        alias="MEMORIA_SPECULATIVE_REPLY_ENABLED",
+    )
     archive_spool_key: SecretStr = Field(
         default=SecretStr(""),
         alias="MEMORIA_ARCHIVE_SPOOL_KEY",

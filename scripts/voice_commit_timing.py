@@ -15,6 +15,10 @@ The commit table splits a commit into ``since_endpoint_ms`` (speech end -> commi
 wait), ``final_to_start_ms`` (last ASR final -> commit start), the awaits inside the commit (``speaker``, ``close``
 = the conversation-close verdict, ``prepare`` = reply preparation: runtime profile, plan, memory) and
 ``final_to_done_ms`` (what the child waits for).  Percentiles are nearest-rank; ``-`` means a step was not reached.
+
+The reply request sent before the commit ends in one ``speculative reply`` line (``ReplyPipeline``): ``used`` means the
+committed turn played it, and ``lead_ms`` of those lines is how long it had been out when the turn asked for it, which
+bounds the time it saved on the reply model's first token.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from pathlib import Path
 COMMIT = "media turn commit timing "
 CALL = "classifier call "
 WAIT = "classifier verdict wait "
+SPECULATIVE = "speculative reply "
 COMMIT_FIELDS = (
     "since_endpoint_ms",
     "final_to_start_ms",
@@ -74,6 +79,7 @@ def summarize(lines: Iterable[str], *, session: str = "") -> str:
     commits: list[dict[str, str]] = []
     calls: dict[str, list[dict[str, str]]] = defaultdict(list)
     waits: dict[tuple[str, str], list[int]] = defaultdict(list)
+    speculative: list[dict[str, str]] = []
     for line in lines:
         if (commit := _fields(line, COMMIT)) is not None:
             if session in commit.get("session", ""):
@@ -82,6 +88,9 @@ def summarize(lines: Iterable[str], *, session: str = "") -> str:
             calls[call.get("kind", "?")].append(call)
         elif (wait := _fields(line, WAIT)) is not None and (waited := _number(wait.get("waited_ms"))) is not None:
             waits[(wait.get("kind", "?"), wait.get("source", "?"))].append(waited)
+        elif (reply := _fields(line, SPECULATIVE)) is not None:
+            if session in reply.get("session_id", ""):
+                speculative.append(reply)
 
     out = [f"== turn commits n={len(commits)}  results: " + ", ".join(
         f"{name}={count}" for name, count in Counter(c.get("result", "?") for c in commits).most_common()
@@ -100,6 +109,12 @@ def summarize(lines: Iterable[str], *, session: str = "") -> str:
         out.append(f"  {kind:<20} {source:<7} {_row(values)}  waited>={SIGNIFICANT_WAIT_MS}ms: {slow}")
     if not waits:
         out.append("  (none)")
+    outcomes = Counter(r.get("outcome", "?") for r in speculative)
+    out.append(f"== speculative replies n={len(speculative)}  outcomes: " + ", ".join(
+        f"{name}={count}" for name, count in outcomes.most_common()
+    ))
+    used = [v for r in speculative if r.get("outcome") == "used" and (v := _number(r.get("lead_ms"))) is not None]
+    out.append(f"  used lead_ms        {_row(used)}")
     return "\n".join(out)
 
 
