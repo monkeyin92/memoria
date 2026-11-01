@@ -140,6 +140,8 @@ class MediaFinalMissingFallbackMixin:
         if handle is not None:
             handle.cancel()
         pending.turn_endpoint_timeout_handle = None
+        # The soft tail would otherwise commit half a sentence while the child is still talking.
+        pending.cancel_final_missing_fallback()
         self._arm_endpoint_tail_timeout(context, endpoint)
         if pending.tail_restarted_endpoint != endpoint:
             pending.tail_restarted_endpoint = endpoint

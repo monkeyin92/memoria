@@ -4753,7 +4753,7 @@ async def _noise_endpoint_then_words(
         turn_endpoint_min_grace_s=60,
         turn_endpoint_max_grace_s=60,
         turn_endpoint_absolute_timeout_s=61,
-        turn_final_missing_fallback_s=0,
+        turn_final_missing_fallback_s=30,
     )
     identity = SessionIdentity(f"words-past-noise-endpoint-{words_end}")
     session = registry.bridge.bridge.open(identity)
@@ -4803,6 +4803,10 @@ async def test_words_past_a_noise_endpoint_restart_its_absolute_tail() -> None:
 
     restarted = context.pending.turn_endpoint_tail_deadline or 0
     assert restarted >= first_deadline + 0.05, "the tail now counts from the child's words"
+    soft = context.pending.final_missing_fallback_handle
+    assert soft is not None and soft.when() >= asyncio.get_running_loop().time() + 29.9, (
+        "the soft tail counts from the child's words too"
+    )
     assert context.pending.turn_endpoint_sample == 3_200
     assert not context.standby_requested
     await registry.finalize_session(context.identity.session_id)
