@@ -554,3 +554,31 @@ async def test_a_refresh_started_for_another_sentence_is_not_reused() -> None:
 
     assert calls == ["refresh", "refresh"], "a different sentence refreshes again at its own boundary"
     await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("change", "changed"),
+    [(_change_policy, "policy"), (_change_fence, "fence"), (_change_context, "messages")],
+)
+async def test_a_restart_between_the_final_and_the_commit_names_what_changed(
+    caplog: pytest.LogCaptureFixture, change: Any, changed: str
+) -> None:
+    """2026-11-01 device soak run-20261101-152438: 5 of 20 head starts were ``restarted`` at the commit,
+    and nothing said which input had moved since the ASR final."""
+
+    caplog.set_level(logging.INFO, logger="services.agent.src.reply_pipeline")
+    runtime = _runtime(f"speculative-restart-{changed}")
+    agent = _pipeline(runtime, _Model())
+    await _earlier_turn(runtime, agent)
+    agent.warm_committed_turn(QUESTION)
+    await _let_tasks_run()
+
+    await change(runtime, agent)
+    agent.start_committed_turn_plan(QUESTION)
+    await _let_tasks_run()
+
+    restarts = [r.getMessage() for r in caplog.records if "speculative reply restart" in r.getMessage()]
+    assert restarts and restarts[-1].endswith(f"changed={changed}")
+    assert QUESTION not in caplog.text
+    await runtime.close()
