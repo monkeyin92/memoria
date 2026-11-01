@@ -4687,6 +4687,61 @@ async def test_a_final_short_of_a_late_vad_end_commits_at_the_soft_tail_with_its
 
 
 @pytest.mark.asyncio
+async def test_words_after_a_noise_endpoint_commit_without_waiting_for_its_tail() -> None:
+    """Device soak 2026-11-01 t007: 0.2 s of noise right after a reply pinned the endpoint; the child's
+    question came after it with no new device VAD.  The endpoint commit found no words, and the turn sat
+    until the noise's 6 s tail, where the session closed under the question's commit."""
+
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: FakeMediaProvider(),
+        turn_endpoint_grace_s=0.001,
+        turn_endpoint_min_grace_s=0,
+        turn_endpoint_max_grace_s=0.01,
+        turn_endpoint_absolute_timeout_s=60,
+        turn_final_missing_fallback_s=0,
+    )
+    identity = SessionIdentity("words-after-noise-endpoint")
+    session = registry.bridge.bridge.open(identity)
+    for segment_id, start, final in (("noise-start", 0, False), ("noise-end", 3_200, True)):
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=1,
+                provider_task_epoch=0,
+                segment_id=segment_id,
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=start,
+                capture_end_sample=start + 1,
+                final=final,
+                voiced_end_sample=start if final else None,
+            ),
+        )
+    question = ASRResult(
+        task_epoch=1,
+        sentence_id="question-after-noise",
+        revision=1,
+        capture_start_sample=36_000,
+        capture_end_sample=69_600,
+        text="恐龙都吃什么东西",
+        is_final=True,
+        confidence=0.9,
+        stream_epoch=1,
+    )
+    context = registry.session_state(identity.session_id)
+    assert await registry.accept_asr_result(identity.session_id, question)
+    registry._observe_final_asr_result(context, question)
+
+    await asyncio.sleep(0.1)
+
+    assert [
+        turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ] == ["恐龙都吃什么东西"]
+
+
+@pytest.mark.asyncio
 async def test_endpoint_tail_rescues_partial_when_device_vad_end_trails_the_last_word() -> None:
     class CapturingBridge(MediaBridgeGrpcServer):
         def __init__(self) -> None:
