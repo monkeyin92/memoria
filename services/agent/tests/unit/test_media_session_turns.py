@@ -5498,6 +5498,42 @@ async def test_media_post_playback_echo_does_not_swallow_the_next_question(
 
 
 @pytest.mark.asyncio
+async def test_media_child_repeating_the_reply_after_its_echo_tail_is_a_turn(
+    device_media_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Device soak 2026-11-01 t037: the robot offered an idiom and the child said it back 1 s after the
+    reply ended.  The words are in the reply, so the post-playback echo guard dropped the turn as
+    ``assistant_echo`` and the child got no answer.  Audio recorded only after the echo tail cannot hold
+    the reply's own voice."""
+
+    monkeypatch.setenv("MEDIA_PLAYBACK_FOLLOWUP_GRACE_S", "0.3")
+    window = await device_media_session("repeat-after-echo-tail", during_playback=False)
+    context = window.context
+    set_floor(
+        context.runtime,
+        played_assistant_text=_ECHOED_REPLY,
+        last_playback_completed_ns=time.monotonic_ns(),
+    )
+    context.last_playback_end_sample = 300_000
+    repeated = "水滴越来越重"
+
+    await _device_vad(window, "repeat-vad", 348_160, final=False)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="repeat",
+        start_sample=346_560,
+        end_sample=364_480,
+        text=repeated,
+    )
+    await _device_vad(window, "repeat-vad-end", 361_920, final=True)
+
+    await _wait_until(lambda: window.provider.prepared == [repeated], timeout=3.0)
+    assert repeated in _user_turn_texts(context)
+
+
+@pytest.mark.asyncio
 async def test_media_vad_inside_the_echo_tail_margin_is_not_new_speech(
     device_media_session: Any,
 ) -> None:
