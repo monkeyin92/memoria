@@ -103,6 +103,14 @@ class MediaTurnEndpointMixin:
         turn_endpoint_absolute_timeout_s: float
         _sessions: dict[str, _MediaVoiceSession]
 
+        def _arm_final_missing_fallback(
+            self, context: _MediaVoiceSession, endpoint_sample: int
+        ) -> None: ...
+
+        async def _commit_stable_partial_fallback(
+            self, context: _MediaVoiceSession, endpoint_sample: int
+        ) -> bool: ...
+
         def _schedule_output_retry(self, context: _MediaVoiceSession) -> None: ...
         def _resume_capped_output(self, context: _MediaVoiceSession) -> None: ...
 
@@ -809,6 +817,7 @@ class MediaTurnEndpointMixin:
         handle = context.pending.turn_endpoint_timeout_handle
         if handle is not None and not handle.cancelled():
             return
+        self._arm_final_missing_fallback(context, endpoint_sample)
         delay = max(0.0, context.pending.turn_endpoint_tail_deadline - now)
         context.pending.turn_endpoint_timeout_handle = asyncio.get_running_loop().call_later(
             delay,
@@ -939,33 +948,8 @@ class MediaTurnEndpointMixin:
                 or context.pending.turn_endpoint_sample != endpoint_sample
             ):
                 return
-        partial = context.pending.pending_partial
-        if (
-            partial is not None and partial.text.strip()
-            and partial.capture_end_sample > (context.pending.turn_start_sample or 0)
-        ):
-            # A stable partial inside this turn is safer than dropping a complete utterance when
-            # the final marker is lost; a device VAD end can trail the last word (t014: 3.5 s).
-            fallback_confidence = (
-                0.35
-                if partial.confidence is None
-                else max(0.2, min(0.75, partial.confidence * 0.75))
-            )
-            fallback = replace(
-                partial,
-                is_final=True,
-                revision=partial.revision + 1,
-                confidence=fallback_confidence,
-            )
-            decision = await self._accept_asr_result_decision(session_id, fallback)
-            if decision.accepted is not None:
-                context.pending.turn_end_sample = max(
-                    decision.accepted.capture_end_sample,
-                    context.pending.turn_end_sample or 0,
-                )
-                await self._commit_pending_turn(context, provider_final_missing=True)
-                if context.pending.turn_endpoint_sample != endpoint_sample:
-                    return
+        if await self._commit_stable_partial_fallback(context, endpoint_sample):
+            return
 
         if await self._commit_final_before_tail(context):
             return

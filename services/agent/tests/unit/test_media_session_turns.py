@@ -4576,6 +4576,116 @@ async def test_absolute_endpoint_tail_commits_stable_partial_with_missing_final_
     assert context.pending.pending_partial is None
 
 
+async def _turn_with_partial_then_vad_end(
+    registry: MediaVoiceCoreRegistry, session: Any, identity: SessionIdentity
+) -> None:
+    """The partial ends 4 s before the device VAD end (t023: the device ended 4.2 s after the child), so
+    the partial does not cover the endpoint and the commit waits for a covering final."""
+
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="late-final-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=1,
+        ),
+    )
+    assert await registry.accept_asr_result(
+        identity.session_id,
+        ASRResult(
+            task_epoch=1,
+            sentence_id="late-final-sentence",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=600,
+            text="有同学总是欺负我",
+            is_final=False,
+            confidence=0.9,
+            stream_epoch=1,
+        ),
+    )
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="late-final-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=64_600,
+            capture_end_sample=64_601,
+            final=True,
+            voiced_end_sample=64_600,
+        ),
+    )
+
+
+def _late_final_registry(fallback_s: float) -> MediaVoiceCoreRegistry:
+    return MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: FakeMediaProvider(),
+        turn_endpoint_grace_s=0.001,
+        turn_endpoint_min_grace_s=0,
+        turn_endpoint_max_grace_s=0.01,
+        turn_endpoint_absolute_timeout_s=60,
+        turn_final_missing_fallback_s=fallback_s,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_partial_short_of_a_late_vad_end_commits_at_the_soft_tail() -> None:
+    """Device soak 2026-11-01 t023: the device VAD ended 4.2 s after the child, ASR never covered it, the turn
+    waited for the 6 s hard tail, its commit started there, and the session closed with the sentence
+    unanswered."""
+
+    registry = _late_final_registry(0.02)
+    identity = SessionIdentity("late-provider-final")
+    session = registry.bridge.bridge.open(identity)
+    await _turn_with_partial_then_vad_end(registry, session, identity)
+
+    await asyncio.sleep(0.06)
+
+    context = registry.session_state(identity.session_id)
+    assert [
+        turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ] == ["有同学总是欺负我"]
+    assert context.pending.pending_partial is None
+
+
+@pytest.mark.asyncio
+async def test_a_final_short_of_a_late_vad_end_commits_at_the_soft_tail_with_its_own_text() -> None:
+    registry = _late_final_registry(0.05)
+    identity = SessionIdentity("final-in-time")
+    session = registry.bridge.bridge.open(identity)
+    await _turn_with_partial_then_vad_end(registry, session, identity)
+    final = ASRResult(
+        task_epoch=1,
+        sentence_id="late-final-sentence",
+        revision=2,
+        capture_start_sample=0,
+        capture_end_sample=600,
+        text="有同学总是欺负我，我不想去学校了",
+        is_final=True,
+        confidence=0.9,
+        stream_epoch=1,
+    )
+    context = registry.session_state(identity.session_id)
+    assert await registry.accept_asr_result(identity.session_id, final)
+    registry._observe_final_asr_result(context, final)
+
+    await asyncio.sleep(0.1)
+
+    assert [
+        turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ] == ["有同学总是欺负我，我不想去学校了"]
+
+
 @pytest.mark.asyncio
 async def test_endpoint_tail_rescues_partial_when_device_vad_end_trails_the_last_word() -> None:
     class CapturingBridge(MediaBridgeGrpcServer):
