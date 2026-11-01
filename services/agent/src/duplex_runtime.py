@@ -92,6 +92,7 @@ from services.agent.src.output_provenance import (
 from services.agent.src.runtime_classifiers import DuplexRuntimeClassifierMixin
 from services.agent.src.runtime_context_activation import DuplexRuntimeContextActivationMixin
 from services.agent.src.runtime_emotion import DuplexRuntimeEmotionMixin
+from services.agent.src.runtime_post_playback_guard import DuplexRuntimePostPlaybackGuardMixin
 from services.agent.src.runtime_profile import VerifiedRuntimeProfile
 from services.agent.src.runtime_provenance import DuplexRuntimeProvenanceMixin
 from services.agent.src.runtime_provenance import (
@@ -102,7 +103,6 @@ from services.agent.src.runtime_speaker import DuplexSpeakerMixin, _InactiveForm
 from services.agent.src.voice_floor import FloorSnapshot, VoiceFloorState
 from services.common.companion_response_safety import SAFE_UNKNOWN_REPLY
 from services.common.evidence_policy import classify_prompt_kind
-from services.common.fixed_safety_scripts import fixed_safety_echo_reference
 from services.common.realtime_information import (
     is_incomplete_realtime_reply,
     is_realtime_followup_nudge,
@@ -116,8 +116,6 @@ from services.speaker.domain import (
 logger = logging.getLogger(__name__)
 
 ResumeSpeakerBinding = tuple[str, str, int | None, str]
-POST_PLAYBACK_BACKCHANNEL_GUARD_MS = 800
-POST_PLAYBACK_ECHO_GUARD_MS = 10_000
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +149,7 @@ class LiveKitTTSPoolAdapter(TTSPoolHandle):
 class DuplexRuntime(
     DuplexRuntimeClassifierMixin,
     DuplexRuntimeContextActivationMixin,
+    DuplexRuntimePostPlaybackGuardMixin,
     DuplexRuntimeShutdownMixin,
     DuplexSpeakerMixin,
     DuplexRuntimeProvenanceMixin,
@@ -1859,6 +1858,7 @@ class DuplexRuntime(
         canonical_speech_epoch: int | None = None,
         canonical_snapshot_bound: bool | None = None,
         semantic_verdict: InterruptSemanticVerdict | None = None,
+        post_playback_echo_possible: bool = True,
     ) -> tuple[bool, str | None]:
         if self.formal_speaker_enrollment_active:
             self.speaker_verifier.mark_utterance_end()
@@ -2080,7 +2080,9 @@ class DuplexRuntime(
         ):
             return False, "speaker_mismatch"
         post_playback_reason = (
-            self.post_playback_guard_reason(text) if input_modality == "audio" else None
+            self.post_playback_guard_reason(text, echo_possible=post_playback_echo_possible)
+            if input_modality == "audio"
+            else None
         )
         if post_playback_reason is not None:
             self.orchestrator.metrics.inc_guarded_user_input(post_playback_reason)
@@ -2697,37 +2699,6 @@ class DuplexRuntime(
             barge_route=barge_route,
             mid_reply=mid_reply,
         )
-
-    def note_fixed_safety_spoken(self, text: str) -> None:
-        echo = fixed_safety_echo_reference(text)
-        if echo is None:
-            return
-        self.fixed_safety_heard = True
-        self.fixed_safety_echo_text = echo
-
-    def post_playback_guard_reason(self, text: str, *, now_ns: int | None = None) -> str | None:
-        script = self.fixed_safety_echo_text
-        if script and self.input_guard.guarded_reason(
-            text, duration_ms=POST_PLAYBACK_ECHO_GUARD_MS, assistant_text=script,
-        ) == "assistant_echo":
-            return "assistant_echo"
-        completed_ns = self._voice_floor.last_playback_completed_ns
-        if completed_ns is None:
-            return None
-        elapsed_ms = ((now_ns or time.monotonic_ns()) - completed_ns) // 1_000_000
-        if not 0 <= elapsed_ms <= POST_PLAYBACK_ECHO_GUARD_MS:
-            return None
-        reason = self.input_guard.guarded_reason(
-            text, duration_ms=int(elapsed_ms),
-            assistant_text=self._voice_floor.played_assistant_text,
-        )
-        if reason == "assistant_echo":
-            return reason
-        if elapsed_ms <= POST_PLAYBACK_BACKCHANNEL_GUARD_MS and (
-            reason == "backchannel" or self.input_guard.enabled
-        ):
-            return reason
-        return None
 
     async def close(self) -> None:
         if self.begin_close():
