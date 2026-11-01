@@ -1179,4 +1179,10 @@ uv run --frozen --extra dev pytest --no-cov services/agent/tests/unit/test_liste
 1. 用合成音在真实端点跑第一次 smoke，读 `asr_finalize_ms` 的 p50/p90。A/B 数据来自 model 1.0，生产跑的是 2.0，不能直接沿用。
 2. p90 超过预算一半时上调 `ASR_FAILOVER_FINAL_RESULT_TIMEOUT_MS`。之后再观察 `asr_failover_total{reason="final_result_timeout"}` 的占比。
 
+### 备份启动与 rescue 预算
+
+媒体层的 turn tail 是 6 s（`turn_endpoint_absolute_timeout_s`）。旧实现要等 primary 的 final 预算耗尽才启动 SenseVoice，备份再跑自己的 5 s 超时，最坏情况已经越过 tail，真实语音会在备份返回前被丢弃。现在备份在 `ASR_FAILOVER_BACKUP_START_DELAY_MS`（默认 250 ms）后与 primary 的 final 等待并行启动，primary 先返回 final 时取消备份；降级后的整条备份链受 `ASR_FAILOVER_RESCUE_BUDGET_MS`（默认 4500 ms）约束，超时只记日志并让媒体层按时丢弃，不再无限等待。
+
+空段分类也改为使用 `ASRSegmentEvidence` 保存的段级 RMS、峰值和失败原因。`rotate_task` 结束时会清空 provider task 的 PCM 证据，旧分类读到的 RMS 已经是 0，真实语音会被误标成 `low_rms`。现在分类读段级快照，`final_result_timeout` 归到 `empty+vendor_silent`，`provider_error` 归到 `empty+vendor_error`。
+
 ---
