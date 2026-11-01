@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -26,7 +27,10 @@ from services.agent.src.voice_core.media_session import (
     MediaSessionResources,
     MediaVoiceCoreRegistry,
 )
-from services.agent.src.voice_core.media_session_types import ASREmptySegmentEvidence
+from services.agent.src.voice_core.media_session_types import (
+    ASREmptySegmentEvidence,
+    classify_empty_segment,
+)
 from services.agent.src.voice_core.playback_ledger import PlaybackSpan
 from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent
 from services.agent.src.voice_core.speech_timeline import (
@@ -176,6 +180,71 @@ async def test_conversation_yield_proxy_resolves_only_on_matching_terminal() -> 
     assert context.conversation_yield_candidate_fence is None
     assert metrics.get("voice_conversation_yield_proxy_total", {"status": "confirmed"}) == 1
     await registry.finalize_session(identity.session_id)
+
+
+def test_empty_tail_classification_uses_captured_samples_for_gating() -> None:
+    assert (
+        classify_empty_segment(
+            evidence=ASREmptySegmentEvidence(
+                had_speech=False,
+                provider_failed=False,
+                retried=False,
+                rms=0,
+                samples=0,
+                min_rms=100,
+            ),
+            task_pcm_rms=None,
+            rescue_min_rms=None,
+            empty_audio_error=False,
+            turn_start_sample=None,
+        )
+        == "empty+gating"
+    )
+    assert (
+        classify_empty_segment(
+            evidence=ASREmptySegmentEvidence(
+                had_speech=False,
+                provider_failed=False,
+                retried=False,
+                rms=50,
+                samples=1600,
+                min_rms=100,
+            ),
+            task_pcm_rms=None,
+            rescue_min_rms=None,
+            empty_audio_error=False,
+            turn_start_sample=None,
+        )
+        == "low_rms"
+    )
+
+
+def test_empty_tail_classification_uses_preserved_segment_rms() -> None:
+    provider = _AckCapturingProvider()
+    provider.last_empty_segment_evidence = ASREmptySegmentEvidence(
+        had_speech=True,
+        provider_failed=True,
+        retried=True,
+        rms=398,
+        peak_abs=7641,
+        samples=22080,
+        min_rms=100,
+        primary_final_seen=False,
+        vendor_error=False,
+        degrade_reason="final_result_timeout",
+    )
+    registry = MediaVoiceCoreRegistry(
+        bridge=_CapturingMediaBridge(),
+        provider_factory=lambda _identity: provider,
+        metrics=MetricsRegistry(),
+    )
+    context = SimpleNamespace(
+        provider=provider,
+        pending=SimpleNamespace(turn_start_sample=0),
+        asr=None,
+    )
+
+    assert registry._classify_provider_final_missing(context) == "empty+vendor_silent"
 
 
 @pytest.mark.asyncio

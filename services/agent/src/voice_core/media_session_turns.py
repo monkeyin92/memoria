@@ -13,7 +13,6 @@ from services.agent.src.clock_fact_queries import is_clock_fact_query
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.conversation_projection import ProjectionPatch
-from services.agent.src.providers.funasr_empty_accounting import classify_funasr_empty_outcome
 from services.agent.src.voice_core.asr_stream_supervisor import ASRAcceptDecision
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_session_types import (
@@ -21,6 +20,7 @@ from services.agent.src.voice_core.media_session_types import (
     OutputDispatchResult,
     OutputDispatchStatus,
     OutputWork,
+    classify_empty_segment,
     owned_delegation_holds_turn,
 )
 from services.agent.src.voice_core.semantic_completeness import (
@@ -59,25 +59,16 @@ class MediaTurnEndpointMixin:
     """Coordinate VAD endpoints with ASR finals for one media session."""
 
     def _classify_provider_final_missing(self, context: _MediaVoiceSession) -> str:
-        rms = 0
-        min_rms = 100
         provider = getattr(context, "provider", None)
         asr_session = getattr(provider, "_asr", None)
-        rms_raw = getattr(asr_session, "task_pcm_rms", None)
-        if rms_raw is not None:
-            rms = int(rms_raw)
         rescue = getattr(getattr(asr_session, "config", None), "rescue_config", None)
-        if rescue is not None:
-            min_rms = int(rescue.min_rms)
-        empty_audio = False
         has_empty = getattr(asr_session, "_has_replaceable_empty_audio_failure", None)
-        if callable(has_empty):
-            empty_audio = bool(has_empty())
-        outcome = classify_funasr_empty_outcome(
-            rms=rms,
-            min_rms=min_rms,
-            empty_audio_error=empty_audio,
-            pcm_gated=context.pending.turn_start_sample is None and rms == 0,
+        outcome = classify_empty_segment(
+            evidence=getattr(provider, "last_empty_segment_evidence", None),
+            task_pcm_rms=getattr(asr_session, "task_pcm_rms", None),
+            rescue_min_rms=rescue.min_rms if rescue is not None else None,
+            empty_audio_error=bool(has_empty()) if callable(has_empty) else False,
+            turn_start_sample=context.pending.turn_start_sample,
         )
         self.metrics.inc_funasr_empty_transcript(outcome)
         return outcome

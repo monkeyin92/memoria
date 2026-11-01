@@ -274,6 +274,20 @@ class ExistingVoiceProviderAdapter:
         asr = self._asr
         if asr is None:
             return None
+        evidence = getattr(asr, "last_segment_evidence", None)
+        if evidence is not None:
+            return ASREmptySegmentEvidence(
+                had_speech=evidence.had_speech,
+                provider_failed=evidence.provider_failed,
+                retried=evidence.retried,
+                rms=evidence.rms,
+                peak_abs=evidence.peak_abs,
+                samples=evidence.samples,
+                min_rms=evidence.min_rms,
+                primary_final_seen=evidence.primary_final_seen,
+                vendor_error=evidence.vendor_error,
+                degrade_reason=evidence.degrade_reason,
+            )
         had_speech = getattr(asr, "last_segment_had_speech", None)
         if had_speech is None:
             return None

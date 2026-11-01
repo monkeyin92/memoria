@@ -138,6 +138,12 @@ class SenseVoiceRescue:
 
         return self._config.accepts_text(text)
 
+    @property
+    def min_rms(self) -> int:
+        """The energy floor used to classify an empty segment."""
+
+        return self._config.min_rms
+
     def accepts_energy(self, *, rms: int, peak_abs: int) -> bool:
         """Whether a segment has enough energy to be worth transcribing."""
 
