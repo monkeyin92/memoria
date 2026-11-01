@@ -238,6 +238,23 @@ def test_provider_tells_the_shared_agent_to_send_the_plan_request_of_the_turn() 
     assert planned == ["后天呢", "后天呢"]  # the agent decides whether a second call sends anything
 
 
+def test_provider_tells_the_shared_agent_to_drop_the_reply_sent_ahead_for_a_rejected_turn() -> None:
+    discarded: list[str] = []
+
+    class SpeculatingLLM(FakeLLM):
+        def discard_speculative_reply(self, reason: str) -> None:
+            discarded.append(reason)
+
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=FakeASR,  # type: ignore[arg-type]
+        language_model=SpeculatingLLM(),
+        speech_synthesis=FakeTTS(),
+    )
+    adapter.discard_speculative_reply(SessionIdentity("speculating-provider"), "assistant_echo")
+
+    assert discarded == ["assistant_echo"]
+
+
 def test_a_language_model_without_the_warm_up_seam_prepares_as_before() -> None:
     adapter = ExistingVoiceProviderAdapter(
         asr_session_factory=FakeASR,  # type: ignore[arg-type]
@@ -247,6 +264,7 @@ def test_a_language_model_without_the_warm_up_seam_prepares_as_before() -> None:
 
     adapter.warm_committed_turn(SessionIdentity("not-warmed-provider"), "后天呢")
     adapter.start_committed_turn_plan(SessionIdentity("not-warmed-provider"), "后天呢")
+    adapter.discard_speculative_reply(SessionIdentity("not-warmed-provider"), "assistant_echo")
 
 
 class SizedTTS:

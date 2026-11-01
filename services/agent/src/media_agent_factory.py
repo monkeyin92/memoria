@@ -99,6 +99,9 @@ class _SessionLanguageModel:
     def start_committed_turn_plan(self, text: str) -> None:
         self.pipeline.start_committed_turn_plan(text)
 
+    def discard_speculative_reply(self, reason: str) -> None:
+        self.pipeline.discard_speculative_reply(reason)
+
     @property
     def supports_delegation(self) -> bool:
         return self.delegation_enabled
@@ -234,6 +237,7 @@ class ProductionMediaSessionFactory:
                 llm_model=self.settings.llm_fast_model,
                 tts_provider=tts_provider_label(self.settings),
                 tts_model=self.settings.doubao_tts_resource_id,
+                speculative_reply=bool(getattr(self.settings, "speculative_reply_enabled", True)),
             )
             runtime.set_response_plan_rebinder(pipeline.rebind_response_plan)
             handler = _SessionLanguageModel(

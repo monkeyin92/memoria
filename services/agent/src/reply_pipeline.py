@@ -75,6 +75,13 @@ from services.agent.src.response_planner_client import (
     ResponsePlannerClient,
     ResponseVoiceTarget,
 )
+from services.agent.src.speculative_reply import (
+    SPECULATIVE_REPLY_TASK_NAME,
+    Outcome,
+    SpeculationKey,
+    SpeculativeReply,
+    log_outcome,
+)
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_profile_client import VoiceProfileClient
 from services.agent.src.weather_thread import AskCity, WeatherSearch
@@ -92,7 +99,12 @@ from services.common.realtime_information import (
     realtime_unavailable_reply,
     strip_realtime_bridge_prefix,
 )
-from services.common.response_depth import SHORT_REPLY_AUDIENCES, ResponseDepth, response_depth_for
+from services.common.response_depth import (
+    SHORT_REPLY_AUDIENCES,
+    ResponseDepth,
+    ResponseDepthPolicy,
+    response_depth_for,
+)
 from services.common.story_grounding import (
     build_grounded_story_system_instruction,
     build_ip_story_search_query,
@@ -224,6 +236,34 @@ def _memory_capsule(items: Iterable[ResponseGroundedItem]) -> MemoryCapsule:
     )
 
 
+def _plan_capsules(
+    plan: ResponsePlan, device_memory: MemoryCapsule | None
+) -> tuple[MemoryCapsule, PersonaCapsule]:
+    """The memory and persona capsules a turn's context snapshot is frozen with under ``plan``."""
+
+    memory = (
+        device_memory
+        if device_memory is not None and plan_is_local_safe(plan)
+        else _memory_capsule(plan.grounded_items)
+    )
+    persona = PersonaCapsule(
+        version_id=plan.provenance.persona_version_id,
+        version_number=plan.provenance.persona_version_number,
+        prompt_fragment="\n".join(
+            item.content for item in plan.grounded_items if item.kind == "persona_trait"
+        ),
+    )
+    return memory, persona
+
+
+def _memory_result(task: asyncio.Task[MemoryCapsule | None] | None) -> MemoryCapsule | None:
+    """What a finished device-memory fetch released; nothing for one still running or cancelled."""
+
+    if task is None or not task.done() or task.cancelled() or task.exception() is not None:
+        return None
+    return task.result()
+
+
 def reply_limits_for(
     depth: ResponseDepth,
     *,
@@ -286,8 +326,10 @@ class ReplyPipeline:
         llm_model: str = "unknown",
         tts_provider: str = "unknown",
         tts_model: str = "unknown",
+        speculative_reply: bool = True,
     ) -> None:
         self._runtime = runtime
+        self._speculative_reply = speculative_reply
         self._instructions = instructions
         self._voice_profile_client = voice_profile_client
         self._response_planner_client = response_planner_client
@@ -312,6 +354,7 @@ class ReplyPipeline:
         self._realtime_tool_registered = False
         self._warmed_memory: _WarmedMemory | None = None
         self._early_plan: _EarlyPlan | None = None
+        self._speculation: SpeculativeReply | None = None
         self._late_crisis: dict[GenerationFence, _LateCrisisPlan] = {}
         self._block_soothing_on_next_reply = False
         if callable(getattr(response_planner_client, "prefetch_context", None)):
@@ -355,13 +398,109 @@ class ReplyPipeline:
     async def stream(self, request: LanguageModelRequest) -> AsyncGenerator[ReplyItem, None]:
         if not request.cancellation.is_current(self._runtime.fence):
             return
+        async for item in self.stream_reply(
+            self._chat_context(self._runtime.orchestrator.context.turns)
+        ):
+            yield item
+
+    def _chat_context(self, turns: Iterable[ChatMessage]) -> ChatContext:
+        """The session prompt and its turns, as ``stream`` hands them to ``stream_reply``."""
+
         chat_ctx = ChatContext.empty()
         chat_ctx.add_message(role="system", content=self._instructions)
-        for turn in self._runtime.orchestrator.context.turns:
+        for turn in turns:
             if turn.role in {"user", "assistant"} and turn.content:
                 chat_ctx.add_message(role=turn.role, content=turn.content)
-        async for item in self.stream_reply(chat_ctx):
-            yield item
+        return chat_ctx
+
+    @staticmethod
+    def _last_user_text(turns: Iterable[ChatMessage], *, resume: bool) -> str:
+        user_turns = [turn.content for turn in turns if turn.role == "user" and turn.content]
+        if resume and len(user_turns) >= 2:
+            return user_turns[-2]
+        return user_turns[-1] if user_turns else ""
+
+    def _reply_chat_context(
+        self,
+        chat_ctx: Any,
+        *,
+        response_plan: ResponsePlan,
+        policy: ModePolicy,
+        snapshot: ContextSnapshot,
+        speech_instruction: str,
+        last_user: str,
+        resume: bool,
+        realtime: bool,
+    ) -> tuple[Any, ResponseDepthPolicy]:
+        """The messages one reply request sends, and the depth they ask for.
+
+        ``stream_reply`` builds the committed turn's request here and the speculative reply builds the
+        predicted one, so the two requests are equal exactly when their inputs are.
+        """
+
+        speaker_class = response_plan.provenance.speaker_class
+        frozen_session_turns = [
+            ChatMessage(turn.role, turn.content, turn.speaker_scope)
+            for turn in snapshot.recent_committed_turns
+        ]
+        heard_assistant = [
+            turn.content for turn in frozen_session_turns if turn.role == "assistant"
+        ]
+        owner_salutation = policy.owner_salutation if speaker_class == "owner" else None
+        device_bound_owner = (
+            speaker_class == "owner"
+            and response_plan.provenance.speaker_reason_code == DEVICE_BOUND_SUBJECT_REASON
+        )
+        profile = policy.runtime_profile
+        depth_policy = response_depth_for(
+            last_user,
+            realtime=realtime,
+            controlled=(not self._runtime.barge_in_enabled or self._runtime.fixed_safety_heard),
+            audience=profile.profile.service_mode if profile is not None else None,
+        )
+        delivery_instruction = speech_instruction.strip()
+        if delivery_instruction:
+            delivery_instruction += "\n"
+        delivery_instruction += depth_policy.instruction
+        anonymous_public = policy.allows_anonymous_public_conversation(speaker_class)
+        safe_chat_ctx = self._context_assembler.assemble(
+            chat_ctx=chat_ctx,
+            heard_assistant=heard_assistant,
+            speaker_class="guest" if anonymous_public else speaker_class,
+            response_plan=response_plan,
+            owner_salutation=owner_salutation,
+            resume_interrupted_reply=resume,
+            force_current_user_only=(
+                plan_is_local_safe(response_plan)
+                and not anonymous_public
+                and (speaker_class == "owner" or resume)
+                # The bound person's own turns of this session are not another speaker's.
+                and not device_bound_owner
+            ),
+            session_turns=frozen_session_turns,
+            delivery_instruction=delivery_instruction,
+            after_fixed_safety=(
+                self._runtime.fixed_safety_heard and response_plan.fixed_safety_script is None
+            ),
+            context_snapshot=(
+                snapshot
+                if not plan_is_local_safe(response_plan)
+                or (
+                    device_bound_owner
+                    and policy.allows_private_context(speaker_class)
+                    and snapshot.memory_capsule.entries
+                )
+                else None
+            ),
+        )
+        if not realtime and extract_story_ip(last_user) is None and is_story_request(last_user):
+            matched_local = match_local_story(last_user, prioritize_generic=True)
+            if matched_local is not None:
+                safe_chat_ctx.add_message(
+                    role="system",
+                    content=build_local_story_prompt_instruction(matched_local),
+                )
+        return safe_chat_ctx, depth_policy
 
     async def resolve_media_delegation(
         self,
@@ -373,6 +512,7 @@ class ReplyPipeline:
         query = text.strip() if isinstance(text, str) else ""
         if not query or not await self._runtime.resolve_lookup_owns_reply(query):
             return None
+        self._settle_speculation(fence, "lookup")
         if not self._can_start_realtime_delegation(fence):
             return None
         weather = self._runtime.weather_turn(query)
@@ -615,10 +755,11 @@ class ReplyPipeline:
         speaker: Any,
         reason: str,
         query: str = "",
+        policy: ModePolicy | None = None,
     ) -> ResponsePlan:
         prior = self._prior_user_text(query)
         return build_local_safe_plan(
-            policy=self._runtime.mode_policy_for_fence(fence),
+            policy=policy or self._runtime.mode_policy_for_fence(fence),
             fence=fence,
             speaker=speaker,
             reason=reason,
@@ -1020,9 +1161,14 @@ class ReplyPipeline:
         profile refreshes, and then took 0.3-0.8 s of the child's wait on its own (2026-10-28 bench:
         ``prepare_ms`` p50 983).  This one goes out under the fence the commit will make; ``prepare_turn``
         takes it only when the request it would send itself is the same, and sends its own otherwise.
+
+        The reply request goes out here too (``_speculate``), unless the one the ASR final sent is still
+        the request this turn is predicted to send.
         """
 
-        self._start_early_plan(text, self._runtime.current_speaker_decision)
+        speaker = self._runtime.current_speaker_decision
+        self._start_early_plan(text, speaker)
+        self._speculate(text, speaker, claim=True)
 
     def _start_early_plan(self, text: str, speaker: Any) -> None:
         fence = self._runtime.fence.bump_turn()
@@ -1126,9 +1272,16 @@ class ReplyPipeline:
         The speaker is the one the commit will hold.  A session's first sentence has no decision yet (it is
         made when the turn commits) and a device VAD start resets it, so asking for the current one found
         nobody and the fetch never started: 6 of 84 commits in round 15, 0.4 s each (N-14 10).
+
+        The sentence's reply request goes out here as well (``_speculate``); the commit's own start keeps it
+        when it is still the request the turn is predicted to send.
         """
 
         speaker = self._runtime.prospective_speaker_decision()
+        self._warm_memory(text, speaker)
+        self._speculate(text, speaker, claim=False)
+
+    def _warm_memory(self, text: str, speaker: Any) -> None:
         sentence = _compact_sentence(text)
         warmed = self._warmed_memory
         if warmed is not None and warmed.sentence == sentence and warmed.speaker == speaker:
@@ -1207,6 +1360,255 @@ class ReplyPipeline:
             len(capsule.entries),
         )
         return capsule
+
+    def _speculate(self, text: str, speaker: Any, *, claim: bool) -> None:
+        """Send the reply request ``text`` is predicted to commit with, unless that request is already out.
+
+        ``claim`` says the commit of ``text`` has begun: only a claimed speculation is ended when the commit
+        rejects its sentence, so one that an ASR final named for a later turn survives an earlier rejection.
+        Nothing here may stop the commit.
+        """
+
+        try:
+            self._start_speculation(text, speaker, claim=claim)
+        except Exception:
+            logger.warning(
+                "speculative reply not started session_id=%s", self._runtime.session_id, exc_info=True
+            )
+
+    def _start_speculation(self, text: str, speaker: Any, *, claim: bool) -> None:
+        model = self.language_model
+        if not self._speculative_reply or model is None or not text.strip():
+            return
+        key = SpeculationKey(text, speaker, self._runtime.fence.bump_turn(), self._runtime.mode_policy)
+        predicted = self._speculation_plan(key)
+        memory: asyncio.Task[MemoryCapsule | None] | None = None
+        if not isinstance(predicted, str) and self._device_memory_in_scope(
+            speaker, self._runtime.fence
+        ):
+            warmed = self._warmed_memory
+            if (
+                warmed is None
+                or warmed.sentence != _compact_sentence(text)
+                or warmed.speaker != speaker
+            ):
+                predicted = "memory"
+            else:
+                memory = warmed.task
+        chat_ctx: ChatContext | None = None
+        if not isinstance(predicted, str) and (memory is None or memory.done()):
+            chat_ctx = self._predicted_reply_context(key, predicted, memory)
+            if chat_ctx is None:
+                predicted = "context"
+        current = self._speculation
+        if isinstance(predicted, str):
+            if current is not None and current.key.text == text:
+                self._take_speculation().settle(predicted)
+                return
+            self._replace_speculation(text)
+            if claim:
+                log_outcome(key.fence, predicted)
+            return
+        plan = predicted
+        if (
+            current is not None
+            and current.key == key
+            and current.memory is memory
+            and (chat_ctx is None or current.messages in (None, chat_ctx.to_openai_messages()))
+        ):
+            current.claimed = current.claimed or claim
+            return
+        self._replace_speculation(text)
+        speculation = SpeculativeReply(key, claimed=claim, memory=memory)
+        self._speculation = speculation
+
+        def spawn(coroutine: Any) -> asyncio.Task[None]:
+            return self._runtime._spawn(coroutine, name=SPECULATIVE_REPLY_TASK_NAME)
+
+        if chat_ctx is not None:
+            speculation.send(spawn, model, chat_ctx)
+            return
+
+        def build_after_memory() -> ChatContext | None:
+            committed_meanwhile = self._runtime.fence.bump_turn() != key.fence
+            if self._speculation is not speculation or committed_meanwhile:
+                return None
+            try:
+                return self._predicted_reply_context(key, plan, memory)
+            except Exception:
+                logger.warning(
+                    "speculative reply not sent session_id=%s", self._runtime.session_id, exc_info=True
+                )
+                return None
+
+        speculation.send_after_memory(spawn, model, build_after_memory)
+
+    def _speculation_plan(self, key: SpeculationKey) -> ResponsePlan | Outcome:
+        """The plan the committed turn is predicted to reply under, or why it will not ask the model.
+
+        The speculative request may carry nothing the committed turn would not send, so every route that
+        never reaches the reply model is ruled out first: a crisis script, a farewell, a live lookup, a
+        local direct answer, and a speaker or plan the policy refuses.
+        """
+
+        text, speaker, policy = key.text, key.speaker, key.policy
+        crisis = route_crisis(text, prior_self_crisis_hits=self._prior_self_crisis_hits(text))
+        if crisis.script is not None:
+            return "crisis"
+        if self._runtime.conversation_close_needed(text):
+            return "close"
+        if self._runtime.weather_turn(text) is not None or self._runtime.live_lookup_needed(text):
+            return "lookup"
+        enforced = self._runtime.mode_policy_enforced
+        if enforced and not policy.allows_conversation(getattr(speaker, "classification", None)):
+            return "plan"
+        plan = self._local_safe_plan(
+            fence=key.fence, speaker=speaker, reason="speculative", query=text, policy=policy
+        )
+        if (
+            plan.direct_text is not None
+            or plan.fixed_safety_script is not None
+            or (enforced and not plan_matches_mode_policy(plan, policy, tts_model=self._tts_model))
+        ):
+            return "plan"
+        return plan
+
+    def _predicted_reply_context(
+        self,
+        key: SpeculationKey,
+        plan: ResponsePlan,
+        memory: asyncio.Task[MemoryCapsule | None] | None,
+    ) -> ChatContext | None:
+        """The request ``stream_reply`` will send for ``key`` if nothing but its commit happens first.
+
+        Each input is what the commit will leave: the session context with the sentence added, the
+        snapshot it freezes with the warmed memory, and the speech plan it picks for the sentence.
+        """
+
+        speaker_class = plan.provenance.speaker_class
+        context = self._runtime.orchestrator.context.after_user(
+            key.text, speaker_scope="owner" if speaker_class == "owner" else "public"
+        )
+        memory_capsule, persona_capsule = _plan_capsules(plan, _memory_result(memory))
+        snapshot = self._runtime.predicted_generation_snapshot(
+            context,
+            speaker_class=speaker_class,
+            memory_capsule=memory_capsule,
+            persona_capsule=persona_capsule,
+        )
+        if snapshot is None:
+            return None
+        speech_plan = self._runtime.preview_speech_plan(key.text, turn_id=key.fence.turn_id)
+        chat_ctx, _ = self._reply_chat_context(
+            self._chat_context(context.turns),
+            response_plan=plan,
+            policy=key.policy,
+            snapshot=snapshot,
+            speech_instruction=speech_plan.llm_instruction,
+            last_user=self._last_user_text(context.turns, resume=False),
+            resume=False,
+            realtime=False,
+        )
+        return cast(ChatContext, chat_ctx)
+
+    def _take_speculation(self) -> SpeculativeReply:
+        speculation, self._speculation = self._speculation, None
+        assert speculation is not None
+        return speculation
+
+    def _replace_speculation(self, text: str) -> None:
+        """End the speculative reply that a new prediction for ``text`` replaces."""
+
+        current = self._speculation
+        if current is None:
+            return
+        self._speculation = None
+        if current.bound:
+            current.settle("unused")
+        elif current.key.text != text:
+            current.settle("other_text")
+        else:
+            current.settle("restarted")
+
+    def _bind_speculation(
+        self, *, text: str, speaker: Any, fence: GenerationFence, plan: ResponsePlan
+    ) -> None:
+        """Hold the speculative reply for the committed turn only when it was sent for exactly this turn."""
+
+        speculation = self._speculation
+        if speculation is None:
+            return
+        key = speculation.key
+        named_for_a_later_sentence = not speculation.claimed and key.text != text
+        if named_for_a_later_sentence:
+            return
+        outcome: Outcome | None = None
+        if key.text != text:
+            outcome = "other_text"
+        elif key.speaker != speaker:
+            outcome = "other_speaker"
+        elif key.fence != fence:
+            outcome = "other_fence"
+        elif key.policy != self._runtime.mode_policy_for_fence(fence):
+            outcome = "other_policy"
+        elif plan.fixed_safety_script is not None:
+            outcome = "crisis"
+        elif self._runtime.conversation_close_needed(text):
+            outcome = "close"
+        elif not plan_is_local_safe(plan) or plan.direct_text is not None:
+            outcome = "plan"
+        if outcome is None:
+            speculation.bound = True
+        else:
+            self._take_speculation().settle(outcome)
+
+    def _speculation_for(self, fence: GenerationFence) -> SpeculativeReply | None:
+        """Take the speculative reply sent for the turn ``fence`` serves; one sent for a later turn stays."""
+
+        speculation = self._speculation
+        if speculation is None or speculation.key.fence.turn_id > fence.turn_id:
+            return None
+        self._speculation = None
+        if speculation.key.fence != fence:
+            speculation.settle("other_fence")
+            return None
+        return speculation
+
+    def _settle_speculation(self, fence: GenerationFence, outcome: Outcome) -> None:
+        speculation = self._speculation_for(fence)
+        if speculation is not None:
+            speculation.settle(outcome)
+
+    def _adopt_speculation(
+        self, fence: GenerationFence, chat_ctx: Any
+    ) -> AsyncGenerator[Any, None] | None:
+        """The speculative stream when it asked exactly what ``chat_ctx`` asks, else None."""
+
+        speculation = self._speculation_for(fence)
+        if speculation is None:
+            return None
+        if speculation.messages is None:
+            speculation.settle("late")
+            return None
+        if not speculation.bound or speculation.messages != chat_ctx.to_openai_messages():
+            speculation.settle("other_request")
+            return None
+        return speculation.adopt()
+
+    def discard_speculative_reply(self, reason: str) -> None:
+        """The commit that claimed the speculative reply rejected its sentence for ``reason``.
+
+        A bound speculation belongs to a turn that was committed and still waits for its reply stream.
+        """
+
+        speculation = self._speculation
+        if speculation is None or not speculation.claimed or speculation.bound:
+            return
+        self._speculation = None
+        close = reason.startswith("conversation_end") or self._runtime.conversation_close_needed(
+            speculation.key.text
+        )
+        speculation.settle("close" if close else "not_committed")
 
     def _mark_context_ready(self, fence: GenerationFence) -> None:
         event = self._context_ready_by_fence.setdefault(fence, asyncio.Event())
@@ -1418,20 +1820,9 @@ class ReplyPipeline:
             )
             raise StopResponse()
         try:
+            memory_capsule, persona_capsule = _plan_capsules(plan, device_memory)
             snapshot = await self._runtime.freeze_context_capsules_for_generation(
-                fence,
-                memory_capsule=(
-                    device_memory
-                    if device_memory is not None and plan_is_local_safe(plan)
-                    else _memory_capsule(plan.grounded_items)
-                ),
-                persona_capsule=PersonaCapsule(
-                    version_id=plan.provenance.persona_version_id,
-                    version_number=plan.provenance.persona_version_number,
-                    prompt_fragment="\n".join(
-                        item.content for item in plan.grounded_items if item.kind == "persona_trait"
-                    ),
-                ),
+                fence, memory_capsule=memory_capsule, persona_capsule=persona_capsule
             )
         except Exception:
             logger.warning(
@@ -1464,6 +1855,7 @@ class ReplyPipeline:
             self._note_fixed_safety_script(plan.fixed_safety_script.display)
         self.cache_response_plan(plan)
         self._mark_context_ready(fence)
+        self._bind_speculation(text=text, speaker=speaker, fence=fence, plan=plan)
         logger.info(
             "response_plan_cached reason=%s mode=%s direct_text=%s fallback=%s "
             "session_id=%s turn_id=%s input_modality=%s",
@@ -1752,7 +2144,6 @@ class ReplyPipeline:
                 fence.generation_id,
             )
             return
-        speaker_class = response_plan.provenance.speaker_class
         script = response_plan.fixed_safety_script
         late_plan = self._late_crisis.get(fence)
         if script is None and late_plan is not None and late_plan.script is not None:
@@ -1946,6 +2337,7 @@ class ReplyPipeline:
         try:
             self._runtime.mark_audio_event("llm_request_started")
             if script is not None:
+                self._settle_speculation(fence, "crisis")
                 self._note_fixed_safety_script(script.display)
                 self._runtime.mark_audio_event("llm_first_content_token")
                 gated = self._runtime.gate_llm_token(cancellation, script.display)
@@ -1954,6 +2346,7 @@ class ReplyPipeline:
                     yield script
                 return
             if response_plan.direct_text is not None and realtime_request is None:
+                self._settle_speculation(fence, "plan")
                 self._runtime.mark_audio_event("llm_first_content_token")
                 gated = self._runtime.gate_llm_token(
                     cancellation,
@@ -1989,71 +2382,18 @@ class ReplyPipeline:
                     async for item in _play_late_crisis(late_crisis_script):
                         yield item
                 return
-            context_snapshot = self._runtime.context_snapshot_for_fence(fence)
-            frozen_session_turns = [
-                ChatMessage(turn.role, turn.content, turn.speaker_scope)
-                for turn in context_snapshot.recent_committed_turns
-            ]
-            heard_assistant = [
-                turn.content for turn in frozen_session_turns if turn.role == "assistant"
-            ]
-            owner_salutation = policy.owner_salutation if speaker_class == "owner" else None
-            device_bound_owner = (
-                speaker_class == "owner"
-                and response_plan.provenance.speaker_reason_code == DEVICE_BOUND_SUBJECT_REASON
+            last_user = self._last_user_text(
+                self._runtime.orchestrator.context.turns, resume=resume_interrupted_reply
             )
-            user_turns = [
-                turn.content
-                for turn in self._runtime.orchestrator.context.turns
-                if turn.role == "user" and turn.content
-            ]
-            last_user = (
-                user_turns[-2]
-                if resume_interrupted_reply and len(user_turns) >= 2
-                else user_turns[-1]
-                if user_turns
-                else ""
-            )
-            depth_policy = response_depth_for(
-                last_user,
-                realtime=realtime_request is not None,
-                controlled=(
-                    not self._runtime.barge_in_enabled or self._runtime.fixed_safety_heard
-                ),
-                audience=audience,
-            )
-            delivery_instruction = speech_plan.llm_instruction.strip()
-            if delivery_instruction:
-                delivery_instruction += "\n"
-            delivery_instruction += depth_policy.instruction
-            anonymous_public = policy.allows_anonymous_public_conversation(speaker_class)
-            safe_chat_ctx = self._context_assembler.assemble(
-                chat_ctx=chat_ctx,
-                heard_assistant=heard_assistant,
-                speaker_class="guest" if anonymous_public else speaker_class,
+            safe_chat_ctx, depth_policy = self._reply_chat_context(
+                chat_ctx,
                 response_plan=response_plan,
-                owner_salutation=owner_salutation,
-                resume_interrupted_reply=resume_interrupted_reply,
-                force_current_user_only=(
-                    plan_is_local_safe(response_plan)
-                    and not anonymous_public
-                    and (speaker_class == "owner" or resume_interrupted_reply)
-                    # The bound person's own turns of this session are not another speaker's.
-                    and not device_bound_owner
-                ),
-                session_turns=frozen_session_turns,
-                delivery_instruction=delivery_instruction,
-                after_fixed_safety=self._runtime.fixed_safety_heard and script is None,
-                context_snapshot=(
-                    context_snapshot
-                    if not plan_is_local_safe(response_plan)
-                    or (
-                        device_bound_owner
-                        and policy.allows_private_context(speaker_class)
-                        and context_snapshot.memory_capsule.entries
-                    )
-                    else None
-                ),
+                policy=policy,
+                snapshot=self._runtime.context_snapshot_for_fence(fence),
+                speech_instruction=speech_plan.llm_instruction,
+                last_user=last_user,
+                resume=resume_interrupted_reply,
+                realtime=realtime_request is not None,
             )
             if resume_realtime_request and realtime_request is not None:
                 safe_chat_ctx.add_message(
@@ -2086,13 +2426,6 @@ class ReplyPipeline:
                 if realtime_request is not None
                 else extract_story_ip(last_user)
             )
-            if story_ip is None and is_story and realtime_request is None:
-                matched_local = match_local_story(last_user, prioritize_generic=True)
-                if matched_local is not None:
-                    safe_chat_ctx.add_message(
-                        role="system",
-                        content=build_local_story_prompt_instruction(matched_local),
-                    )
 
             if realtime_request is not None and not resume_realtime_request:
                 delegated_search_query = (
@@ -2194,9 +2527,12 @@ class ReplyPipeline:
                     realtime_request = None
 
             if realtime_request is not None:
+                self._settle_speculation(fence, "lookup")
                 stream = self._forced_realtime_search_stream(query=realtime_request.query)
             else:
-                stream = self._model_stream(safe_chat_ctx)
+                stream = self._adopt_speculation(fence, safe_chat_ctx) or self._model_stream(
+                    safe_chat_ctx
+                )
             try:
                 async for chunk in stream:
                     if task is not None and task.cancelled():

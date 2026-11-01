@@ -315,6 +315,35 @@ async def test_the_commit_sends_the_plan_request_before_it_waits_for_the_close_v
 
 
 @pytest.mark.asyncio
+async def test_a_commit_that_rejects_its_sentence_tells_the_provider_to_drop_the_reply_sent_ahead(
+    device_media_session: Any,
+) -> None:
+    window = await _open(device_media_session, "commit-discards-speculative-reply", grace_s=0.05)
+    window.close_verdict.answer = True
+
+    await _end_the_utterance(window, _final("q-1", 40_000, 58_000, _QUESTION), vad_start=40_000)
+    await _wait_until(lambda: window.provider.planned == [_QUESTION], timeout=3.0)
+    _release(window)
+    await _wait_until(lambda: window.provider.discarded != [], timeout=3.0)
+
+    assert window.provider.prepared == []
+    assert len(window.provider.discarded) == 1
+    assert window.provider.discarded[0].startswith("conversation_end")
+
+
+@pytest.mark.asyncio
+async def test_a_committed_turn_keeps_the_reply_sent_ahead(device_media_session: Any) -> None:
+    window = await _open(device_media_session, "commit-keeps-speculative-reply", grace_s=0.05)
+
+    await _end_the_utterance(window, _final("q-1", 40_000, 58_000, _QUESTION), vad_start=40_000)
+    _release(window)
+    await _wait_until(lambda: window.provider.prepared == [_QUESTION], timeout=3.0)
+    await _let_tasks_run()
+
+    assert window.provider.discarded == []
+
+
+@pytest.mark.asyncio
 async def test_a_failed_plan_head_start_does_not_stop_the_commit(
     device_media_session: Any,
     caplog: pytest.LogCaptureFixture,

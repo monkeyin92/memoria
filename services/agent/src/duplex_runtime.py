@@ -40,7 +40,6 @@ from services.agent.src.observability.tracing import LatencyTrace
 from services.agent.src.orchestration.context_snapshot_manager import (
     ContextSnapshot,
     ContextSnapshotDraft,
-    ContextTurn,
     MemoryCapsule,
     PendingSnapshot,
     PersonaCapsule,
@@ -517,35 +516,6 @@ class DuplexRuntime(
         if snapshot.version != version:
             raise RuntimeError("frozen context snapshot is no longer retained")
         return snapshot
-
-    def _context_snapshot_draft(self) -> ContextSnapshotDraft:
-        current = self.orchestrator.context_snapshots.current(self.session_id)
-        turns = tuple(
-            ContextTurn(
-                "user" if turn.role == "user" else "assistant",
-                turn.content,
-                turn.speaker_scope,
-            )
-            for turn in self.orchestrator.context.turns
-            if turn.role in {"user", "assistant"}
-        )
-        policy = self._mode_policy
-        # Public read-only tools stay available; revoked epochs stop them too.
-        # Tool authorization is per ToolSpec, never a coarse policy aggregate.
-        outputs_allowed = self.orchestrator.runtime_profiles.output_allowed(
-            self.fence, current_fence=self.fence
-        )
-        return scope_context_snapshot_draft(
-            ContextSnapshotDraft(
-                recent_committed_turns=turns,
-                memory_capsule=current.memory_capsule,
-                persona_capsule=current.persona_capsule,
-                relationship_policy=policy,
-                tool_permission=outputs_allowed,
-                speaker_class=self.current_speaker_class,
-                summary=self.orchestrator.context.context_summary(),
-            )
-        )
 
     async def freeze_context_capsules_for_generation(
         self,

@@ -335,6 +335,17 @@ class ExistingVoiceProviderAdapter:
         if callable(start):
             start(text)
 
+    def discard_speculative_reply(self, identity: SessionIdentity, reason: str) -> None:
+        """Tell the shared Agent that the commit it was told about rejected its sentence for ``reason``.
+
+        The Agent cancels the reply request it sent ahead for that sentence.  A language model without the
+        seam sent none.
+        """
+
+        discard = getattr(self.language_model, "discard_speculative_reply", None)
+        if callable(discard):
+            discard(reason)
+
     async def prepare_committed_turn(
         self,
         identity: SessionIdentity,

@@ -8,6 +8,7 @@ checking.
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -97,28 +98,35 @@ class DuplexRuntimeEmotionMixin:
             fence=fence,
         )
 
-    def _apply_speech_plan(
+    def preview_speech_plan(self, user_text: str, *, turn_id: int) -> SpeechPlan:
+        """The plan ``_apply_speech_plan`` would choose for ``user_text`` now; nothing is observed or bound."""
+
+        _, plan = self._turn_speech_plan(
+            user_text,
+            turn_id=turn_id,
+            segments=self._emotion_segments_by_turn.get(turn_id, []),
+            smoother=copy.deepcopy(self.emotion_smoother),
+        )
+        return plan
+
+    def _turn_speech_plan(
         self,
         user_text: str,
         *,
         turn_id: int,
-        fence: GenerationFence,
-    ) -> SpeechPlan:
-        segments = self._emotion_segments_by_turn.pop(turn_id, [])
-        self._emotion_segments_by_turn = {
-            key: value for key, value in self._emotion_segments_by_turn.items() if key > turn_id
-        }
+        segments: list[tuple[str, str]],
+        smoother: EmotionSmoother,
+    ) -> tuple[EmotionObservation, SpeechPlan]:
         acoustic = None
         if segments:
             provider_label, acoustic_text = aggregate_acoustic_segments(segments)
-            acoustic = self.emotion_smoother.observe_acoustic(
+            acoustic = smoother.observe_acoustic(
                 provider_label,
                 text=acoustic_text,
                 turn_id=turn_id,
             )
-        observation = self.emotion_smoother.observe_text(user_text, acoustic=acoustic)
-        self._publish_emotion_observation(observation, turn_id=turn_id, fence=fence)
-        self.speech_plan = speech_plan_for_turn(
+        observation = smoother.observe_text(user_text, acoustic=acoustic)
+        plan = speech_plan_for_turn(
             label=observation.label,
             provider_label=observation.provider_label,
             text=user_text,
@@ -132,6 +140,23 @@ class DuplexRuntimeEmotionMixin:
             ),
             previous=self.speech_plan,
         )
+        return observation, plan
+
+    def _apply_speech_plan(
+        self,
+        user_text: str,
+        *,
+        turn_id: int,
+        fence: GenerationFence,
+    ) -> SpeechPlan:
+        segments = self._emotion_segments_by_turn.pop(turn_id, [])
+        self._emotion_segments_by_turn = {
+            key: value for key, value in self._emotion_segments_by_turn.items() if key > turn_id
+        }
+        observation, self.speech_plan = self._turn_speech_plan(
+            user_text, turn_id=turn_id, segments=segments, smoother=self.emotion_smoother
+        )
+        self._publish_emotion_observation(observation, turn_id=turn_id, fence=fence)
         self._generation_records.bind_speech_plan(fence, self.speech_plan)
         apply_plan = getattr(self.tts, "apply_speech_plan", None)
         if callable(apply_plan):

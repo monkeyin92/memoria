@@ -46,6 +46,18 @@
 
 ---
 
+## 预发回复请求（speculative reply）
+
+ASR 终稿到达、提交开始时，bridge 就按预测把这一轮要发的 DeepSeek 回复请求发出去，回来的字先存着。提交做完后，只有这一轮真正要发的请求与预发的逐字相同，才播放存着的字；句子、说话人、fence、模式策略、上下文、记忆、语气计划有任何一处不同，就取消预发请求，按原路径重发。危机、结束对话、实时查询、本地直答（如报时）这几条路不问回复模型，从不播放预发的字。预发请求只调用 DeepSeek，不写上下文、转写或记忆。
+
+每个预发请求以一行日志结束，不含原文：`speculative reply session_id=… turn_id=… outcome=… lead_ms=…`。`outcome` 是 `used`（被采用）、`other_text` / `other_speaker` / `other_fence` / `other_policy`（提交的不是预测的那一轮）、`other_request`（同一轮，但请求内容变了）、`late`（提交时请求还没发出，通常是记忆还没取回）、`close` / `crisis` / `lookup` / `plan`（这一轮不问回复模型）、`memory`（记忆在范围内但这句话没有预取）、`context`（快照预测不了）、`unused`（匹配了但这一轮最后没问回复模型）、`not_committed`（提交拒绝了这句话）、`restarted`（同一句话换了一次预测）。`lead_ms` 是被采用时请求已经发出多久，即这一轮首字等待最多省下的时间。
+
+看数：`python scripts/voice_commit_timing.py bridge.log` 的最后一段 `== speculative replies` 给出各 outcome 的次数和 `used` 的 `lead_ms` p50 / p90；采用率按 `used` 除以 `result=committed` 的提交数算。
+
+开关：bridge 环境变量 `MEMORIA_SPECULATIVE_REPLY_ENABLED=false` 关掉，行为回到旧路径，不发预发请求，也不打这行日志。改 env 是生产变更，要用户授权，并且要重建 bridge 容器才生效。代价：没被采用的预发请求是一次中途取消的 DeepSeek 调用。
+
+---
+
 ## 来源：`docs/runbooks/operations-space-governance.md`
 
 ## 空间治理运维基线

@@ -827,12 +827,16 @@ class _PreparingDeviceProvider(FakeMediaProvider):
         self.prepared: list[str] = []
         self.warmed: list[str] = []
         self.planned: list[str] = []
+        self.discarded: list[str] = []
 
     def warm_committed_turn(self, _identity: SessionIdentity, text: str) -> None:
         self.warmed.append(text)
 
     def start_committed_turn_plan(self, _identity: SessionIdentity, text: str) -> None:
         self.planned.append(text)
+
+    def discard_speculative_reply(self, _identity: SessionIdentity, reason: str) -> None:
+        self.discarded.append(reason)
 
     async def prepare_committed_turn(
         self,
