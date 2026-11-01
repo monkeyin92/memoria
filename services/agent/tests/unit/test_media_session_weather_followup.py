@@ -103,16 +103,29 @@ async def _never_live(_text: str) -> bool:
 class _PipelineDelegation(FakeMediaProvider):
     """Production's delegation seam: the media task asks the reply pipeline."""
 
-    def __init__(self, search: _Search) -> None:
+    def __init__(self, search: _Search, *, prepare_tail_s: float = 0.0) -> None:
         super().__init__()
         self.search = search
         self.pipeline: ReplyPipeline | None = None
         self.spoken: list[str] = []
+        self.delivered: list[str] = []
+        self.prepare_tail_s = prepare_tail_s
 
     def runtime(self, session_id: str) -> DuplexRuntime:
         runtime = DuplexRuntime.create(session_id=session_id, barge_in_enabled=False)
         # Production's classifier sees only the current text and says no to 「那明天呢」.
         runtime.set_live_lookup_semantic_resolver(_never_live)
+        if self.prepare_tail_s > 0:
+            committed = runtime.on_turn_committed
+            tail_s = self.prepare_tail_s
+
+            async def _keeps_preparing(*args: Any, **kwargs: Any) -> GenerationFence:
+                fence = await committed(*args, **kwargs)
+                # Production's prepare keeps working (plan, context freeze) after the delegation started.
+                await asyncio.sleep(tail_s)
+                return fence
+
+            runtime.on_turn_committed = _keeps_preparing  # type: ignore[method-assign]
         self.pipeline = ReplyPipeline(
             instructions="test",
             runtime=runtime,
@@ -141,6 +154,10 @@ class _PipelineDelegation(FakeMediaProvider):
         self.spoken.append(str(intent.tts_source))
 
         async def chunks() -> AsyncIterator[MediaReplyChunk]:
+            if self.prepare_tail_s > 0:
+                # Synthesis takes a moment before the first audio, as Doubao's does.
+                await asyncio.sleep(self.prepare_tail_s * 2)
+            self.delivered.append(str(intent.tts_source))
             yield MediaReplyChunk(
                 pcm_s16le=b"\x02\x00\x03\x00",
                 source_start_sample=source_start_sample,
@@ -153,9 +170,15 @@ class _PipelineDelegation(FakeMediaProvider):
 
 
 class _Device:
-    def __init__(self, name: str, turns: list[tuple[tuple[str, ...], str]]) -> None:
+    def __init__(
+        self,
+        name: str,
+        turns: list[tuple[tuple[str, ...], str]],
+        *,
+        prepare_tail_s: float = 0.0,
+    ) -> None:
         self.search = _Search()
-        self.provider = _PipelineDelegation(self.search)
+        self.provider = _PipelineDelegation(self.search, prepare_tail_s=prepare_tail_s)
         self.bridge = _CapturingGenerationBridge()
         self.registry = MediaVoiceCoreRegistry(
             bridge=self.bridge,
@@ -213,7 +236,7 @@ class _Device:
         start = self.turn * _TURN_GAP
         end = start + _TURN_SAMPLES
         self.turn += 1
-        spoken_before = len(self.provider.spoken)
+        delivered_before = len(self.provider.delivered)
         await self._asr_results(start)
         pending = self.context.turn_endpoint_task
         if pending is not None:
@@ -221,23 +244,19 @@ class _Device:
         if len(self._user_turns()) < self.turn:
             self.context.pending.turn_endpoint_sample = end
             self.context.pending.turn_retire_sample = end
-            fence, reason = await self.registry.commit_user_turn(
-                self.identity.session_id,
-                stream_epoch=self.identity.stream_epoch,
-                start_sample=start,
-                end_sample=end,
-                retire_sample=end,
-            )
-            assert fence is not None, reason
+            # The device's endpoint commit, which also retires the previous reply.
+            reason = await self.registry._commit_pending_turn(self.context)
+            assert reason in {None, "heard_output_in_flight"}, reason
         try:
             await _wait_until(
-                lambda: len(self.provider.spoken) > spoken_before
+                lambda: len(self.provider.delivered) > delivered_before
                 and self.context.output.output_owner is not None,
                 timeout=1.0,
             )
         except AssertionError:
             # Not a lookup: the conversation reply is outside this fixture.
             return
+        await asyncio.sleep(0.01)
         await _finish_output_owner_playback(
             self.registry, self.identity, self.bridge, self.session
         )
@@ -319,8 +338,10 @@ async def test_device_named_city_carries_to_day_follow_up_and_a_cityless_questio
 
 @pytest.mark.asyncio
 async def test_device_day_follow_up_before_any_city_is_answered() -> None:
-    """Device soaks 2026-11-01 (run 172746 t056, run 190839 t011): 「那明天呢？」 right after the city
-    question, with no city given, got no reply at all."""
+    """Device soaks 2026-11-01 (run 172746 t056, run 190839 t011, run 201623 t006/t016/t023): 「那明天呢？」
+    right after the city question, with no city given, got no reply at all.  Asking for the city needs no
+    lookup, so the delegated answer started before the commit finished, and the commit then cancelled it
+    as the previous reply."""
 
     device = _Device(
         "device-weather-followup-no-city",
@@ -328,15 +349,17 @@ async def test_device_day_follow_up_before_any_city_is_answered() -> None:
             (("今天", "今天天气", "今天天气怎么样"), "今天天气怎么样？"),
             (("那明天", "那明天呢"), "那明天呢？"),
         ],
+        prepare_tail_s=0.05,
     )
     await device.open()
     try:
         await device.say()
         assert device.provider.spoken[-1] == ASK_WEATHER_CITY_REPLY
 
-        spoken_before = len(device.provider.spoken)
+        delivered_before = len(device.provider.delivered)
         await device.say()
         assert device._user_turns()[-1] == "那明天呢？"
-        assert len(device.provider.spoken) > spoken_before, "the follow-up got no reply"
+        assert len(device.provider.delivered) > delivered_before, "the follow-up got no reply"
+        assert device.provider.delivered[-1] == ASK_WEATHER_CITY_REPLY
     finally:
         await device.close()
