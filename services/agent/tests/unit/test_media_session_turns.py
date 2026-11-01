@@ -4741,6 +4741,85 @@ async def test_words_after_a_noise_endpoint_commit_without_waiting_for_its_tail(
     ] == ["恐龙都吃什么东西"]
 
 
+async def _noise_endpoint_then_words(
+    words_end: int,
+) -> tuple[MediaVoiceCoreRegistry, Any, float]:
+    """Noise pins the endpoint at sample 3200; 60 ms later ASR reports words ending at ``words_end``."""
+
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: FakeMediaProvider(),
+        turn_endpoint_grace_s=60,
+        turn_endpoint_min_grace_s=60,
+        turn_endpoint_max_grace_s=60,
+        turn_endpoint_absolute_timeout_s=61,
+        turn_final_missing_fallback_s=30,
+    )
+    identity = SessionIdentity(f"words-past-noise-endpoint-{words_end}")
+    session = registry.bridge.bridge.open(identity)
+    for segment_id, start, final in (("noise-start", 0, False), ("noise-end", 3_200, True)):
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=1,
+                provider_task_epoch=0,
+                segment_id=segment_id,
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=start,
+                capture_end_sample=start + 1,
+                final=final,
+                voiced_end_sample=start if final else None,
+            ),
+        )
+    context = registry.session_state(identity.session_id)
+    first_deadline = context.pending.turn_endpoint_tail_deadline
+    assert first_deadline is not None
+    await asyncio.sleep(0.06)
+    assert await registry.accept_asr_result(
+        identity.session_id,
+        ASRResult(
+            task_epoch=1,
+            sentence_id="still-talking",
+            revision=1,
+            capture_start_sample=8_000,
+            capture_end_sample=words_end,
+            text="有同学总是欺负我",
+            is_final=False,
+            confidence=0.9,
+            stream_epoch=1,
+        ),
+    )
+    return registry, context, first_deadline
+
+
+@pytest.mark.asyncio
+async def test_words_past_a_noise_endpoint_restart_its_absolute_tail() -> None:
+    """Device soak 2026-11-01 t023: echo pinned the endpoint, the child talked on with no new device VAD,
+    and the 6 s tail of the echo's endpoint put the device on standby under the child's own commit."""
+
+    registry, context, first_deadline = await _noise_endpoint_then_words(3_200 + 32_000)
+
+    restarted = context.pending.turn_endpoint_tail_deadline or 0
+    assert restarted >= first_deadline + 0.05, "the tail now counts from the child's words"
+    soft = context.pending.final_missing_fallback_handle
+    assert soft is not None and soft.when() >= asyncio.get_running_loop().time() + 29.9, (
+        "the soft tail counts from the child's words too"
+    )
+    assert context.pending.turn_endpoint_sample == 3_200
+    assert not context.standby_requested
+    await registry.finalize_session(context.identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_words_inside_the_coverage_tolerance_keep_the_tail() -> None:
+    registry, context, first_deadline = await _noise_endpoint_then_words(3_200 + 8_000)
+
+    assert context.pending.turn_endpoint_tail_deadline == first_deadline
+    await registry.finalize_session(context.identity.session_id)
+
+
 @pytest.mark.asyncio
 async def test_endpoint_tail_rescues_partial_when_device_vad_end_trails_the_last_word() -> None:
     class CapturingBridge(MediaBridgeGrpcServer):

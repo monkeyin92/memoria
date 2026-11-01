@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -27,10 +28,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Device VAD and provider word timestamps are independent clocks around the
+# same 16 kHz capture. After the provider task-finished boundary proves no
+# later sentence can arrive, permit at most 1.5 seconds of tail skew after
+# firmware removes its known 900 ms AFE hangover. Real-device evidence still
+# showed 1.14 seconds between FunASR's last word and the device voiced end;
+# larger gaps keep the endpoint commit waiting for a covering final. The tail
+# timeout then commits this turn's accepted final instead of dropping it, and
+# the turn's own sample range is what stops an earlier sentence reaching a
+# later turn.
+_ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES = 24_000
+
 
 class MediaFinalMissingFallbackMixin:
     if TYPE_CHECKING:
         turn_final_missing_fallback_s: float
+        turn_endpoint_absolute_timeout_s: float
+
+        def _arm_endpoint_tail_timeout(
+            self, context: _MediaVoiceSession, endpoint_sample: int
+        ) -> None: ...
+
         _sessions: dict[str, _MediaVoiceSession]
 
         async def _accept_asr_result_decision(
@@ -78,6 +96,63 @@ class MediaFinalMissingFallbackMixin:
             and context.pending.turn_endpoint_sample == endpoint_sample
             and (context.pending.turn_end_sample or 0) > endpoint_sample
         )
+
+    @staticmethod
+    def _asr_covers_endpoint(
+        context: _MediaVoiceSession,
+        result_end_sample: int | None,
+        endpoint_sample: int,
+    ) -> bool:
+        if result_end_sample is None:
+            return False
+        return result_end_sample >= endpoint_sample or (
+            context.ingress.last_finalized_audio_watermark >= endpoint_sample
+            and endpoint_sample - result_end_sample <= _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES
+        )
+
+    def _restart_tail_for_words_past_endpoint(
+        self, context: _MediaVoiceSession, result: ASRResult
+    ) -> None:
+        """Start the absolute tail over while the child's words keep landing past the pinned endpoint.
+
+        Device soak 2026-11-01 (t023 twice, t007): echo or noise pinned the endpoint a few seconds before the
+        child spoke and the device sent no new VAD, so the 6 s tail still counted from that noise.  It came
+        while the child's own commit was preparing and put the device on standby with the sentence
+        unanswered.  The tail now counts from the child's last words; a prepare that hangs after them is
+        still stopped by it.
+        """
+
+        pending = context.pending
+        endpoint = pending.turn_endpoint_sample
+        deadline = pending.turn_endpoint_tail_deadline
+        if (
+            endpoint is None
+            or deadline is None
+            or not result.text.strip()
+            or result.capture_end_sample <= endpoint + _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES
+        ):
+            return
+        restarted = time.monotonic() + self.turn_endpoint_absolute_timeout_s
+        if restarted <= deadline:
+            return
+        pending.turn_endpoint_tail_deadline = restarted
+        handle = pending.turn_endpoint_timeout_handle
+        if handle is not None:
+            handle.cancel()
+        pending.turn_endpoint_timeout_handle = None
+        # The soft tail would otherwise commit half a sentence while the child is still talking.
+        pending.cancel_final_missing_fallback()
+        self._arm_endpoint_tail_timeout(context, endpoint)
+        if pending.tail_restarted_endpoint != endpoint:
+            pending.tail_restarted_endpoint = endpoint
+            logger.info(
+                "media endpoint tail restarted for words past the endpoint session=%s stream_epoch=%s "
+                "endpoint=%s words_end=%s",
+                context.identity.session_id,
+                context.stream_epoch,
+                endpoint,
+                result.capture_end_sample,
+            )
 
     def _arm_final_missing_fallback(
         self, context: _MediaVoiceSession, endpoint_sample: int
