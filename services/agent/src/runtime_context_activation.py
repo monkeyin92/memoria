@@ -11,13 +11,18 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Literal
 
-from services.agent.src.orchestration.context_snapshot_manager import ContextSnapshot
+from services.agent.src.orchestration.context_snapshot_manager import (
+    ContextSnapshot,
+    ContextSnapshotDraft,
+    ContextTurn,
+    scope_context_snapshot_draft,
+)
 
 if TYPE_CHECKING:
     from services.agent.src.contracts.ids import GenerationFence
+    from services.agent.src.mode_policy_client import ModePolicy
     from services.agent.src.orchestration.context_manager import ContextManager
     from services.agent.src.orchestration.context_snapshot_manager import (
-        ContextSnapshotDraft,
         MemoryCapsule,
         PendingSnapshot,
         PersonaCapsule,
@@ -37,6 +42,7 @@ class DuplexRuntimeContextActivationMixin:
         _pending_context_snapshot: PendingSnapshot | None
         _pending_context_snapshot_epoch: int | None
         _context_snapshot_prepare_epoch: int
+        _mode_policy: ModePolicy
 
         # Core runtime members consumed by this mixin.
         @property
@@ -45,12 +51,43 @@ class DuplexRuntimeContextActivationMixin:
         @property
         def current_speaker_class(self) -> SpeakerClass: ...
 
-        def _context_snapshot_draft(
-            self,
-            context: ContextManager | None = None,
-            *,
-            speaker_class: SpeakerClass | None = None,
-        ) -> ContextSnapshotDraft: ...
+    def _context_snapshot_draft(
+        self,
+        context: ContextManager | None = None,
+        *,
+        speaker_class: SpeakerClass | None = None,
+    ) -> ContextSnapshotDraft:
+        """The session context as a snapshot draft; ``context`` and ``speaker_class`` default to the current ones."""
+
+        if context is None:
+            context = self.orchestrator.context
+        current = self.orchestrator.context_snapshots.current(self.session_id)
+        turns = tuple(
+            ContextTurn(
+                "user" if turn.role == "user" else "assistant",
+                turn.content,
+                turn.speaker_scope,
+            )
+            for turn in context.turns
+            if turn.role in {"user", "assistant"}
+        )
+        policy = self._mode_policy
+        # Public read-only tools stay available; revoked epochs stop them too.
+        # Tool authorization is per ToolSpec, never a coarse policy aggregate.
+        outputs_allowed = self.orchestrator.runtime_profiles.output_allowed(
+            self.fence, current_fence=self.fence
+        )
+        return scope_context_snapshot_draft(
+            ContextSnapshotDraft(
+                recent_committed_turns=turns,
+                memory_capsule=current.memory_capsule,
+                persona_capsule=current.persona_capsule,
+                relationship_policy=policy,
+                tool_permission=outputs_allowed,
+                speaker_class=speaker_class or self.current_speaker_class,
+                summary=context.context_summary(),
+            )
+        )
 
     def _activate_pending_context_snapshot(self) -> None:
         pending = self._pending_context_snapshot
