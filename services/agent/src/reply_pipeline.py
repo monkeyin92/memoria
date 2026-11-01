@@ -173,6 +173,15 @@ def _speculation_change(
     return ",".join(changed) or "none"
 
 
+def _log_delegation_route(fence: GenerationFence, route: str) -> None:
+    logger.info(  # never the text: a robot round reads this to see where a lookup turn went
+        "media delegation route session_id=%s turn_id=%s route=%s",
+        fence.session_id,
+        fence.turn_id,
+        route,
+    )
+
+
 def _compact_sentence(text: str) -> str:
     """The sentence without punctuation or spaces: the final and the committed text may differ in those."""
 
@@ -536,18 +545,23 @@ class ReplyPipeline:
 
         query = text.strip() if isinstance(text, str) else ""
         if not query or not await self._runtime.resolve_lookup_owns_reply(query):
+            _log_delegation_route(fence, "not_lookup")
             return None
         self._settle_speculation(fence, "lookup")
         if not self._can_start_realtime_delegation(fence):
+            _log_delegation_route(fence, "blocked")
             return None
         weather = self._runtime.weather_turn(query)
         if isinstance(weather, WeatherSearch):
             query = weather.query
         resolver = self._realtime_search_resolver
         if resolver is None or not self._realtime_sources_available():
+            _log_delegation_route(fence, "unavailable")
             return realtime_unavailable_reply(query)
         if isinstance(weather, AskCity):
+            _log_delegation_route(fence, "ask_city")
             return ASK_WEATHER_CITY_REPLY
+        _log_delegation_route(fence, "weather_search" if weather is not None else "search")
         try:
             result = await resolver.resolve(query=query)
         except asyncio.CancelledError:
