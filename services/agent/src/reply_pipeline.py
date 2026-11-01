@@ -354,6 +354,7 @@ class ReplyPipeline:
         self._realtime_tool_registered = False
         self._warmed_memory: _WarmedMemory | None = None
         self._early_plan: _EarlyPlan | None = None
+        self._early_profile_refresh: tuple[str, asyncio.Task[Any]] | None = None
         self._speculation: SpeculativeReply | None = None
         self._late_crisis: dict[GenerationFence, _LateCrisisPlan] = {}
         self._block_soothing_on_next_reply = False
@@ -1168,7 +1169,38 @@ class ReplyPipeline:
 
         speaker = self._runtime.current_speaker_decision
         self._start_early_plan(text, speaker)
+        self._start_early_profile_refresh(text)
         self._speculate(text, speaker, claim=True)
+
+    def _start_early_profile_refresh(self, text: str) -> None:
+        """Refresh the signed profile beside the close verdict instead of after it.
+
+        ``prepare_turn`` refreshes it before the voice bind check; on the device path that ran only once
+        the commit had its close verdict, and the session-policy round trip added about 0.1 s to every
+        turn (2026-11-01 device soak).  The turn-boundary refresh in ``on_turn_committed`` stays.
+        """
+
+        self._drop_early_profile_refresh()
+        if self._runtime.tts is None:
+            return
+        task = self._runtime._spawn(
+            self._runtime.refresh_runtime_profile(), name="runtime-profile-head-start"
+        )
+        self._early_profile_refresh = (text, task)
+
+    def _drop_early_profile_refresh(self) -> None:
+        early, self._early_profile_refresh = self._early_profile_refresh, None
+        if early is not None and not early[1].done():
+            early[1].cancel()
+
+    async def _refresh_runtime_profile_for(self, text: str) -> None:
+        early, self._early_profile_refresh = self._early_profile_refresh, None
+        if early is not None and early[0] == text and not early[1].cancelled():
+            await early[1]
+            return
+        if early is not None and not early[1].done():
+            early[1].cancel()
+        await self._runtime.refresh_runtime_profile()
 
     def _start_early_plan(self, text: str, speaker: Any) -> None:
         fence = self._runtime.fence.bump_turn()
@@ -1601,6 +1633,7 @@ class ReplyPipeline:
         A bound speculation belongs to a turn that was committed and still waits for its reply stream.
         """
 
+        self._drop_early_profile_refresh()
         speculation = self._speculation
         if speculation is None or not speculation.claimed or speculation.bound:
             return
@@ -1660,7 +1693,7 @@ class ReplyPipeline:
             ) or output_policy.frozen_companion_clone_permitted(self._runtime.mode_policy)
             if self._voice_profile_client is not None and clone_use:
                 await self._runtime.wait_for_voice_profile_refresh()
-            await self._runtime.refresh_runtime_profile()
+            await self._refresh_runtime_profile_for(text)
             policy = self._runtime.mode_policy
             if self._voice_profile_client is not None and clone_use:
                 _apply_cached_voice_profile(
