@@ -34,6 +34,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def plan_with_assistant_emotion(plan: SpeechPlan, emotion: AssistantEmotion | None) -> SpeechPlan:
+    """``plan`` with the emotion the reply declares; the same object when that changes nothing."""
+
+    if emotion is None or plan.assistant_emotion == emotion:
+        return plan
+    instruction = (
+        plan.tts_instruction
+        if plan.delivery_mode == "supportive"
+        else compose_tts_instruction(plan.tts_instruction, emotion)
+    )
+    return replace(plan, assistant_emotion=emotion, tts_instruction=instruction)
+
+
 class DuplexRuntimeEmotionMixin:
     """Aggregate acoustic emotion evidence and freeze one plan per turn."""
 
@@ -190,21 +203,10 @@ class DuplexRuntimeEmotionMixin:
         emotion: AssistantEmotion | None,
     ) -> None:
         """Rebind the current fence's plan with the emotion declared by the reply."""
-        if emotion is None:
-            return
         plan = self._generation_records.speech_plan_for(fence, self.speech_plan)
-        if plan.assistant_emotion == emotion:
+        updated = plan_with_assistant_emotion(plan, emotion)
+        if updated is plan:
             return
-        instruction = (
-            plan.tts_instruction
-            if plan.delivery_mode == "supportive"
-            else compose_tts_instruction(plan.tts_instruction, emotion)
-        )
-        updated = replace(
-            plan,
-            assistant_emotion=emotion,
-            tts_instruction=instruction,
-        )
         self._generation_records.bind_speech_plan(fence, updated)
         self._assistant_expression_fence = None
         self.apply_speech_plan_to_tts(fence)

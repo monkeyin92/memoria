@@ -22,6 +22,7 @@ from typing import Any, Literal
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.llm_types import ChatContext
 from services.agent.src.mode_policy_client import ModePolicy
+from services.agent.src.speculative_speech import SpeechHeadStart
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,7 @@ class SpeculativeReply:
     ``claimed`` says a commit has begun for the sentence (an ASR final alone only names it); ``bound`` says the
     committed turn matched the key.  The model stream is read by a task of its own into a queue that only
     ``adopt`` can hand out, once; ``settle`` cancels the task and nothing read so far ever leaves the queue.
+    ``speech`` sees every chunk too, and ends with the reply: adopted with it, discarded with it.
     """
 
     def __init__(
@@ -91,10 +93,12 @@ class SpeculativeReply:
         *,
         claimed: bool,
         memory: asyncio.Task[Any] | None,
+        speech: SpeechHeadStart | None = None,
     ) -> None:
         self.key = key
         self.claimed = claimed
         self.memory = memory
+        self.speech = speech
         self.bound = False
         self.messages: list[dict[str, str]] | None = None
         self.outcome: Outcome | None = None
@@ -126,6 +130,8 @@ class SpeculativeReply:
         """The buffered and still-arriving stream, exactly as a fresh request would yield it."""
 
         self._finish("used")
+        if self.speech is not None:
+            self.speech.adopt()
         return self._replay()
 
     def settle(self, outcome: Outcome) -> None:
@@ -134,6 +140,8 @@ class SpeculativeReply:
         if self.outcome is None:
             self._finish(outcome)
             self._cancel()
+            if self.speech is not None:
+                self.speech.discard(outcome)
 
     def _mark_sent(self, chat_ctx: ChatContext) -> None:
         self.messages = chat_ctx.to_openai_messages()
@@ -155,10 +163,14 @@ class SpeculativeReply:
             async with model.chat(chat_ctx=chat_ctx, tools=[]) as stream:
                 async for chunk in stream:
                     self._chunks.put_nowait(chunk)
+                    if self.speech is not None:
+                        self.speech.feed(chunk)
         except Exception as exc:
             self._chunks.put_nowait(_Failure(exc))
             return
         self._chunks.put_nowait(_END)
+        if self.speech is not None:
+            self.speech.end()
 
     async def _replay(self) -> AsyncGenerator[Any, None]:
         try:

@@ -238,6 +238,7 @@ class ProductionMediaSessionFactory:
                 tts_provider=tts_provider_label(self.settings),
                 tts_model=self.settings.doubao_tts_resource_id,
                 speculative_reply=bool(getattr(self.settings, "speculative_reply_enabled", True)),
+                speculative_speech=bool(getattr(self.settings, "speculative_speech_enabled", True)),
             )
             runtime.set_response_plan_rebinder(pipeline.rebind_response_plan)
             handler = _SessionLanguageModel(

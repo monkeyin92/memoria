@@ -42,7 +42,7 @@ from services.agent.src.duplex_runtime import (
     DuplexRuntime,
     GenerationVoiceSnapshot,
 )
-from services.agent.src.llm_types import ChatContext, StopResponse
+from services.agent.src.llm_types import ChatContext, StopResponse, chunk_text
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.context_manager import ChatMessage
 from services.agent.src.orchestration.context_snapshot_manager import (
@@ -82,6 +82,7 @@ from services.agent.src.speculative_reply import (
     SpeculativeReply,
     log_outcome,
 )
+from services.agent.src.speculative_speech import speech_head_start
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_profile_client import VoiceProfileClient
 from services.agent.src.weather_thread import AskCity, WeatherSearch
@@ -320,18 +321,6 @@ def reply_limits_for(
     return chars, sentences
 
 
-def _chunk_text(chunk: Any) -> str:
-    """Extract plain text from LLM stream items for fence gating."""
-    if isinstance(chunk, str):
-        return chunk
-    delta = getattr(chunk, "delta", None)
-    if delta is not None:
-        content = getattr(delta, "content", None)
-        if isinstance(content, str):
-            return content
-    return ""
-
-
 class ReplyPipeline:
     """Gate one media reply through its GenerationFence, response plan and budget."""
 
@@ -351,9 +340,11 @@ class ReplyPipeline:
         tts_provider: str = "unknown",
         tts_model: str = "unknown",
         speculative_reply: bool = True,
+        speculative_speech: bool = True,
     ) -> None:
         self._runtime = runtime
         self._speculative_reply = speculative_reply
+        self._speculative_speech = speculative_speech
         self._instructions = instructions
         self._voice_profile_client = voice_profile_client
         self._response_planner_client = response_planner_client
@@ -1482,7 +1473,12 @@ class ReplyPipeline:
                 _speculation_change(current, key, memory, chat_ctx),
             )
         self._replace_speculation(text)
-        speculation = SpeculativeReply(key, claimed=claim, memory=memory)
+        speech = (
+            speech_head_start(self._runtime, key, speaker_class=plan.provenance.speaker_class)
+            if self._speculative_speech
+            else None
+        )
+        speculation = SpeculativeReply(key, claimed=claim, memory=memory, speech=speech)
         self._speculation = speculation
 
         def spawn(coroutine: Any) -> asyncio.Task[None]:
@@ -2605,7 +2601,7 @@ class ReplyPipeline:
                         break
                     if _late_crisis_now() is not None:
                         break
-                    text = _chunk_text(chunk)
+                    text = chunk_text(chunk)
                     if text:
                         if not first_content_marked:
                             self._runtime.mark_audio_event("llm_first_content_token")

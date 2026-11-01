@@ -7,12 +7,12 @@ from collections.abc import AsyncIterator
 
 import pytest
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.llm_types import chunk_text
 from services.agent.src.mode_policy_client import ModePolicy
-from services.agent.src.reply_pipeline import _chunk_text
 
 
 def test_chunk_text_extracts_content() -> None:
-    assert _chunk_text("你好") == "你好"
+    assert chunk_text("你好") == "你好"
 
     class Delta:
         content = "世界"
@@ -20,8 +20,8 @@ def test_chunk_text_extracts_content() -> None:
     class Chunk:
         delta = Delta()
 
-    assert _chunk_text(Chunk()) == "世界"
-    assert _chunk_text(object()) == ""
+    assert chunk_text(Chunk()) == "世界"
+    assert chunk_text(object()) == ""
 
 
 @pytest.mark.asyncio

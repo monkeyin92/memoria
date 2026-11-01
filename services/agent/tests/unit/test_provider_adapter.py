@@ -2070,3 +2070,113 @@ async def test_labelled_tts_source_output_skips_streaming_tts() -> None:
         assert line.aigc["ai_generated"] is True
     finally:
         override_labelled_catalogue(None)
+
+
+class _HeadStartTTS(PhraseDrivenTTS):
+    """A provider that may already hold a session opened with the reply's first phrase."""
+
+    def __init__(self, *, head_start: bool) -> None:
+        super().__init__()
+        self.asked: list[tuple[GenerationFence, str]] = []
+        self.prepared: PhraseDrivenStreamingSpeech | None = None
+        if head_start:
+            self.prepared = PhraseDrivenStreamingSpeech()
+            self.prepared.push_text("第一句。")
+
+    def take_presynthesis(
+        self, fence: GenerationFence, text: str
+    ) -> PhraseDrivenStreamingSpeech | None:
+        self.asked.append((fence, text))
+        prepared, self.prepared = self.prepared, None
+        return prepared if prepared is not None and prepared.phrases == [text] else None
+
+
+class _ItemsLLM:
+    def __init__(self, *items: str) -> None:
+        self.items = items
+
+    def stream(self, request: LanguageModelRequest) -> AsyncIterator[str]:
+        _ = request
+
+        async def tokens() -> AsyncIterator[str]:
+            for item in self.items:
+                yield item
+
+        return tokens()
+
+
+def _reply_view(chunks: list[Any]) -> list[tuple[Any, ...]]:
+    return [
+        (
+            chunk.pcm_s16le,
+            chunk.source_start_sample,
+            chunk.assistant_text_delta,
+            chunk.first,
+            chunk.final,
+            [(span.text, span.audio_start_sample, span.audio_end_sample) for span in chunk.text_spans],
+        )
+        for chunk in chunks
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_reply_continues_the_session_opened_ahead_with_its_first_phrase() -> None:
+    replies: dict[bool, list[Any]] = {}
+    for head_start in (False, True):
+        speech = _HeadStartTTS(head_start=head_start)
+        prepared = speech.prepared
+        adapter = ExistingVoiceProviderAdapter(
+            asr_session_factory=cast(Any, lambda: FakeASR()),
+            language_model=cast(Any, MultiPhraseLLM()),
+            speech_synthesis=cast(Any, speech),
+        )
+        identity = SessionIdentity("head-start-reply", stream_epoch=1)
+        fence = GenerationFence(identity.session_id, 1, 1, 0)
+
+        replies[head_start] = await _collect(adapter.generate_reply(identity, "hi", fence))
+
+        assert speech.asked == [(fence, "第一句。")]
+        session = prepared if prepared is not None else speech.stream_instance
+        assert session.phrases == ["第一句。", "第二句。"], "the first phrase is sent once"
+        assert speech.stream_calls == (0 if head_start else 1)
+        assert session.closed
+
+    assert _reply_view(replies[True]) == _reply_view(replies[False])
+
+
+@pytest.mark.asyncio
+async def test_a_reply_that_opens_with_a_stored_line_never_uses_a_session_opened_ahead() -> None:
+    from pathlib import Path
+
+    from services.common.labelled_lines import (
+        LabelledLine,
+        LabelledLineCatalogue,
+        override_labelled_catalogue,
+    )
+
+    text = "我现在有点卡住了，等一会儿再来找我聊吧。"
+    line = LabelledLine(
+        line_id="llm_unavailable",
+        text=text,
+        aigc={"content_id": "llm_unavailable", "service_provider": "Memoria", "ai_generated": True},
+        pcm_s16le=b"\x04\x00" * 960,
+        sample_rate_hz=24_000,
+        ogg_path=Path("llm_unavailable.ogg"),
+    )
+    override_labelled_catalogue(LabelledLineCatalogue({"llm_unavailable": line}))
+    speech = _HeadStartTTS(head_start=True)
+    try:
+        adapter = ExistingVoiceProviderAdapter(
+            asr_session_factory=cast(Any, lambda: FakeASR()),
+            language_model=cast(Any, _ItemsLLM(text, "第二句。")),
+            speech_synthesis=cast(Any, speech),
+        )
+        identity = SessionIdentity("head-start-stored-line", stream_epoch=1)
+        fence = GenerationFence(identity.session_id, 1, 1, 0)
+
+        await _collect(adapter.generate_reply(identity, "hi", fence))
+
+        assert speech.asked == [(fence, "")], "a reply that sends no first phrase asks with none"
+        assert speech.stream_instance.phrases == ["第二句。"]
+    finally:
+        override_labelled_catalogue(None)

@@ -98,3 +98,28 @@ def test_speculative_reply_outcomes_and_their_lead() -> None:
 
     assert "== speculative replies n=4  outcomes: used=2, other_text=1, close=1" in report
     assert "used lead_ms        n=2 p50=610 p90=840 max=840" in report
+
+
+def _speech(session: str, outcome: str, started_ms: int, pcm_lead_ms: int | str) -> str:
+    return (
+        "2026-11-01T08:00:00Z INFO:services.agent.src.providers.doubao_presynthesis:"
+        f"speculative speech session_id={session} turn_id=4 outcome={outcome} "
+        f"started_ms={started_ms} pcm_lead_ms={pcm_lead_ms}"
+    )
+
+
+def test_speculative_speech_outcomes_and_how_far_ahead_the_audio_was() -> None:
+    lines = [
+        _speech("aaaa1111", "used", 900, 420),
+        _speech("aaaa1111", "used", 300, "-"),
+        _speech("aaaa1111", "other_request", 500, 100),
+        _speech("bbbb2222", "used", 50, "-"),
+        _speculative("aaaa1111", "used", 610),
+    ]
+
+    report = timing.summarize(lines, session="aaaa")
+
+    assert "== speculative replies n=1  outcomes: used=1" in report
+    assert "== speculative speech n=3  outcomes: used=2, other_request=1" in report
+    assert "used started_ms     n=2 p50=300 p90=900 max=900" in report
+    assert "used pcm_lead_ms    n=1 p50=420 p90=420 max=420" in report

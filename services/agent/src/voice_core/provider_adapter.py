@@ -1238,6 +1238,29 @@ class ExistingVoiceProviderAdapter:
         self._output_sample = last.source_start_sample + frame_samples
         self._generation_output_ends[fence] = self._output_sample
 
+    def _presynthesized_stream(
+        self, fence: GenerationFence, first_phrase: SpokenPhrase, cancel_event: asyncio.Event
+    ) -> Any:
+        """The session a speculative reply's head start opened, when it is the one this reply would open.
+
+        The provider compares it with the stream it would open now and the text ``push_phrase`` sends first;
+        a reply that sends no first text (a stored line, a cancelled reply) asks with none, which ends any
+        head start for this turn.
+        """
+
+        from services.common.labelled_lines import labelled_catalogue
+
+        take = getattr(self.speech_synthesis, "take_presynthesis", None)
+        if not callable(take):
+            return None
+        spoken = first_phrase.spoken
+        sends_first = (
+            bool(spoken)
+            and not cancel_event.is_set()
+            and labelled_catalogue().by_text(spoken) is None
+        )
+        return take(fence, spoken if sends_first else "")
+
     async def _stream_incremental_generation(
         self,
         user_text: str,
@@ -1349,10 +1372,13 @@ class ExistingVoiceProviderAdapter:
             bound = bind_fence(fence)
             if inspect.isawaitable(bound):
                 await bound
-        stream_factory = self.speech_synthesis.stream  # type: ignore[attr-defined]
-        stream = stream_factory()
-        if inspect.isawaitable(stream):
-            stream = await stream
+        stream = self._presynthesized_stream(fence, first_phrase, cancel_event)
+        first_phrase_pushed = stream is not None
+        if stream is None:
+            stream_factory = self.speech_synthesis.stream  # type: ignore[attr-defined]
+            stream = stream_factory()
+            if inspect.isawaitable(stream):
+                stream = await stream
         push_text = getattr(stream, "push_text", None)
         end_input = getattr(stream, "end_input", None)
         if not callable(push_text) or not callable(end_input):
@@ -1365,7 +1391,7 @@ class ExistingVoiceProviderAdapter:
         first_phrase_ready = asyncio.Event()
         trailing_labelled: list[tuple[Any, str]] = []
 
-        async def push_phrase(phrase: SpokenPhrase) -> None:
+        async def push_phrase(phrase: SpokenPhrase, *, already_pushed: bool = False) -> None:
             if cancel_event.is_set() or not phrase.spoken:
                 return
             labelled = labelled_catalogue().by_text(phrase.spoken)
@@ -1376,14 +1402,15 @@ class ExistingVoiceProviderAdapter:
                 return
             phrases.append(phrase.display)
             pending_announcements.append(phrase.display)
-            pushed = push_text(phrase.spoken)
-            if inspect.isawaitable(pushed):
-                await pushed
+            if not already_pushed:
+                pushed = push_text(phrase.spoken)
+                if inspect.isawaitable(pushed):
+                    await pushed
             first_phrase_ready.set()
 
         async def produce_text() -> None:
             try:
-                await push_phrase(first_phrase)
+                await push_phrase(first_phrase, already_pushed=first_phrase_pushed)
                 async for phrase in reply_iter:
                     await push_phrase(phrase)
             finally:
