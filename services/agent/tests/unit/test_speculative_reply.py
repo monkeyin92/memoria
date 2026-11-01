@@ -506,3 +506,51 @@ async def test_a_clock_question_answered_locally_sends_no_request(
     assert model.requests == []
     assert _outcomes(caplog) == ["plan"]
     await runtime.close()
+
+
+def _counting_refresher(runtime: DuplexRuntime) -> list[str]:
+    """Install a profile refresher that re-applies the current profile and records each call."""
+
+    calls: list[str] = []
+
+    async def _refresh() -> Any:
+        calls.append("refresh")
+        return runtime.orchestrator.runtime_profiles.current
+
+    runtime.set_runtime_profile_refresher(_refresh)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_the_profile_refresh_runs_while_the_commit_waits_for_the_close_verdict() -> None:
+    """2026-11-01 device soak: the session-policy round trip of the voice-bind refresh only started once the
+    close verdict was in, about 0.1 s of every turn.  It now leaves with the commit and the turn uses it."""
+
+    runtime = _runtime("profile-refresh-head-start")
+    runtime.tts = object()
+    calls = _counting_refresher(runtime)
+    runtime.set_conversation_close_semantic_resolver(_Verdict(answer=False))
+    agent = _pipeline(runtime, _Model())
+
+    agent.start_committed_turn_plan(QUESTION)
+    await _let_tasks_run()
+    assert calls == ["refresh"], "the refresh went out before any close verdict"
+
+    await agent._refresh_runtime_profile_for(QUESTION)
+    assert calls == ["refresh"], "the turn reuses the refresh it started"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_refresh_started_for_another_sentence_is_not_reused() -> None:
+    runtime = _runtime("profile-refresh-other-sentence")
+    runtime.tts = object()
+    calls = _counting_refresher(runtime)
+    agent = _pipeline(runtime, _Model())
+
+    agent.start_committed_turn_plan(OTHER)
+    await _let_tasks_run()
+    await agent._refresh_runtime_profile_for(QUESTION)
+
+    assert calls == ["refresh", "refresh"], "a different sentence refreshes again at its own boundary"
+    await runtime.close()
