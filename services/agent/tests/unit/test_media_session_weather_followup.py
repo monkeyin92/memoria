@@ -115,17 +115,19 @@ class _PipelineDelegation(FakeMediaProvider):
         runtime = DuplexRuntime.create(session_id=session_id, barge_in_enabled=False)
         # Production's classifier sees only the current text and says no to 「那明天呢」.
         runtime.set_live_lookup_semantic_resolver(_never_live)
-        if self.prepare_tail_s > 0:
-            committed = runtime.on_turn_committed
-            tail_s = self.prepare_tail_s
+        committed = runtime.on_turn_committed
+        tail_s = self.prepare_tail_s
 
-            async def _keeps_preparing(*args: Any, **kwargs: Any) -> GenerationFence:
-                fence = await committed(*args, **kwargs)
-                # Production's prepare keeps working (plan, context freeze) after the delegation started.
-                await asyncio.sleep(tail_s)
-                return fence
+        async def _prepare(*args: Any, **kwargs: Any) -> GenerationFence:
+            fence = await committed(*args, **kwargs)
+            # Production's prepare keeps working (plan, context freeze) after the delegation started,
+            # then marks the turn's context ready.
+            await asyncio.sleep(tail_s)
+            assert self.pipeline is not None
+            self.pipeline._mark_context_ready(fence)
+            return fence
 
-            runtime.on_turn_committed = _keeps_preparing  # type: ignore[method-assign]
+        runtime.on_turn_committed = _prepare  # type: ignore[method-assign]
         self.pipeline = ReplyPipeline(
             instructions="test",
             runtime=runtime,
@@ -363,3 +365,26 @@ async def test_device_day_follow_up_before_any_city_is_answered() -> None:
         assert device.provider.delivered[-1] == ASK_WEATHER_CITY_REPLY
     finally:
         await device.close()
+
+
+@pytest.mark.asyncio
+async def test_the_city_question_waits_for_its_turn_context_to_be_frozen() -> None:
+    """Device soak 2026-11-01 run 205917: the city question was ready before ``prepare_turn`` froze the
+    turn's context, carried the old context version, and was dropped as superseded at its first audio."""
+
+    provider = _PipelineDelegation(_Search())
+    runtime = provider.runtime("city-question-waits-for-context")
+    pipeline = provider.pipeline
+    assert pipeline is not None
+    first = await runtime.on_turn_committed("今天天气怎么样？", input_modality="audio")
+    assert await pipeline.resolve_media_delegation("今天天气怎么样？", first) == ASK_WEATHER_CITY_REPLY
+    fence = await runtime.on_turn_committed("那明天呢？", input_modality="audio")
+    pipeline._context_ready_by_fence.pop(fence, None)
+
+    answer = asyncio.create_task(pipeline.resolve_media_delegation("那明天呢？", fence))
+    await asyncio.sleep(0.05)
+    assert not answer.done(), "the answer waits for the turn's context"
+    pipeline._mark_context_ready(fence)
+
+    assert await asyncio.wait_for(answer, 1.0) == ASK_WEATHER_CITY_REPLY
+    await runtime.close()

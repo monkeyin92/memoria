@@ -147,6 +147,7 @@ _WARMED_MEMORY_MAX_AGE_S = 10.0
 # The response-plan request of a turn about to be committed goes out under the fence the commit will make
 # (``start_committed_turn_plan``); the commit takes it only when it would send exactly the same request.
 EARLY_RESPONSE_PLAN_TASK_NAME = "response-plan-head-start"
+_TURN_CONTEXT_WAIT_S = 2.5
 
 
 def _speculation_change(
@@ -560,6 +561,7 @@ class ReplyPipeline:
             return realtime_unavailable_reply(query)
         if isinstance(weather, AskCity):
             _log_delegation_route(fence, "ask_city")
+            await self._wait_for_turn_context(fence)
             return ASK_WEATHER_CITY_REPLY
         _log_delegation_route(fence, "weather_search" if weather is not None else "search")
         try:
@@ -1692,6 +1694,24 @@ class ReplyPipeline:
         event = self._context_ready_by_fence.setdefault(fence, asyncio.Event())
         event.set()
 
+    async def _wait_for_turn_context(self, fence: GenerationFence) -> None:
+        """Hold a delegated answer until its turn's context is frozen.
+
+        Device soak 2026-11-01 (run 205917, 4 of 12 「那明天呢？」 before any city): asking for the city needs
+        no lookup, so the answer was ready before ``prepare_turn`` froze the turn's context.  Its output
+        intent carried the context version from before the freeze, the freeze moved the version on, and
+        the reply was dropped as superseded at its first audio.  A prepare that never marks the turn
+        ready leaves the old timing after the bound.
+        """
+
+        ready = self._context_ready_by_fence.setdefault(fence, asyncio.Event())
+        try:
+            await asyncio.wait_for(ready.wait(), timeout=_TURN_CONTEXT_WAIT_S)
+        except TimeoutError:
+            pass
+        finally:
+            self._context_ready_by_fence.pop(fence, None)
+
     def _observe_tts_alignment(
         self,
         fence: GenerationFence,
@@ -2066,7 +2086,7 @@ class ReplyPipeline:
             return
         ready = self._context_ready_by_fence.setdefault(fence, asyncio.Event())
         try:
-            await asyncio.wait_for(ready.wait(), timeout=2.5)
+            await asyncio.wait_for(ready.wait(), timeout=_TURN_CONTEXT_WAIT_S)
         except TimeoutError:
             return
         finally:

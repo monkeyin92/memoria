@@ -41,6 +41,8 @@ def _session(name: str, resolver: object) -> tuple[DuplexRuntime, ReplyPipeline]
 
 async def _say(runtime: DuplexRuntime, pipeline: ReplyPipeline, text: str) -> str | None:
     fence = await runtime.on_turn_committed(text)
+    # Production's prepare_turn marks the turn's context frozen before the delegated answer is used.
+    pipeline._mark_context_ready(fence)
     return await pipeline.resolve_media_delegation(text, fence)
 
 
