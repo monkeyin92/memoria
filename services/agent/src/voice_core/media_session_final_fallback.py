@@ -47,9 +47,37 @@ class MediaFinalMissingFallbackMixin:
 
         async def _commit_final_before_tail(self, context: _MediaVoiceSession) -> bool: ...
 
-        def _turn_commit_retry_matches(
-            self, context: _MediaVoiceSession, stream_epoch: int, endpoint_sample: int
-        ) -> bool: ...
+    @staticmethod
+    def _turn_commit_retry_matches(
+        context: _MediaVoiceSession,
+        stream_epoch: int,
+        endpoint_sample: int,
+    ) -> bool:
+        task = context.pending.turn_commit_retry_task
+        return bool(
+            task is not None
+            and not task.done()
+            and context.pending.turn_commit_retry_stream_epoch == stream_epoch
+            and context.pending.turn_commit_retry_endpoint_sample == endpoint_sample
+        )
+
+    @staticmethod
+    def _words_wait_past_endpoint(
+        context: _MediaVoiceSession, endpoint_sample: int, *, provider_final_missing: bool
+    ) -> bool:
+        """The endpoint range held no words but the child's words run on past it.
+
+        Device soak 2026-11-01 t007: 0.2 s of noise right after a reply pinned the endpoint, the child's
+        question landed after it with no new device VAD, and the endpoint commit found nothing.  The turn
+        then sat until the 6 s tail of the noise's endpoint, whose commit started as the tail closed the
+        session.  Committing to the end of the words right away is what that tail would have done.
+        """
+
+        return (
+            not provider_final_missing
+            and context.pending.turn_endpoint_sample == endpoint_sample
+            and (context.pending.turn_end_sample or 0) > endpoint_sample
+        )
 
     def _arm_final_missing_fallback(
         self, context: _MediaVoiceSession, endpoint_sample: int
