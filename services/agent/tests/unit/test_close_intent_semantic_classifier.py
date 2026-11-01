@@ -116,3 +116,25 @@ async def test_stop_words_never_end_the_conversation_even_if_the_classifier_says
         phrase, cache=cache, semantic_resolver=resolver
     )
     assert not conversation_close_needed(phrase, cache=cache)
+
+
+@pytest.mark.asyncio
+async def test_the_classifier_is_told_thanks_and_turning_down_a_story_are_not_goodbye() -> None:
+    # 2026-11-01 device soak run-20261101-160729: 「谢谢你陪我说话」 and 「谢谢你，刚才那个故事我不想听了」
+    # came back END_SESSION and closed the conversation with the child's turn unanswered.
+    sent: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request.content.decode("utf-8"))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "CONTINUE"}}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    classifier = CloseIntentSemanticClassifier(
+        CloseIntentSemanticClassifierConfig(api_key="test-secret", base_url="https://provider.test/v1"),
+        client=client,
+    )
+    verdict = await classifier.classify(current_text="谢谢你陪我说话")
+    await client.aclose()
+
+    assert verdict is CloseIntentSemanticVerdict.CONTINUE
+    assert sent and "道谢" in sent[0] and "不想听某个故事" in sent[0]
