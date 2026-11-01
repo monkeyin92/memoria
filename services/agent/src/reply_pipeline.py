@@ -149,6 +149,30 @@ _WARMED_MEMORY_MAX_AGE_S = 10.0
 EARLY_RESPONSE_PLAN_TASK_NAME = "response-plan-head-start"
 
 
+def _speculation_change(
+    current: SpeculativeReply,
+    key: SpeculationKey,
+    memory: asyncio.Task[Any] | None,
+    chat_ctx: ChatContext | None,
+) -> str:
+    """Which input of a speculative request for the same sentence differs, as field names."""
+
+    changed = [
+        name
+        for name, before, after in (
+            ("speaker", current.key.speaker, key.speaker),
+            ("fence", current.key.fence, key.fence),
+            ("policy", current.key.policy, key.policy),
+        )
+        if before != after
+    ]
+    if current.memory is not memory:
+        changed.append("memory")
+    if chat_ctx is not None and current.messages not in (None, chat_ctx.to_openai_messages()):
+        changed.append("messages")
+    return ",".join(changed) or "none"
+
+
 def _compact_sentence(text: str) -> str:
     """The sentence without punctuation or spaces: the final and the committed text may differ in those."""
 
@@ -1450,6 +1474,13 @@ class ReplyPipeline:
         ):
             current.claimed = current.claimed or claim
             return
+        if current is not None and current.key.text == text:
+            logger.info(  # never the text: a robot round reads this to see why the head start was lost
+                "speculative reply restart session_id=%s turn_id=%s changed=%s",
+                self._runtime.session_id,
+                key.fence.turn_id,
+                _speculation_change(current, key, memory, chat_ctx),
+            )
         self._replace_speculation(text)
         speculation = SpeculativeReply(key, claimed=claim, memory=memory)
         self._speculation = speculation
