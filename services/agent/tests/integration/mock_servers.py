@@ -674,11 +674,19 @@ def _parse_doubao_client_frame(data: bytes) -> tuple[EventType, str, dict[str, A
     return event, session_id, payload
 
 
+def task_pcm(text: str) -> bytes:
+    """What the ``stream_tasks`` scenario answers one task request with: 10 ms per character at a level
+    only that text gets, so a test can tell whose audio reached it."""
+
+    level = 100 + sum(map(ord, text)) % 20_000
+    return struct.pack("<h", level) * (240 * max(1, len(text)))
+
+
 @dataclass
 class MockDoubaoServer:
     host: str = "127.0.0.1"
     port: int = 0
-    scenario: str = "happy"  # happy|split_pcm|split_pcm_odd|odd_pcm|stall_after_first_pcm|slow|slow_once|slow_after_first|slow_after_second|slow_after_sixth|expire_after_first|empty_ts|scaled_ts|degraded_ts
+    scenario: str = "happy"  # happy|split_pcm|split_pcm_odd|odd_pcm|stall_after_first_pcm|slow|slow_once|slow_after_first|slow_after_second|slow_after_sixth|expire_after_first|empty_ts|scaled_ts|degraded_ts|stream_tasks
     chunk_delay_s: float = 0.0
     connection_failure_payload: bytes | None = None
     #: Reject the HTTP upgrade with this status, which is what Volcengine does
@@ -815,6 +823,16 @@ class MockDoubaoServer:
                 elif event == EventType.TASK_REQUEST and active_texts is not None:
                     req_params = payload.get("req_params", {})
                     active_texts.append(str(req_params.get("text") or ""))
+                    if self.scenario == "stream_tasks":
+                        await ws.send(
+                            _doubao_server_frame(
+                                EventType.TTS_RESPONSE,
+                                session_id=session_id,
+                                payload=task_pcm(active_texts[-1]),
+                                audio=True,
+                            )
+                        )
+                        self.chunk_count += 1
                 elif event == EventType.CANCEL_SESSION:
                     self.canceled_sessions.append(session_id)
                     await ws.send(
@@ -857,6 +875,11 @@ class MockDoubaoServer:
         texts: list[str],
     ) -> None:
         full_text = "".join(texts) or "你好"
+        if self.scenario == "stream_tasks":
+            await self._send_subtitles_and_finish(
+                ws, session_id, full_text, sum(len(task_pcm(text)) // 2 for text in texts)
+            )
+            return
         samples = max(480, len(full_text) * 240)
         if self.scenario in {"scaled_ts", "degraded_ts"}:
             samples = max(samples, 24_000)
@@ -898,6 +921,15 @@ class MockDoubaoServer:
                 # so the client's bounded failure path (not its happy path) is
                 # what ends the stream.
                 return
+        await self._send_subtitles_and_finish(ws, session_id, full_text, samples)
+
+    async def _send_subtitles_and_finish(
+        self,
+        ws: ServerConnection,
+        session_id: str,
+        full_text: str,
+        samples: int,
+    ) -> None:
         if self.scenario != "empty_ts":
             duration_s = samples / 24000
             # A realistic long utterance can be linearly normalized when its

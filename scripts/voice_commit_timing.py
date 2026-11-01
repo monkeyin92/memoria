@@ -18,7 +18,9 @@ wait), ``final_to_start_ms`` (last ASR final -> commit start), the awaits inside
 
 The reply request sent before the commit ends in one ``speculative reply`` line (``ReplyPipeline``): ``used`` means the
 committed turn played it, and ``lead_ms`` of those lines is how long it had been out when the turn asked for it, which
-bounds the time it saved on the reply model's first token.
+bounds the time it saved on the reply model's first token.  Its first phrase, when synthesized before the commit,
+ends in one ``speculative speech`` line (``DoubaoTTS``): ``used`` means the turn played that session, ``started_ms``
+is how long it had been open and ``pcm_lead_ms`` how long its first audio had been waiting (``-``: none yet).
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ COMMIT = "media turn commit timing "
 CALL = "classifier call "
 WAIT = "classifier verdict wait "
 SPECULATIVE = "speculative reply "
+SPEECH = "speculative speech "
 COMMIT_FIELDS = (
     "since_endpoint_ms",
     "final_to_start_ms",
@@ -80,6 +83,7 @@ def summarize(lines: Iterable[str], *, session: str = "") -> str:
     calls: dict[str, list[dict[str, str]]] = defaultdict(list)
     waits: dict[tuple[str, str], list[int]] = defaultdict(list)
     speculative: list[dict[str, str]] = []
+    speech: list[dict[str, str]] = []
     for line in lines:
         if (commit := _fields(line, COMMIT)) is not None:
             if session in commit.get("session", ""):
@@ -91,6 +95,9 @@ def summarize(lines: Iterable[str], *, session: str = "") -> str:
         elif (reply := _fields(line, SPECULATIVE)) is not None:
             if session in reply.get("session_id", ""):
                 speculative.append(reply)
+        elif (spoken := _fields(line, SPEECH)) is not None:
+            if session in spoken.get("session_id", ""):
+                speech.append(spoken)
 
     out = [f"== turn commits n={len(commits)}  results: " + ", ".join(
         f"{name}={count}" for name, count in Counter(c.get("result", "?") for c in commits).most_common()
@@ -115,6 +122,12 @@ def summarize(lines: Iterable[str], *, session: str = "") -> str:
     ))
     used = [v for r in speculative if r.get("outcome") == "used" and (v := _number(r.get("lead_ms"))) is not None]
     out.append(f"  used lead_ms        {_row(used)}")
+    out.append(f"== speculative speech n={len(speech)}  outcomes: " + ", ".join(
+        f"{name}={count}" for name, count in Counter(r.get("outcome", "?") for r in speech).most_common()
+    ))
+    for name in ("started_ms", "pcm_lead_ms"):
+        values = [v for r in speech if r.get("outcome") == "used" and (v := _number(r.get(name))) is not None]
+        out.append(f"  used {name:<14} {_row(values)}")
     return "\n".join(out)
 
 

@@ -18,9 +18,11 @@ from typing import Any
 
 import pytest
 from services.agent.src import reply_pipeline
-from services.agent.src.contracts.ids import CancellationContext
+from services.agent.src.contracts.ids import CancellationContext, GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.handlers import LanguageModelRequest
+from services.agent.src.providers.doubao_tts import DoubaoTTS, DoubaoTTSConfig
+from services.agent.src.providers.doubao_voice_catalog import catalog_by_id
 from services.agent.src.providers.llm_failover import LlmUnavailableError
 from services.agent.src.reply_pipeline import ReplyPipeline
 from services.agent.src.response_planner_client import (
@@ -60,6 +62,7 @@ class _Model:
         self.release = asyncio.Event()
         self.release.set()
         self.fail_after: int | None = None
+        self.opener: list[str] = []
 
     @contextlib.asynccontextmanager
     async def chat(self, *, chat_ctx: Any, tools: list[Any]) -> AsyncIterator[Any]:
@@ -67,7 +70,7 @@ class _Model:
         self.requests.append(chat_ctx.to_openai_messages())
 
         async def tokens() -> AsyncGenerator[str, None]:
-            for position, token in enumerate(_answer(index)):
+            for position, token in enumerate(self.opener + _answer(index)):
                 await self.release.wait()
                 if position == self.fail_after:
                     raise LlmUnavailableError("primary and backup both stalled")
@@ -125,8 +128,8 @@ class _Verdict:
         return self.answer
 
 
-def _runtime(name: str) -> DuplexRuntime:
-    runtime = DuplexRuntime.create(session_id=name)
+def _runtime(name: str, tts: Any = None) -> DuplexRuntime:
+    runtime = DuplexRuntime.create(session_id=name, tts=tts)
     bind_owner_policy(
         runtime,
         policy_version="test-policy",
@@ -142,13 +145,19 @@ def _runtime(name: str) -> DuplexRuntime:
 
 
 def _pipeline(
-    runtime: DuplexRuntime, model: _Model, planner: _Planner | None = None, *, speculative: bool = True
+    runtime: DuplexRuntime,
+    model: _Model,
+    planner: _Planner | None = None,
+    *,
+    speculative: bool = True,
+    speech: bool = True,
 ) -> ReplyPipeline:
     agent = ReplyPipeline(
         instructions=SYSTEM_PROMPT,
         runtime=runtime,
         response_planner_client=planner or _Planner(),  # type: ignore[arg-type]
         speculative_reply=speculative,
+        speculative_speech=speech,
     )
     agent.language_model = model
     return agent
@@ -581,4 +590,187 @@ async def test_a_restart_between_the_final_and_the_commit_names_what_changed(
     restarts = [r.getMessage() for r in caplog.records if "speculative reply restart" in r.getMessage()]
     assert restarts and restarts[-1].endswith(f"changed={changed}")
     assert QUESTION not in caplog.text
+    await runtime.close()
+
+
+class _PendingSpeech:
+    def __init__(self) -> None:
+        self.adopted = False
+        self.discarded: list[str] = []
+
+    def adopt(self) -> None:
+        self.adopted = True
+
+    def discard(self, reason: str) -> None:
+        self.discarded.append(reason)
+
+
+class _HeadStartTTS(DoubaoTTS):
+    """The real Doubao client, except that a pre-synthesis is recorded instead of opening a session."""
+
+    def __init__(self, *, style: bool = False) -> None:
+        super().__init__(
+            DoubaoTTSConfig(
+                api_key="test",
+                speaker=catalog_by_id()["warm_companion"].speaker_id,
+                pool_size=0,
+                style_control_enabled=style,
+            )
+        )
+        self.head_starts: list[tuple[GenerationFence, str, dict[str, Any]]] = []
+        self.pending: list[_PendingSpeech] = []
+        self.broken = False
+
+    def presynthesize(self, fence: GenerationFence, text: str, **plan: Any) -> Any:
+        if self.broken:
+            raise RuntimeError("doubao unavailable")
+        self.head_starts.append((fence, text, plan))
+        self.pending.append(_PendingSpeech())
+        return self.pending[-1]
+
+
+def _voice_settings(tts: DoubaoTTS, fence: GenerationFence) -> tuple[Any, ...]:
+    tts.bind_fence(fence)
+    return (tts.current_rate, tts.current_pitch, tts.current_instruction, tts.current_context_texts)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("opener", [[], ["[emotion:happy]"]])
+async def test_an_adopted_reply_hands_its_turn_the_first_phrase_spoken_with_the_turns_own_settings(
+    opener: list[str],
+) -> None:
+    tts = _HeadStartTTS(style=True)
+    runtime = _runtime("speculative-speech-adopted", tts)
+    model = _Model()
+    model.opener = opener
+    agent = _pipeline(runtime, model)
+    await _earlier_turn(runtime, agent)
+    await _announce(agent, QUESTION)
+
+    assert [text for _, text, _ in tts.head_starts] == ["第1次的回答。"], "sent before the commit"
+    items = await _reply(agent, QUESTION)
+
+    fence, _, plan = tts.head_starts[0]
+    predicted = _HeadStartTTS(style=True)
+    predicted.apply_speech_plan(emotion="neutral", fence=fence, **plan)
+    assert fence == runtime.fence and _spoken(items) == "第1次的回答。"
+    assert _voice_settings(tts, fence) == _voice_settings(predicted, fence)
+    assert tts.pending[0].adopted and tts.pending[0].discarded == []
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("change", "outcome"),
+    [(_change_text, "other_text"), (_change_speaker, "other_speaker"), (_change_context, "other_request")],
+)
+async def test_a_reply_that_is_not_adopted_discards_the_first_phrase_synthesized_ahead(
+    change: Any, outcome: str
+) -> None:
+    tts = _HeadStartTTS()
+    runtime = _runtime(f"speculative-speech-{outcome}", tts)
+    agent = _pipeline(runtime, _Model())
+    await _earlier_turn(runtime, agent)
+    await _announce(agent, QUESTION)
+    assert len(tts.pending) == 1
+
+    items = await _reply(agent, await change(runtime, agent))
+
+    assert _spoken(items) == "第2次的回答。"
+    assert tts.pending[0].discarded == [outcome] and not tts.pending[0].adopted
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sentence", "reason", "outcome"),
+    [("那我先去写作业啦", "conversation_end_explicit", "close"), (QUESTION, "low_confidence", "not_committed")],
+)
+async def test_a_sentence_the_commit_rejects_discards_its_first_phrase_synthesized_ahead(
+    sentence: str, reason: str, outcome: str
+) -> None:
+    tts = _HeadStartTTS()
+    runtime = _runtime(f"speculative-speech-{outcome}", tts)
+    agent = _pipeline(runtime, _Model())
+    await _announce(agent, sentence)
+    assert len(tts.pending) == 1
+
+    agent.discard_speculative_reply(reason)
+
+    assert tts.pending[0].discarded == [outcome] and not tts.pending[0].adopted
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_live_lookup_turn_discards_the_first_phrase_synthesized_ahead() -> None:
+    tts = _HeadStartTTS()
+    runtime = _runtime("speculative-speech-lookup", tts)
+    verdict = _Verdict(answer=True)
+    runtime.set_live_lookup_semantic_resolver(verdict)
+    agent = _pipeline(runtime, _Model())
+    question = "恐龙为什么会灭绝呀"
+
+    runtime.live_lookup_needed(question, start_verdict=True)
+    await _announce(agent, question)
+    assert len(tts.pending) == 1
+    verdict.release.set()
+    await _reply(agent, question)
+
+    assert tts.pending[0].discarded == ["lookup"] and not tts.pending[0].adopted
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_crisis_sentence_synthesizes_nothing_ahead() -> None:
+    tts = _HeadStartTTS()
+    runtime = _runtime("speculative-speech-crisis", tts)
+    agent = _pipeline(runtime, _Model())
+
+    await _announce(agent, "我不想活了")
+    items = await _reply(agent, "我不想活了")
+
+    assert tts.head_starts == [] and [type(item) for item in items] == [FixedSafetyScript]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_a_first_phrase_that_arrives_after_the_commit_is_not_synthesized_ahead(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="services.agent.src.speculative_reply")
+    tts = _HeadStartTTS()
+    runtime = _runtime("speculative-speech-late-phrase", tts)
+    model = _Model()
+    model.release.clear()
+    agent = _pipeline(runtime, model)
+
+    await _announce(agent, QUESTION)
+    reply = asyncio.create_task(_reply(agent, QUESTION))
+    for _ in range(200):
+        if _outcomes(caplog):
+            break
+        await asyncio.sleep(0)
+    assert _outcomes(caplog) == ["used"], "adopted while the model has said nothing yet"
+    model.release.set()
+
+    assert await reply == ["第0次的回答。"]
+    assert tts.head_starts == [], "the turn sends that phrase itself, as early"
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("broken", [True, False])
+async def test_the_reply_is_unchanged_when_the_head_start_fails_or_is_switched_off(
+    caplog: pytest.LogCaptureFixture, broken: bool
+) -> None:
+    caplog.set_level(logging.INFO, logger="services.agent.src.speculative_reply")
+    tts = _HeadStartTTS()
+    tts.broken = broken
+    runtime = _runtime("speculative-speech-unavailable", tts)
+    agent = _pipeline(runtime, _Model(), speech=broken)
+
+    await _announce(agent, QUESTION)
+
+    assert await _reply(agent, QUESTION) == ["第0次的回答。"]
+    assert tts.head_starts == [] and _outcomes(caplog) == ["used"]
     await runtime.close()
