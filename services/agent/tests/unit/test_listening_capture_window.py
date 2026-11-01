@@ -714,7 +714,8 @@ async def test_tail_timeout_rescues_the_final_that_arrived_after_the_endpoint(
 ) -> None:
     """Soak 20261030-134232 t003: the final landed past the endpoint.
 
-    The endpoint commit projected nothing, then the tail timeout discarded the turn.
+    The endpoint commit projected nothing, then the tail timeout discarded the turn.  The endpoint
+    commit now commits to the end of the final itself.
     """
 
     clock = _clock()
@@ -750,16 +751,10 @@ async def test_tail_timeout_rescues_the_final_that_arrived_after_the_endpoint(
         )
         assert context.pending.turn_end_sample == 907_712
         await _cancel_scheduled_endpoint(context)
-        assert await registry._commit_pending_turn(context) == "empty_media_turn"
-
-        await _cancel_scheduled_endpoint(context)
         published = _spy_states(monkeypatch, context.runtime)
-        clock["now"] = 1_031.0
-        await registry._expire_endpoint_tail(
-            identity.session_id,
-            identity.stream_epoch,
-            endpoint,
-        )
+        # The endpoint range holds no words, so the commit runs on to the end of the final at once
+        # instead of leaving it for the tail (device soak 2026-11-01 t007).
+        assert await registry._commit_pending_turn(context) is None
         for _ in range(10):
             await asyncio.sleep(0)
 

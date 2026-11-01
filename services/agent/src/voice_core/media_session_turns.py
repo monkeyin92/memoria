@@ -111,6 +111,14 @@ class MediaTurnEndpointMixin:
             self, context: _MediaVoiceSession, endpoint_sample: int
         ) -> bool: ...
 
+        def _turn_commit_retry_matches(
+            self, context: _MediaVoiceSession, stream_epoch: int, endpoint_sample: int
+        ) -> bool: ...
+
+        def _words_wait_past_endpoint(
+            self, context: _MediaVoiceSession, endpoint_sample: int, *, provider_final_missing: bool
+        ) -> bool: ...
+
         def _schedule_output_retry(self, context: _MediaVoiceSession) -> None: ...
         def _resume_capped_output(self, context: _MediaVoiceSession) -> None: ...
 
@@ -855,20 +863,6 @@ class MediaTurnEndpointMixin:
         )
 
     @staticmethod
-    def _turn_commit_retry_matches(
-        context: _MediaVoiceSession,
-        stream_epoch: int,
-        endpoint_sample: int,
-    ) -> bool:
-        task = context.pending.turn_commit_retry_task
-        return bool(
-            task is not None
-            and not task.done()
-            and context.pending.turn_commit_retry_stream_epoch == stream_epoch
-            and context.pending.turn_commit_retry_endpoint_sample == endpoint_sample
-        )
-
-    @staticmethod
     def _clear_pending_turn_state(context: _MediaVoiceSession) -> None:
         context.pending.reset()
         context.missed_hearing_nudge_count = 0
@@ -1378,6 +1372,10 @@ class MediaTurnEndpointMixin:
                 endpoint_sample=endpoint_sample,
                 provider_final_missing=provider_final_missing,
             )
+        if reason == "empty_media_turn" and self._words_wait_past_endpoint(
+            context, endpoint_sample, provider_final_missing=provider_final_missing
+        ):
+            return await self._commit_pending_turn(context, provider_final_missing=True)
         if reason != "empty_media_turn" and not prepare_retryable:
             self._clear_pending_turn_state(context)
         if fence is None:
