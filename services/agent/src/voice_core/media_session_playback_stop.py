@@ -46,6 +46,7 @@ from services.agent.src.voice_core.media_session_pending_turn import (
     EndpointPinSource,
     open_turn_verdict_scope,
 )
+from services.agent.src.voice_core.semantic_completeness import is_semantically_complete
 from services.agent.src.voice_core.speech_timeline import ASRResult
 from services.common.redaction import redact_pii
 
@@ -801,35 +802,46 @@ class MediaPlaybackStopMixin:
         )
         self._schedule_turn_commit(context)
 
-    def _warm_endpoint_commit(self, context: _MediaVoiceSession) -> None:
-        """A commit is scheduled and its grace runs: start what the commit would wait for after it.
+    def _warm_endpoint_commit(
+        self,
+        context: _MediaVoiceSession,
+        *,
+        asr_final_start_sample: int | None = None,
+        asr_final_end_sample: int | None = None,
+    ) -> None:
+        """Start classifier and memory warmups as soon as a final text is usable.
 
-        Round 12 (2026-10-03): the conversation-close verdict (p50 403 ms) was asked only after the playback
-        follow-up grace, because the task the final scheduled found the endpoint already pinned and returned
-        without asking, and the bound person's memory (about 0.4 s) was fetched after it too (TODOLIST N-14
-        7 and 8).  Round 14 (2026-10-04): every commit that follows a device VAD end waits the same way
-        (final to end of commit p50 2.9 s, against 1.3 s for the follow-up flow): the final arrives while the
-        VAD end is being finalized, the endpoint is set a few milliseconds later in the same step, and the
-        task the final scheduled returns at once; and when earlier finals are merged into the turn, the live
-        verdict started at the last final asks about a shorter sentence than the commit does (N-14 9).
-
-        So this runs wherever a commit is scheduled and reads the sentence the way the commit will (the pending
-        turn up to the endpoint): a final that extends the turn starts the longer text, and whatever nobody
-        uses costs one read-only call.  It starts nothing unless the commit will go ahead with that sentence:
-        not while a reply is in flight (its echo must not start a verdict), not before the ASR covers the
-        endpoint (the commit waits for a late final) and not for a turn a pin owns (a farewell, a clock fact
-        and a live query have their own routes).  Never at the price of the commit: a failure is logged and
-        the commit goes on as before.
+        The endpoint grace still gates commitment. Warmed work is reused only for the same projected text.
         """
 
         pending = context.pending
-        start, endpoint = pending.turn_start_sample, pending.turn_endpoint_sample
+        start = pending.turn_start_sample
+        endpoint = pending.turn_endpoint_sample
+        if endpoint is None:
+            if (
+                asr_final_end_sample is None
+                or pending.active_vad_start_sample is None
+                or pending.pending_partial is not None
+                or pending.turn_end_sample != asr_final_end_sample
+            ):
+                return
+            endpoint = pending.turn_end_sample
+            result_end_sample = asr_final_end_sample
+        else:
+            result_end_sample = pending.turn_end_sample
+        playback_end = context.last_playback_end_sample
+        if (
+            asr_final_start_sample is not None
+            and playback_end is not None
+            and asr_final_start_sample < playback_end
+        ):
+            return
         if (
             start is None
             or endpoint is None
-            or endpoint <= start  # the commit refuses such a range, and the timeline raises on it
+            or endpoint <= start
             or self._reply_in_flight(context)
-            or not self._asr_covers_endpoint(context, pending.turn_end_sample, endpoint)
+            or not self._asr_covers_endpoint(context, result_end_sample, endpoint)
             or pending.clock_fact_endpoint_pinned is not None
             or pending.conversation_close_endpoint_pinned is not None
             or pending.live_query_endpoint_pinned is not None
@@ -842,6 +854,8 @@ class MediaPlaybackStopMixin:
                 stream_epoch=context.stream_epoch, start_sample=start, end_sample=endpoint
             )
             if not text or text == pending.warmed_commit_text:
+                return
+            if pending.turn_endpoint_sample is None and not is_semantically_complete(text):
                 return
             pending.warmed_commit_text = text
             runtime.start_conversation_close_verdict(text)

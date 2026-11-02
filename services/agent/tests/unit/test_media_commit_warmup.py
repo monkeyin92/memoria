@@ -136,6 +136,106 @@ async def test_a_vad_flow_commit_asks_the_close_verdict_before_the_grace_runs_ou
 
 
 @pytest.mark.asyncio
+async def test_an_asr_final_starts_warmups_before_the_device_vad_end(
+    device_media_session: Any,
+) -> None:
+    window = await _open(device_media_session, "vad-warm-before-end")
+    await _device_vad(window, "vad-start", 40_000, final=False)
+    window.context.asr.last_sent_sample = _VOICED_END
+
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="early-final",
+        start_sample=40_000,
+        end_sample=_VOICED_END,
+        text=_QUESTION,
+    )
+    await _let_tasks_run()
+
+    assert window.close_verdict.calls == [_QUESTION]
+    assert window.live_verdict.calls == [_QUESTION]
+    assert window.provider.warmed == [_QUESTION]
+    assert window.provider.prepared == []
+
+    async def no_finals(_identity: SessionIdentity) -> Sequence[ASRResult]:
+        return ()
+
+    window.provider.finalize_speech_segment = no_finals
+    await _device_vad(window, "vad-end", _VOICED_END, final=True)
+    _release(window)
+    await _wait_until(lambda: window.provider.prepared == [_QUESTION], timeout=3.0)
+    assert window.close_verdict.calls.count(_QUESTION) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_incomplete_final_does_not_start_warmups_before_the_device_vad_end(
+    device_media_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = await _open(device_media_session, "vad-no-warm-incomplete")
+    monkeypatch.setattr(window.registry, "_maybe_early_commit_live_lookup", lambda *_args: None)
+    monkeypatch.setattr(window.registry, "_maybe_early_commit_conversation_close", lambda *_args: None)
+    await _device_vad(window, "vad-start", 40_000, final=False)
+    window.context.asr.last_sent_sample = _VOICED_END
+
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="incomplete-final",
+        start_sample=40_000,
+        end_sample=_VOICED_END,
+        text="我想",
+    )
+    await _let_tasks_run()
+
+    assert window.close_verdict.calls == []
+    assert window.live_verdict.calls == []
+    assert window.provider.warmed == []
+    assert window.provider.prepared == []
+
+
+@pytest.mark.asyncio
+async def test_a_final_with_a_pending_partial_does_not_start_warmups_before_the_device_vad_end(
+    device_media_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = await _open(device_media_session, "vad-no-warm-pending-partial")
+    monkeypatch.setattr(window.registry, "_maybe_early_commit_live_lookup", lambda *_args: None)
+    monkeypatch.setattr(window.registry, "_maybe_early_commit_conversation_close", lambda *_args: None)
+    await _device_vad(window, "vad-start", 40_000, final=False)
+    window.context.asr.last_sent_sample = _VOICED_END
+
+    await _accept_media_asr_decision(
+        window.registry,
+        window.identity,
+        sentence_id="partial-final",
+        start_sample=40_000,
+        end_sample=50_000,
+        text="我想",
+        is_final=False,
+    )
+    assert window.context.pending.pending_partial is not None
+
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="late-final",
+        start_sample=40_000,
+        end_sample=_VOICED_END,
+        text=_QUESTION,
+        task_epoch=4,
+    )
+    await _let_tasks_run()
+
+    assert window.context.pending.pending_partial is not None
+    assert window.close_verdict.calls == []
+    assert window.live_verdict.calls == []
+    assert window.provider.warmed == []
+    assert window.provider.prepared == []
+
+
+@pytest.mark.asyncio
 async def test_the_commit_starts_both_verdicts_before_it_waits_for_either(
     device_media_session: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -143,7 +243,9 @@ async def test_the_commit_starts_both_verdicts_before_it_waits_for_either(
 
     window = await _open(device_media_session, "vad-warm-verdicts-together")
     # Isolate the commit gate: the final's early verdicts and the endpoint warm-up must not start them.
-    monkeypatch.setattr(window.registry, "_warm_endpoint_commit", lambda _context: None)
+    monkeypatch.setattr(
+        window.registry, "_warm_endpoint_commit", lambda _context, **_kwargs: None
+    )
     monkeypatch.setattr(window.registry, "_maybe_early_commit_live_lookup", lambda *_args: None)
     monkeypatch.setattr(
         window.registry, "_maybe_early_commit_conversation_close", lambda *_args: None

@@ -224,7 +224,13 @@ class MediaTurnEndpointMixin:
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
 
-        def _warm_endpoint_commit(self, context: _MediaVoiceSession) -> None: ...
+        def _warm_endpoint_commit(
+            self,
+            context: _MediaVoiceSession,
+            *,
+            asr_final_start_sample: int | None = None,
+            asr_final_end_sample: int | None = None,
+        ) -> None: ...
 
         def _pin_conversation_close_endpoint(
             self, context: _MediaVoiceSession, capture_end_sample: int, *, text: str,
@@ -292,6 +298,11 @@ class MediaTurnEndpointMixin:
         self._maybe_early_commit_live_lookup(context, result)
         self._maybe_early_commit_conversation_close(context, result)
         self._maybe_endpoint_playback_followup(context, result)
+        self._warm_endpoint_commit(
+            context,
+            asr_final_start_sample=result.capture_start_sample,
+            asr_final_end_sample=result.capture_end_sample,
+        )
         # A provider final is evidence, never the endpoint itself. If VAD has already ended, a late final re-arms the same logical-turn commit.
         if context.pending.turn_endpoint_sample is not None:
             maybe_rearm_grace_on_evidence(self, context, result.text)
