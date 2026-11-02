@@ -823,6 +823,7 @@ class MediaPlaybackStopMixin:
         start = pending.turn_start_sample
         endpoint = pending.turn_endpoint_sample
         early_final = endpoint is None
+        result_end_sample: int | None
         if endpoint is None:
             if (
                 asr_final_end_sample is None
