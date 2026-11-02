@@ -11,6 +11,7 @@ from typing import Any, Protocol
 
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.providers.funasr_empty_accounting import classify_funasr_empty_outcome
 from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
 from services.agent.src.voice_core.speech_timeline import ASRResult
 
@@ -118,6 +119,44 @@ class ASREmptySegmentEvidence:
     had_speech: bool
     provider_failed: bool
     retried: bool
+    rms: int = 0
+    peak_abs: int = 0
+    samples: int = 0
+    min_rms: int = 100
+    primary_final_seen: bool = False
+    vendor_error: bool = False
+    degrade_reason: str | None = None
+
+
+def classify_empty_segment(
+    *,
+    evidence: ASREmptySegmentEvidence | None,
+    task_pcm_rms: float | None,
+    rescue_min_rms: int | None,
+    empty_audio_error: bool,
+    turn_start_sample: int | None,
+) -> str:
+    """Classify an empty ASR result from the segment's preserved evidence.
+
+    Prefer the evidence captured before the provider task reset. Fall back to
+    the live task RMS for providers that do not publish the preserved copy.
+    """
+
+    if evidence is not None:
+        rms = evidence.rms
+        min_rms = evidence.min_rms
+        empty_audio_error = evidence.vendor_error
+        pcm_gated = evidence.samples == 0
+    else:
+        rms = int(task_pcm_rms) if task_pcm_rms is not None else 0
+        min_rms = rescue_min_rms if rescue_min_rms is not None else 100
+        pcm_gated = turn_start_sample is None and rms == 0
+    return classify_funasr_empty_outcome(
+        rms=rms,
+        min_rms=min_rms,
+        empty_audio_error=empty_audio_error,
+        pcm_gated=pcm_gated,
+    )
 
 
 @dataclass(frozen=True, slots=True)
