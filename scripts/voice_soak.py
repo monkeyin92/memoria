@@ -179,10 +179,17 @@ class SerialWatcher:
 
     def observe_post_scenario(self, timeout: float) -> dict[str, object]:
         """Keep collecting serial events for a bounded tail and snapshot the final state."""
-        started_at = now()
-        started_monotonic = time.monotonic()
-        deadline = started_monotonic + timeout
+        settle_started_monotonic = time.monotonic()
         with self.cond:
+            settle_deadline = settle_started_monotonic + MAX_POST_SCENARIO_SETTLE_S
+            while self.state == "speaking" and (
+                remaining := settle_deadline - time.monotonic()
+            ) > 0:
+                self.cond.wait(min(remaining, 0.25))
+            settled_s = round(time.monotonic() - settle_started_monotonic, 2)
+            started_at = now()
+            started_monotonic = time.monotonic()
+            deadline = started_monotonic + timeout
             while (remaining := deadline - time.monotonic()) > 0:
                 self.cond.wait(min(remaining, 0.25))
 
@@ -206,6 +213,7 @@ class SerialWatcher:
             "final_state": final_state,
             "final_state_source": state_source,
             "final_state_since": stamp(final_state_since),
+            "settled_s": settled_s,
             "waited_s": round(time.monotonic() - started_monotonic, 2),
             "timeout_s": timeout,
             "verdict": verdict,
@@ -216,6 +224,7 @@ class SerialWatcher:
 MIN_CLIP_SECONDS = 0.5
 DEFAULT_POST_SCENARIO_WAIT_S = 180.0
 MAX_POST_SCENARIO_WAIT_S = 180.0
+MAX_POST_SCENARIO_SETTLE_S = 30.0
 
 
 class LogTailWatcher(SerialWatcher):
