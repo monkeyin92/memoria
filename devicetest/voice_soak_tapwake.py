@@ -365,7 +365,7 @@ def main() -> int:
     ap.add_argument("--remote", default=DEFAULT_REMOTE, help="ssh host that runs the production containers")
     args = ap.parse_args()
     if not 0 <= args.post_scenario_wait <= MAX_POST_SCENARIO_WAIT_S:
-        ap.error("--post-scenario-wait must be between 0 and 180 seconds")
+        ap.error("--post-scenario-wait must be between 0 and 240 seconds")
 
     out = Path(args.out)
     bank = Path(args.bank) if args.bank else None
