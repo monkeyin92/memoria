@@ -73,6 +73,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - 21:44 故事播报“别说了”和“停”各测一次，均未进入可证实的 stop 路由，回复自然播完。其后 10-11 [stop-target](docs/acceptance.md) 与 [停止词对照](docs/acceptance.md) 仍不稳定；N-5 ≥30 分钟混合长稳暂缓，先定位停止词路径，不能以长时间发声替代停止验收。
 - 2026-10-12 经授权一圈 `child.json`（音量 30，产品 build 24）：44 步、41 有回复、2 no_reply，约 13 分钟场景 + 90 s 尾窗（退出 4，idle 证据不足）。不是 ≥30 分钟混合长稳，不关闭 N-5。见 [多轮对话收据](docs/acceptance.md)。
 - `voice_soak` 默认保留 210 秒尾窗。若 `scenario_done` 时设备仍在 `speaking`，先最多等 30 秒让设备离开 `speaking`，再开始尾窗；只在尾窗内观察到真实串口 `StateMachine -> idle` 才通过。推定 idle 返回 4（证据不足），非 idle 返回 3（超时）。21:38 真机样本覆盖该判据，旧 10-10 timeline 缺少新收尾记录仍保持未验证。
+- **2026-11-02 owner-silence 恢复（PR #522，已合 main，未部署）**：噪声 VAD 暂停定时器后，空回合 retire 与 capture hold 会用剩余预算恢复 `owner_silence_task`，不再永久暂停。232237 日志比新期限早 8.6 秒结束，真机 idle 仍待下一轮真机窗。
 - [ ] 要你点头的一轮：天气 / 知识 / 故事 / 闲聊、播放中打断（「停」「别说了」）、续问、长静默、重连、负面情绪（孤独、难过、被欺负、焦虑、厌学；不含危机类话术，会给家长队列写入假的危机提醒）、USB 唤醒。孩子的 profile 带 `QUIET_HOURS 04:00–07:00`（时段内唤醒只播晚安）与 `MAX_SESSION_SECONDS 1800`（单次最长 30 分钟），这两项是家长设定、我不绕过，所以不能在 07:00 前测，≥ 30 分钟要分多次会话。工具 `scripts/voice_soak.py`（场景在 `scripts/voice_soak_scenarios/`），产出写进 `docs/acceptance.md`。
 
 ### [ ] N-6 产品体验官评审：说话内容、语气（孩子；2026-10-04 起老人一侧不再评）
@@ -150,6 +151,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 ### [ ] N-14 说完到开口的时延（目标 P90 ≤ 2.0 s、最慢 ≤ 3.0 s，2026-10-31 改；现状 11-01 P50 约 2.0–2.2 s、P90 约 3.1 s）
 
 - **2026-11-01 迭代**（详见 `docs/acceptance.md`「内测准入门禁 2026-11-01 迭代」）：③ 投机起跑回复已做（#506，LLM 段降到约 0），profile 刷新并行（#509）；首句 TTS 预合成做了但暂缓（#514，预估只省约 0.1 s）。剩余大头：说完到 ASR 终稿（火山终稿延迟与重连，各轮差异大）、设备 VAD 结束晚、提交路径上的结束对话判定。
+- **2026-11-02 ASR final→commit warmup（PR #523，已合 main，未部署）**：accepted final 有稳定起点、完整文本、ASR endpoint 覆盖且不在播放回声或重叠边界时，提前启动既有 close/live/memory warmup。232237 离线复算 ASR p90 1.18 秒、reply p95 2.71 秒、最慢 3.19 秒，本刀未证明收益；P90≤2.0/最慢≤3.0 待下一轮 overlay 与 soak。
 
 - **2026-10-31 基线拆分**（run-20261031-204642，34 轮，`tapwake_report.py` 分段 + `media turn commit timing`）：说完→ASR 终稿 p50 0.31 s；终稿→提交 p50 1.13 s（宽限等待 `final_to_start_ms` p50 505、结束对话判定尾巴 `close_ms` p50 173 / p90 508、`prepare_ms` p50 289）；提交→LLM 首字 p50 0.71 s（28 轮有打点）；LLM→TTS 首包 p50 0.49 s（只有 17 轮有 `doubao_first_pcm` 打点，待补）；下发→设备开口 p50 0.11 s。下一步按便宜到贵：① 上线 #483（宽限从说完时起算，已在 main；**2026-10-31 22:38 随 `20261031-batch-6fad1896` 上线**，复测 run-20261031-223809 对比 204642：P50 2.50→2.43 s、P90 3.51→2.85 s、最慢 4.42→3.25 s、2 秒内 1→5 轮，终稿→提交开始 p50 505→343 ms，各一轮，门禁仍未过）；② 结束对话判定尾巴与 `prepare_committed_turn` 并行；③ 宽限期内投机起跑回复（要先设计，唯一可能把 P90 压到 2 s 的一档）。
 

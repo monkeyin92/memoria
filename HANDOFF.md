@@ -44,6 +44,13 @@
 - **2026-10-13 软件 AEC 参考与三窗复测**：板无硬件 loopback（README）；注入 `software_post_gain_pre_i2s`（`memoria_software_aec_ref.h` / patch 0037）。复测相对修复前：只播 `pre_afe_ref` −78→−20 dBFS，粗 ERLE 5→23 dB；安静近端保留；双讲停止词仍不可分。收据 [复测](docs/acceptance.md)。已刷回产品；`aec_reference_verified` 仍 false。N-5 / N-10 / P1-07 保持开放。
 - **固定参考**：[发布、恢复与回滚运维手册](docs/runbooks.md)、[空间治理运维基线](docs/runbooks.md)、[删除域与 seal 契约](docs/compliance.md)；历史归档 [2026-09-24 至 2026-10-03](docs/handoff-archive.md)、[2026-09-16 至 2026-09-23](docs/handoff-archive.md)、[2026-09-20 及更早](docs/handoff-archive.md)。下面各节里写着「2026-10-03 …」「2026-09-2x …」一节的引用，都到这些归档里找。
 
+## 2026-11-02 看板卡 1–3 合并（未部署）
+
+- **#521 测侧判分（merge `b29b9231`）**：新增 `devicetest/safety_soak_report.py`，剥 `tNNN-` 前缀、一回合只配一个结果、尾窗只认串口转换到 idle，并按回合切回复音频。重算 `safety-20261031-073531-140855c3` 为 `crisis_self=1/5`、`crisis_self_escalation=4/5`、`victim=5/5`、`other=0/5`，`post_scenario_ok=0`。该 run 的 `session_mic.wav` 比 timeline 短 122.075 秒，只切出 15 段，另 5 段写 `.missing`，没有补造音频。
+- **#522 owner-silence 与尾窗（merge `ac21a7ba`）**：尾窗在设备离开 `speaking` 后才起算，默认 210 秒、上限 240 秒，静默步 215 秒；噪声 VAD 暂停 owner-silence 定时器后，空回合 retire、capture hold、phase sync 都会用剩余预算恢复，不再留下永久暂停。232237 日志在 23:48:04 截止，比新期限早约 8.6 秒，真机 idle 仍未验证。
+- **#523 ASR final→commit warmup（merge `cec1b53b`）**：accepted final 有稳定起点、完整文本、ASR endpoint 覆盖且不在播放回声或重叠边界时，提前启动既有 close/live/memory warmup；commit、安全、idle、打断判定不变。232237 离线复算 ASR p90 1.18 秒、reply p95 2.71 秒、最慢 3.19 秒，同一采集不能证明运行时收益；真机 P90≤2.0 秒与最慢≤3.0 秒未验证。
+- **验证**：三个 PR 的全部 CI checks 通过后合并；本地 `ruff`、`mypy services --strict`、`scripts/check_module_budget.py check` 与相关 pytest 通过。线上仍为 `20261023-edge-fix-v1`，本次没有部署。
+
 ## 2026-10-29 整栈发布 `20261029-plan-head-start-v1`（PR #445 回复计划请求提前发）
 
 - **范围**：线上 `20261028-assistant-emotion-v1`（`3e42b95d`）只加 #445，发布提交 `2c6ff2cc`（tag 已推送），不含当时 main 上的 #437、#441/#443 等改动（用户选择只发 #445：隔离时延对比，且 #441 合规勾选为空）。#445 本身已合入 main（`d389e0e2`）。
