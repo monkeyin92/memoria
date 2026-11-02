@@ -42,6 +42,7 @@
 - `docs/acceptance/run-20261015-llm-thinking/design.md`
 - `docs/acceptance/run-20261019-n10-vocab/findings.md`
 - `docs/acceptance/run-20261026-entry-round/RUNBOOK.md`
+- `docs/acceptance/run-20261101-asrfix-v2/findings.md`
 - `docs/acceptance/run-20261031-entry-gate/findings.md`
 
 ---
@@ -3815,3 +3816,31 @@ N-10 的验收口径是真机「停」识别率 ≥ 80%（10 次）。本轮 0 /
 2. ASR 无文本（`vendor_silent` / `low_rms`）每轮约 2 次，如 t016「介绍一下大熊猫」、t052「恐龙都吃什么东西」：语音识别或收音层面的问题，待查火山 ASR 与设备增益。
 3. 时延 P90 约 3.0–3.2 s：剩余大头是说完到 ASR 终稿（火山终稿延迟与重连）、设备 VAD 结束晚（最多 8 s）和提交路径上的结束对话判定（p50 约 0.3 s、p90 约 0.6 s）。
 4. 连续 3 轮通过、安全评测（main 上 #485–#489 未上线的原因）仍是门禁前置条件。
+
+---
+
+## 来源：`docs/acceptance/run-20261101-asrfix-v2/findings.md`
+
+## ASR failover 备份时序与 volume 20 真机复测（2026-11-01）
+
+`memoria-agent:20261101-asr-failover-v2`（commit `397007d6`，base `20261101-batch-46eca33e`）于 2026-11-01T15:13:32Z 组件切流，bridge healthy，rollback `memoria-agent:rollback-20261101-asr-failover-v2-pre`。控制面仍是 `memoria-control-api:20261029-plan-head-start-v1`。
+
+真机 device `/dev/cu.usbmodem2101`，Mac 音量 20（开测前 19，结束恢复），22 分钟 `child_tapwake`，23:22:37–23:48:07 CST。63 轮、62 次回复、1 no_reply（t045-bye 预期结束）。首字 P50 2.01 s、P90 2.52 s、P95 2.71 s、P99/最慢 3.19 s。对比 19:08 volume 30 的 54 轮，P50 2.17、P90 3.17、最慢 6.30、no_reply 4。
+
+| 段 | p50 | p90 | max |
+| --- | --- | --- | --- |
+| 收音 | 0.39 | 0.84 | 1.36 |
+| ASR | 0.91 | 1.18 | 1.31 |
+| LLM | 0.07 | 0.54 | 1.23 |
+| TTS | 0.42 | 0.50 | 0.55 |
+| 下发播放 | 0.17 | 0.25 | 0.32 |
+
+54/62 轮最大段仍是「ASR」，即 final 到 commit 的提交路径；5 轮是「收音」，3 轮是 LLM。这次修复把「收音」p90 从 1.13 降到 0.84、max 从 4.23 降到 1.36，但提交路径没有动，所以 P90 仍由 `final_to_done_ms` 主导。
+
+ASR 无文本这次只有 1 次 `low_rms` tail timeout、3 次 `empty_media_turn`，0 次 `final_result_timeout`、0 次 `rescue timed out`、0 次 `both providers failed`。上次 190839 的 t052-dino 无回复这次回复了，延迟 1.51 s；这次没有触发 final 超时，所以新备份时序的救援路径主要由单测覆盖，真机没有复现慢 final。
+
+门禁仍未过，P90 2.52 > 2.0、最慢 3.19 > 3.0。停止与附和在音量 20 下 8 次打断 6 次通过、2 次「嗯」1 次通过；t016/t061 的「停」未停，t018/t063 的「嗯」未停，属于低音量声学问题，不是这次 ASR failover 改动引入的。尾窗 180 s 未观察到 idle，最后 screen off (idle) 在 23:45:58，keepawake verdict 因此记 tail timeout。`voice_soak_verdict.py` 当前不接受 P90/最慢参数，本报告分位数由 `summary.json` 按 `scripts/voice_soak_analyze.py` 的 `pct` 口径计算。
+
+收据目录 `devicetest/run-20261101-232237-soak-tapwake/`，原始输出 `outputs/acceptance/run-20261101-232237-soak-tapwake/`。
+
+---
