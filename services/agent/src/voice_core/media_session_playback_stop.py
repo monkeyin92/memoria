@@ -610,6 +610,11 @@ class MediaPlaybackStopMixin:
         way (``_playback_followup_straddles``).
         """
 
+        self._warm_endpoint_commit(
+            context,
+            asr_final_start_sample=result.capture_start_sample,
+            asr_final_end_sample=result.capture_end_sample,
+        )
         if context.identity.client_type != "device" or not result.text.strip():
             return  # An empty final is not speech and must not pin the endpoint.
         playback_end = context.last_playback_end_sample
