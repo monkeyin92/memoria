@@ -208,10 +208,17 @@ class SerialWatcher:
 
     def observe_post_scenario(self, timeout: float) -> dict[str, object]:
         """Keep collecting serial events for a bounded tail and snapshot the final state."""
-        started_at = now()
-        started_monotonic = time.monotonic()
-        deadline = started_monotonic + timeout
+        settle_started_monotonic = time.monotonic()
         with self.cond:
+            settle_deadline = settle_started_monotonic + MAX_POST_SCENARIO_SETTLE_S
+            while self.state == "speaking" and (
+                remaining := settle_deadline - time.monotonic()
+            ) > 0:
+                self.cond.wait(min(remaining, 0.25))
+            settled_s = round(time.monotonic() - settle_started_monotonic, 2)
+            started_at = now()
+            started_monotonic = time.monotonic()
+            deadline = started_monotonic + timeout
             while (remaining := deadline - time.monotonic()) > 0:
                 self.cond.wait(min(remaining, 0.25))
 
@@ -235,6 +242,7 @@ class SerialWatcher:
             "final_state": final_state,
             "final_state_source": state_source,
             "final_state_since": stamp(final_state_since),
+            "settled_s": settled_s,
             "waited_s": round(time.monotonic() - started_monotonic, 2),
             "timeout_s": timeout,
             "verdict": verdict,
@@ -243,8 +251,9 @@ class SerialWatcher:
 
 
 MIN_CLIP_SECONDS = 0.5
-DEFAULT_POST_SCENARIO_WAIT_S = 180.0
-MAX_POST_SCENARIO_WAIT_S = 180.0
+DEFAULT_POST_SCENARIO_WAIT_S = 210.0
+MAX_POST_SCENARIO_WAIT_S = 240.0
+MAX_POST_SCENARIO_SETTLE_S = 30.0
 FORCE_SETTLE_S = 5.0  # a repeated wake refusal: just wait for listening|idle, never force a full idle
 
 
@@ -345,7 +354,7 @@ def main() -> int:
         "--post-scenario-wait",
         type=float,
         default=DEFAULT_POST_SCENARIO_WAIT_S,
-        help="seconds to keep collecting logs after the scenario (0-180; default 180)",
+        help="seconds to keep collecting logs after the scenario (0-240; default 210)",
     )
     ap.add_argument("--port", default=DEFAULT_PORT, help="the robot's USB serial port")
     ap.add_argument("--serial-log", default=None, help="follow this log (voice_soak_serial_logger.py) instead of opening the port")
@@ -356,7 +365,7 @@ def main() -> int:
     ap.add_argument("--remote", default=DEFAULT_REMOTE, help="ssh host that runs the production containers")
     args = ap.parse_args()
     if not 0 <= args.post_scenario_wait <= MAX_POST_SCENARIO_WAIT_S:
-        ap.error("--post-scenario-wait must be between 0 and 180 seconds")
+        ap.error("--post-scenario-wait must be between 0 and 240 seconds")
 
     out = Path(args.out)
     bank = Path(args.bank) if args.bank else None
