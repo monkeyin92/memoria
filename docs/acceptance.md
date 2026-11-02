@@ -42,7 +42,6 @@
 - `docs/acceptance/run-20261015-llm-thinking/design.md`
 - `docs/acceptance/run-20261019-n10-vocab/findings.md`
 - `docs/acceptance/run-20261026-entry-round/RUNBOOK.md`
-- `docs/acceptance/run-20261101-asrfix-v2/findings.md`
 - `docs/acceptance/run-20261031-entry-gate/findings.md`
 
 ---
@@ -3818,8 +3817,6 @@ N-10 的验收口径是真机「停」识别率 ≥ 80%（10 次）。本轮 0 /
 4. 连续 3 轮通过、安全评测（main 上 #485–#489 未上线的原因）仍是门禁前置条件。
 
 ---
-
-## 来源：`docs/acceptance/run-20261101-asrfix-v2/findings.md`
 
 ## ASR failover 备份时序与 volume 20 真机复测（2026-11-01）
 
