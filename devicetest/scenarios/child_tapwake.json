@@ -248,7 +248,7 @@
  },
  {
   "tag": "silence",
-  "expect_idle_wait": 185
+  "expect_idle_wait": 215
  },
  {
   "tag": "rewake-hello",

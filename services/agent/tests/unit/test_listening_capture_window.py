@@ -439,6 +439,42 @@ async def test_listening_capture_stops_after_thirty_seconds_and_keeps_the_connec
 
 
 @pytest.mark.asyncio
+async def test_a_paused_owner_silence_timer_resumes_when_capture_hold_latches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _clock()
+    registry, context, provider, identity = await _open(monkeypatch, clock)
+    try:
+        assert context.owner_silence_task is not None
+        paused_remaining = context.owner_silence_remaining_s
+        registry._admit_owner_silence_vad(context, 48_000)
+        watchdog = context.pending.max_user_speech_task
+        if watchdog is not None:
+            watchdog.cancel()
+            await asyncio.gather(watchdog, return_exceptions=True)
+        assert context.owner_silence_task is None
+        assert context.owner_silence_remaining_s is not None
+
+        context.pending.reset()
+        registry._latch_listening_capture(context)
+
+        assert context.listening_capture_hold is True
+        assert context.owner_silence_task is not None
+        assert context.owner_silence_remaining_s == pytest.approx(paused_remaining)
+
+        lost = context.owner_silence_task
+        lost.cancel()
+        await asyncio.gather(lost, return_exceptions=True)
+        context.owner_silence_task = None
+        registry._sync_owner_silence_phase(context, "listening")
+        assert context.listening_capture_hold is True
+        assert context.owner_silence_task is not None
+        assert provider.frames == []
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_screen_tap_resumes_capture_without_replaying_or_vad(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

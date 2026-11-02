@@ -222,8 +222,8 @@ class SerialWatcher:
 
 
 MIN_CLIP_SECONDS = 0.5
-DEFAULT_POST_SCENARIO_WAIT_S = 180.0
-MAX_POST_SCENARIO_WAIT_S = 180.0
+DEFAULT_POST_SCENARIO_WAIT_S = 210.0
+MAX_POST_SCENARIO_WAIT_S = 240.0
 MAX_POST_SCENARIO_SETTLE_S = 30.0
 
 
@@ -324,7 +324,7 @@ def main() -> int:
         "--post-scenario-wait",
         type=float,
         default=DEFAULT_POST_SCENARIO_WAIT_S,
-        help="seconds to keep collecting logs after the scenario (0-180; default 180)",
+        help="seconds to keep collecting logs after the scenario (0-240; default 210)",
     )
     ap.add_argument("--port", default=DEFAULT_PORT, help="the robot's USB serial port")
     ap.add_argument("--serial-log", default=None, help="follow this log (voice_soak_serial_logger.py) instead of opening the port")
