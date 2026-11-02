@@ -236,6 +236,40 @@ async def test_a_final_with_a_pending_partial_does_not_start_warmups_before_the_
 
 
 @pytest.mark.asyncio
+async def test_an_unpinned_playback_overlap_turn_does_not_warm_before_vad_end(
+    device_media_session: Any,
+) -> None:
+    window = await _open(device_media_session, "vad-no-warm-playback-overlap")
+    pending = window.context.pending
+    pending.turn_start_sample = 40_000
+    pending.turn_end_sample = _VOICED_END
+    pending.turn_endpoint_sample = None
+    pending.active_vad_start_sample = 40_000
+    window.context.last_playback_end_sample = 50_000
+
+    pending.pending_turn_playback_overlap = True
+    window.registry._warm_endpoint_commit(
+        window.context,
+        asr_final_start_sample=_VOICED_END,
+        asr_final_end_sample=_VOICED_END,
+    )
+    assert window.provider.warmed == []
+    assert window.close_verdict.calls == []
+    assert window.live_verdict.calls == []
+
+    # The projected text starts before the playback boundary even without the flag.
+    pending.pending_turn_playback_overlap = False
+    window.registry._warm_endpoint_commit(
+        window.context,
+        asr_final_start_sample=_VOICED_END,
+        asr_final_end_sample=_VOICED_END,
+    )
+    assert window.provider.warmed == []
+    assert window.close_verdict.calls == []
+    assert window.live_verdict.calls == []
+
+
+@pytest.mark.asyncio
 async def test_the_commit_starts_both_verdicts_before_it_waits_for_either(
     device_media_session: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:

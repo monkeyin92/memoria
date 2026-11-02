@@ -817,6 +817,7 @@ class MediaPlaybackStopMixin:
         pending = context.pending
         start = pending.turn_start_sample
         endpoint = pending.turn_endpoint_sample
+        early_final = endpoint is None
         if endpoint is None:
             if (
                 asr_final_end_sample is None
@@ -830,6 +831,11 @@ class MediaPlaybackStopMixin:
         else:
             result_end_sample = pending.turn_end_sample
         playback_end = context.last_playback_end_sample
+        if early_final:
+            if pending.pending_turn_playback_overlap:
+                return
+            if playback_end is not None and (start is None or start < playback_end):
+                return
         if (
             asr_final_start_sample is not None
             and playback_end is not None
