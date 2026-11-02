@@ -160,7 +160,7 @@ class SerialWatcher:
                 self.cond.wait(min(remaining, 0.25))
 
     def wait_state(self, states: set[str], timeout: float, since: float | None = None,
-                   require_source: str | None = None) -> float | None:
+                   require_source: str | tuple[str, ...] | None = None) -> float | None:
         """Return the time we were in one of `states` (after `since`), or None on timeout.
 
         `require_source` pins how the state was learned, e.g. "serial_transition" for a real State line.
@@ -168,8 +168,10 @@ class SerialWatcher:
         deadline = now() + timeout
         with self.cond:
             while True:
+                sources = ((require_source,) if isinstance(require_source, str)
+                           else (require_source or ()))
                 if (self.state in states and (since is None or self.state_since >= since)
-                        and (require_source is None or self.state_source == require_source)):
+                        and (not sources or self.state_source in sources)):
                     return self.state_since
                 remaining = deadline - now()
                 if remaining <= 0:
@@ -269,7 +271,24 @@ class LogTailWatcher(SerialWatcher):
     def _run(self) -> None:
         line_re = re.compile(r"^(\d\d):(\d\d):(\d\d)\.(\d\d\d) (.*)$")
         with self.source.open("rb") as src, self.path.open("ab") as out:
-            src.seek(0, 2)  # only what happens from now on
+            # Replay what the logger already captured before tailing. The wrapper resets the board and
+            # starts the logger first, so the one `activating -> idle` line the idle-only gate needs is
+            # always written before this watcher opens the file. Seeking to the end lost it and the gate
+            # could never pass (2026-11-02 19:56, 20:05, 20:17 attempts).
+            for raw in src.read().split(b"\n"):
+                text = raw.decode("utf-8", "replace")
+                if not text:
+                    continue
+                match = line_re.match(text)
+                if match:
+                    hh, mm, ss, ms = int(match[1]), int(match[2]), int(match[3]), int(match[4])
+                    local = time.localtime()
+                    replay_t = time.mktime(local[:3] + (hh, mm, ss) + local[6:]) + ms / 1000
+                    self._parse(replay_t, match[5])
+                else:
+                    # A raw boot transcript carries no clock prefix, so it lands here. Only timing is
+                    # unknown, not the state: the board is idle from this boot onward.
+                    self._parse(now(), text)
             buf = b""
             while not self.stop.is_set():
                 chunk = src.read(65536)
