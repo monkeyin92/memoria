@@ -50,6 +50,7 @@
 - **#522 owner-silence 与尾窗（merge `ac21a7ba`）**：尾窗在设备离开 `speaking` 后才起算，默认 210 秒、上限 240 秒，静默步 215 秒；噪声 VAD 暂停 owner-silence 定时器后，空回合 retire、capture hold、phase sync 都会用剩余预算恢复，不再留下永久暂停。232237 日志在 23:48:04 截止，比新期限早约 8.6 秒，真机 idle 仍未验证。
 - **#523 ASR final→commit warmup（merge `cec1b53b`）**：accepted final 有稳定起点、完整文本、ASR endpoint 覆盖且不在播放回声或重叠边界时，提前启动既有 close/live/memory warmup；commit、安全、idle、打断判定不变。232237 离线复算 ASR p90 1.18 秒、reply p95 2.71 秒、最慢 3.19 秒，同一采集不能证明运行时收益；真机 P90≤2.0 秒与最慢≤3.0 秒未验证。
 - **验证**：三个 PR 的全部 CI checks 通过后合并；本地 `ruff`、`mypy services --strict`、`scripts/check_module_budget.py check` 与相关 pytest 通过。线上仍为 `20261023-edge-fix-v1`，本次没有部署。
+- **卡 4 bridge overlay（`20261102-card-1-3-overlay-v1`）**：2026-11-02 07:07:46Z 切流 PASS。新 bridge 为 `memoria-agent:20261102-card-1-3-overlay-v1`（image id `263748d8bb79…`），基座 `20261102-card-1-3-base-v1`（image id `b277bdad…`，revision `18e39519`），healthy、restarts 0。control-api 仍 `20261029-plan-head-start-v1`，media-edge 仍 `20261023-edge-fix-v1`。回滚点 `memoria-agent:rollback-20261102-card-1-3-overlay-v1-pre` = `20261101-asr-failover-v2`（image id `7095f68c…`）。新 `agent-component.override.yml` 已 `record-override` 登记；生产盘 84%（剩 6.4G）。卡 5 机器测试等 Monkey 通知后跑 precheck → safety → vol30% soak。
 
 ## 2026-10-29 整栈发布 `20261029-plan-head-start-v1`（PR #445 回复计划请求提前发）
 
