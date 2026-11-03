@@ -1,0 +1,3252 @@
+TAP version 13
+# Subtest: app config only declares supported required private APIs
+ok 1 - app config only declares supported required private APIs
+  ---
+  duration_ms: 0.641292
+  ...
+# Subtest: app config declares no recorder permission after voice-clone removal
+ok 2 - app config declares no recorder permission after voice-clone removal
+  ---
+  duration_ms: 0.065958
+  ...
+# Subtest: home is the first tab and stays a status board without in-app chat
+ok 3 - home is the first tab and stays a status board without in-app chat
+  ---
+  duration_ms: 0.438542
+  ...
+# Subtest: the detail shows category, summary, what the robot said and what to do, never the words
+ok 4 - the detail shows category, summary, what the robot said and what to do, never the words
+  ---
+  duration_ms: 9.484666
+  ...
+# Subtest: an interrupted crisis script keeps the headline and shows the server sentence verbatim
+ok 5 - an interrupted crisis script keeps the headline and shows the server sentence verbatim
+  ---
+  duration_ms: 8.802583
+  ...
+# Subtest: a guessed retell note never becomes the attention title or the detail
+ok 6 - a guessed retell note never becomes the attention title or the detail
+  ---
+  duration_ms: 5.7505
+  ...
+# Subtest: the attention page opens the alert it was linked to
+ok 7 - the attention page opens the alert it was linked to
+  ---
+  duration_ms: 15.216167
+  ...
+# Subtest: an unknown script shows the title and neither a category nor a hotline
+ok 8 - an unknown script shows the title and neither a category nor a hotline
+  ---
+  duration_ms: 2.002
+  ...
+# Subtest: a stale or missing link says nothing needs attention instead of showing another alert
+ok 9 - a stale or missing link says nothing needs attention instead of showing another alert
+  ---
+  duration_ms: 4.998833
+  ...
+# Subtest: 我知道了 records the receipt once and leaves only after it is saved
+ok 10 - 我知道了 records the receipt once and leaves only after it is saved
+  ---
+  duration_ms: 3.686375
+  ...
+# Subtest: the back chevron leaves without recording anything
+ok 11 - the back chevron leaves without recording anything
+  ---
+  duration_ms: 1.722375
+  ...
+# Subtest: a save that fails stays on the alert and asks for another tap
+ok 12 - a save that fails stays on the alert and asks for another tap
+  ---
+  duration_ms: 7.781209
+  ...
+# Subtest: an alert that is already gone when 我知道了 is tapped still leaves
+ok 13 - an alert that is already gone when 我知道了 is tapped still leaves
+  ---
+  duration_ms: 1.919917
+  ...
+# Subtest: 我知道了 on the empty card just leaves
+ok 14 - 我知道了 on the empty card just leaves
+  ---
+  duration_ms: 1.490292
+  ...
+# Subtest: the home attention card and the review banner both open the attention page
+ok 15 - the home attention card and the review banner both open the attention page
+  ---
+  duration_ms: 14.884042
+  ...
+# Subtest: no shipped copy carries a hotline number; the server's next-step line owns them
+ok 16 - no shipped copy carries a hotline number; the server's next-step line owns them
+  ---
+  duration_ms: 18.34225
+  ...
+# Subtest: the login checkbox starts unchecked and names both agreements
+ok 17 - the login checkbox starts unchecked and names both agreements
+  ---
+  duration_ms: 12.800042
+  ...
+# Subtest: agreement titles open the full text and do not check the box
+ok 18 - agreement titles open the full text and do not check the box
+  ---
+  duration_ms: 2.917167
+  ...
+# Subtest: login while unchecked shows the prompt and sends no request
+ok 19 - login while unchecked shows the prompt and sends no request
+  ---
+  duration_ms: 3.605792
+  ...
+# Subtest: a checked login sends only the phone code
+ok 20 - a checked login sends only the phone code
+  ---
+  duration_ms: 3.714167
+  ...
+# Subtest: returning to the login page does not check the box
+ok 21 - returning to the login page does not check the box
+  ---
+  duration_ms: 1.420959
+  ...
+# Subtest: a failed login stays on the page and does not keep a phone request in flight
+ok 22 - a failed login stays on the page and does not keep a phone request in flight
+  ---
+  duration_ms: 2.339375
+  ...
+# Subtest: child consent header puts the draft chip and the two-line title on separate lines
+ok 23 - child consent header puts the draft chip and the two-line title on separate lines
+  ---
+  duration_ms: 1.027709
+  ...
+# Subtest: child consent facts state only what the product does
+ok 24 - child consent facts state only what the product does
+  ---
+  duration_ms: 6.061167
+  ...
+# Subtest: the login page collects no avatar or nickname
+ok 25 - the login page collects no avatar or nickname
+  ---
+  duration_ms: 0.169583
+  ...
+# Subtest: app registers binding, device, and onboarding pages
+ok 26 - app registers binding, device, and onboarding pages
+  ---
+  duration_ms: 1.534333
+  ...
+# Subtest: binding page cannot enter from a device code or scanner
+ok 27 - binding page cannot enter from a device code or scanner
+  ---
+  duration_ms: 0.533541
+  ...
+# Subtest: binding page names the robot by the tail passed from the onboarding page, never its raw id
+ok 28 - binding page names the robot by the tail passed from the onboarding page, never its raw id
+  ---
+  duration_ms: 0.423833
+  ...
+# Subtest: binding page collects a required subject remark after choosing who it is for
+ok 29 - binding page collects a required subject remark after choosing who it is for
+  ---
+  duration_ms: 3.016083
+  ...
+# Subtest: the companion picked while binding becomes the account's companion
+ok 30 - the companion picked while binding becomes the account's companion
+  ---
+  duration_ms: 0.636541
+  ...
+# Subtest: self_use flow keeps sensitive offers off by default and submits clean payload
+ok 31 - self_use flow keeps sensitive offers off by default and submits clean payload
+  ---
+  duration_ms: 0.466083
+  ...
+# Subtest: checking digital self includes it in the submitted consent offers
+ok 32 - checking digital self includes it in the submitted consent offers
+  ---
+  duration_ms: 0.368
+  ...
+# Subtest: parent_for_child flow validates minimal info and submits guardian relationship
+ok 33 - parent_for_child flow validates minimal info and submits guardian relationship
+  ---
+  duration_ms: 0.78775
+  ...
+# Subtest: parent_for_child cannot submit until the child rules are accepted
+ok 34 - parent_for_child cannot submit until the child rules are accepted
+  ---
+  duration_ms: 0.538792
+  ...
+# Subtest: parent_for_child bind still completes when WeChat subscribe is rejected
+ok 35 - parent_for_child bind still completes when WeChat subscribe is rejected
+  ---
+  duration_ms: 0.511166
+  ...
+# Subtest: parent_for_child asks before submitting an unusually short quiet-hours window
+ok 36 - parent_for_child asks before submitting an unusually short quiet-hours window
+  ---
+  duration_ms: 0.607666
+  ...
+# Subtest: minor long-term memory defaults unticked and sends memory_level none
+ok 37 - minor long-term memory defaults unticked and sends memory_level none
+  ---
+  duration_ms: 0.376792
+  ...
+# Subtest: ticking minor long-term memory sends memory_level growth_summary
+ok 38 - ticking minor long-term memory sends memory_level growth_summary
+  ---
+  duration_ms: 0.355542
+  ...
+# Subtest: parent_for_child can reuse an existing linked child profile
+ok 39 - parent_for_child can reuse an existing linked child profile
+  ---
+  duration_ms: 1.208458
+  ...
+# Subtest: late child-profile lookup is ignored after switching away from parent_for_child
+ok 40 - late child-profile lookup is ignored after switching away from parent_for_child
+  ---
+  duration_ms: 4.315542
+  ...
+# Subtest: a child declared by an earlier binding can be reused when no guardian link exists
+ok 41 - a child declared by an earlier binding can be reused when no guardian link exists
+  ---
+  duration_ms: 0.518708
+  ...
+# Subtest: choosing 使用已有档案 in the 孩子档案 picker binds the child picked in the list
+ok 42 - choosing 使用已有档案 in the 孩子档案 picker binds the child picked in the list
+  ---
+  duration_ms: 0.479209
+  ...
+# Subtest: a picker row that does not exist leaves the child-profile source as it was
+ok 43 - a picker row that does not exist leaves the child-profile source as it was
+  ---
+  duration_ms: 0.864459
+  ...
+# Subtest: guardian-linked and binding-declared children are merged without repeats
+ok 44 - guardian-linked and binding-declared children are merged without repeats
+  ---
+  duration_ms: 1.131
+  ...
+# Subtest: a child already chosen keeps its place when the slower lookup adds more
+ok 45 - a child already chosen keeps its place when the slower lookup adds more
+  ---
+  duration_ms: 0.94075
+  ...
+# Subtest: a failing lookup leaves the children the other one found
+ok 46 - a failing lookup leaves the children the other one found
+  ---
+  duration_ms: 0.886
+  ...
+# Subtest: a late binding-children lookup is ignored after switching away from parent_for_child
+ok 47 - a late binding-children lookup is ignored after switching away from parent_for_child
+  ---
+  duration_ms: 0.434334
+  ...
+# Subtest: the binding children list is read from the server and tolerates an older backend
+ok 48 - the binding children list is read from the server and tolerates an older backend
+  ---
+  duration_ms: 1.135333
+  ...
+# Subtest: the bind page tells a parent that an earlier child profile can be reused
+ok 49 - the bind page tells a parent that an earlier child profile can be reused
+  ---
+  duration_ms: 0.379834
+  ...
+# Subtest: the finish step keeps the selected voice summary alongside the device illustration
+ok 50 - the finish step keeps the selected voice summary alongside the device illustration
+  ---
+  duration_ms: 1.02375
+  ...
+# Subtest: continuing to activation hands the picked companion to the onboarding page
+ok 51 - continuing to activation hands the picked companion to the onboarding page
+  ---
+  duration_ms: 0.523208
+  ...
+# Subtest: child_for_parent defaults proxy memory consent off and keeps admin scope
+ok 52 - child_for_parent defaults proxy memory consent off and keeps admin scope
+  ---
+  duration_ms: 0.367
+  ...
+# Subtest: child_for_parent binder can tick proxy memory consent on the parent's behalf
+ok 53 - child_for_parent binder can tick proxy memory consent on the parent's behalf
+  ---
+  duration_ms: 0.17225
+  ...
+# Subtest: family_shared flow keeps extra members off the binding request
+ok 54 - family_shared flow keeps extra members off the binding request
+  ---
+  duration_ms: 0.265375
+  ...
+# Subtest: binding failures surface explainable errors and stay on review
+ok 55 - binding failures surface explainable errors and stay on review
+  ---
+  duration_ms: 0.218708
+  ...
+# Subtest: submit after the claim expired explains the timeout and offers a rescan
+ok 56 - submit after the claim expired explains the timeout and offers a rescan
+  ---
+  duration_ms: 0.137917
+  ...
+# Subtest: submit after the onboarding session expired explains the expiry and offers a rescan
+ok 57 - submit after the onboarding session expired explains the expiry and offers a rescan
+  ---
+  duration_ms: 0.447792
+  ...
+# Subtest: the review step refuses an expired claim before the WeChat prompt runs
+ok 58 - the review step refuses an expired claim before the WeChat prompt runs
+  ---
+  duration_ms: 0.826667
+  ...
+# Subtest: done step shows the binding manifest and offers device management
+ok 59 - done step shows the binding manifest and offers device management
+  ---
+  duration_ms: 0.467833
+  ...
+# Subtest: subject remark helpers normalize, scope, and extract bind-form labels
+ok 60 - subject remark helpers normalize, scope, and extract bind-form labels
+  ---
+  duration_ms: 0.312708
+  ...
+# Subtest: the form step lays every AI role out as a grid card with exactly one selected
+ok 61 - the form step lays every AI role out as a grid card with exactly one selected
+  ---
+  duration_ms: 16.130833
+  ...
+# Subtest: tapping a role selects it and the voice card follows the selection
+ok 62 - tapping a role selects it and the voice card follows the selection
+  ---
+  duration_ms: 7.024416
+  ...
+# Subtest: 试听 plays the selected role's voice, and picking another role stops it
+ok 63 - 试听 plays the selected role's voice, and picking another role stops it
+  ---
+  duration_ms: 11.672041
+  ...
+# Subtest: the review step labels itself as steps 3 and 4 and keeps 上一步 inside the card
+ok 64 - the review step labels itself as steps 3 and 4 and keeps 上一步 inside the card
+  ---
+  duration_ms: 6.66775
+  ...
+# Subtest: the archive leads the page with the design's three labels and footer, summaries follow below
+ok 65 - the archive leads the page with the design's three labels and footer, summaries follow below
+  ---
+  duration_ms: 17.152459
+  ...
+# Subtest: an open long-term memory shows each fact on its own row
+ok 66 - an open long-term memory shows each fact on its own row
+  ---
+  duration_ms: 4.432792
+  ...
+# Subtest: a closed long-term memory shows an empty state and does not list facts
+ok 67 - a closed long-term memory shows an empty state and does not list facts
+  ---
+  duration_ms: 4.226959
+  ...
+# Subtest: with no summaries yet the section explains when they appear
+ok 68 - with no summaries yet the section explains when they appear
+  ---
+  duration_ms: 3.777959
+  ...
+# Subtest: each fact can be deleted and the archive can be cleared, both only after confirm
+ok 69 - each fact can be deleted and the archive can be cleared, both only after confirm
+  ---
+  duration_ms: 5.12625
+  ...
+# Subtest: deleting a fact from the archive card removes it on the server and from the page
+ok 70 - deleting a fact from the archive card removes it on the server and from the page
+  ---
+  duration_ms: 2.203417
+  ...
+# Subtest: opening from the home preview scrolls once to 近期摘要
+ok 71 - opening from the home preview scrolls once to 近期摘要
+  ---
+  duration_ms: 4.497792
+  ...
+# Subtest: opening from anywhere else stays at the archive
+ok 72 - opening from anywhere else stays at the archive
+  ---
+  duration_ms: 3.821667
+  ...
+# Subtest: a logged-in parent whose memory read is refused does not see the raw login line
+ok 73 - a logged-in parent whose memory read is refused does not see the raw login line
+  ---
+  duration_ms: 5.430041
+  ...
+# Subtest: a guest return clears a stale login error instead of leaving it above the empty state
+ok 74 - a guest return clears a stale login error instead of leaving it above the empty state
+  ---
+  duration_ms: 3.192708
+  ...
+# Subtest: the home memory card opens the summaries section
+ok 75 - the home memory card opens the summaries section
+  ---
+  duration_ms: 5.512458
+  ...
+# Subtest: home routes unread safety banner and shows the child memory card
+ok 76 - home routes unread safety banner and shows the child memory card
+  ---
+  duration_ms: 1.804834
+  ...
+# Subtest: page copy and structure match product acceptance
+ok 77 - page copy and structure match product acceptance
+  ---
+  duration_ms: 1.308209
+  ...
+# Subtest: normalizeSessionSummaries uses spaced Chinese dates and newest first
+ok 78 - normalizeSessionSummaries uses spaced Chinese dates and newest first
+  ---
+  duration_ms: 1.196833
+  ...
+# Subtest: archive facts group under whitelist categories
+ok 79 - archive facts group under whitelist categories
+  ---
+  duration_ms: 0.216792
+  ...
+# Subtest: child memory API helpers hit the guardian layer endpoints
+ok 80 - child memory API helpers hit the guardian layer endpoints
+  ---
+  duration_ms: 0.55425
+  ...
+# Subtest: recent summaries list, delete sheet confirms, clear-all shows remaining 0
+ok 81 - recent summaries list, delete sheet confirms, clear-all shows remaining 0
+  ---
+  duration_ms: 3.986791
+  ...
+# Subtest: archive hides items without consent and confirms turn-off copy
+ok 82 - archive hides items without consent and confirms turn-off copy
+  ---
+  duration_ms: 2.020333
+  ...
+# Subtest: a pick with a bound device says the device will switch
+ok 83 - a pick with a bound device says the device will switch
+  ---
+  duration_ms: 2.539125
+  ...
+# Subtest: a pick without a device just says saved
+ok 84 - a pick without a device just says saved
+  ---
+  duration_ms: 0.128
+  ...
+# Subtest: a failed save puts the card back on the account's companion
+ok 85 - a failed save puts the card back on the account's companion
+  ---
+  duration_ms: 0.125542
+  ...
+# Subtest: a second selection waits for the pending voice setting to finish
+ok 86 - a second selection waits for the pending voice setting to finish
+  ---
+  duration_ms: 2.690334
+  ...
+# Subtest: voices render as a vertical list with the account pick marked current
+ok 87 - voices render as a vertical list with the account pick marked current
+  ---
+  duration_ms: 12.33125
+  ...
+# Subtest: tapping the role already in use does not save again
+ok 88 - tapping the role already in use does not save again
+  ---
+  duration_ms: 3.443
+  ...
+# Subtest: 自定义表达 opens the custom persona page
+ok 89 - 自定义表达 opens the custom persona page
+  ---
+  duration_ms: 3.114208
+  ...
+# Subtest: the voice row previews the role in use and stops on a second tap
+ok 90 - the voice row previews the role in use and stops on a second tap
+  ---
+  duration_ms: 2.455834
+  ...
+# Subtest: the Mini Program keeps the five approved companion styles
+ok 91 - the Mini Program keeps the five approved companion styles
+  ---
+  duration_ms: 0.710292
+  ...
+# Subtest: continuous use reminder fires after two hours in foreground
+ok 92 - continuous use reminder fires after two hours in foreground
+  ---
+  duration_ms: 0.492333
+  ...
+# Subtest: foreground session resets when app hides
+ok 93 - foreground session resets when app hides
+  ---
+  duration_ms: 0.116167
+  ...
+# Subtest: consent stays locked for a pending agreement and a blank effective date
+ok 94 - consent stays locked for a pending agreement and a blank effective date
+  ---
+  duration_ms: 0.365417
+  ...
+# Subtest: a grant stores the current versions and leaves the unlock record absent
+ok 95 - a grant stores the current versions and leaves the unlock record absent
+  ---
+  duration_ms: 0.118083
+  ...
+# Subtest: an unlock-path grant records versions and keeps the consent string accepted
+ok 96 - an unlock-path grant records versions and keeps the consent string accepted
+  ---
+  duration_ms: 1.023167
+  ...
+# Subtest: release gate fails only when the unlock constant is strictly true
+ok 97 - release gate fails only when the unlock constant is strictly true
+  ---
+  duration_ms: 119.86025
+  ...
+# Subtest: parseSafetyAlert keeps a server detail sentence and drops an empty one
+ok 98 - parseSafetyAlert keeps a server detail sentence and drops an empty one
+  ---
+  duration_ms: 0.524125
+  ...
+# Subtest: parseSafetyAlert drops an item only when its id is missing
+ok 99 - parseSafetyAlert drops an item only when its id is missing
+  ---
+  duration_ms: 1.362208
+  ...
+# Subtest: loadUnreadSafetyAlerts gives the newest and how many more, and none on empty or error
+ok 100 - loadUnreadSafetyAlerts gives the newest and how many more, and none on empty or error
+  ---
+  duration_ms: 0.205333
+  ...
+# Subtest: loadSafetyAlert returns only the alert it was asked for
+ok 101 - loadSafetyAlert returns only the alert it was asked for
+  ---
+  duration_ms: 0.18425
+  ...
+# Subtest: acknowledgeSafetyAlert PUTs the receipt and says saved, gone, or failed
+ok 102 - acknowledgeSafetyAlert PUTs the receipt and says saved, gone, or failed
+  ---
+  duration_ms: 5.778834
+  ...
+# Subtest: moreUnreadLabel counts the alerts not shown and says nothing for none
+ok 103 - moreUnreadLabel counts the alerts not shown and says nothing for none
+  ---
+  duration_ms: 0.064708
+  ...
+# Subtest: requireCrisisSubscribeBeforeBind lets rejected subscribe still bind
+ok 104 - requireCrisisSubscribeBeforeBind lets rejected subscribe still bind
+  ---
+  duration_ms: 0.215708
+  ...
+# Subtest: requireCrisisSubscribeBeforeBind lets a missing template still bind
+ok 105 - requireCrisisSubscribeBeforeBind lets a missing template still bind
+  ---
+  duration_ms: 0.060333
+  ...
+# Subtest: requireCrisisSubscribeBeforeBind blocks parent bind only when push is re-enabled
+ok 106 - requireCrisisSubscribeBeforeBind blocks parent bind only when push is re-enabled
+  ---
+  duration_ms: 0.426541
+  ...
+# Subtest: bind runs the subscribe gate before creating the binding; memory pins alerts
+ok 107 - bind runs the subscribe gate before creating the binding; memory pins alerts
+  ---
+  duration_ms: 0.742417
+  ...
+# Subtest: unread home and memory alerts stay independent of the push toggle
+ok 108 - unread home and memory alerts stay independent of the push toggle
+  ---
+  duration_ms: 1.150208
+  ...
+# Subtest: home today count uses session reads and composes the daily summary
+ok 109 - home today count uses session reads and composes the daily summary
+  ---
+  duration_ms: 4.306917
+  ...
+# Subtest: home keeps the recent child summary when the legacy day read is closed
+ok 110 - home keeps the recent child summary when the legacy day read is closed
+  ---
+  duration_ms: 7.007167
+  ...
+# Subtest: home shows the existing empty state when neither day rows nor child summaries exist
+ok 111 - home shows the existing empty state when neither day rows nor child summaries exist
+  ---
+  duration_ms: 4.284917
+  ...
+# Subtest: loadHome wires a non-UTC local-day session into page data and generic sharing
+ok 112 - loadHome wires a non-UTC local-day session into page data and generic sharing
+  ---
+  duration_ms: 1.962542
+  ...
+# Subtest: home never falls back to the day count when the session list is unavailable
+ok 113 - home never falls back to the day count when the session list is unavailable
+  ---
+  duration_ms: 1.556125
+  ...
+# Subtest: guest and failed home loads cannot retain a private summary
+ok 114 - guest and failed home loads cannot retain a private summary
+  ---
+  duration_ms: 1.571042
+  ...
+# Subtest: a late home response cannot repopulate a private summary after auth is cleared
+ok 115 - a late home response cannot repopulate a private summary after auth is cleared
+  ---
+  duration_ms: 1.5235
+  ...
+# Subtest: auth clear while resolving a custom persona cannot repopulate private home data
+ok 116 - auth clear while resolving a custom persona cannot repopulate private home data
+  ---
+  duration_ms: 1.457834
+  ...
+# Subtest: an older home flow cannot overwrite the latest private summary
+ok 117 - an older home flow cannot overwrite the latest private summary
+  ---
+  duration_ms: 0.942125
+  ...
+# Subtest: home reads the daily summary without consulting the Runtime Profile
+ok 118 - home reads the daily summary without consulting the Runtime Profile
+  ---
+  duration_ms: 0.611917
+  ...
+# Subtest: home share never carries private summary copy
+ok 119 - home share never carries private summary copy
+  ---
+  duration_ms: 1.49725
+  ...
+# Subtest: memory page no longer offers sharing or a chosen day
+ok 120 - memory page no longer offers sharing or a chosen day
+  ---
+  duration_ms: 2.181709
+  ...
+# Subtest: home keeps a generic share while the review page has no share entry
+ok 121 - home keeps a generic share while the review page has no share entry
+  ---
+  duration_ms: 0.8185
+  ...
+# Subtest: the board's WeChat bind link carries the signed payload unchanged
+ok 122 - the board's WeChat bind link carries the signed payload unchanged
+  ---
+  duration_ms: 1.163625
+  ...
+# Subtest: every form a scanner hands back for the bind link is unwrapped
+ok 123 - every form a scanner hands back for the bind link is unwrapped
+  ---
+  duration_ms: 1.171917
+  ...
+# Subtest: a foreign code is named in the error without its query
+ok 124 - a foreign code is named in the error without its query
+  ---
+  duration_ms: 0.27525
+  ...
+# Subtest: a malformed bind link is refused before anything is sent
+ok 125 - a malformed bind link is refused before anything is sent
+  ---
+  duration_ms: 0.192708
+  ...
+# Subtest: introspect receives only the device payload from a bind link
+ok 126 - introspect receives only the device payload from a bind link
+  ---
+  duration_ms: 0.630291
+  ...
+# Subtest: opening the onboarding page from WeChat's scanner starts with the scanned link
+ok 127 - opening the onboarding page from WeChat's scanner starts with the scanned link
+  ---
+  duration_ms: 1.633
+  ...
+# Subtest: the in-app scanner falls back to the page path WeChat returns
+ok 128 - the in-app scanner falls back to the page path WeChat returns
+  ---
+  duration_ms: 0.547667
+  ...
+# Subtest: home retry 未授权时 fail closed，恢复失败后迟到响应不回填
+ok 129 - home retry 未授权时 fail closed，恢复失败后迟到响应不回填
+  ---
+  duration_ms: 10.978875
+  ...
+# Subtest: home retry while logged out asks for login and does not sync
+ok 130 - home retry while logged out asks for login and does not sync
+  ---
+  duration_ms: 1.156667
+  ...
+# Subtest: device retry 未授权时清空敏感设备态，迟到响应不回填
+ok 131 - device retry 未授权时清空敏感设备态，迟到响应不回填
+  ---
+  duration_ms: 6.560042
+  ...
+# Subtest: device retry while logged out asks for login and does not sync
+ok 132 - device retry while logged out asks for login and does not sync
+  ---
+  duration_ms: 0.935625
+  ...
+# Subtest: device companion follows the account profile companion_id
+ok 133 - device companion follows the account profile companion_id
+  ---
+  duration_ms: 0.689125
+  ...
+# Subtest: profile retry 未授权时进入游客态，旧同步迟到不得回填
+ok 134 - profile retry 未授权时进入游客态，旧同步迟到不得回填
+  ---
+  duration_ms: 1.266625
+  ...
+# Subtest: profile retry while logged out asks for login and does not sync
+ok 135 - profile retry while logged out asks for login and does not sync
+  ---
+  duration_ms: 0.362542
+  ...
+# Subtest: a single server binding is restored on a new client
+ok 136 - a single server binding is restored on a new client
+  ---
+  duration_ms: 4.999583
+  ...
+# Subtest: multiple server bindings require an explicit selection
+ok 137 - multiple server bindings require an explicit selection
+  ---
+  duration_ms: 0.324959
+  ...
+# Subtest: an existing valid local selection is preserved
+ok 138 - an existing valid local selection is preserved
+  ---
+  duration_ms: 0.188041
+  ...
+# Subtest: a removed cached binding is cleared when the account needs a new selection
+ok 139 - a removed cached binding is cleared when the account needs a new selection
+  ---
+  duration_ms: 0.190792
+  ...
+# Subtest: an old account 401 cannot clear the new account session or device
+ok 140 - an old account 401 cannot clear the new account session or device
+  ---
+  duration_ms: 0.487625
+  ...
+# Subtest: a newer active binding for the same device replaces the cached version
+ok 141 - a newer active binding for the same device replaces the cached version
+  ---
+  duration_ms: 0.220708
+  ...
+# Subtest: only an explicit empty server list clears local device context
+ok 142 - only an explicit empty server list clears local device context
+  ---
+  duration_ms: 0.185625
+  ...
+# Subtest: a network failure retains the current valid cached binding
+ok 143 - a network failure retains the current valid cached binding
+  ---
+  duration_ms: 0.175333
+  ...
+# Subtest: a network failure without a cache returns an error state
+ok 144 - a network failure without a cache returns an error state
+  ---
+  duration_ms: 0.227541
+  ...
+# Subtest: binding discovery rejects non-canonical, inactive, and duplicate results
+    # Subtest: non-canonical
+    ok 1 - non-canonical
+      ---
+      duration_ms: 0.739416
+      ...
+    # Subtest: inactive
+    ok 2 - inactive
+      ---
+      duration_ms: 0.094833
+      ...
+    # Subtest: duplicate binding id
+    ok 3 - duplicate binding id
+      ---
+      duration_ms: 0.174917
+      ...
+    # Subtest: duplicate active device
+    ok 4 - duplicate active device
+      ---
+      duration_ms: 0.082541
+      ...
+    1..4
+ok 145 - binding discovery rejects non-canonical, inactive, and duplicate results
+  ---
+  duration_ms: 1.415625
+  ...
+# Subtest: 401 and local logout both clear binding, remark, and runtime cache
+    # Subtest: 401
+    ok 1 - 401
+      ---
+      duration_ms: 0.174875
+      ...
+    # Subtest: logout
+    ok 2 - logout
+      ---
+      duration_ms: 0.093416
+      ...
+    1..2
+ok 146 - 401 and local logout both clear binding, remark, and runtime cache
+  ---
+  duration_ms: 0.377542
+  ...
+# Subtest: a late discovery response cannot overwrite a newer device selection
+ok 147 - a late discovery response cannot overwrite a newer device selection
+  ---
+  duration_ms: 0.138166
+  ...
+# Subtest: a late discovery response cannot restore a binding after logout
+ok 148 - a late discovery response cannot restore a binding after logout
+  ---
+  duration_ms: 0.079625
+  ...
+# Subtest: builds the documented payload for parent_for_child
+ok 149 - builds the documented payload for parent_for_child
+  ---
+  duration_ms: 1.176792
+  ...
+# Subtest: self_use uses the owner person and no draft
+ok 150 - self_use uses the owner person and no draft
+  ---
+  duration_ms: 0.097583
+  ...
+# Subtest: child_for_parent keeps admin scope minimal and memory off by default
+ok 151 - child_for_parent keeps admin scope minimal and memory off by default
+  ---
+  duration_ms: 0.18125
+  ...
+# Subtest: family_shared binds the owner as a family member
+ok 152 - family_shared binds the owner as a family member
+  ---
+  duration_ms: 0.112542
+  ...
+# Subtest: rejects fake authorization fields fail-closed
+ok 153 - rejects fake authorization fields fail-closed
+  ---
+  duration_ms: 0.512667
+  ...
+# Subtest: rejects unknown request keys and invalid declared modes
+ok 154 - rejects unknown request keys and invalid declared modes
+  ---
+  duration_ms: 0.1195
+  ...
+# Subtest: rejects unknown, mismatched, and parent-self-acceptance consent offers
+ok 155 - rejects unknown, mismatched, and parent-self-acceptance consent offers
+  ---
+  duration_ms: 0.216834
+  ...
+# Subtest: memory_level must follow the long-term memory offer selection
+ok 156 - memory_level must follow the long-term memory offer selection
+  ---
+  duration_ms: 0.320125
+  ...
+# Subtest: a child session accepts 10 to 30 minutes and rejects the minute outside that range
+ok 157 - a child session accepts 10 to 30 minutes and rejects the minute outside that range
+  ---
+  duration_ms: 1.598125
+  ...
+# Subtest: rejects unknown service preference keys and invalid values
+ok 158 - rejects unknown service preference keys and invalid values
+  ---
+  duration_ms: 0.393125
+  ...
+# Subtest: validates subject drafts against mode age bands
+ok 159 - validates subject drafts against mode age bands
+  ---
+  duration_ms: 0.16325
+  ...
+# Subtest: consent catalogs keep sensitive capabilities off by default
+ok 160 - consent catalogs keep sensitive capabilities off by default
+  ---
+  duration_ms: 0.229
+  ...
+# Subtest: null or non-object runtime profile fails closed
+ok 161 - null or non-object runtime profile fails closed
+  ---
+  duration_ms: 0.31675
+  ...
+# Subtest: missing any required runtime profile field fails closed
+ok 162 - missing any required runtime profile field fails closed
+  ---
+  duration_ms: 1.340417
+  ...
+# Subtest: extra fields on runtime profile fail closed
+ok 163 - extra fields on runtime profile fail closed
+  ---
+  duration_ms: 0.100667
+  ...
+# Subtest: expired or future-issued runtime profiles fail closed
+ok 164 - expired or future-issued runtime profiles fail closed
+  ---
+  duration_ms: 0.419792
+  ...
+# Subtest: runtime-profile-v2 with structured obligations (current server wire) is accepted
+ok 165 - runtime-profile-v2 with structured obligations (current server wire) is accepted
+  ---
+  duration_ms: 0.507042
+  ...
+# Subtest: runtime-profile-v2 obligations must be well-formed specs matching the schema
+ok 166 - runtime-profile-v2 obligations must be well-formed specs matching the schema
+  ---
+  duration_ms: 0.2265
+  ...
+# Subtest: a freshly issued profile tolerates small phone/server clock skew
+ok 167 - a freshly issued profile tolerates small phone/server clock skew
+  ---
+  duration_ms: 0.053791
+  ...
+# Subtest: signature shape errors fail closed (TLS boundary + envelope only, no HMAC key)
+ok 168 - signature shape errors fail closed (TLS boundary + envelope only, no HMAC key)
+  ---
+  duration_ms: 0.105167
+  ...
+# Subtest: string/null/0 binding_version fails closed
+ok 169 - string/null/0 binding_version fails closed
+  ---
+  duration_ms: 0.089542
+  ...
+# Subtest: session_epoch 0 or regression fails closed
+ok 170 - session_epoch 0 or regression fails closed
+  ---
+  duration_ms: 0.09025
+  ...
+# Subtest: illegal speaker/subject relationships fail closed
+ok 171 - illegal speaker/subject relationships fail closed
+  ---
+  duration_ms: 0.154375
+  ...
+# Subtest: unknown_safe allows only chat/english_practice and requires DO_NOT_PERSIST
+ok 172 - unknown_safe allows only chat/english_practice and requires DO_NOT_PERSIST
+  ---
+  duration_ms: 0.088458
+  ...
+# Subtest: loose datetime strings and whitespace ids fail closed
+ok 173 - loose datetime strings and whitespace ids fail closed
+  ---
+  duration_ms: 0.112
+  ...
+# Subtest: calendar truth: nonexistent dates and out-of-range offsets fail closed
+ok 174 - calendar truth: nonexistent dates and out-of-range offsets fail closed
+  ---
+  duration_ms: 0.20675
+  ...
+# Subtest: minor profile rejects every minor-forbidden capability (full matrix)
+ok 175 - minor profile rejects every minor-forbidden capability (full matrix)
+  ---
+  duration_ms: 0.261958
+  ...
+# Subtest: minor profile structurally accepts child-available sensitive capabilities
+ok 176 - minor profile structurally accepts child-available sensitive capabilities
+  ---
+  duration_ms: 0.072667
+  ...
+# Subtest: minor profile rejects every adult/senior service mode (full matrix)
+ok 177 - minor profile rejects every adult/senior service mode (full matrix)
+  ---
+  duration_ms: 0.125041
+  ...
+# Subtest: adult profile keeps adult modes and capabilities open
+ok 178 - adult profile keeps adult modes and capabilities open
+  ---
+  duration_ms: 0.221417
+  ...
+# Subtest: tampered binding manifest is cleared on read and yields no_binding
+ok 179 - tampered binding manifest is cleared on read and yields no_binding
+  ---
+  duration_ms: 0.660917
+  ...
+# Subtest: unknown config action fails closed before any policy request
+ok 180 - unknown config action fails closed before any policy request
+  ---
+  duration_ms: 0.6905
+  ...
+# Subtest: config action gate fails closed without a session or binding
+ok 181 - config action gate fails closed without a session or binding
+  ---
+  duration_ms: 0.271416
+  ...
+# Subtest: config action gate allows only a complete policy allow
+ok 182 - config action gate allows only a complete policy allow
+  ---
+  duration_ms: 0.775792
+  ...
+# Subtest: config action gate fails closed on deny, http errors, and incomplete decisions
+ok 183 - config action gate fails closed on deny, http errors, and incomplete decisions
+  ---
+  duration_ms: 0.87675
+  ...
+# Subtest: config action gate does not decide when the runtime profile request fails
+ok 184 - config action gate does not decide when the runtime profile request fails
+  ---
+  duration_ms: 0.146666
+  ...
+# Subtest: valid adult profile is accepted with capabilities intact
+ok 185 - valid adult profile is accepted with capabilities intact
+  ---
+  duration_ms: 0.07025
+  ...
+# Subtest: sensitive entries are driven by capabilities, not local inference
+ok 186 - sensitive entries are driven by capabilities, not local inference
+  ---
+  duration_ms: 0.085708
+  ...
+# Subtest: profile-listed capabilities open only their own entry; action-time entries need a confirmed profile
+ok 187 - profile-listed capabilities open only their own entry; action-time entries need a confirmed profile
+  ---
+  duration_ms: 0.121291
+  ...
+# Subtest: action-time entries stay closed for degraded, invalid and minor-forbidden profiles
+ok 188 - action-time entries stay closed for degraded, invalid and minor-forbidden profiles
+  ---
+  duration_ms: 0.053167
+  ...
+# Subtest: client action-time capabilities match the server's PROFILE_ISSUE_DEFERRED_CAPABILITIES
+ok 189 - client action-time capabilities match the server's PROFILE_ISSUE_DEFERRED_CAPABILITIES
+  ---
+  duration_ms: 0.198
+  ...
+# Subtest: voice_profile_create no longer opens a navigation entry
+ok 190 - voice_profile_create no longer opens a navigation entry
+  ---
+  duration_ms: 0.085541
+  ...
+# Subtest: profile unavailable denies all five sensitive entries
+ok 191 - profile unavailable denies all five sensitive entries
+  ---
+  duration_ms: 0.048875
+  ...
+# Subtest: degradation is explainable and only present when unsafe
+ok 192 - degradation is explainable and only present when unsafe
+  ---
+  duration_ms: 0.102292
+  ...
+# Subtest: subject resolution normalization keeps only valid candidates
+ok 193 - subject resolution normalization keeps only valid candidates
+  ---
+  duration_ms: 0.124459
+  ...
+# Subtest: cache round-trips only with the exact device+binding+session context
+ok 194 - cache round-trips only with the exact device+binding+session context
+  ---
+  duration_ms: 0.129166
+  ...
+# Subtest: cross device/session/binding replay is refused and clears the cache
+ok 195 - cross device/session/binding replay is refused and clears the cache
+  ---
+  duration_ms: 0.194292
+  ...
+# Subtest: cache refuses epoch regression writes for the same session
+ok 196 - cache refuses epoch regression writes for the same session
+  ---
+  duration_ms: 0.089084
+  ...
+# Subtest: expired cached profile is never returned
+ok 197 - expired cached profile is never returned
+  ---
+  duration_ms: 0.078166
+  ...
+# Subtest: binding version change and manifest replacement clear the old profile cache
+ok 198 - binding version change and manifest replacement clear the old profile cache
+  ---
+  duration_ms: 0.139416
+  ...
+# Subtest: binding manifest storage round-trips and fails closed without wx
+ok 199 - binding manifest storage round-trips and fails closed without wx
+  ---
+  duration_ms: 0.131875
+  ...
+# Subtest: clearing or replacing a binding drops the local subject remark
+ok 200 - clearing or replacing a binding drops the local subject remark
+  ---
+  duration_ms: 0.170791
+  ...
+# Subtest: the robot joining Wi-Fi and coming online moves straight on to the claim
+ok 201 - the robot joining Wi-Fi and coming online moves straight on to the claim
+  ---
+  duration_ms: 2.213875
+  ...
+# Subtest: no Wi-Fi join within 45 s is reported with the network name
+ok 202 - no Wi-Fi join within 45 s is reported with the network name
+  ---
+  duration_ms: 0.405583
+  ...
+# Subtest: joined Wi-Fi but no cloud within 90 s is a separate failure
+ok 203 - joined Wi-Fi but no cloud within 90 s is a separate failure
+  ---
+  duration_ms: 1.185833
+  ...
+# Subtest: the password is cleared before the watch starts
+ok 204 - the password is cleared before the watch starts
+  ---
+  duration_ms: 0.425583
+  ...
+# Subtest: a reprovision ends as soon as the robot is back online
+ok 205 - a reprovision ends as soon as the robot is back online
+  ---
+  duration_ms: 0.3005
+  ...
+# Subtest: retrying Wi-Fi reuses a live BLE session
+ok 206 - retrying Wi-Fi reuses a live BLE session
+  ---
+  duration_ms: 0.378916
+  ...
+# Subtest: the Wi-Fi step lists networks by signal, never dBm, and marks the tapped one
+ok 207 - the Wi-Fi step lists networks by signal, never dBm, and marks the tapped one
+  ---
+  duration_ms: 20.600459
+  ...
+# Subtest: the stepper marks finished steps done and the Wi-Fi step current while the robot joins
+ok 208 - the stepper marks finished steps done and the Wi-Fi step current while the robot joins
+  ---
+  duration_ms: 7.490041
+  ...
+# Subtest: the finish card replaces the cancel link with the way into device management
+ok 209 - the finish card replaces the cancel link with the way into device management
+  ---
+  duration_ms: 7.792541
+  ...
+# Subtest: QR parser accepts the versioned shape and rejects unknown/versioned payloads
+ok 210 - QR parser accepts the versioned shape and rejects unknown/versioned payloads
+  ---
+  duration_ms: 2.996708
+  ...
+# Subtest: packet framing fragments at the BLE MTU and reassembles with integrity checks
+ok 211 - packet framing fragments at the BLE MTU and reassembles with integrity checks
+  ---
+  duration_ms: 0.379333
+  ...
+# Subtest: default provisioning transport fails closed before any Wi-Fi write without audited crypto
+ok 212 - default provisioning transport fails closed before any Wi-Fi write without audited crypto
+  ---
+  duration_ms: 0.435459
+  ...
+# Subtest: provisioning asks for a fresh QR when the in-memory BLE session was released
+ok 213 - provisioning asks for a fresh QR when the in-memory BLE session was released
+  ---
+  duration_ms: 1.191375
+  ...
+# Subtest: Protocomm Security 1 completes the X25519, PoP, and AES-CTR proof exchange
+ok 214 - Protocomm Security 1 completes the X25519, PoP, and AES-CTR proof exchange
+  ---
+  duration_ms: 29.601458
+  ...
+# Subtest: BLE adapter calls the real wx lifecycle and clears listeners on dispose
+ok 215 - BLE adapter calls the real wx lifecycle and clears listeners on dispose
+  ---
+  duration_ms: 1.107667
+  ...
+# Subtest: BLE adapter uses the iOS negotiated ATT payload as the conservative default
+ok 216 - BLE adapter uses the iOS negotiated ATT payload as the conservative default
+  ---
+  duration_ms: 0.259916
+  ...
+# Subtest: BLE adapter ignores empty read results until the non-empty GATT value event arrives
+ok 217 - BLE adapter ignores empty read results until the non-empty GATT value event arrives
+  ---
+  duration_ms: 3.230666
+  ...
+# Subtest: BLE adapter accepts CoreBluetooth byte-reversed Protocomm endpoint UUIDs
+ok 218 - BLE adapter accepts CoreBluetooth byte-reversed Protocomm endpoint UUIDs
+  ---
+  duration_ms: 0.256416
+  ...
+# Subtest: BLE adapter resolves the real CoreBluetooth GATT characteristic set
+ok 219 - BLE adapter resolves the real CoreBluetooth GATT characteristic set
+  ---
+  duration_ms: 0.396917
+  ...
+# Subtest: BLE discovery invalidates a previous attempt and drops its late event
+ok 220 - BLE discovery invalidates a previous attempt and drops its late event
+  ---
+  duration_ms: 0.167834
+  ...
+# Subtest: SensitiveBuffer is cleared and never retains Wi-Fi password bytes
+ok 221 - SensitiveBuffer is cleared and never retains Wi-Fi password bytes
+  ---
+  duration_ms: 0.056667
+  ...
+# Subtest: resume fences the second getDeviceClaim await after pause/dispose
+ok 222 - resume fences the second getDeviceClaim await after pause/dispose
+  ---
+  duration_ms: 1.154625
+  ...
+# Subtest: rescanning a QR whose robot is already online resumes instead of redoing BLE
+ok 223 - rescanning a QR whose robot is already online resumes instead of redoing BLE
+  ---
+  duration_ms: 0.770292
+  ...
+# Subtest: expired session cannot reserve a claim
+ok 224 - expired session cannot reserve a claim
+  ---
+  duration_ms: 0.091292
+  ...
+# Subtest: claim retries reuse the onboarding-session idempotency key
+ok 225 - claim retries reuse the onboarding-session idempotency key
+  ---
+  duration_ms: 0.121
+  ...
+# Subtest: late activation ACK cannot be regressed by an older response
+ok 226 - late activation ACK cannot be regressed by an older response
+  ---
+  duration_ms: 0.987459
+  ...
+# Subtest: resuming an already-complete add session clears the stored session id
+ok 227 - resuming an already-complete add session clears the stored session id
+  ---
+  duration_ms: 0.162459
+  ...
+# Subtest: an activation lookup the server refuses (robot unbound meanwhile) ends the stale session
+ok 228 - an activation lookup the server refuses (robot unbound meanwhile) ends the stale session
+  ---
+  duration_ms: 2.684792
+  ...
+# Subtest: other activation lookup failures stay on the activation step
+ok 229 - other activation lookup failures stay on the activation step
+  ---
+  duration_ms: 1.138541
+  ...
+# Subtest: cancelling a session the server has already closed or moved past still leaves the flow
+ok 230 - cancelling a session the server has already closed or moved past still leaves the flow
+  ---
+  duration_ms: 0.575792
+  ...
+# Subtest: a cancel that fails for another reason keeps the session and reports the error
+ok 231 - a cancel that fails for another reason keeps the session and reports the error
+  ---
+  duration_ms: 0.2345
+  ...
+# Subtest: the activation step says so once the robot has taken its time, and not before
+ok 232 - the activation step says so once the robot has taken its time, and not before
+  ---
+  duration_ms: 1.939459
+  ...
+# Subtest: a finished activation is never reported as slow
+ok 233 - a finished activation is never reported as slow
+  ---
+  duration_ms: 1.534709
+  ...
+# Subtest: the activation card talks to people, not to the protocol
+ok 234 - the activation card talks to people, not to the protocol
+  ---
+  duration_ms: 0.510709
+  ...
+# Subtest: the finish card shows the companion picked on the bind page
+ok 235 - the finish card shows the companion picked on the bind page
+  ---
+  duration_ms: 3.591625
+  ...
+# Subtest: the setup pages speak plainly: no protocol terms, enums, ids or timestamps on screen
+ok 236 - the setup pages speak plainly: no protocol terms, enums, ids or timestamps on screen
+  ---
+  duration_ms: 0.521458
+  ...
+# Subtest: the claim step presents its window as a deadline, not a retry
+ok 237 - the claim step presents its window as a deadline, not a retry
+  ---
+  duration_ms: 0.146292
+  ...
+# Subtest: the onboarding page shows networks by signal and the claim deadline as a clock time
+ok 238 - the onboarding page shows networks by signal and the claim deadline as a clock time
+  ---
+  duration_ms: 1.657333
+  ...
+# Subtest: onboarding API sends raw QR and uses the planned paths with strict responses
+ok 239 - onboarding API sends raw QR and uses the planned paths with strict responses
+  ---
+  duration_ms: 1.27
+  ...
+# Subtest: bind page removes scanner/token source and onboarding clears password on hide
+ok 240 - bind page removes scanner/token source and onboarding clears password on hide
+  ---
+  duration_ms: 0.484416
+  ...
+# Subtest: device page registers in app.json
+ok 241 - device page registers in app.json
+  ---
+  duration_ms: 0.748125
+  ...
+# Subtest: no binding manifest shows the empty state
+ok 242 - no binding manifest shows the empty state
+  ---
+  duration_ms: 0.644417
+  ...
+# Subtest: device page can set the bind-time subject remark used on home
+ok 243 - device page can set the bind-time subject remark used on home
+  ---
+  duration_ms: 4.025417
+  ...
+# Subtest: family mode loads candidates and switches with an epoch-bumped profile
+ok 244 - family mode loads candidates and switches with an epoch-bumped profile
+  ---
+  duration_ms: 1.374
+  ...
+# Subtest: switch result without an epoch bump is rejected and not applied
+ok 245 - switch result without an epoch bump is rejected and not applied
+  ---
+  duration_ms: 0.617333
+  ...
+# Subtest: late refresh response cannot overwrite the switched profile
+ok 246 - late refresh response cannot overwrite the switched profile
+  ---
+  duration_ms: 9.4245
+  ...
+# Subtest: unknown_safe shows explainable degradation and hides sensitive entries
+ok 247 - unknown_safe shows explainable degradation and hides sensitive entries
+  ---
+  duration_ms: 0.693
+  ...
+# Subtest: capability hiding removes un-granted sensitive entries
+ok 248 - capability hiding removes un-granted sensitive entries
+  ---
+  duration_ms: 0.428792
+  ...
+# Subtest: confirming without a usable session is rejected with an explainable message
+ok 249 - confirming without a usable session is rejected with an explainable message
+  ---
+  duration_ms: 0.967458
+  ...
+# Subtest: ordinary parent_for_child can resolve and confirm with app_confirm
+ok 250 - ordinary parent_for_child can resolve and confirm with app_confirm
+  ---
+  duration_ms: 2.714375
+  ...
+# Subtest: the guardian edits session limits from the device page and sees the signed result
+ok 251 - the guardian edits session limits from the device page and sees the signed result
+  ---
+  duration_ms: 1.94675
+  ...
+# Subtest: the 单次上限 slider keeps an unset quiet window unset on the wire
+ok 252 - the 单次上限 slider keeps an unset quiet window unset on the wire
+  ---
+  duration_ms: 0.690083
+  ...
+# Subtest: the 每天上限 slider saves the daily budget with the current cap and quiet window, and the cap slider leaves it alone
+ok 253 - the 每天上限 slider saves the daily budget with the current cap and quiet window, and the cap slider leaves it alone
+  ---
+  duration_ms: 15.615667
+  ...
+# Subtest: a slider released while another limits save is in flight sends nothing
+ok 254 - a slider released while another limits save is in flight sends nothing
+  ---
+  duration_ms: 3.718041
+  ...
+# Subtest: the usage ring counts today's minutes against the signed daily budget and says when it cannot
+ok 255 - the usage ring counts today's minutes against the signed daily budget and says when it cannot
+  ---
+  duration_ms: 24.495458
+  ...
+# Subtest: the device lists its offline story titles, and says so when it has none to show
+ok 256 - the device lists its offline story titles, and says so when it has none to show
+  ---
+  duration_ms: 5.029
+  ...
+# Subtest: parent_for_child without app_confirm cannot switch
+ok 257 - parent_for_child without app_confirm cannot switch
+  ---
+  duration_ms: 0.574167
+  ...
+# Subtest: unconfirmed parent_for_child subject stays unlabeled
+ok 258 - unconfirmed parent_for_child subject stays unlabeled
+  ---
+  duration_ms: 0.49525
+  ...
+# Subtest: stale confirm response does not refill after a newer load
+ok 259 - stale confirm response does not refill after a newer load
+  ---
+  duration_ms: 0.792083
+  ...
+# Subtest: age declaration offers only three bands and never claims verification
+ok 260 - age declaration offers only three bands and never claims verification
+  ---
+  duration_ms: 4.13975
+  ...
+# Subtest: age declaration explains owner-only and unavailable authority failures
+ok 261 - age declaration explains owner-only and unavailable authority failures
+  ---
+  duration_ms: 0.615041
+  ...
+# Subtest: confirming is blocked when the server does not allow app confirmation
+ok 262 - confirming is blocked when the server does not allow app confirmation
+  ---
+  duration_ms: 0.331792
+  ...
+# Subtest: candidate voice-match confidence is never decorated or shown
+ok 263 - candidate voice-match confidence is never decorated or shown
+  ---
+  duration_ms: 0.465834
+  ...
+# Subtest: device load failures surface an error without breaking the page
+ok 264 - device load failures surface an error without breaking the page
+  ---
+  duration_ms: 0.29625
+  ...
+# Subtest: device page loads authoritative settings and diagnostics (half-duplex fail-closed)
+ok 265 - device page loads authoritative settings and diagnostics (half-duplex fail-closed)
+  ---
+  duration_ms: 0.377625
+  ...
+# Subtest: aec-verified diagnostics expose server-approved modes and voice barge-in
+ok 266 - aec-verified diagnostics expose server-approved modes and voice barge-in
+  ---
+  duration_ms: 0.312166
+  ...
+# Subtest: device page shows the Edge-negotiated effective audio mode, not the requested echo
+ok 267 - device page shows the Edge-negotiated effective audio mode, not the requested echo
+  ---
+  duration_ms: 0.2745
+  ...
+# Subtest: diagnostics unavailable fails closed for acoustics controls
+ok 268 - diagnostics unavailable fails closed for acoustics controls
+  ---
+  duration_ms: 0.247875
+  ...
+# Subtest: settings saves go through versioned updateDeviceSettings and revert on conflict
+ok 269 - settings saves go through versioned updateDeviceSettings and revert on conflict
+  ---
+  duration_ms: 0.560333
+  ...
+# Subtest: audio mode picker only submits server-approved values
+ok 270 - audio mode picker only submits server-approved values
+  ---
+  duration_ms: 0.27975
+  ...
+# Subtest: tap-only wake copy stays fixed regardless of legacy wake_mode rows
+ok 271 - tap-only wake copy stays fixed regardless of legacy wake_mode rows
+  ---
+  duration_ms: 0.261
+  ...
+# Subtest: wake word picker only submits server-approved catalog ids
+ok 272 - wake word picker only submits server-approved catalog ids
+  ---
+  duration_ms: 0.299041
+  ...
+# Subtest: custom wake word validates and saves through the settings API
+ok 273 - custom wake word validates and saves through the settings API
+  ---
+  duration_ms: 0.391042
+  ...
+# Subtest: empty barge-in selection is blocked and voice kind follows AEC evidence
+ok 274 - empty barge-in selection is blocked and voice kind follows AEC evidence
+  ---
+  duration_ms: 0.325917
+  ...
+# Subtest: persona assignment follows the subject override and the binding default
+ok 275 - persona assignment follows the subject override and the binding default
+  ---
+  duration_ms: 0.584583
+  ...
+# Subtest: an override written by the companion picker reads as following the pick
+ok 276 - an override written by the companion picker reads as following the pick
+  ---
+  duration_ms: 0.292083
+  ...
+# Subtest: persona assignment failure keeps the sheet open and reports the error
+ok 277 - persona assignment failure keeps the sheet open and reports the error
+  ---
+  duration_ms: 1.124667
+  ...
+# Subtest: 角色与声音 opens the 伙伴 tab with switchTab, which navigateTo cannot open
+ok 278 - 角色与声音 opens the 伙伴 tab with switchTab, which navigateTo cannot open
+  ---
+  duration_ms: 0.486958
+  ...
+# Subtest: sensitive entries open tab pages with switchTab and other pages with navigateTo
+ok 279 - sensitive entries open tab pages with switchTab and other pages with navigateTo
+  ---
+  duration_ms: 0.347792
+  ...
+# Subtest: wake sheet saves a custom wake word, then closes and gives the tab bar back
+ok 280 - wake sheet saves a custom wake word, then closes and gives the tab bar back
+  ---
+  duration_ms: 2.318833
+  ...
+# Subtest: wake sheet stays open when the save is refused
+ok 281 - wake sheet stays open when the save is refused
+  ---
+  duration_ms: 0.861334
+  ...
+# Subtest: device page shows the network as connected without claiming it is a home network
+ok 282 - device page shows the network as connected without claiming it is a home network
+  ---
+  duration_ms: 0.415125
+  ...
+# Subtest: unbind always clears the child and submits without a data switch
+ok 283 - unbind always clears the child and submits without a data switch
+  ---
+  duration_ms: 1.888792
+  ...
+# Subtest: closing the unbind result releases the page and the tab bar
+ok 284 - closing the unbind result releases the page and the tab bar
+  ---
+  duration_ms: 0.416625
+  ...
+# Subtest: the single unbind confirmation carries the product copy and can be cancelled
+ok 285 - the single unbind confirmation carries the product copy and can be cancelled
+  ---
+  duration_ms: 1.790916
+  ...
+# Subtest: an unfinished delete result is shown as still deleting
+ok 286 - an unfinished delete result is shown as still deleting
+  ---
+  duration_ms: 0.363917
+  ...
+# Subtest: unbind result renders one node per line instead of joining into showModal
+ok 287 - unbind result renders one node per line instead of joining into showModal
+  ---
+  duration_ms: 0.389541
+  ...
+# Subtest: unbind panel copy matches the product confirmation character for character
+ok 288 - unbind panel copy matches the product confirmation character for character
+  ---
+  duration_ms: 0.135833
+  ...
+# Subtest: unbind panel and result never use internal deletion words
+ok 289 - unbind panel and result never use internal deletion words
+  ---
+  duration_ms: 0.178416
+  ...
+# Subtest: self_use unbind shows the same copy without internal words
+ok 290 - self_use unbind shows the same copy without internal words
+  ---
+  duration_ms: 0.329292
+  ...
+# Subtest: unbinding also drops the enable session stored for that robot
+ok 291 - unbinding also drops the enable session stored for that robot
+  ---
+  duration_ms: 0.28
+  ...
+# Subtest: a failed unbind keeps the enable session
+ok 292 - a failed unbind keeps the enable session
+  ---
+  duration_ms: 0.26775
+  ...
+# Subtest: device page no longer offers an unbind data choice
+ok 293 - device page no longer offers an unbind data choice
+  ---
+  duration_ms: 0.137667
+  ...
+# Subtest: device page shows a bound elder's style labels and resets only after confirmation
+ok 294 - device page shows a bound elder's style labels and resets only after confirmation
+  ---
+  duration_ms: 0.220375
+  ...
+# Subtest: an elder's binder sees safety alerts on the device page (P0-04 D7)
+ok 295 - an elder's binder sees safety alerts on the device page (P0-04 D7)
+  ---
+  duration_ms: 0.222583
+  ...
+# Subtest: trial safety subscribe toggle loads ledger state and opt-outs on the server
+ok 296 - trial safety subscribe toggle loads ledger state and opt-outs on the server
+  ---
+  duration_ms: 0.402333
+  ...
+# Subtest: failed subscription-state load shows unknown caption and retry restores the toggle
+ok 297 - failed subscription-state load shows unknown caption and retry restores the toggle
+  ---
+  duration_ms: 0.172208
+  ...
+# Subtest: 重新配网从新二维码开始，不带旧启用会话
+ok 298 - 重新配网从新二维码开始，不带旧启用会话
+  ---
+  duration_ms: 0.0745
+  ...
+# Subtest: contracts carry the session purpose and default old servers to onboarding
+ok 299 - contracts carry the session purpose and default old servers to onboarding
+  ---
+  duration_ms: 2.386375
+  ...
+# Subtest: reprovision finishes at device_online without claim, binding, or activation
+ok 300 - reprovision finishes at device_online without claim, binding, or activation
+  ---
+  duration_ms: 2004.242667
+  ...
+# Subtest: reprovision progress is not filled in by the device's existing activation
+ok 301 - reprovision progress is not filled in by the device's existing activation
+  ---
+  duration_ms: 0.150209
+  ...
+# Subtest: reprovision entry refuses a robot that is not bound to this account
+ok 302 - reprovision entry refuses a robot that is not bound to this account
+  ---
+  duration_ms: 0.466083
+  ...
+# Subtest: add-device entry follows the server when the owner scans their own bound robot
+ok 303 - add-device entry follows the server when the owner scans their own bound robot
+  ---
+  duration_ms: 0.207792
+  ...
+# Subtest: add-device flow still stops at progress for an onboarding session that is online
+ok 304 - add-device flow still stops at progress for an onboarding session that is online
+  ---
+  duration_ms: 0.102667
+  ...
+# Subtest: resuming a finished reprovision lands on complete and clears the stored session
+ok 305 - resuming a finished reprovision lands on complete and clears the stored session
+  ---
+  duration_ms: 0.1635
+  ...
+# Subtest: DEVICE_ALREADY_BOUND now speaks to accounts the robot is not bound to
+ok 306 - DEVICE_ALREADY_BOUND now speaks to accounts the robot is not bound to
+  ---
+  duration_ms: 0.05425
+  ...
+# Subtest: onboarding page passes its entry mode and hides claim steps while reprovisioning
+ok 307 - onboarding page passes its entry mode and hides claim steps while reprovisioning
+  ---
+  duration_ms: 0.509
+  ...
+# Subtest: the usage screen shows the real quiet window as the card chip, then the offline stories and the privacy rows
+ok 308 - the usage screen shows the real quiet window as the card chip, then the offline stories and the privacy rows
+  ---
+  duration_ms: 27.409375
+  ...
+# Subtest: the 单次上限 slider runs from 10 to 30 and shows a signed 15 minute cap
+ok 309 - the 单次上限 slider runs from 10 to 30 and shows a signed 15 minute cap
+  ---
+  duration_ms: 12.513042
+  ...
+# Subtest: releasing the 单次上限 slider past 30 saves 30 minutes with the stored quiet window
+ok 310 - releasing the 单次上限 slider past 30 saves 30 minutes with the stored quiet window
+  ---
+  duration_ms: 9.762958
+  ...
+# Subtest: the usage screen counts today's chat against the daily budget the guardian sets beside the per-session cap
+ok 311 - the usage screen counts today's chat against the daily budget the guardian sets beside the per-session cap
+  ---
+  duration_ms: 9.417333
+  ...
+# Subtest: the usage ring fills today's share of the daily budget
+ok 312 - the usage ring fills today's share of the daily budget
+  ---
+  duration_ms: 10.249792
+  ...
+# Subtest: a missing per-session cap displays 15 minutes and the slider rests on 15
+ok 313 - a missing per-session cap displays 15 minutes and the slider rests on 15
+  ---
+  duration_ms: 7.023125
+  ...
+# Subtest: a stored cap outside 10 to 30 minutes shows 15 and does not save or prompt
+ok 314 - a stored cap outside 10 to 30 minutes shows 15 and does not save or prompt
+  ---
+  duration_ms: 26.43
+  ...
+# Subtest: confirming a rebind sends 15 minutes, the same number an old cap displays
+ok 315 - confirming a rebind sends 15 minutes, the same number an old cap displays
+  ---
+  duration_ms: 4.247708
+  ...
+# Subtest: a quiet-only profile keeps the signed cap empty and shows the 15 minute fallback
+ok 316 - a quiet-only profile keeps the signed cap empty and shows the 15 minute fallback
+  ---
+  duration_ms: 9.077417
+  ...
+# Subtest: digital-self counts confirmed sources and labels every growth dimension
+ok 317 - digital-self counts confirmed sources and labels every growth dimension
+  ---
+  duration_ms: 10.99975
+  ...
+# Subtest: version records stay folded until tapped, then list labelled versions
+ok 318 - version records stay folded until tapped, then list labelled versions
+  ---
+  duration_ms: 11.89275
+  ...
+# Subtest: digital-self with no growth data shows zero and the empty state
+ok 319 - digital-self with no growth data shows zero and the empty state
+  ---
+  duration_ms: 7.637583
+  ...
+# Subtest: every companion ships a compact packed set of expression frames
+ok 320 - every companion ships a compact packed set of expression frames
+  ---
+  duration_ms: 1.238542
+  ...
+# Subtest: the full expression frame set stays out of the package and out of pages
+ok 321 - the full expression frame set stays out of the package and out of pages
+  ---
+  duration_ms: 0.210083
+  ...
+# Subtest: v4 home keeps the mascot off the dashboard; settings keep none
+ok 322 - v4 home keeps the mascot off the dashboard; settings keep none
+  ---
+  duration_ms: 1.370417
+  ...
+# Subtest: guardian consent renders the draft chip, the source note, and the compliance paragraphs in order
+ok 323 - guardian consent renders the draft chip, the source note, and the compliance paragraphs in order
+  ---
+  duration_ms: 7.735292
+  ...
+# Subtest: guardian page covers child confirmation, granular consent, summary, and alerts
+ok 324 - guardian page covers child confirmation, granular consent, summary, and alerts
+  ---
+  duration_ms: 0.822417
+  ...
+# Subtest: student notice and bind consent remain explicit client choices
+ok 325 - student notice and bind consent remain explicit client choices
+  ---
+  duration_ms: 0.4835
+  ...
+# Subtest: guardian page grants and revokes person consent for an accountless child
+ok 326 - guardian page grants and revokes person consent for an accountless child
+  ---
+  duration_ms: 11.261958
+  ...
+# Subtest: person consent failure stays owner-scoped and does not blank the row
+ok 327 - person consent failure stays owner-scoped and does not blank the row
+  ---
+  duration_ms: 0.603875
+  ...
+# Subtest: guardian exports an accountless child's data to a file without rendering it
+ok 328 - guardian exports an accountless child's data to a file without rendering it
+  ---
+  duration_ms: 0.980542
+  ...
+# Subtest: guardian deletes an accountless child's data only after typed confirmation
+ok 329 - guardian deletes an accountless child's data only after typed confirmation
+  ---
+  duration_ms: 0.493459
+  ...
+# Subtest: guardian child data actions surface a 403 as an owner-scoped message
+ok 330 - guardian child data actions surface a 403 as an owner-scoped message
+  ---
+  duration_ms: 0.340458
+  ...
+# Subtest: guardian page opens the bound child's summary when there is no guardian link
+ok 331 - guardian page opens the bound child's summary when there is no guardian link
+  ---
+  duration_ms: 0.647
+  ...
+# Subtest: disabled push config never prompts or records
+ok 332 - disabled push config never prompts or records
+  ---
+  duration_ms: 1.061833
+  ...
+# Subtest: enabled push prompts for the crisis template and posts an accepted result
+ok 333 - enabled push prompts for the crisis template and posts an accepted result
+  ---
+  duration_ms: 0.221667
+  ...
+# Subtest: reject, ban and main-switch-off are recorded without a login code
+ok 334 - reject, ban and main-switch-off are recorded without a login code
+  ---
+  duration_ms: 0.288791
+  ...
+# Subtest: the post-binding offer explains first and subscribes only on confirm
+ok 335 - the post-binding offer explains first and subscribes only on confirm
+  ---
+  duration_ms: 0.632458
+  ...
+# Subtest: guardian page wires the subscribe prompt to a tap and keeps alerts visible
+ok 336 - guardian page wires the subscribe prompt to a tap and keeps alerts visible
+  ---
+  duration_ms: 0.515583
+  ...
+# Subtest: settings toggle loads remaining > 0 as on and opt_out clears the ledger
+ok 337 - settings toggle loads remaining > 0 as on and opt_out clears the ledger
+  ---
+  duration_ms: 0.330875
+  ...
+# Subtest: subscription-state query failure is unknown, not pretended off
+ok 338 - subscription-state query failure is unknown, not pretended off
+  ---
+  duration_ms: 0.163042
+  ...
+# Subtest: device settings toggle uses ledger state and real opt-out, not UI-only off
+ok 339 - device settings toggle uses ledger state and real opt-out, not UI-only off
+  ---
+  duration_ms: 0.537833
+  ...
+# Subtest: guardian opens on a large title and the bound child's weekly bars
+ok 340 - guardian opens on a large title and the bound child's weekly bars
+  ---
+  duration_ms: 18.559708
+  ...
+# Subtest: guardian alerts show the child, a readable time and no delivery internals
+ok 341 - guardian alerts show the child, a readable time and no delivery internals
+  ---
+  duration_ms: 5.187625
+  ...
+# Subtest: guardian alerts without a name or valid time fall back to TA and drop the time line
+ok 342 - guardian alerts without a name or valid time fall back to TA and drop the time line
+  ---
+  duration_ms: 5.438958
+  ...
+# Subtest: tab pages keep a useful guest state instead of redirecting on show
+ok 343 - tab pages keep a useful guest state instead of redirecting on show
+  ---
+  duration_ms: 1.537458
+  ...
+# Subtest: guest actions share one login gate with a return path
+ok 344 - guest actions share one login gate with a return path
+  ---
+  duration_ms: 0.798583
+  ...
+# Subtest: login uses WeChat phone authorization only after the account checkbox is on
+ok 345 - login uses WeChat phone authorization only after the account checkbox is on
+  ---
+  duration_ms: 0.316209
+  ...
+# Subtest: logout clears private profile state without relying on a tab navigation refresh
+ok 346 - logout clears private profile state without relying on a tab navigation refresh
+  ---
+  duration_ms: 0.309458
+  ...
+# Subtest: auth cleanup broadcasts to every page that can hold private state
+ok 347 - auth cleanup broadcasts to every page that can hold private state
+  ---
+  duration_ms: 0.7365
+  ...
+# Subtest: an authenticated 401 clears the persisted identity before returning the error
+ok 348 - an authenticated 401 clears the persisted identity before returning the error
+  ---
+  duration_ms: 4.846041
+  ...
+# Subtest: a late review response cannot repopulate private data after auth is cleared
+ok 349 - a late review response cannot repopulate private data after auth is cleared
+  ---
+  duration_ms: 8.862042
+  ...
+# Subtest: device names describe the bound use instead of a mascot
+ok 350 - device names describe the bound use instead of a mascot
+  ---
+  duration_ms: 0.503958
+  ...
+# Subtest: home greeting bands do not invent a room or a master title
+ok 351 - home greeting bands do not invent a room or a master title
+  ---
+  duration_ms: 0.942917
+  ...
+# Subtest: online status copy is device-oriented, not in-app chat
+ok 352 - online status copy is device-oriented, not in-app chat
+  ---
+  duration_ms: 0.153542
+  ...
+# Subtest: online status reflects activation readiness
+ok 353 - online status reflects activation readiness
+  ---
+  duration_ms: 0.124833
+  ...
+# Subtest: home page is a status board without rooms or realtime chat
+ok 354 - home page is a status board without rooms or realtime chat
+  ---
+  duration_ms: 1.0595
+  ...
+# Subtest: current user on home is the bind-time remark, not the WeChat name
+ok 355 - current user on home is the bind-time remark, not the WeChat name
+  ---
+  duration_ms: 0.089416
+  ...
+# Subtest: device wake word copy tells users it syncs then restarts
+ok 356 - device wake word copy tells users it syncs then restarts
+  ---
+  duration_ms: 0.243458
+  ...
+# Subtest: profile has no voice-sample entry points after voice-clone removal
+ok 357 - profile has no voice-sample entry points after voice-clone removal
+  ---
+  duration_ms: 0.255291
+  ...
+# Subtest: online hero caption names the device's configured wake word
+ok 358 - online hero caption names the device's configured wake word
+  ---
+  duration_ms: 0.352292
+  ...
+# Subtest: trial device card helper uses profile quiet hours and usage limit
+ok 359 - trial device card helper uses profile quiet hours and usage limit
+  ---
+  duration_ms: 1.393541
+  ...
+# Subtest: parent v4 tokens live in app.wxss and pages avoid third-party art
+ok 360 - parent v4 tokens live in app.wxss and pages avoid third-party art
+  ---
+  duration_ms: 1.684542
+  ...
+# Subtest: home leaves the usage bar hidden when the ledger could not read today's minutes
+ok 361 - home leaves the usage bar hidden when the ledger could not read today's minutes
+  ---
+  duration_ms: 16.859625
+  ...
+# Subtest: home shows today's used minutes and daily cap
+ok 362 - home shows today's used minutes and daily cap
+  ---
+  duration_ms: 5.662875
+  ...
+# Subtest: home ring fills the used share of the daily budget
+ok 363 - home ring fills the used share of the daily budget
+  ---
+  duration_ms: 6.628375
+  ...
+# Subtest: home shows today's minutes only when the session-limits read carries them
+ok 364 - home shows today's minutes only when the session-limits read carries them
+  ---
+  duration_ms: 13.276584
+  ...
+# Subtest: home links to device settings when the signed profile has no daily budget
+ok 365 - home links to device settings when the signed profile has no daily budget
+  ---
+  duration_ms: 5.042875
+  ...
+# Subtest: home can show an account review without a child archive
+ok 366 - home can show an account review without a child archive
+  ---
+  duration_ms: 4.992041
+  ...
+# Subtest: home counts all recent summaries and today's conversations separately
+ok 367 - home counts all recent summaries and today's conversations separately
+  ---
+  duration_ms: 8.073583
+  ...
+# Subtest: home pins the attention card with its time and the open-to-pin meta
+ok 368 - home pins the attention card with its time and the open-to-pin meta
+  ---
+  duration_ms: 11.470917
+  ...
+# Subtest: home shows the safety subscribe card only while subscription push is enabled
+ok 369 - home shows the safety subscribe card only while subscription push is enabled
+  ---
+  duration_ms: 8.425625
+  ...
+# Subtest: home links to child memory without repeating the review preview
+ok 370 - home links to child memory without repeating the review preview
+  ---
+  duration_ms: 6.842583
+  ...
+# Subtest: home never renders battery, story counts or a recommendation card
+ok 371 - home never renders battery, story counts or a recommendation card
+  ---
+  duration_ms: 5.501375
+  ...
+# Subtest: guest home lists the product intro and stays off the login screen
+ok 372 - guest home lists the product intro and stays off the login screen
+  ---
+  duration_ms: 5.544209
+  ...
+# Subtest: guest login opens the login page without wx.login
+ok 373 - guest login opens the login page without wx.login
+  ---
+  duration_ms: 2.501583
+  ...
+# Subtest: a guest gated action shows the login modal and does not obtain an identity
+ok 374 - a guest gated action shows the login modal and does not obtain an identity
+  ---
+  duration_ms: 2.372667
+  ...
+# Subtest: alert time label reads today or the calendar day
+ok 375 - alert time label reads today or the calendar day
+  ---
+  duration_ms: 0.214417
+  ...
+# Subtest: home load stays within the setData budget
+ok 376 - home load stays within the setData budget
+  ---
+  duration_ms: 2.991917
+  ...
+# Subtest: the agreement file is packed even though only a runtime path names it
+ok 377 - the agreement file is packed even though only a runtime path names it
+  ---
+  duration_ms: 0.581083
+  ...
+# Subtest: the shipped agreement carries its effective date
+ok 378 - the shipped agreement carries its effective date
+  ---
+  duration_ms: 0.086417
+  ...
+# Subtest: consent stays locked unless the agreement body and the effective date are both present
+ok 379 - consent stays locked unless the agreement body and the effective date are both present
+  ---
+  duration_ms: 25.356917
+  ...
+# Subtest: consent links open their documents before the guardian ticks a finished release
+ok 380 - consent links open their documents before the guardian ticks a finished release
+  ---
+  duration_ms: 2.820417
+  ...
+# Subtest: login titles open the agreement and the privacy notice without a login redirect
+ok 381 - login titles open the agreement and the privacy notice without a login redirect
+  ---
+  duration_ms: 14.779458
+  ...
+# Subtest: the user agreement page shows the document body, or a pending notice when that body is empty
+ok 382 - the user agreement page shows the document body, or a pending notice when that body is empty
+  ---
+  duration_ms: 4.608833
+  ...
+# Subtest: the shipped user agreement page shows the dated body and opens the gate
+ok 383 - the shipped user agreement page shows the dated body and opens the gate
+  ---
+  duration_ms: 1.892792
+  ...
+# Subtest: parent-visible login and consent surfaces do not say 草稿
+ok 384 - parent-visible login and consent surfaces do not say 草稿
+  ---
+  duration_ms: 18.887459
+  ...
+# Subtest: confirming stores the versions and a stored older version sends the guardian back
+ok 385 - confirming stores the versions and a stored older version sends the guardian back
+  ---
+  duration_ms: 8.723333
+  ...
+# Subtest: the interaction draft and its detail page are gone
+ok 386 - the interaction draft and its detail page are gone
+  ---
+  duration_ms: 0.944125
+  ...
+# Subtest: the lifecycle page never uses destructive copy
+ok 387 - the lifecycle page never uses destructive copy
+  ---
+  duration_ms: 0.346416
+  ...
+# Subtest: both entry points open the lifecycle page
+ok 388 - both entry points open the lifecycle page
+  ---
+  duration_ms: 4.217667
+  ...
+# Subtest: only an active parent_for_child binding yields a non-owner child
+ok 389 - only an active parent_for_child binding yields a non-owner child
+  ---
+  duration_ms: 0.080125
+  ...
+# Subtest: an empty list renders the empty state without throwing
+ok 390 - an empty list renders the empty state without throwing
+  ---
+  duration_ms: 0.734167
+  ...
+# Subtest: without a bound child the page says how to get one and makes no request
+ok 391 - without a bound child the page says how to get one and makes no request
+  ---
+  duration_ms: 0.331958
+  ...
+# Subtest: a 403 or a failed list clears the rows and offers a retry
+ok 392 - a 403 or a failed list clears the rows and offers a retry
+  ---
+  duration_ms: 0.330917
+  ...
+# Subtest: a retraction refreshes the authoritative list and is restorable
+ok 393 - a retraction refreshes the authoritative list and is restorable
+  ---
+  duration_ms: 0.796333
+  ...
+# Subtest: a reopened page reads retracted memories from the backend
+ok 394 - a reopened page reads retracted memories from the backend
+  ---
+  duration_ms: 4.781542
+  ...
+# Subtest: restoring a retracted memory confirms it and reloads both lists
+ok 395 - restoring a retracted memory confirms it and reloads both lists
+  ---
+  duration_ms: 0.884458
+  ...
+# Subtest: a failed retracted read surfaces the error without NaN or a crash
+ok 396 - a failed retracted read surfaces the error without NaN or a crash
+  ---
+  duration_ms: 0.374417
+  ...
+# Subtest: ISO times become Beijing labels and bad input never prints NaN
+ok 397 - ISO times become Beijing labels and bad input never prints NaN
+  ---
+  duration_ms: 0.119125
+  ...
+# Subtest: the lifecycle WXML carries no WXS new Date
+ok 398 - the lifecycle WXML carries no WXS new Date
+  ---
+  duration_ms: 0.260667
+  ...
+# Subtest: the guardian request URL carries the currently bound minor id, and another child is unavailable
+ok 399 - the guardian request URL carries the currently bound minor id, and another child is unavailable
+  ---
+  duration_ms: 0.572667
+  ...
+# Subtest: the bottom connection to the unbind deletion path opens the device tab's unbind sheet
+ok 400 - the bottom connection to the unbind deletion path opens the device tab's unbind sheet
+  ---
+  duration_ms: 0.266042
+  ...
+# Subtest: the retraction prompt is the same for a candidate and a confirmed memory
+ok 401 - the retraction prompt is the same for a candidate and a confirmed memory
+  ---
+  duration_ms: 0.276959
+  ...
+# Subtest: getConversationReview and reviewMemoryClaim use the canonical endpoints
+ok 402 - getConversationReview and reviewMemoryClaim use the canonical endpoints
+  ---
+  duration_ms: 2.688583
+  ...
+# Subtest: conversation session APIs validate parameters and keep session ids encoded
+ok 403 - conversation session APIs validate parameters and keep session ids encoded
+  ---
+  duration_ms: 0.777709
+  ...
+# Subtest: conversation sessions are displayed without hiding the daily review when unavailable
+ok 404 - conversation sessions are displayed without hiding the daily review when unavailable
+  ---
+  duration_ms: 6.255792
+  ...
+# Subtest: late conversation detail after logout clears the transient selection state
+ok 405 - late conversation detail after logout clears the transient selection state
+  ---
+  duration_ms: 5.376125
+  ...
+# Subtest: conversation review is normalized into three partitions and candidates never enter confirmed
+ok 406 - conversation review is normalized into three partitions and candidates never enter confirmed
+  ---
+  duration_ms: 0.708583
+  ...
+# Subtest: confirming a candidate calls the canonical review API then refetches the authoritative projection
+ok 407 - confirming a candidate calls the canonical review API then refetches the authoritative projection
+  ---
+  duration_ms: 0.556041
+  ...
+# Subtest: a failed confirmation does not locally upgrade the candidate
+ok 408 - a failed confirmation does not locally upgrade the candidate
+  ---
+  duration_ms: 0.462667
+  ...
+# Subtest: a profile without memory_recall_private no longer hides either review interface
+ok 409 - a profile without memory_recall_private no longer hides either review interface
+  ---
+  duration_ms: 0.314417
+  ...
+# Subtest: a late conversation-review response cannot repopulate partitions after auth is cleared
+ok 410 - a late conversation-review response cannot repopulate partitions after auth is cleared
+  ---
+  duration_ms: 1.739875
+  ...
+# Subtest: guest state clears every private review partition
+ok 411 - guest state clears every private review partition
+  ---
+  duration_ms: 0.619125
+  ...
+# Subtest: memory review WXML exposes daily recap, pending memory, and approximate heard labels
+ok 412 - memory review WXML exposes daily recap, pending memory, and approximate heard labels
+  ---
+  duration_ms: 0.208042
+  ...
+# Subtest: guardian review endpoints are canonical and encode the child id and day
+ok 413 - guardian review endpoints are canonical and encode the child id and day
+  ---
+  duration_ms: 0.102709
+  ...
+# Subtest: a parent who bound the device for a child sees the child's days and never their words
+ok 414 - a parent who bound the device for a child sees the child's days and never their words
+  ---
+  duration_ms: 0.514167
+  ...
+# Subtest: a closed legacy day read shows the child's recent summary in a self-use account
+ok 415 - a closed legacy day read shows the child's recent summary in a self-use account
+  ---
+  duration_ms: 0.499666
+  ...
+# Subtest: a closed legacy day read with no recent summary keeps the empty state and no error
+ok 416 - a closed legacy day read with no recent summary keeps the empty state and no error
+  ---
+  duration_ms: 0.323542
+  ...
+# Subtest: a missing long-term memory consent is explained in words, not as an error code
+ok 417 - a missing long-term memory consent is explained in words, not as an error code
+  ---
+  duration_ms: 0.288875
+  ...
+# Subtest: an account that is not a bound child's guardian keeps its own daily review
+ok 418 - an account that is not a bound child's guardian keeps its own daily review
+  ---
+  duration_ms: 0.315375
+  ...
+# Subtest: guardian memory endpoints are canonical, encode their ids and only allow confirm or retract
+ok 419 - guardian memory endpoints are canonical, encode their ids and only allow confirm or retract
+  ---
+  duration_ms: 0.237834
+  ...
+# Subtest: a parent who bound the device for a child reviews the child's memories, not their own
+ok 420 - a parent who bound the device for a child reviews the child's memories, not their own
+  ---
+  duration_ms: 0.37775
+  ...
+# Subtest: an account without a bound child keeps its own memories and never asks for a child's
+ok 421 - an account without a bound child keeps its own memories and never asks for a child's
+  ---
+  duration_ms: 0.30225
+  ...
+# Subtest: a missing consent leaves the child's memory list empty and says why in words
+ok 422 - a missing consent leaves the child's memory list empty and says why in words
+  ---
+  duration_ms: 0.363416
+  ...
+# Subtest: the parent's confirmation goes to the child's review endpoint and refetches the list
+ok 423 - the parent's confirmation goes to the child's review endpoint and refetches the list
+  ---
+  duration_ms: 0.418125
+  ...
+# Subtest: a failed confirmation of a child's memory leaves the list as the server sent it
+ok 424 - a failed confirmation of a child's memory leaves the list as the server sent it
+  ---
+  duration_ms: 1.098917
+  ...
+# Subtest: not remembering a candidate and forgetting a kept memory are both a retract after a question
+ok 425 - not remembering a candidate and forgetting a kept memory are both a retract after a question
+  ---
+  duration_ms: 0.790375
+  ...
+# Subtest: declining the question changes nothing, and outside a child's robot nothing is retracted
+ok 426 - declining the question changes nothing, and outside a child's robot nothing is retracted
+  ---
+  duration_ms: 1.871708
+  ...
+# Subtest: memory review WXML offers the guardian's confirm, not-this and forget actions
+ok 427 - memory review WXML offers the guardian's confirm, not-this and forget actions
+  ---
+  duration_ms: 0.141125
+  ...
+# Subtest: summary days carry the date only and an unsummarised day says how many chats it had
+ok 428 - summary days carry the date only and an unsummarised day says how many chats it had
+  ---
+  duration_ms: 11.656584
+  ...
+# Subtest: memory has no date bar even when only one day has a summary
+ok 429 - memory has no date bar even when only one day has a summary
+  ---
+  duration_ms: 3.669125
+  ...
+# Subtest: 记住的事 opens from a row under the days and 日常回顾 goes back
+ok 430 - 记住的事 opens from a row under the days and 日常回顾 goes back
+  ---
+  duration_ms: 7.018583
+  ...
+# Subtest: the thumb starts at the stored 30 of a 15–60 range
+ok 431 - the thumb starts at the stored 30 of a 15–60 range
+  ---
+  duration_ms: 1.066541
+  ...
+# Subtest: dragging to the right end follows the finger and reports 60 only on release
+ok 432 - dragging to the right end follows the finger and reports 60 only on release
+  ---
+  duration_ms: 0.825083
+  ...
+# Subtest: a tap snaps to the nearest step
+ok 433 - a tap snaps to the nearest step
+  ---
+  duration_ms: 0.285042
+  ...
+# Subtest: releasing on the stored value reports nothing
+ok 434 - releasing on the stored value reports nothing
+  ---
+  duration_ms: 0.243916
+  ...
+# Subtest: a disabled slider ignores the finger while a save is in flight
+ok 435 - a disabled slider ignores the finger while a save is in flight
+  ---
+  duration_ms: 0.816458
+  ...
+# Subtest: a cancelled touch drops the drag and puts the thumb back
+ok 436 - a cancelled touch drops the drag and puts the thumb back
+  ---
+  duration_ms: 0.270708
+  ...
+# Subtest: the released value holds through the save and a failed save snaps back to the stored value
+ok 437 - the released value holds through the save and a failed save snaps back to the stored value
+  ---
+  duration_ms: 0.282959
+  ...
+# Subtest: a successful save keeps the thumb on the new stored value
+ok 438 - a successful save keeps the thumb on the new stored value
+  ---
+  duration_ms: 0.292083
+  ...
+# Subtest: a stored value from the parent moves an idle thumb
+ok 439 - a stored value from the parent moves an idle thumb
+  ---
+  duration_ms: 0.363084
+  ...
+# Subtest: the parent's value does not yank the thumb out from under the finger
+ok 440 - the parent's value does not yank the thumb out from under the finger
+  ---
+  duration_ms: 0.483292
+  ...
+# Subtest: mini program consumes the generated canonical artifact through a thin re-export
+ok 441 - mini program consumes the generated canonical artifact through a thin re-export
+  ---
+  duration_ms: 1.012625
+  ...
+# Subtest: every mini program enum exactly matches the canonical schema and fails closed
+ok 442 - every mini program enum exactly matches the canonical schema and fails closed
+  ---
+  duration_ms: 1.748417
+  ...
+# Subtest: memory authority capabilities are distinct canonical actions
+ok 443 - memory authority capabilities are distinct canonical actions
+  ---
+  duration_ms: 0.072416
+  ...
+# Subtest: new producer lifecycle guard permits only canonical current contracts
+ok 444 - new producer lifecycle guard permits only canonical current contracts
+  ---
+  duration_ms: 0.332667
+  ...
+# Subtest: the style carries the status bar and the real capsule bottom, which sits lower on Android
+ok 445 - the style carries the status bar and the real capsule bottom, which sits lower on Android
+  ---
+  duration_ms: 0.795416
+  ...
+# Subtest: without a capsule rect the style assumes a capsule 40px below the status bar
+ok 446 - without a capsule rect the style assumes a capsule 40px below the status bar
+  ---
+  duration_ms: 0.236417
+  ...
+# Subtest: production package contains no realtime voice surface at all
+ok 447 - production package contains no realtime voice surface at all
+  ---
+  duration_ms: 39.008792
+  ...
+# Subtest: test sources are explicitly excluded from the WeChat package
+ok 448 - test sources are explicitly excluded from the WeChat package
+  ---
+  duration_ms: 0.188
+  ...
+# Subtest: cold start, memory, home and device surfaces never create a RecorderManager
+ok 449 - cold start, memory, home and device surfaces never create a RecorderManager
+  ---
+  duration_ms: 0.774375
+  ...
+# Subtest: RecorderManager is unused after voice-clone removal
+ok 450 - RecorderManager is unused after voice-clone removal
+  ---
+  duration_ms: 9.129
+  ...
+# Subtest: phone voiceprint enrollment page is fully removed
+ok 451 - phone voiceprint enrollment page is fully removed
+  ---
+  duration_ms: 0.324291
+  ...
+# Subtest: voiceprint and voice cloning are gone from every page
+ok 452 - voiceprint and voice cloning are gone from every page
+  ---
+  duration_ms: 8.646959
+  ...
+# Subtest: deleted media modules stay deleted
+ok 453 - deleted media modules stay deleted
+  ---
+  duration_ms: 0.14625
+  ...
+# Subtest: control api exposes no miniprogram media session endpoints
+ok 454 - control api exposes no miniprogram media session endpoints
+  ---
+  duration_ms: 1.861916
+  ...
+# Subtest: home status board has no realtime voice dashboard
+ok 455 - home status board has no realtime voice dashboard
+  ---
+  duration_ms: 0.499625
+  ...
+# Subtest: 自定义人格：创建即冻结并把服务端记录显示出来
+ok 456 - 自定义人格：创建即冻结并把服务端记录显示出来
+  ---
+  duration_ms: 3.165042
+  ...
+# Subtest: 自定义人格：结构化未接入时如实提示并可手填创建
+ok 457 - 自定义人格：结构化未接入时如实提示并可手填创建
+  ---
+  duration_ms: 0.686667
+  ...
+# Subtest: 自定义人格：删除必须先确认，取消则不发请求
+ok 458 - 自定义人格：删除必须先确认，取消则不发请求
+  ---
+  duration_ms: 0.501208
+  ...
+# Subtest: my personas list the version and voice name, never the persona or voice id
+ok 459 - my personas list the version and voice name, never the persona or voice id
+  ---
+  duration_ms: 12.996375
+  ...
+# Subtest: a persona whose fallback voice is unknown shows no voice instead of the first companion
+ok 460 - a persona whose fallback voice is unknown shows no voice instead of the first companion
+  ---
+  duration_ms: 3.981875
+  ...
+# Subtest: pickers and the rate slider use the shared v4 field chrome
+ok 461 - pickers and the rate slider use the shared v4 field chrome
+  ---
+  duration_ms: 2.976958
+  ...
+# Subtest: privacy policy keeps paragraphs 1-7 exactly as shipped
+ok 462 - privacy policy keeps paragraphs 1-7 exactly as shipped
+  ---
+  duration_ms: 0.635208
+  ...
+# Subtest: privacy policy keeps paragraphs 8-12 verbatim, in order, and stops at 12
+ok 463 - privacy policy keeps paragraphs 8-12 verbatim, in order, and stops at 12
+  ---
+  duration_ms: 0.246958
+  ...
+# Subtest: the privacy policy page renders the paragraphs in array order
+ok 464 - the privacy policy page renders the paragraphs in array order
+  ---
+  duration_ms: 7.24425
+  ...
+# Subtest: long-term memory row opens the child memory page instead of a local switch
+ok 465 - long-term memory row opens the child memory page instead of a local switch
+  ---
+  duration_ms: 3.815333
+  ...
+# Subtest: 空缓存只进入同步中，不能推断账号没有设备
+ok 466 - 空缓存只进入同步中，不能推断账号没有设备
+  ---
+  duration_ms: 4.374542
+  ...
+# Subtest: 服务端同步失败（405）显示同步失败，而不是没有设备
+ok 467 - 服务端同步失败（405）显示同步失败，而不是没有设备
+  ---
+  duration_ms: 0.853708
+  ...
+# Subtest: 服务端确认 empty 才显示未绑定设备，且保持 fail-closed
+ok 468 - 服务端确认 empty 才显示未绑定设备，且保持 fail-closed
+  ---
+  duration_ms: 0.763167
+  ...
+# Subtest: cached 状态保留本机绑定并提示列表未同步
+ok 469 - cached 状态保留本机绑定并提示列表未同步
+  ---
+  duration_ms: 0.913
+  ...
+# Subtest: 多台设备进入待选择，选择后按所选设备刷新
+ok 470 - 多台设备进入待选择，选择后按所选设备刷新
+  ---
+  duration_ms: 0.638375
+  ...
+# Subtest: 重复调用共享同一在途同步，不产生重复请求
+ok 471 - 重复调用共享同一在途同步，不产生重复请求
+  ---
+  duration_ms: 0.343584
+  ...
+# Subtest: 账号切换后旧账号迟到同步不得覆盖新账号状态
+ok 472 - 账号切换后旧账号迟到同步不得覆盖新账号状态
+  ---
+  duration_ms: 0.431916
+  ...
+# Subtest: onShow 读取到新账号时重置旧绑定展示
+ok 473 - onShow 读取到新账号时重置旧绑定展示
+  ---
+  duration_ms: 0.423542
+  ...
+# Subtest: 游客状态不持有绑定信息，也不显示未绑定设备
+ok 474 - 游客状态不持有绑定信息，也不显示未绑定设备
+  ---
+  duration_ms: 0.695125
+  ...
+# Subtest: onShow 换账号时旧请求忙位不得拦截新账号同步
+ok 475 - onShow 换账号时旧请求忙位不得拦截新账号同步
+  ---
+  duration_ms: 6.567333
+  ...
+# Subtest: 同账号重复 onShow 去重且完成后释放忙位
+ok 476 - 同账号重复 onShow 去重且完成后释放忙位
+  ---
+  duration_ms: 2.257125
+  ...
+# Subtest: onUnload 后迟到加载不得改写页面且必须释放忙位
+ok 477 - onUnload 后迟到加载不得改写页面且必须释放忙位
+  ---
+  duration_ms: 1.868334
+  ...
+# Subtest: 设备入口用 switchTab 打开设备 tab（navigateTo 打不开 tab 页）
+ok 478 - 设备入口用 switchTab 打开设备 tab（navigateTo 打不开 tab 页）
+  ---
+  duration_ms: 0.83225
+  ...
+# Subtest: a closed legacy day read resets the profile stats to zero without an error
+ok 479 - a closed legacy day read resets the profile stats to zero without an error
+  ---
+  duration_ms: 0.964709
+  ...
+# Subtest: profile hero uses the WeChat avatar or a name initial, not a robot mascot
+ok 480 - profile hero uses the WeChat avatar or a name initial, not a robot mascot
+  ---
+  duration_ms: 0.522792
+  ...
+# Subtest: roles and custom personas live on the 角色 tab, not on the profile
+ok 481 - roles and custom personas live on the 角色 tab, not on the profile
+  ---
+  duration_ms: 0.194125
+  ...
+# Subtest: signed in, the page shows the account card, the robot card and the design's four menu rows
+ok 482 - signed in, the page shows the account card, the robot card and the design's four menu rows
+  ---
+  duration_ms: 15.8675
+  ...
+# Subtest: returning to the tab keeps the robot's name on screen while the profile refreshes
+ok 483 - returning to the tab keeps the robot's name on screen while the profile refreshes
+  ---
+  duration_ms: 9.64775
+  ...
+# Subtest: a guest still gets privacy, feedback and about, and 微信登录 opens the login page
+ok 484 - a guest still gets privacy, feedback and about, and 微信登录 opens the login page
+  ---
+  duration_ms: 10.978209
+  ...
+# Subtest: 帮助与反馈 is WeChat's native feedback button only after login
+ok 485 - 帮助与反馈 is WeChat's native feedback button only after login
+  ---
+  duration_ms: 1.411166
+  ...
+# Subtest: 关于 shows the release version, or the build channel before release, and no model filing the server did not report
+ok 486 - 关于 shows the release version, or the build channel before release, and no model filing the server did not report
+  ---
+  duration_ms: 11.892459
+  ...
+# Subtest: chat_llm_providers empty, before the voice agent reports its models, shows no model filing
+ok 487 - chat_llm_providers empty, before the voice agent reports its models, shows no model filing
+  ---
+  duration_ms: 3.758208
+  ...
+# Subtest: chat_llm_providers deepseek keeps the DeepSeek filing
+ok 488 - chat_llm_providers deepseek keeps the DeepSeek filing
+  ---
+  duration_ms: 5.533917
+  ...
+# Subtest: chat_llm_providers qwen lists only the 通义千问 filing
+ok 489 - chat_llm_providers qwen lists only the 通义千问 filing
+  ---
+  duration_ms: 5.543208
+  ...
+# Subtest: chat_llm_providers deepseek and qwen discloses both filings
+ok 490 - chat_llm_providers deepseek and qwen discloses both filings
+  ---
+  duration_ms: 5.589
+  ...
+# Subtest: 授权与隐私说明 opens the consent page when raw-audio consent is open, the WeChat privacy guideline otherwise
+ok 491 - 授权与隐私说明 opens the consent page when raw-audio consent is open, the WeChat privacy guideline otherwise
+  ---
+  duration_ms: 6.440583
+  ...
+# Subtest: a guardian with guardian_summary_view sees 记忆管理 beside privacy and opens it
+ok 492 - a guardian with guardian_summary_view sees 记忆管理 beside privacy and opens it
+  ---
+  duration_ms: 6.020125
+  ...
+# Subtest: default quiet hours are 21:00–07:00 with the exact night-mode label
+ok 493 - default quiet hours are 21:00–07:00 with the exact night-mode label
+  ---
+  duration_ms: 0.593625
+  ...
+# Subtest: duration is cross-midnight aware
+ok 494 - duration is cross-midnight aware
+  ---
+  duration_ms: 0.091375
+  ...
+# Subtest: windows shorter than 1 hour or longer than 12 hours need confirm
+ok 495 - windows shorter than 1 hour or longer than 12 hours need confirm
+  ---
+  duration_ms: 0.122709
+  ...
+# Subtest: confirmUnusualQuietHours skips the modal for a usual window
+ok 496 - confirmUnusualQuietHours skips the modal for a usual window
+  ---
+  duration_ms: 0.081916
+  ...
+# Subtest: confirmUnusualQuietHours only proceeds when the guardian confirms
+ok 497 - confirmUnusualQuietHours only proceeds when the guardian confirms
+  ---
+  duration_ms: 0.207
+  ...
+# Subtest: refresh accepts fully idempotent same-epoch response after rebuild
+ok 498 - refresh accepts fully idempotent same-epoch response after rebuild
+  ---
+  duration_ms: 3.363417
+  ...
+# Subtest: refresh rejects same-epoch different-content response
+ok 499 - refresh rejects same-epoch different-content response
+  ---
+  duration_ms: 2.137083
+  ...
+# Subtest: responses from another device/binding/session are rejected and clear the cache
+ok 500 - responses from another device/binding/session are rejected and clear the cache
+  ---
+  duration_ms: 0.340291
+  ...
+# Subtest: setActiveSubject rejects profiles that do not match the binding manifest
+ok 501 - setActiveSubject rejects profiles that do not match the binding manifest
+  ---
+  duration_ms: 0.167167
+  ...
+# Subtest: setActiveSubject requires strict epoch increase
+ok 502 - setActiveSubject requires strict epoch increase
+  ---
+  duration_ms: 0.289125
+  ...
+# Subtest: refresh vs switch out-of-order: late refresh response is dropped
+ok 503 - refresh vs switch out-of-order: late refresh response is dropped
+  ---
+  duration_ms: 0.438208
+  ...
+# Subtest: request generation is isolated per device/session context
+ok 504 - request generation is isolated per device/session context
+  ---
+  duration_ms: 0.291875
+  ...
+# Subtest: logout clears the cached runtime profile
+ok 505 - logout clears the cached runtime profile
+  ---
+  duration_ms: 0.164458
+  ...
+# Subtest: logout clears in-memory epoch floors and request seqs
+ok 506 - logout clears in-memory epoch floors and request seqs
+  ---
+  duration_ms: 0.387917
+  ...
+# Subtest: auth 401 clears in-memory runtime profile guards
+ok 507 - auth 401 clears in-memory runtime profile guards
+  ---
+  duration_ms: 0.570667
+  ...
+# Subtest: rebinding to a new manifest version clears in-memory guards
+ok 508 - rebinding to a new manifest version clears in-memory guards
+  ---
+  duration_ms: 0.422667
+  ...
+# Subtest: requireRuntimeCapability gates profile-listed capabilities and defers action-time ones
+ok 509 - requireRuntimeCapability gates profile-listed capabilities and defers action-time ones
+  ---
+  duration_ms: 0.398625
+  ...
+# Subtest: requireRuntimeCapability accepts the runtime-profile-v2 wire the server signs
+ok 510 - requireRuntimeCapability accepts the runtime-profile-v2 wire the server signs
+  ---
+  duration_ms: 0.219875
+  ...
+# Subtest: requireRuntimeCapability denies every capability without a binding or profile
+ok 511 - requireRuntimeCapability denies every capability without a binding or profile
+  ---
+  duration_ms: 0.338167
+  ...
+# Subtest: a protected deep link restores its account binding before checking capability
+ok 512 - a protected deep link restores its account binding before checking capability
+  ---
+  duration_ms: 4.422209
+  ...
+# Subtest: restoring a binding does not grant a capability absent from the runtime profile
+ok 513 - restoring a binding does not grant a capability absent from the runtime profile
+  ---
+  duration_ms: 0.603542
+  ...
+# Subtest: protected deep links distinguish discovery failure from an unbound account
+ok 514 - protected deep links distinguish discovery failure from an unbound account
+  ---
+  duration_ms: 0.5555
+  ...
+# Subtest: protected deep links require selection instead of guessing among multiple devices
+ok 515 - protected deep links require selection instead of guessing among multiple devices
+  ---
+  duration_ms: 0.374958
+  ...
+# Subtest: refresh failure fails closed through requireRuntimeCapability
+ok 516 - refresh failure fails closed through requireRuntimeCapability
+  ---
+  duration_ms: 0.226833
+  ...
+# Subtest: discovery timeout is not an unbound account
+ok 517 - discovery timeout is not an unbound account
+  ---
+  duration_ms: 0.199583
+  ...
+# Subtest: logout or account change during discovery cannot grant a capability
+ok 518 - logout or account change during discovery cannot grant a capability
+  ---
+  duration_ms: 0.458833
+  ...
+# Subtest: a late profile cannot reuse a reset sequence and overwrite a new session
+ok 519 - a late profile cannot reuse a reset sequence and overwrite a new session
+  ---
+  duration_ms: 0.394041
+  ...
+# Subtest: no unread alert puts no safety banner on home or 回顾
+ok 520 - no unread alert puts no safety banner on home or 回顾
+  ---
+  duration_ms: 19.983583
+  ...
+# Subtest: one unread alert shows on home and 回顾 without a 还有 line
+ok 521 - one unread alert shows on home and 回顾 without a 还有 line
+  ---
+  duration_ms: 8.412667
+  ...
+# Subtest: three unread alerts show the newest once, and 回顾 says 还有 2 条
+ok 522 - three unread alerts show the newest once, and 回顾 says 还有 2 条
+  ---
+  duration_ms: 15.082417
+  ...
+# Subtest: after 我知道了 a later login shows the next unread alert, never the acknowledged one
+ok 523 - after 我知道了 a later login shows the next unread alert, never the acknowledged one
+  ---
+  duration_ms: 27.232375
+  ...
+# Subtest: coming back to 回顾 after 我知道了 drops the acknowledged alert
+ok 524 - coming back to 回顾 after 我知道了 drops the acknowledged alert
+  ---
+  duration_ms: 4.686
+  ...
+# Subtest: memory page loads the owner's own recap without consulting the Runtime Profile
+ok 525 - memory page loads the owner's own recap without consulting the Runtime Profile
+  ---
+  duration_ms: 3.26575
+  ...
+# Subtest: guardian config actions use the config seam, not the usage capability
+ok 526 - guardian config actions use the config seam, not the usage capability
+  ---
+  duration_ms: 1.438167
+  ...
+# Subtest: guardian config actions proceed only when the policy decision allows
+ok 527 - guardian config actions proceed only when the policy decision allows
+  ---
+  duration_ms: 4.85925
+  ...
+# Subtest: digital-self loadOverview is gated by digital_self_preview
+ok 528 - digital-self loadOverview is gated by digital_self_preview
+  ---
+  duration_ms: 0.806125
+  ...
+# Subtest: guardian refresh is gated by guardian_summary_view
+ok 529 - guardian refresh is gated by guardian_summary_view
+  ---
+  duration_ms: 0.552
+  ...
+# Subtest: profile stats stay zero and no private recall request without a device binding
+ok 530 - profile stats stay zero and no private recall request without a device binding
+  ---
+  duration_ms: 1.788667
+  ...
+# Subtest: profile entry flags: profile-listed from capabilities, action-time from a confirmed profile
+ok 531 - profile entry flags: profile-listed from capabilities, action-time from a confirmed profile
+  ---
+  duration_ms: 0.661875
+  ...
+# Subtest: profile entry clicks follow the entry flags, so action-time entries open
+ok 532 - profile entry clicks follow the entry flags, so action-time entries open
+  ---
+  duration_ms: 0.432333
+  ...
+# Subtest: privacy page has no voice-sample revoke path
+ok 533 - privacy page has no voice-sample revoke path
+  ---
+  duration_ms: 0.413959
+  ...
+# Subtest: a minor's signed obligations become the displayed session limits
+ok 534 - a minor's signed obligations become the displayed session limits
+  ---
+  duration_ms: 2.225416
+  ...
+# Subtest: the daily chat budget shows only when signed as whole minutes in seconds
+ok 535 - the daily chat budget shows only when signed as whole minutes in seconds
+  ---
+  duration_ms: 0.271958
+  ...
+# Subtest: nothing is shown for adults, invalid profiles or missing obligations
+ok 536 - nothing is shown for adults, invalid profiles or missing obligations
+  ---
+  duration_ms: 0.071042
+  ...
+# Subtest: quiet hours follow Beijing time and the agent's [start, end) window
+ok 537 - quiet hours follow Beijing time and the agent's [start, end) window
+  ---
+  duration_ms: 0.069792
+  ...
+# Subtest: a same-day window has no 次日 marker
+ok 538 - a same-day window has no 次日 marker
+  ---
+  duration_ms: 0.062625
+  ...
+# Subtest: stored seconds outside 10 to 30 minutes are not a parent choice
+ok 539 - stored seconds outside 10 to 30 minutes are not a parent choice
+  ---
+  duration_ms: 0.061583
+  ...
+# Subtest: stored per-session limits above 30 minutes stay off the slider instead of clamping to 30
+ok 540 - stored per-session limits above 30 minutes stay off the slider instead of clamping to 30
+  ---
+  duration_ms: 0.739167
+  ...
+# Subtest: child consent exits through 暂不同意 instead of a back button
+ok 541 - child consent exits through 暂不同意 instead of a back button
+  ---
+  duration_ms: 9.725708
+  ...
+# Subtest: child-memory opens on its heading like the design's tab page, with no back button
+ok 542 - child-memory opens on its heading like the design's tab page, with no back button
+  ---
+  duration_ms: 4.324166
+  ...
+# Subtest: guardian draws its own round back button under the status bar instead of the native bar
+ok 543 - guardian draws its own round back button under the status bar instead of the native bar
+  ---
+  duration_ms: 4.554625
+  ...
+# Subtest: guardian back pops the stack, or opens /pages/profile/index when it is the first page
+ok 544 - guardian back pops the stack, or opens /pages/profile/index when it is the first page
+  ---
+  duration_ms: 1.881292
+  ...
+# Subtest: bind draws its own round back button under the status bar instead of the native bar
+ok 545 - bind draws its own round back button under the status bar instead of the native bar
+  ---
+  duration_ms: 6.225542
+  ...
+# Subtest: bind back pops the stack, or opens /pages/profile/index when it is the first page
+ok 546 - bind back pops the stack, or opens /pages/profile/index when it is the first page
+  ---
+  duration_ms: 2.127458
+  ...
+# Subtest: persona-custom draws its own round back button under the status bar instead of the native bar
+ok 547 - persona-custom draws its own round back button under the status bar instead of the native bar
+  ---
+  duration_ms: 2.652625
+  ...
+# Subtest: persona-custom back pops the stack, or opens /pages/profile/index when it is the first page
+ok 548 - persona-custom back pops the stack, or opens /pages/profile/index when it is the first page
+  ---
+  duration_ms: 0.504666
+  ...
+# Subtest: auth draws its own round back button under the status bar instead of the native bar
+ok 549 - auth draws its own round back button under the status bar instead of the native bar
+  ---
+  duration_ms: 1.392958
+  ...
+# Subtest: auth back pops the stack, or opens /pages/home/index when it is the first page
+ok 550 - auth back pops the stack, or opens /pages/home/index when it is the first page
+  ---
+  duration_ms: 0.622292
+  ...
+# Subtest: guardian-consent draws its own round back button under the status bar instead of the native bar
+ok 551 - guardian-consent draws its own round back button under the status bar instead of the native bar
+  ---
+  duration_ms: 1.566417
+  ...
+# Subtest: guardian-consent back pops the stack, or opens /pages/home/index when it is the first page
+ok 552 - guardian-consent back pops the stack, or opens /pages/home/index when it is the first page
+  ---
+  duration_ms: 0.402917
+  ...
+# Subtest: privacy draws its own round back button under the status bar instead of the native bar
+ok 553 - privacy draws its own round back button under the status bar instead of the native bar
+  ---
+  duration_ms: 1.074875
+  ...
+# Subtest: privacy back pops the stack, or opens /pages/profile/index when it is the first page
+ok 554 - privacy back pops the stack, or opens /pages/profile/index when it is the first page
+  ---
+  duration_ms: 0.216042
+  ...
+# Subtest: privacy-policy draws its own round back button under the status bar instead of the native bar
+ok 555 - privacy-policy draws its own round back button under the status bar instead of the native bar
+  ---
+  duration_ms: 0.920459
+  ...
+# Subtest: privacy-policy back pops the stack, or opens /pages/home/index when it is the first page
+ok 556 - privacy-policy back pops the stack, or opens /pages/home/index when it is the first page
+  ---
+  duration_ms: 0.346459
+  ...
+# Subtest: user-agreement draws its own round back button under the status bar instead of the native bar
+ok 557 - user-agreement draws its own round back button under the status bar instead of the native bar
+  ---
+  duration_ms: 0.952375
+  ...
+# Subtest: user-agreement back pops the stack, or opens /pages/home/index when it is the first page
+ok 558 - user-agreement back pops the stack, or opens /pages/home/index when it is the first page
+  ---
+  duration_ms: 0.333791
+  ...
+# Subtest: digital-self draws its own round back button under the status bar instead of the native bar
+ok 559 - digital-self draws its own round back button under the status bar instead of the native bar
+  ---
+  duration_ms: 1.796208
+  ...
+# Subtest: digital-self back pops the stack, or opens /pages/profile/index when it is the first page
+ok 560 - digital-self back pops the stack, or opens /pages/profile/index when it is the first page
+  ---
+  duration_ms: 1.06725
+  ...
+# Subtest: attention draws its own round back button under the status bar instead of the native bar
+ok 561 - attention draws its own round back button under the status bar instead of the native bar
+  ---
+  duration_ms: 1.213083
+  ...
+# Subtest: attention back pops the stack, or opens /pages/home/index when it is the first page
+ok 562 - attention back pops the stack, or opens /pages/home/index when it is the first page
+  ---
+  duration_ms: 0.497167
+  ...
+# Subtest: device-onboarding draws its own round back button under the status bar instead of the native bar
+ok 563 - device-onboarding draws its own round back button under the status bar instead of the native bar
+  ---
+  duration_ms: 10.250292
+  ...
+# Subtest: device-onboarding back pops the stack, or opens /pages/device/index when it is the first page
+ok 564 - device-onboarding back pops the stack, or opens /pages/device/index when it is the first page
+  ---
+  duration_ms: 1.436708
+  ...
+# Subtest: tab route helper mirrors app.json tabBar exactly
+ok 565 - tab route helper mirrors app.json tabBar exactly
+  ---
+  duration_ms: 0.653334
+  ...
+# Subtest: navigateTo / redirectTo never target a tabBar page
+ok 566 - navigateTo / redirectTo never target a tabBar page
+  ---
+  duration_ms: 9.890125
+  ...
+# Subtest: <navigator> links to tabBar pages declare open-type switchTab
+ok 567 - <navigator> links to tabBar pages declare open-type switchTab
+  ---
+  duration_ms: 3.5675
+  ...
+# Subtest: login returns to every tab page with switchTab and to other pages with redirectTo
+ok 568 - login returns to every tab page with switchTab and to other pages with redirectTo
+  ---
+  duration_ms: 1.635916
+  ...
+# Subtest: template handler scan reads static and conditional bindings
+ok 569 - template handler scan reads static and conditional bindings
+  ---
+  duration_ms: 1.201542
+  ...
+# Subtest: every page template event names a method the page defines
+ok 570 - every page template event names a method the page defines
+  ---
+  duration_ms: 42.60825
+  ...
+# Subtest: every component template event names a method the component defines
+ok 571 - every component template event names a method the component defines
+  ---
+  duration_ms: 1.043792
+  ...
+# Subtest: a completed delete says the child data and summaries are gone
+ok 572 - a completed delete says the child data and summaries are gone
+  ---
+  duration_ms: 0.620792
+  ...
+# Subtest: the delete path still reports the consents it withdrew
+ok 573 - the delete path still reports the consents it withdrew
+  ---
+  duration_ms: 0.066084
+  ...
+# Subtest: an incomplete delete says it is still running, never that it finished
+ok 574 - an incomplete delete says it is still running, never that it finished
+  ---
+  duration_ms: 0.064958
+  ...
+# Subtest: clearing the identity row alone still reports the deletion
+ok 575 - clearing the identity row alone still reports the deletion
+  ---
+  duration_ms: 0.049583
+  ...
+# Subtest: unbind never claims the data was kept any more
+ok 576 - unbind never claims the data was kept any more
+  ---
+  duration_ms: 0.083459
+  ...
+# Subtest: not applicable, missing or unknown values add no line
+ok 577 - not applicable, missing or unknown values add no line
+  ---
+  duration_ms: 0.105208
+  ...
+# Subtest: the result copy never uses internal deletion terms or the audit sentence
+ok 578 - the result copy never uses internal deletion terms or the audit sentence
+  ---
+  duration_ms: 0.109708
+  ...
+# Subtest: upload runtime gate rejects incompatible Node and storage before vendor code
+ok 579 - upload runtime gate rejects incompatible Node and storage before vendor code
+  ---
+  duration_ms: 326.537083
+  ...
+# Subtest: upload dry-run executes the real compiler and stops before platform upload
+ok 580 - upload dry-run executes the real compiler and stops before platform upload
+  ---
+  duration_ms: 3887.451292
+  ...
+# Subtest: every page state lays out without overflow, capsule or tab bar collisions at 320/375/390/430 and 1.3x font
+ok 581 - every page state lays out without overflow, capsule or tab bar collisions at 320/375/390/430 and 1.3x font
+  ---
+  duration_ms: 12385.379958
+  ...
+# 180 layouts checked
+# Subtest: home loads in at most 16 setData calls, none over 16 KiB
+ok 582 - home loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 15.246958
+  ...
+# calls=3 largest=1993B total=2195B load=10.7ms render=4.1ms
+# Subtest: home-guest loads in at most 16 setData calls, none over 16 KiB
+ok 583 - home-guest loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 3.615042
+  ...
+# calls=2 largest=1686B total=1740B load=2.3ms render=1.3ms
+# Subtest: memory loads in at most 16 setData calls, none over 16 KiB
+ok 584 - memory loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 4.234208
+  ...
+# calls=5 largest=1618B total=1769B load=2.3ms render=1.8ms
+# Subtest: memory-attention loads in at most 16 setData calls, none over 16 KiB
+ok 585 - memory-attention loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 3.278125
+  ...
+# calls=5 largest=1618B total=1876B load=1.6ms render=1.6ms
+# Subtest: memory-attention-more loads in at most 16 setData calls, none over 16 KiB
+ok 586 - memory-attention-more loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 3.289459
+  ...
+# calls=5 largest=1618B total=1888B load=1.4ms render=1.8ms
+# Subtest: memory-empty loads in at most 16 setData calls, none over 16 KiB
+ok 587 - memory-empty loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 2.4405
+  ...
+# calls=5 largest=331B total=482B load=1.1ms render=1.2ms
+# Subtest: memory-empty-memories loads in at most 16 setData calls, none over 16 KiB
+ok 588 - memory-empty-memories loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 2.861166
+  ...
+# calls=6 largest=331B total=527B load=1.3ms render=1.4ms
+# Subtest: companion loads in at most 16 setData calls, none over 16 KiB
+ok 589 - companion loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 2.482583
+  ...
+# calls=1 largest=166B total=166B load=1.5ms render=0.9ms
+# Subtest: device loads in at most 16 setData calls, none over 16 KiB
+ok 590 - device loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 8.223375
+  ...
+# calls=7 largest=4815B total=5614B load=4.2ms render=3.7ms
+# Subtest: profile loads in at most 16 setData calls, none over 16 KiB
+ok 591 - profile loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 4.417459
+  ...
+# calls=11 largest=1183B total=2759B load=2.7ms render=1.6ms
+# Subtest: guardian loads in at most 16 setData calls, none over 16 KiB
+ok 592 - guardian loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 4.517208
+  ...
+# calls=11 largest=1037B total=2570B load=3.0ms render=1.4ms
+# Subtest: bind loads in at most 16 setData calls, none over 16 KiB
+ok 593 - bind loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 3.435833
+  ...
+# calls=2 largest=132B total=187B load=2.3ms render=1.1ms
+# Subtest: bind-mode loads in at most 16 setData calls, none over 16 KiB
+ok 594 - bind-mode loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 3.148791
+  ...
+# calls=3 largest=193B total=309B load=2.1ms render=1.0ms
+# Subtest: bind-form loads in at most 16 setData calls, none over 16 KiB
+ok 595 - bind-form loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 3.683042
+  ...
+# calls=5 largest=2199B total=2523B load=1.9ms render=1.3ms
+# Subtest: bind-review loads in at most 16 setData calls, none over 16 KiB
+ok 596 - bind-review loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 3.598833
+  ...
+# calls=7 largest=2199B total=2801B load=2.2ms render=0.8ms
+# Subtest: persona-custom loads in at most 16 setData calls, none over 16 KiB
+ok 597 - persona-custom loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 1.869792
+  ...
+# calls=3 largest=168B total=219B load=1.1ms render=0.8ms
+# Subtest: auth loads in at most 16 setData calls, none over 16 KiB
+ok 598 - auth loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 1.215375
+  ...
+# calls=1 largest=87B total=87B load=0.7ms render=0.5ms
+# Subtest: auth-checked loads in at most 16 setData calls, none over 16 KiB
+ok 599 - auth-checked loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 1.075417
+  ...
+# calls=2 largest=87B total=120B load=0.5ms render=0.4ms
+# Subtest: child-consent loads in at most 16 setData calls, none over 16 KiB
+ok 600 - child-consent loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 2.375125
+  ...
+# calls=2 largest=96B total=111B load=1.4ms render=0.9ms
+# Subtest: child-consent-locked loads in at most 16 setData calls, none over 16 KiB
+ok 601 - child-consent-locked loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 1.439041
+  ...
+# calls=2 largest=169B total=184B load=0.6ms render=0.8ms
+# Subtest: privacy-policy loads in at most 16 setData calls, none over 16 KiB
+ok 602 - privacy-policy loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 1.353708
+  ...
+# calls=0 largest=0B total=0B load=0.7ms render=0.6ms
+# Subtest: attention loads in at most 16 setData calls, none over 16 KiB
+ok 603 - attention loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 1.950416
+  ...
+# calls=1 largest=523B total=523B load=1.1ms render=0.8ms
+# Subtest: attention-empty loads in at most 16 setData calls, none over 16 KiB
+ok 604 - attention-empty loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 1.288334
+  ...
+# calls=1 largest=30B total=30B load=0.7ms render=0.5ms
+# Subtest: attention-ack-failed loads in at most 16 setData calls, none over 16 KiB
+ok 605 - attention-ack-failed loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 1.959917
+  ...
+# calls=3 largest=523B total=629B load=1.1ms render=0.7ms
+# Subtest: privacy loads in at most 16 setData calls, none over 16 KiB
+ok 606 - privacy loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 1.145542
+  ...
+# calls=1 largest=15B total=15B load=0.5ms render=0.6ms
+# Subtest: privacy-guest loads in at most 16 setData calls, none over 16 KiB
+ok 607 - privacy-guest loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 0.891542
+  ...
+# calls=1 largest=14B total=14B load=0.4ms render=0.5ms
+# Subtest: user-agreement loads in at most 16 setData calls, none over 16 KiB
+ok 608 - user-agreement loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 1.147709
+  ...
+# calls=1 largest=4883B total=4883B load=0.6ms render=0.5ms
+# Subtest: privacy-granted loads in at most 16 setData calls, none over 16 KiB
+ok 609 - privacy-granted loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 0.888416
+  ...
+# calls=1 largest=15B total=15B load=0.4ms render=0.5ms
+# Subtest: digital-self loads in at most 16 setData calls, none over 16 KiB
+ok 610 - digital-self loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 2.407333
+  ...
+# calls=3 largest=1207B total=1258B load=1.7ms render=0.6ms
+# Subtest: digital-self-empty loads in at most 16 setData calls, none over 16 KiB
+ok 611 - digital-self-empty loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 2.103625
+  ...
+# calls=2 largest=143B total=170B load=1.6ms render=0.4ms
+# Subtest: child-memory loads in at most 16 setData calls, none over 16 KiB
+ok 612 - child-memory loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 2.762916
+  ...
+# calls=5 largest=1276B total=1538B load=1.7ms render=1.0ms
+# Subtest: child-memory-archive loads in at most 16 setData calls, none over 16 KiB
+ok 613 - child-memory-archive loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 2.493458
+  ...
+# calls=5 largest=3362B total=3624B load=1.4ms render=1.1ms
+# Subtest: device-onboarding loads in at most 16 setData calls, none over 16 KiB
+ok 614 - device-onboarding loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 6.275709
+  ...
+# calls=2 largest=1371B total=1405B load=4.9ms render=1.3ms
+# Subtest: device-onboarding-wifi loads in at most 16 setData calls, none over 16 KiB
+ok 615 - device-onboarding-wifi loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 3.988083
+  ...
+# calls=4 largest=1371B total=2450B load=2.5ms render=1.1ms
+# Subtest: device-onboarding-progress loads in at most 16 setData calls, none over 16 KiB
+ok 616 - device-onboarding-progress loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 2.728167
+  ...
+# calls=3 largest=1371B total=2347B load=1.6ms render=1.0ms
+# Subtest: device-onboarding-complete loads in at most 16 setData calls, none over 16 KiB
+ok 617 - device-onboarding-complete loads in at most 16 setData calls, none over 16 KiB
+  ---
+  duration_ms: 2.557375
+  ...
+# calls=3 largest=1371B total=2316B load=1.5ms render=0.9ms
+# Subtest: memory renders all 200 days and keeps each setData under WeChat's 256 KiB guidance
+ok 618 - memory renders all 200 days and keeps each setData under WeChat's 256 KiB guidance
+  ---
+  duration_ms: 5.675375
+  ...
+# calls=5 largest=43018B render=3.7ms
+# Subtest: child-memory renders all 200 archive facts and keeps each setData under 256 KiB
+ok 619 - child-memory renders all 200 archive facts and keeps each setData under 256 KiB
+  ---
+  duration_ms: 5.720167
+  ...
+# calls=5 largest=91650B render=2.9ms
+# Subtest: the shipped files fit WeChat's 2 MiB main package before minification
+ok 620 - the shipped files fit WeChat's 2 MiB main package before minification
+  ---
+  duration_ms: 3.658417
+  ...
+# 1933.8 KiB of 2048 KiB
+# Subtest: pages use v4 line icons, not the retired glass icons or photo backdrop
+ok 621 - pages use v4 line icons, not the retired glass icons or photo backdrop
+  ---
+  duration_ms: 4.717875
+  ...
+# Subtest: every mp-icon name and v4 asset path resolves to a generated file
+ok 622 - every mp-icon name and v4 asset path resolves to a generated file
+  ---
+  duration_ms: 3.207875
+  ...
+# Subtest: pages register exactly the components their templates render
+ok 623 - pages register exactly the components their templates render
+  ---
+  duration_ms: 1.448584
+  ...
+# Subtest: page and shared stylesheets take every colour from the app.wxss tokens
+ok 624 - page and shared stylesheets take every colour from the app.wxss tokens
+  ---
+  duration_ms: 4.935333
+  ...
+# Subtest: type sizes come from the --mp-type scale, so no page drifts to odd or tiny sizes
+ok 625 - type sizes come from the --mp-type scale, so no page drifts to odd or tiny sizes
+  ---
+  duration_ms: 2.292
+  ...
+# Subtest: lengths are px so the 390 pt design frame renders 1:1, never rpx
+ok 626 - lengths are px so the 390 pt design frame renders 1:1, never rpx
+  ---
+  duration_ms: 3.268417
+  ...
+# Subtest: the rpx-to-px codemod halves literal and bound lengths
+ok 627 - the rpx-to-px codemod halves literal and bound lengths
+  ---
+  duration_ms: 0.572041
+  ...
+# Subtest: mp-icon tiles of 48px and up take the design's 16px inset radius
+ok 628 - mp-icon tiles of 48px and up take the design's 16px inset radius
+  ---
+  duration_ms: 0.575417
+  ...
+# Subtest: app.wxss declares raw colours only inside the page token block
+ok 629 - app.wxss declares raw colours only inside the page token block
+  ---
+  duration_ms: 0.187833
+  ...
+# Subtest: miniprogram has no voice-clone gate or profile entry
+ok 630 - miniprogram has no voice-clone gate or profile entry
+  ---
+  duration_ms: 0.600833
+  ...
+# Subtest: digital-self WXML keeps else branches separate from repeated nodes
+ok 631 - digital-self WXML keeps else branches separate from repeated nodes
+  ---
+  duration_ms: 0.4705
+  ...
+# Subtest: WXML templates never use inline <svg>, which WeChat does not render
+ok 632 - WXML templates never use inline <svg>, which WeChat does not render
+  ---
+  duration_ms: 5.379083
+  ...
+# Subtest: WXS files and inline blocks never call new Date
+ok 633 - WXS files and inline blocks never call new Date
+  ---
+  duration_ms: 6.348042
+  ...
+# Subtest: new Date detector catches calls without flagging getDate
+ok 634 - new Date detector catches calls without flagging getDate
+  ---
+  duration_ms: 0.204125
+  ...
+1..634
+# tests 640
+# suites 0
+# pass 640
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 13054.912667

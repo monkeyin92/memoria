@@ -18,7 +18,7 @@
   <block wx:else>
     <block wx:if="{{archiveConsent.active}}">
       <view wx:if="{{!archiveFlat.length}}" class="cm-empty-state">
-        <face-badge role="{{companionId}}" size="empty" mood="thinking" plain></face-badge>
+        <device-screen online="{{false}}" size="120"></device-screen>
         <text class="cm-empty-title">暂无长期记忆</text>
         <text class="cm-empty-copy">{{emptyArchiveOn}}</text>
       </view>
@@ -26,7 +26,7 @@
       <block wx:else>
         <view class="trial-card trial-card-xl cm-archive cm-first">
           <view wx:for="{{archiveCards}}" wx:key="field" class="cm-field">
-            <mp-icon name="{{item.field === 'appellation' ? 'tag' : item.field === 'preference' ? 'heart' : 'paw'}}"></mp-icon>
+            <mp-icon name="{{item.field === 'appellation' ? 'tag' : item.field === 'preference' ? 'heart' : 'note'}}"></mp-icon>
             <view class="cm-field-body">
               <text class="cm-field-label">{{item.label}}</text>
               <view wx:for="{{item.facts}}" wx:for-item="fact" wx:key="recordId" class="cm-fact">
@@ -51,13 +51,13 @@
         </view>
 
         <view class="trial-card cm-note">
-          <view class="cm-note-art" aria-hidden="true"><image src="/assets/ui/v4/mascot-curious.jpg" mode="widthFix"></image></view>
+          <view class="mp-icon-tile cm-note-art" aria-hidden="true"><image src="/assets/ui/v4/shield-accent.svg" /></view>
           <text class="cm-note-text">除这三项外，不长期保存其他信息。</text>
         </view>
       </block>
     </block>
     <view wx:else class="cm-empty-state">
-      <face-badge role="{{companionId}}" size="empty" mood="thinking" plain></face-badge>
+      <device-screen online="{{false}}" size="120"></device-screen>
       <text class="cm-empty-title">{{emptyArchiveOffTitle}}</text>
       <text class="cm-empty-copy">{{emptyArchiveOff}}</text>
     </view>
@@ -70,7 +70,7 @@
         </view>
         <switch
           checked="{{archiveConsent.active}}"
-          color="#4A52C9"
+          color="#176B5B"
           disabled="{{working}}"
           bindchange="onArchiveConsentChange"
           aria-label="长期记忆"
@@ -84,7 +84,7 @@
 
     <text id="cm-recent" class="section-title">近期摘要</text>
     <view wx:if="{{!summaries.length}}" class="cm-empty-state">
-      <face-badge role="{{companionId}}" size="empty" mood="thinking" plain></face-badge>
+      <device-screen online="{{false}}" size="120"></device-screen>
       <text class="cm-empty-title">{{emptyTitle}}</text>
       <text class="cm-empty-copy">{{emptyRecent}}</text>
     </view>

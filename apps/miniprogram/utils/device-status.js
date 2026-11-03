@@ -25,12 +25,12 @@ function currentUserSummary({ subjectLabel = "" } = {}) {
   return label || "未设置";
 }
 
-function devicePlaceName(binding, companionName) {
-  const name = String(companionName || "Memoria").trim() || "Memoria";
+function devicePlaceName(binding) {
   const mode = binding?.declared_mode;
-  if (mode === "family_shared" || mode === "child_for_parent") return `家里共用的${name}`;
-  if (mode === "parent_for_child") return `孩子的${name}`;
-  return `我的${name}`;
+  if (mode === "family_shared") return "家里的机器人";
+  if (mode === "child_for_parent") return "父母的机器人";
+  if (mode === "parent_for_child") return "孩子的机器人";
+  return "我的机器人";
 }
 
 function offlineLabelFor(status, activation, profile) {

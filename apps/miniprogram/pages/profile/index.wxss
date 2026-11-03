@@ -60,19 +60,15 @@
 }
 
 .device-art {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
   width: 56px;
   height: 56px;
   overflow: hidden;
   border-radius: var(--mp-radius-inset);
-  background: var(--mp-accent-soft);
-}
-
-.device-art-img {
-  display: block;
-  width: 72px;
-  margin-top: 8px;
-  mix-blend-mode: multiply;
+  background: var(--mp-fill-art);
 }
 
 .device-name {

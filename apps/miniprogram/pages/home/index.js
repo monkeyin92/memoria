@@ -120,11 +120,10 @@ function emptyDashboard() {
 
 function bindingChoiceItems(bindings) {
   return (bindings || []).map((binding) => {
-    const companion = companionById(defaultCompanionId);
     return {
       binding,
       bindingId: binding.binding_id,
-      label: devicePlaceName(binding, companion.name),
+      label: devicePlaceName(binding),
       modeLabel: MODE_META[binding.declared_mode]?.title || "已绑定设备",
     };
   });
@@ -567,7 +566,7 @@ Page({
     const unreadSafetyMeta = pinnedAlertMeta({
       occurredAt: alertTimeLabel(unread?.newest.occurredAt),
     });
-    const placeName = devicePlaceName(binding, personaName);
+    const placeName = devicePlaceName(binding);
     const childName = boundChild?.displayName || "";
     const todayCount = today.todayCount || 0;
 

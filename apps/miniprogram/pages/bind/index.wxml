@@ -72,11 +72,11 @@
         </picker>
         <view class="setting-row">
           <view><text class="setting-name">学习指导</text><text class="setting-desc">先引导步骤，不直接代做作业</text></view>
-          <switch checked="{{form.tutorEnabled}}" data-key="tutorEnabled" bindchange="onSwitch" color="#4A52C9" />
+          <switch checked="{{form.tutorEnabled}}" data-key="tutorEnabled" bindchange="onSwitch" color="#176B5B" />
         </view>
         <view class="setting-row">
           <view><text class="setting-name">英语口语陪练</text><text class="setting-desc">开口练习与即时反馈</text></view>
-          <switch checked="{{form.englishPracticeEnabled}}" data-key="englishPracticeEnabled" bindchange="onSwitch" color="#4A52C9" />
+          <switch checked="{{form.englishPracticeEnabled}}" data-key="englishPracticeEnabled" bindchange="onSwitch" color="#176B5B" />
         </view>
         <picker range="{{sessionMinuteOptions}}" value="{{sessionMinuteIndex}}" bindchange="onSessionMinutesChange">
           <view class="picker-row"><text class="picker-label">单次使用时长</text><text class="picker-value">{{sessionMinuteOptions[sessionMinuteIndex]}} 分钟</text></view>
@@ -113,7 +113,7 @@
       <block wx:if="{{declaredMode === 'child_for_parent'}}">
         <view class="setting-row">
           <view><text class="setting-name">我是购买者 / 设备管理员</text><text class="setting-desc">管理网络、固件与绑定，不代表可以读取父母私人内容</text></view>
-          <switch checked="{{form.adminIsBuyer}}" data-key="adminIsBuyer" bindchange="onSwitch" color="#4A52C9" />
+          <switch checked="{{form.adminIsBuyer}}" data-key="adminIsBuyer" bindchange="onSwitch" color="#176B5B" />
         </view>
         <text class="field-label">使用者备注 *</text>
         <input class="field-input" value="{{form.parentNickname}}" placeholder="例如：老爸、妈妈" placeholder-class="field-placeholder" maxlength="{{maxSubjectLabel}}" data-key="parentNickname" bindinput="onFieldInput" />
@@ -136,29 +136,35 @@
         <text class="caption">家庭名称与其他成员可以稍后添加。</text>
         <view class="setting-row">
           <view><text class="setting-name">共用同一位 AI 角色</text><text class="setting-desc">成员档案仍然各自独立</text></view>
-          <switch checked="{{form.sharedPersonaEnabled}}" data-key="sharedPersonaEnabled" bindchange="onSwitch" color="#4A52C9" />
+          <switch checked="{{form.sharedPersonaEnabled}}" data-key="sharedPersonaEnabled" bindchange="onSwitch" color="#176B5B" />
         </view>
         <text class="form-note">每位成员都有自己独立的档案；私人记忆、家庭共享记忆与待确认的共同记忆分开管理，家庭管理员不能读取成员的私人记忆。成员邀请与确认由系统完成。</text>
       </block>
 
     </view>
 
-    <text class="section-title">AI 角色</text>
-    <view class="role-grid bind-roles">
+    <text class="section-title">声音与表达</text>
+    <view class="voice-list bind-voices">
       <view
         wx:for="{{personaOptions}}"
         wx:key="id"
-        class="role-card {{index === personaIndex ? 'role-card-on' : ''}}"
+        class="voice-option {{index === personaIndex ? 'voice-option-on' : ''}}"
         data-index="{{index}}"
         bindtap="onPersonaTap"
       >
-        <view class="role-art">
-          <view class="role-fig"><face-badge role="{{item.id}}" size="lg" plain="{{true}}"></face-badge></view>
+        <view class="voice-bars" aria-hidden="true">
+          <view class="voice-bar"></view>
+          <view class="voice-bar"></view>
+          <view class="voice-bar"></view>
+          <view class="voice-bar"></view>
+          <view class="voice-bar"></view>
         </view>
-        <text class="role-name">{{item.name}}</text>
-        <text class="role-tagline">{{item.tagline}}</text>
-        <view wx:if="{{index === personaIndex}}" class="pill pill-online role-chip">已选择</view>
-        <view wx:else class="pill pill-neutral role-chip">选这个</view>
+        <view class="voice-copy">
+          <text class="voice-name">{{item.name}}</text>
+          <text class="voice-tagline">{{item.tagline}}</text>
+        </view>
+        <view wx:if="{{index === personaIndex}}" class="pill pill-online voice-chip">已选择</view>
+        <view wx:else class="pill pill-neutral voice-chip">选这个</view>
       </view>
     </view>
     <view class="card bind-voice">
@@ -187,7 +193,7 @@
       <text class="l2-card-sub">核对下面的信息，勾选需要的授权后提交</text>
       <view class="summary-row"><text class="summary-key">设备用途</text><text class="summary-value">{{modeMeta.title}}</text></view>
       <view class="summary-row"><text class="summary-key">使用者</text><text class="summary-value">{{reviewSubjectLabel}}</text></view>
-      <view class="summary-row"><text class="summary-key">AI 角色</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
+      <view class="summary-row"><text class="summary-key">声音与表达</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
 
       <text class="field-label">需要你确认的授权</text>
       <view wx:for="{{offers}}" wx:key="id" class="offer-row {{item.requiresParentSelfAcceptance ? 'offer-disabled' : ''}}" data-id="{{item.id}}" bindtap="{{item.requiresParentSelfAcceptance ? '' : 'toggleOffer'}}">
@@ -221,12 +227,12 @@
   <block wx:if="{{step === 'done'}}">
     <view class="l2-card done-card">
       <view class="done-device">
-        <face-badge role="{{personaOptions[personaIndex].id}}" size="xl" plain="{{true}}" animated="{{true}}"></face-badge>
+        <device-screen online="{{true}}" size="220"></device-screen>
       </view>
       <text class="done-badge">设置已提交</text>
       <text class="done-title">机器人已建立「{{manifest.declared_mode === 'parent_for_child' ? '给孩子使用' : manifest.declared_mode === 'self_use' ? '给自己使用' : manifest.declared_mode === 'child_for_parent' ? '给父母使用' : '家庭共同使用'}}」绑定</text>
       <view class="summary-row"><text class="summary-key">使用者</text><text class="summary-value">{{reviewSubjectLabel}}</text></view>
-      <view class="summary-row"><text class="summary-key">AI 角色</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
+      <view class="summary-row"><text class="summary-key">声音与表达</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
       <view wx:if="{{deviceTail}}" class="summary-row"><text class="summary-key">机器人</text><text class="summary-value">尾号 {{deviceTail}}</text></view>
       <text wx:if="{{subscriptionPushEnabled && crisisSubscribeAccepted}}" class="done-note">已完成安全提醒设置。家长打开小程序时首页会置顶显示。</text>
       <text class="done-note">设置已经提交，机器人收到后就能用了，一般一分钟内。等它准备好，唤醒它就能开始聊天；手机不会录音。</text>

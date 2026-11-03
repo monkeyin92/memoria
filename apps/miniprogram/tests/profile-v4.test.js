@@ -62,7 +62,7 @@ test("signed in, the page shows the account card, the robot card and the design'
     const text = profileText(harness);
     assert.match(
       text,
-      /^我的 乐 乐乐妈妈 已绑定 1 台设备 孩子的星澜 已绑定设备 设备管理 授权与隐私说明 帮助与反馈 关于 账号 账号编号 /,
+      /^我的 乐 乐乐妈妈 已绑定 1 台设备 孩子的机器人 已绑定设备 设备管理 授权与隐私说明 帮助与反馈 关于 账号 账号编号 /,
     );
     assert.match(text, / 永久注销 .* 开发版$/);
     assert.doesNotMatch(text, /自定义人格|你的日常角色|自动整理日常回顾|偏好/);
@@ -85,10 +85,10 @@ test("returning to the tab keeps the robot's name on screen while the profile re
     harness.page.onShow();
     await harness.settle();
     assert.equal(profileCalls, 2);
-    assert.match(profileText(harness), /^我的 乐 乐乐妈妈 已绑定 1 台设备 孩子的星澜 已绑定设备 /);
+    assert.match(profileText(harness), /^我的 乐 乐乐妈妈 已绑定 1 台设备 孩子的机器人 已绑定设备 /);
     releaseProfile();
     await harness.settle();
-    assert.match(profileText(harness), / 孩子的星澜 已绑定设备 /);
+    assert.match(profileText(harness), / 孩子的机器人 已绑定设备 /);
   } finally {
     harness.restore();
   }

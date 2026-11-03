@@ -305,11 +305,10 @@ function dailyChatFrom(result) {
 }
 
 function bindingChoiceItems(bindings) {
-  const companion = companionById(defaultCompanionId);
   return (bindings || []).map((binding) => ({
     binding,
     bindingId: binding.binding_id,
-    label: devicePlaceName(binding, companion.name),
+    label: devicePlaceName(binding),
     modeLabel: MODE_META[binding.declared_mode]?.title || "已绑定设备",
   }));
 }
@@ -1062,7 +1061,7 @@ Page({
         ),
         personaOptions,
         accountCompanionId,
-        devicePlaceName: devicePlaceName(binding, companion.name),
+        devicePlaceName: devicePlaceName(binding),
         personaName: companion.name,
         personaVoice: companion.voiceName,
         heroRoleId: companion.id,

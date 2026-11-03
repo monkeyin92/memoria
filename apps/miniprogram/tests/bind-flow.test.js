@@ -203,7 +203,7 @@ test("app registers binding, device, and onboarding pages", () => {
   assert.ok(appConfig.pages.includes("pages/device-onboarding/index"));
   assert.deepEqual(
     appConfig.tabBar.list.map((item) => item.text),
-    ["首页", "回顾", "角色", "设备", "我的"],
+    ["首页", "回顾", "声音", "设备", "我的"],
   );
 });
 
@@ -802,15 +802,15 @@ test("the bind page tells a parent that an earlier child profile can be reused",
   assert.match(template, /选「使用已有档案」就能沿用/);
 });
 
-test("the finish step shows the companion picked while binding, not a generic robot", async () => {
+test("the finish step keeps the selected voice summary alongside the device illustration", async () => {
   const template = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
   const done = template.slice(template.indexOf("<!-- 步骤 5"));
-  assert.match(done, /<face-badge role="\{\{personaOptions\[personaIndex\]\.id\}\}" size="xl"/);
-  assert.match(done, /AI 角色<\/text><text class="summary-value">\{\{personaOptions\[personaIndex\]\.name\}\}/);
-  assert.doesNotMatch(done, /<device-screen/);
+  assert.match(done, /<device-screen online="\{\{true\}\}" size="220"><\/device-screen>/);
+  assert.match(done, /声音与表达<\/text><text class="summary-value">\{\{personaOptions\[personaIndex\]\.name\}\}/);
+  assert.doesNotMatch(done, /<face-badge/);
   const components = JSON.parse(fs.readFileSync(path.join(root, "pages/bind/index.json"), "utf8")).usingComponents;
-  assert.ok(components["face-badge"]);
-  assert.equal(components["device-screen"], undefined);
+  assert.ok(components["device-screen"]);
+  assert.equal(components["face-badge"], undefined);
 
   nextResponse = successResponse(defaultManifestResponse("self_use"));
   const page = await bootSelfUseReady("阿宁");

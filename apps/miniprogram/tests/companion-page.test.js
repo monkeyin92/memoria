@@ -91,3 +91,25 @@ test("a failed save puts the card back on the account's companion", async () => 
     api.updateProfile = originalUpdate;
   }
 });
+
+test("a second selection waits for the pending voice setting to finish", async () => {
+  const originalUpdate = api.updateProfile;
+  let finishSave;
+  api.updateProfile = (userId, profile) => new Promise((resolve) => {
+    finishSave = () => resolve({ user_id: userId, companion_id: profile.companion_id });
+  });
+  try {
+    const page = instantiate(pageDefinition);
+    const pending = page.chooseCompanion({ currentTarget: { dataset: { id: "taoxi" } } });
+    await new Promise(setImmediate);
+    assert.equal(page.data.saving, true);
+    await page.chooseCompanion({ currentTarget: { dataset: { id: "axu" } } });
+    assert.equal(page.data.profile.companion_id, "taoxi");
+    finishSave();
+    await pending;
+    assert.equal(page.data.profile.companion_id, "taoxi");
+    assert.equal(page.data.saving, false);
+  } finally {
+    api.updateProfile = originalUpdate;
+  }
+});

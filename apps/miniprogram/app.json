@@ -21,19 +21,19 @@
     "pages/memory-lifecycle/index"
   ],
   "window": {
-    "backgroundColor": "#F4F4F7",
-    "backgroundColorTop": "#F4F4F7",
-    "backgroundColorBottom": "#F4F4F7",
+    "backgroundColor": "#F2F6F5",
+    "backgroundColorTop": "#F2F6F5",
+    "backgroundColorBottom": "#F2F6F5",
     "backgroundTextStyle": "dark",
-    "navigationBarBackgroundColor": "#F4F4F7",
+    "navigationBarBackgroundColor": "#F2F6F5",
     "navigationBarTextStyle": "black",
     "navigationBarTitleText": "Memoria"
   },
   "tabBar": {
     "custom": true,
-    "color": "#8E91A3",
-    "selectedColor": "#4A52C9",
-    "backgroundColor": "#FAFAFC",
+    "color": "#536A6C",
+    "selectedColor": "#176B5B",
+    "backgroundColor": "#FFFFFF",
     "borderStyle": "white",
     "list": [
       {
@@ -46,7 +46,7 @@
       },
       {
         "pagePath": "pages/companion/index",
-        "text": "角色"
+        "text": "声音"
       },
       {
         "pagePath": "pages/device/index",
