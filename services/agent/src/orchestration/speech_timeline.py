@@ -273,6 +273,8 @@ class SpeechTimeline:
             return False
         if segment.capture_end_sample <= self._committed_sample:
             return False
+        if segment.text.strip() and segment.capture_start_sample < self._committed_sample:
+            return False
         key = (segment.stream_epoch, segment.segment_id)
         previous_version = self._last_segment_revision.get(key)
         if previous_version is not None and segment.logical_version < previous_version:
@@ -331,7 +333,10 @@ class SpeechTimeline:
             for item in self._segments
             if not (
                 item.stream_epoch == stream_epoch
-                and item.capture_end_sample <= self._committed_sample
+                and (
+                    item.capture_end_sample <= self._committed_sample
+                    or (item.text.strip() and item.capture_start_sample < self._committed_sample)
+                )
             )
         ]
         return matched
@@ -379,6 +384,9 @@ class SpeechTimeline:
         if start_sample < 0 or end_sample <= start_sample:
             raise ValueError("projection range must be a positive sample interval")
         if self._current_stream_epoch != stream_epoch:
+            return ()
+        start_sample = max(start_sample, self._committed_sample)
+        if end_sample <= start_sample:
             return ()
         return tuple(
             item

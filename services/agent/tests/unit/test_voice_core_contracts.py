@@ -628,6 +628,28 @@ def test_asr_supervisor_uses_watermark_and_task_epoch_on_reconnect() -> None:
     assert supervisor.task_epoch == 2
 
 
+def test_reconnect_cannot_use_old_stream_text_to_normalize_a_new_stream_tail() -> None:
+    supervisor = ASRStreamSupervisor()
+    old = ASRResult(1, "s1", 1, 0, 320, "旧问题", True)
+    assert supervisor.accept_result(old, session_id="session")
+    supervisor.mark_committed(320)
+    assert supervisor.reconnect(stream_epoch=2)
+    supervisor.mark_committed(320)
+    stale_prefix = ASRResult(
+        1, "s1", 2, 0, 640, "旧问题新问题", True, stream_epoch=2
+    )
+
+    decision = supervisor.accept_result(stale_prefix, session_id="session")
+
+    assert decision.accepted is None
+    assert decision.reason is ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING
+    current = ASRResult(2, "s1", 1, 320, 640, "新问题", True, stream_epoch=2)
+    assert supervisor.accept_result(current, session_id="session").accepted == current
+    assert supervisor.timeline.projected_text(
+        stream_epoch=2, start_sample=320, end_sample=640
+    ) == "新问题"
+
+
 def test_asr_supervisor_accepts_out_of_order_non_overlapping_finals() -> None:
     supervisor = ASRStreamSupervisor(reconnect_audio_ms=500)
     supervisor.start_task()

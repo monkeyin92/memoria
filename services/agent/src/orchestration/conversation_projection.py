@@ -458,6 +458,7 @@ class ConversationProjection:
             segment.capture_start_sample,
             current.capture_start_sample if current is not None else segment.capture_start_sample,
         )
+        start_sample = max(self.timeline.committed_sample, start_sample)
         end_sample = max(
             segment.capture_end_sample,
             current.capture_end_sample if current is not None else segment.capture_end_sample,
@@ -575,6 +576,11 @@ class ConversationProjection:
             context_version=evidence.context_version,
             provider_final_missing=evidence.provider_final_missing,
         )
+        self.timeline.commit_range(
+            stream_epoch=evidence.stream_epoch,
+            start_sample=evidence.capture_start_sample,
+            end_sample=evidence.capture_end_sample,
+        )
         self._provisional = None
         self._enter_phase(
             TurnPhase.IDLE,
@@ -618,13 +624,7 @@ class ConversationProjection:
         return None
 
     def align_provisional_text(self, text: str) -> ProjectionPatch | None:
-        """Keep the live provisional on the same sample-clock text as commit.
-
-        Media commit re-reads the timeline after speaker classify. A late ASR
-        final can change ``projected_text`` while the provisional still holds
-        the previous revision, which used to fail closed as TEXT_MISMATCH and
-        swallow a usable weather/weekday turn.
-        """
+        """Align text after a late ASR revision or speaker-classification await."""
 
         current = self._provisional
         stripped = text.strip()

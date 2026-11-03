@@ -21,7 +21,7 @@ def align_provisional_range(
     Media commit uses VAD/ASR turn bounds. Projection can lag that clock
     when a VAD-only provisional never absorbed the accepted final
     (2026-09-04 epoch 1384 weekday: ``projection_range_mismatch``).
-    Never shrink the interval; a contained ASR subrange stays valid.
+    Keep a contained ASR subrange valid, but never reopen committed samples.
     """
 
     current = projection._provisional
@@ -29,9 +29,13 @@ def align_provisional_range(
         current is None
         or capture_start_sample < 0
         or capture_end_sample <= capture_start_sample
+        or capture_end_sample <= projection.timeline.committed_sample
     ):
         return None
-    start_sample = min(current.capture_start_sample, capture_start_sample)
+    start_sample = max(
+        projection.timeline.committed_sample,
+        min(current.capture_start_sample, capture_start_sample),
+    )
     end_sample = max(current.capture_end_sample, capture_end_sample)
     if (
         start_sample == current.capture_start_sample

@@ -1293,6 +1293,9 @@ class MediaSessionCommitMixin:
     ) -> tuple[GenerationFence | None, str | None]:
         """Prepare and project one turn while its transport epoch is stable."""
 
+        start_sample = max(start_sample, context.runtime.speech_timeline.committed_sample)
+        if end_sample <= start_sample:
+            return None, "empty_media_turn"
         # Compatibility callers may have populated the authoritative Timeline
         # directly before invoking this seam. Re-project those already-
         # accepted facts rather than letting a valid turn bypass Projection.
