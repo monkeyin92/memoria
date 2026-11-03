@@ -537,6 +537,7 @@ class ASRStreamSupervisor:
         self._latest_task_by_segment.clear()
         self._revision_order.clear()
         self._segment_order.clear()
+        self._accepted_text.clear()
         self.timeline.start_stream_epoch(stream_epoch)
         return True
 
