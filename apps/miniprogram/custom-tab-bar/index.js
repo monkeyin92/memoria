@@ -15,8 +15,9 @@ Component({
   data: {
     hidden: false,
     tabs: [
-      tab("/pages/home/index", "今天", "home"),
+      tab("/pages/home/index", "首页", "home"),
       tab("/pages/memory/index", "回顾", "book"),
+      tab("/pages/companion/index", "声音", "wave"),
       tab("/pages/device/index", "设备", "dev"),
       tab("/pages/profile/index", "我的", "user"),
     ],

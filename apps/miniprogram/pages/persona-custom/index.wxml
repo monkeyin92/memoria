@@ -1,6 +1,6 @@
 <view class="page-shell sub-page" style="{{statusBarStyle}}">
   <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
-  <text class="eyebrow">说话方式</text>
+  <text class="eyebrow">声音与表达</text>
   <text class="page-title">自定义表达</text>
   <text class="page-lede">写下名字和说话方式。创建后这套设置固定为 v1，想改内容就新建一个。</text>
 
@@ -37,9 +37,15 @@
       </view>
 
       <text class="field-label">语速（0.90 - 1.10）</text>
-      <slider min="90" max="110" step="1" value="{{rateValue}}" show-value="{{true}}" activeColor="#2455EF" backgroundColor="#DAE1EF" block-size="24" bindchange="onRateChange" />
+      <slider min="90" max="110" step="1" value="{{rateValue}}" show-value="{{true}}" activeColor="#176B5B" backgroundColor="#DFE8E4" block-size="24" bindchange="onRateChange" />
 
-      <text class="caption">使用统一默认声音。这里只调整表达方式。</text>
+      <text class="field-label">没有克隆声音时用谁的音色</text>
+      <picker mode="selector" range="{{voiceOptions}}" range-key="name" value="{{voiceIndex}}" bindchange="onVoiceChange">
+        <view class="picker-row">
+          <text class="picker-value">{{voiceOptions[voiceIndex].name}}</text>
+          <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
+        </view>
+      </picker>
     </view>
 
     <button class="primary-button pc-create" loading="{{acting}}" disabled="{{acting}}" bindtap="create">创建并冻结</button>
@@ -52,7 +58,7 @@
       <view wx:for="{{personas}}" wx:key="persona_id" class="list-row">
         <view class="row-copy">
           <text class="row-title">{{item.display_name}}</text>
-          <text class="row-meta">v{{item.persona_version}} · 默认声音</text>
+          <text class="row-meta">v{{item.persona_version}}{{item.voiceName ? ' · 音色 ' + item.voiceName : ''}}</text>
         </view>
         <view class="pc-delete" data-persona-id="{{item.persona_id}}" bindtap="remove">删除</view>
       </view>

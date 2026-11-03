@@ -36,8 +36,9 @@ test("home is the first tab and stays a status board without in-app chat", () =>
   assert.deepEqual(
     appConfig.tabBar?.list?.map((item) => [item.pagePath, item.text]),
     [
-      ["pages/home/index", "今天"],
+      ["pages/home/index", "首页"],
       ["pages/memory/index", "回顾"],
+      ["pages/companion/index", "声音"],
       ["pages/device/index", "设备"],
       ["pages/profile/index", "我的"],
     ],

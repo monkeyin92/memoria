@@ -1,9 +1,7 @@
-<view class="page-shell tab-page memory-page" style="{{statusBarStyle}}">
-  <view class="page-heading"><view class="page-heading-copy">
-  <text class="eyebrow">记录与记忆</text>
+<view class="page-shell tab-page" style="{{statusBarStyle}}">
+  <text class="eyebrow">最近几天</text>
   <text class="page-title">对话回顾</text>
   <text class="page-lede">{{guardianMode ? '这里只有摘要，不显示原话，也没有录音。' : '想记住的事，点确认后才会留下。'}}</text>
-  </view><view class="memory-heading-icon"><mp-icon name="note" tone="ink"></mp-icon></view></view>
 
   <view wx:if="{{!authenticated}}" class="memory-guest">
     <view class="notice">登录后打开你的专属回顾。未登录时不会读取或展示任何对话整理内容。</view>
@@ -46,10 +44,10 @@
         <text class="l2-card-sub">{{guardianMode ? '孩子还没有聊过天，或者还没有开启孩子的长期记忆。' : '这里还空空的，没关系。需要时再来看看，一切由你决定。'}}</text>
         <text class="caption">{{guardianMode ? '孩子和机器人聊几句后，再回来看看。' : '在设备上说几句后，再回来看看。'}}</text>
         <view class="button-row">
-          <button class="secondary-button btn-sm" bindtap="goCompanion">查看设备</button>
+          <button class="secondary-button btn-sm" bindtap="goCompanion">设置声音与表达</button>
         </view>
       </view>
-      <view wx:for="{{days}}" wx:key="date" class="card memory-day {{index === 0 ? 'memory-day-featured' : 'memory-day-plain'}}">
+      <view wx:for="{{days}}" wx:key="date" class="card memory-day">
         <view class="memory-day-head">
           <text class="memory-day-label">{{item.dayLabel}}</text>
           <text class="memory-day-meta">{{item.dateLabel}}</text>

@@ -4,9 +4,7 @@ const { launch, problems, shoot } = require("./mp-harness/shoot");
 const { PAGES, VIEWS } = require("./mp-harness/pages");
 const fx = require("./mp-harness/fixtures");
 
-const OUTPUT = process.env.MP_SCREENSHOT_OUTPUT
-  ? path.resolve(process.env.MP_SCREENSHOT_OUTPUT)
-  : path.resolve(__dirname, "../../../docs/design/parent-ui-20261103");
+const OUTPUT = path.resolve(__dirname, "../../../docs/design/parent-ui-20261103");
 const PAGE_SLUGS = new Set([
   "home", "home-guest", "memory", "memory-empty", "companion", "device",
   "profile", "bind-form", "bind-review", "attention", "child-memory",
@@ -15,24 +13,6 @@ const PAGE_SLUGS = new Set([
 ]);
 const SCENARIOS = [
   ...PAGES.filter((scenario) => PAGE_SLUGS.has(scenario.slug)),
-  {
-    slug: "device-expanded",
-    page: "pages/device/index",
-    harness: fx.authed(),
-    actions: [["toggleManagement"], ["toggleUsage"], ["toggleMemberSettings"], ["toggleStories"], ["toggleDiag"]],
-  },
-  {
-    slug: "device-guest",
-    page: "pages/device/index",
-    harness: fx.guest(),
-  },
-  {
-    slug: "device-offline",
-    page: "pages/device/index",
-    harness: fx.authed({
-      getActivationStatus: async () => ({ status: "failed", network: { internet: false } }),
-    }),
-  },
   {
     slug: "home-offline",
     page: "pages/home/index",

@@ -2,6 +2,7 @@
   "navigationBarTitleText": "绑定设备",
   "navigationStyle": "custom",
   "usingComponents": {
+    "device-screen": "/components/device-screen/index",
     "mp-icon": "/components/mp-icon/index"
   }
 }

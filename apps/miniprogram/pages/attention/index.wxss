@@ -7,6 +7,28 @@
   text-align: center;
 }
 
+.attention-device {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.attention-mascot {
+  width: 80px;
+  height: 80px;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--mp-rust-bg);
+}
+
+.attention-mascot-img {
+  display: block;
+  width: 96px;
+  margin-top: 8px;
+  mix-blend-mode: multiply;
+}
+
 .attention-title {
   display: block;
   margin-top: 16px;

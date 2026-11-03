@@ -5,6 +5,7 @@
 
   <block wx:elif="{{alert}}">
     <view class="card attention-card">
+      <view class="attention-device" aria-hidden="true"><device-screen online="{{false}}" size="120"></device-screen></view>
       <text class="attention-title">{{alert.message}}</text>
       <text class="attention-time">{{alert.occurredLabel}}</text>
       <text wx:if="{{alert.categoryLabel}}" class="attention-category">{{alert.categoryLabel}}</text>

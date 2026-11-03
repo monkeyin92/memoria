@@ -1,7 +1,9 @@
 {
   "navigationBarTitleText": "首页",
   "navigationStyle": "custom",
-  "backgroundColor": "#F2F4F8",
+  "backgroundColor": "#F2F6F5",
   "enablePullDownRefresh": true,
-  "usingComponents": {}
+  "usingComponents": {
+    "device-screen": "/components/device-screen/index"
+  }
 }

@@ -1,7 +1,5 @@
 {
-  "navigationBarTitleText": "默认声音",
+  "navigationBarTitleText": "声音",
   "navigationStyle": "custom",
-  "usingComponents": {
-    "mp-icon": "/components/mp-icon/index"
-  }
+  "usingComponents": {}
 }

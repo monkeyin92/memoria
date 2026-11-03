@@ -1,6 +1,8 @@
 {
   "navigationBarTitleText": "需要你关注",
   "navigationStyle": "custom",
-  "backgroundColor": "#F2F4F8",
-  "usingComponents": {}
+  "backgroundColor": "#F2F6F5",
+  "usingComponents": {
+    "device-screen": "/components/device-screen/index"
+  }
 }
