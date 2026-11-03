@@ -24,6 +24,7 @@ from services.agent.src.orchestration.speech_timeline import (
     SpeechSegment,
     SpeechTimeline,
 )
+from services.common.companion_response_safety import companion_safety_decision
 
 
 def _segment(
@@ -179,6 +180,68 @@ def test_commit_allows_asr_subrange_inside_leading_vad_provisional() -> None:
     assert isinstance(committed, CommittedTurn)
     assert committed.capture_start_sample == 160
     assert committed.capture_end_sample == 640
+
+
+def test_short_turns_consume_their_text_even_when_asr_outlasts_the_commit() -> None:
+    timeline = SpeechTimeline()
+    projection = ConversationProjection("session", timeline)
+    queries = ("我想伤害自己。", "我爸爸打我，好疼。", "今天天气怎么样")
+
+    for turn_id, text in enumerate(queries, start=1):
+        start = (turn_id - 1) * 640
+        final = _segment(
+            f"asr-{turn_id}",
+            start=start,
+            end=start + 640,
+            text=text,
+            kind=SegmentKind.ASR_FINAL,
+            final=True,
+        )
+        assert timeline.add(final)
+        patch = projection.apply_continuous_event(final, turn_id_hint=turn_id)
+        assert patch is not None
+        assert patch.turn.text == text
+        committed = projection.commit_turn(
+            CommitEvidence(
+                session_id="session",
+                stream_epoch=1,
+                capture_start_sample=start,
+                capture_end_sample=start + 320,
+                text=text,
+                fence=GenerationFence("session", turn_id, turn_id, 0),
+                speaker_evidence=SpeakerEvidence(),
+                history_eligible=False,
+            )
+        )
+        assert isinstance(committed, CommittedTurn)
+        assert committed.text == text
+        if turn_id == 2:
+            assert companion_safety_decision(committed.text) == "support_victim"
+        assert timeline.committed_sample == start + 320
+        assert (
+            timeline.projected_text(
+                stream_epoch=1, start_sample=start + 320, end_sample=start + 640
+            )
+            == ""
+        )
+        assert projection.provisional is None
+
+
+def test_late_vad_and_range_alignment_cannot_reopen_committed_samples() -> None:
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    timeline.commit_range(stream_epoch=1, start_sample=0, end_sample=320)
+    projection = ConversationProjection("session", timeline)
+    vad = _segment("late-vad", start=160, end=480, kind=SegmentKind.VAD)
+
+    patch = _apply(projection, vad)
+
+    assert patch is not None
+    assert patch.turn.capture_start_sample == 320
+    aligned = align_provisional_range(projection, 0, 640)
+    assert aligned is not None
+    assert aligned.turn.capture_start_sample == 320
+    assert aligned.turn.capture_end_sample == 640
 
 
 def test_commit_rejects_ranges_outside_the_provisional_interval() -> None:

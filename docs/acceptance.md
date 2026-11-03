@@ -3841,3 +3841,15 @@ ASR 无文本这次只有 1 次 `low_rms` tail timeout、3 次 `empty_media_turn
 收据目录 `devicetest/run-20261101-232237-soak-tapwake/`，原始输出 `outputs/acceptance/run-20261101-232237-soak-tapwake/`。
 
 ---
+
+## 5a 跨轮投影修复（2026-11-03）
+
+本地复现了历史自伤文字进入下一轮受害求助的路径。ASR 文本段覆盖 `0..640`，提交只消费 `0..320`，旧时间线仍保留整段文字。后续投影因而携带已提交文字。
+
+`SpeechTimeline.commit_range` 随水位推进消费整段已用文字，包括跨越提交终点的段。无逐词时间的文本不能按字符比例切割。合法的新尾段仍由现有 ASR supervisor 先按词时间或已提交前缀归一化。未来文本与跨界无文字声学段保留。
+
+投影提交显式推进水位。新 provisional、range alignment 与 pending commit 的起点不得早于水位，迟到且未经归一化的旧文字不能重新进入时间线。危机分类规则与阈值未改。
+
+回归覆盖短轮连续提交、历史自伤与本轮受害求助隔离、迟到 VAD、重连前缀隔离，以及真实 registry 提交路径。重复问题夹具改用实际未消费水位，原有重复抑制与回复交付断言保留。
+
+候选从远端 `main` 隔离，未夹带本地其他提交与 ASR 缓存清理。`code` 与离线 registry 路径已实现，`enabled=false`、`verified=false`。本节的实现状态不代表真机安全或时延门禁通过。

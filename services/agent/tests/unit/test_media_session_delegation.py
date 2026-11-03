@@ -2300,7 +2300,7 @@ async def test_duplicate_turn_commit_is_skipped_after_ack_playback_completed() -
             claim.state is DelegationOutputState.OWNED
             for claim in context.output.delegation_output_claims.values()
         )
-        # The board re-transcribes the same question over the contiguous range.
+        duplicate_start = context.runtime.speech_timeline.committed_sample
         duplicate_segment = SpeechSegment(
             session_id=identity.session_id,
             stream_epoch=identity.stream_epoch,
@@ -2308,21 +2308,21 @@ async def test_duplicate_turn_commit_is_skipped_after_ack_playback_completed() -
             segment_id="duplicate-final",
             revision=1,
             kind=SegmentKind.ASR_FINAL,
-            capture_start_sample=600,
+            capture_start_sample=duplicate_start,
             capture_end_sample=1200,
             text=question,
             final=True,
         )
         assert context.runtime.ingest_media_speech_segment(duplicate_segment)
         await registry._apply_projection_segment(context, duplicate_segment)
-        context.pending.turn_start_sample = 600
+        context.pending.turn_start_sample = duplicate_start
         context.pending.turn_end_sample = 1200
         context.pending.turn_endpoint_sample = 1200
         context.pending.turn_retire_sample = 1240
         repeat_fence, repeat_reason = await registry.commit_user_turn(
             identity.session_id,
             stream_epoch=identity.stream_epoch,
-            start_sample=600,
+            start_sample=duplicate_start,
             end_sample=1200,
             retire_sample=1240,
         )

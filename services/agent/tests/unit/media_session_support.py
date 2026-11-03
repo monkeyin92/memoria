@@ -688,8 +688,9 @@ async def _qa_commit_repeat_question(
     end_sample: int,
     retire_sample: int,
 ) -> tuple[GenerationFence | None, str | None]:
-    """Re-transcribe ``text`` over the contiguous range and commit it."""
+    """Commit a repeated question over the unconsumed capture range."""
 
+    start_sample = max(start_sample, context.runtime.speech_timeline.committed_sample)
     segment = SpeechSegment(
         session_id=identity.session_id,
         stream_epoch=identity.stream_epoch,
