@@ -409,17 +409,11 @@
 .wake-mode-note-warn { color: var(--mp-sun); }
 .device-page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
 .device-add { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; margin: 36px 0 0; padding: 0; border-radius: 50%; background: var(--mp-paper); color: var(--mp-forest); font-size: var(--mp-type-display); line-height: 1; }
-.device-hero { padding: 20px; border-radius: 24px; background: var(--mp-screen); color: var(--mp-on-accent); }
-.device-hero-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-.device-hero-name { display: block; flex: 1; min-width: 120px; font-size: var(--mp-type-lead); font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
-.device-hero-hint { display: block; margin-top: 14px; font-size: var(--mp-type-meta); color: var(--mp-on-accent); }
-.device-hero .trial-status-pill { background: var(--mp-cyan); color: var(--mp-screen); }
-.device-hero .trial-status-pill.is-off { background: var(--mp-fill); color: var(--mp-screen); }
-.device-default-voice { display: flex; align-items: center; gap: 12px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--mp-line); }
-.device-voice-wave { display: flex; align-items: center; justify-content: center; gap: 3px; width: 36px; height: 36px; }
-.device-voice-wave view { width: 3px; height: 12px; border-radius: 3px; background: var(--mp-accent); }
-.device-voice-wave view:nth-child(2), .device-voice-wave view:nth-child(4) { height: 22px; }
-.device-voice-wave view:nth-child(3) { height: 30px; }
+.device-hero { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 20px; border-radius: 24px; background: var(--mp-paper); }
+.device-hero-copy { flex: 1; min-width: 0; }
+.device-hero-name { display: block; margin-bottom: 12px; font-size: var(--mp-type-heading); font-weight: 600; line-height: 1.4; }
+.device-hero-hint { display: block; margin-top: 14px; font-size: var(--mp-type-meta); color: var(--mp-ink-2); }
+.device-hero-art { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 96px; min-height: 108px; }
 .device-volume-label { display: flex; align-items: center; gap: 10px; }
 .device-volume-card .setting-row { justify-content: space-between; margin-bottom: 4px; }
 .device-controls { margin-top: 12px; }
@@ -431,12 +425,12 @@
 .device-usage-title { font-size: var(--mp-type-small); }
 .device-limit-card { padding: 16px; }
 .device-limit-num { font-size: var(--mp-type-heading); }
-.device-quiet-card { background: var(--mp-paper); gap: 10px; }
+.device-quiet-card { background: var(--mp-lilac); gap: 10px; }
 .device-quiet-card .device-setting-copy { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .device-quiet-description { flex: 1; min-width: 110px; }
 .device-quiet-chip { background: var(--mp-glass); font-size: var(--mp-type-meta); }
 .device-quiet-title { font-size: var(--mp-type-small); }
 .device-quiet-card .trial-caption { font-size: var(--mp-type-meta); line-height: 1.6; }
-.device-member-entry { background: var(--mp-surface); }
+.device-member-entry { background: var(--mp-peach); }
 .device-help { font-size: var(--mp-type-meta); text-align: center; }
-.device-more-entry { margin-top: 16px; background: var(--mp-surface); }
+.device-more-entry { margin-top: 16px; background: var(--mp-peach); }

@@ -189,7 +189,7 @@ test("home links to child memory without repeating the review preview", async ()
   const { data } = await loadHome();
   const text = visibleText(renderPage("pages/home/index", data));
   assert.match(text, /孩子的记忆 查看长期记忆与近期摘要/);
-  assert.match(renderPage("pages/home/index", data), /class="trial-card home-row-card" data-tap/);
+  assert.match(renderPage("pages/home/index", data), /class="trial-card home-row-card home-memory-entry" data-tap/);
 });
 
 test("home never renders battery, story counts or a recommendation card", async () => {

@@ -21,13 +21,14 @@ test("voices render as a vertical list with the account pick marked current", as
   try {
     const html = renderPage("pages/companion/index", data).replace(/<style>[\s\S]*?<\/style>/, "");
     const text = visibleText(html);
-    assert.equal((html.match(/class="voice-option[ "]/g) || []).length, companions.length);
+    assert.equal((html.match(/class="voice-option /g) || []).length, companions.length);
     assert.equal((html.match(/voice-option-on/g) || []).length, 1);
     assert.match(text, /声音与表达 声音 选择一种音色与说话方式。/);
-    assert.match(text, /清澈、自然 星澜 温和清晰，留一点想象 已选 试听/);
+    assert.match(text, /星澜 清澈、自然 温和清晰，留一点想象 已选 试听/);
     assert.match(text, /自定义表达/);
     assert.equal((text.match(/试听(?= )/g) || []).length, companions.length);
-    assert.doesNotMatch(html, /face-badge|--role-|deck-/);
+    assert.doesNotMatch(html, /--role-|deck-/);
+    assert.equal((html.match(/class="voice-portrait"/g) || []).length, companions.length);
   } finally {
     harness.restore();
   }

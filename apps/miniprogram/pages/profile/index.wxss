@@ -66,9 +66,6 @@
   flex-shrink: 0;
   width: 56px;
   height: 56px;
-  overflow: hidden;
-  border-radius: var(--mp-radius-inset);
-  background: var(--mp-fill-art);
 }
 
 .device-name {
@@ -145,3 +142,10 @@
 .privacy-note + .profile-version {
   margin-top: 8px;
 }
+.account-card { background: var(--mp-peach); box-shadow: none; padding: 22px 20px; }
+.hero-initial { width: 56px; height: 56px; background: var(--mp-surface); }
+.account-name { font-size: var(--mp-type-heading); }
+.account-sub { font-size: var(--mp-type-meta); }
+.device-card { background: var(--mp-paper); }
+.device-art { background: var(--mp-surface); }
+.profile-menu { margin-top: 24px; }

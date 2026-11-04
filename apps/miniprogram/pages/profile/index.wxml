@@ -1,4 +1,5 @@
-<view class="page-shell tab-page" style="{{statusBarStyle}}">
+<view class="page-shell tab-page profile-page" style="{{statusBarStyle}}">
+  <text class="eyebrow">Memoria · 个人中心</text>
   <text class="page-title">我的</text>
 
   <block wx:if="{{!authenticated}}">
@@ -53,11 +54,6 @@
   </block>
 
   <view class="list profile-menu">
-    <view wx:if="{{authenticated}}" class="list-row" bindtap="openDevice">
-      <mp-icon name="dev" tone="ink"></mp-icon>
-      <text class="row-title row-copy">设备管理</text>
-      <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />
-    </view>
     <view wx:if="{{guardianEntryAllowed}}" class="list-row" bindtap="openGuardianSummary">
       <mp-icon name="user" tone="ink"></mp-icon>
       <view class="row-copy">

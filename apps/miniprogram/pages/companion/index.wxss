@@ -1,7 +1,50 @@
-.default-voice-stage { display: flex; align-items: center; justify-content: center; margin-top: 24px; padding: 24px 20px; border-radius: 24px; background: var(--mp-screen); }
-.default-voice-wave { display: flex; align-items: center; gap: 8px; height: 40px; }
-.default-voice-wave view { width: 5px; height: 12px; border-radius: 4px; background: var(--mp-cyan); }
-.default-voice-wave view:nth-child(2), .default-voice-wave view:nth-child(6) { height: 24px; }
-.default-voice-wave view:nth-child(3), .default-voice-wave view:nth-child(5) { height: 32px; }
-.default-voice-wave view:nth-child(4) { height: 40px; }
-.default-voice-title { display: block; margin-top: 28px; font-size: var(--mp-type-heading); line-height: 1.5; font-weight: 650; }
+.role-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 48px;
+  margin-top: var(--mp-gap-card);
+  border-radius: var(--mp-radius-inset);
+  background: var(--mp-surface);
+  box-shadow: var(--mp-shadow-card);
+  color: var(--mp-accent);
+  font-size: var(--mp-type-card);
+  font-weight: 600;
+}
+
+.role-new-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.role-hint {
+  margin-top: 8px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.companion-voice {
+  margin-top: 0;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.companion-voice .setting-row {
+  gap: 16px;
+}
+.voice-list { gap: 12px; }
+.voice-option { position: relative; min-height: 104px; padding: 16px 14px; gap: 12px; overflow: hidden; }
+.voice-portrait { flex-shrink: 0; width: 48px; height: 66px; }
+.voice-name { font-size: var(--mp-type-title); }
+.voice-catalog-name { display: block; margin-top: 3px; font-size: var(--mp-type-meta); }
+.voice-tagline { margin-top: 6px; font-size: var(--mp-type-meta); }
+.voice-starlight { background: var(--mp-voice-starlight); }
+.voice-taoxi { background: var(--mp-voice-taoxi); }
+.voice-mianmian { background: var(--mp-voice-mianmian); }
+.voice-axu { background: var(--mp-voice-axu); }
+.voice-xuanmo { background: var(--mp-voice-xuanmo); }
+.voice-current { position: absolute; top: 0; right: 0; padding: 3px 10px; border-radius: 0 14px 0 12px; background: var(--mp-accent); color: var(--mp-on-accent); font-size: var(--mp-type-micro); }
+.voice-chip { min-height: 44px; background: var(--mp-glass); font-size: var(--mp-type-meta); }
+.voice-option-on { box-shadow: inset 0 0 0 1.5px var(--mp-accent); }
+.role-new { background: transparent; border: 1px dashed var(--mp-dash); box-shadow: none; font-size: var(--mp-type-small); font-weight: 500; }

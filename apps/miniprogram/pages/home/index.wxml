@@ -1,5 +1,6 @@
 <view class="page-shell trial-page tab-page home-v4" style="{{statusBarStyle}}">
   <view wx:if="{{!authenticated}}" class="home-guest">
+    <view class="guest-brand-art"><face-badge role="starlight" size="brand" plain="{{true}}"></face-badge></view>
     <text class="page-title">{{guestHome.productTitle}}</text>
     <text class="page-lede">{{guestHome.productBody}}</text>
     <view class="card guest-features">
@@ -36,7 +37,7 @@
         <text class="eyebrow">{{pageLede}}</text>
         <text class="trial-title">今天</text>
       </view>
-      <view class="home-avatar" bindtap="openProfile">{{avatarGlyph}}</view>
+      <view class="home-avatar" bindtap="openProfile" aria-label="打开我的资料">{{avatarGlyph}}</view>
     </view>
 
     <view wx:if="{{loading}}" class="trial-card home-pad">
@@ -90,19 +91,27 @@
       </view>
 
       <view class="trial-card trial-card-xl home-review-card" bindtap="openMemory">
-        <text class="home-lbl">近期回顾</text>
-        <text wx:if="{{memoryPreviews.length}}" class="home-review-lead">{{memoryPreviews[0].text}}</text>
-        <text wx:elif="{{dailySummaryText}}" class="home-review-lead">{{dailySummaryText}}</text>
-        <text wx:else class="home-review-empty">还没有摘要，聊过之后会出现在这里</text>
+        <view class="home-review-top">
+          <text class="home-lbl">近期回顾</text>
+        </view>
+        <view class="home-review-body">
+          <view class="home-review-copy">
+            <text wx:if="{{memoryPreviews.length}}" class="home-review-lead">{{memoryPreviews[0].text}}</text>
+            <text wx:elif="{{dailySummaryText}}" class="home-review-lead">{{dailySummaryText}}</text>
+            <text wx:else class="home-review-empty">还没有摘要，聊过之后会出现在这里</text>
+          </view>
+          <view class="home-review-art"><face-badge role="starlight" size="review" plain="{{true}}"></face-badge></view>
+        </view>
         <view class="home-review-meta">
           <text class="home-review-stat">今天对话 {{todayCount}} 次</text>
           <text wx:if="{{showChildMemory}}" class="home-review-stat">近期摘要 {{summaryCount}} 条</text>
+          <text class="home-review-open">打开回顾 ↗</text>
         </view>
-        <image class="home-chev home-review-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>
 
+      <view class="home-section-head"><text>陪伴日常</text><text class="home-section-meta">在这里，慢慢了解 TA</text></view>
       <view class="trial-card home-device-card" bindtap="openDevice">
-        <device-screen online="{{online}}" size="120"></device-screen>
+        <view class="home-device-illustration"><device-screen online="{{online}}" size="120"></device-screen></view>
         <view class="home-device-copy">
           <view class="trial-status-pill {{online ? '' : 'is-off'}}">
             <view class="trial-status-dot"></view>
@@ -122,12 +131,11 @@
               style="width: {{usageKnown && usageFillPercent ? usageFillPercent : 0}}%;"
             ></view>
           </view>
-          <text class="home-device-voice-hint">表达风格 · {{personaName}}</text>
         </view>
         <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>
 
-      <view wx:if="{{showChildMemory}}" class="trial-card home-row-card" bindtap="openChildMemory">
+      <view wx:if="{{showChildMemory}}" class="trial-card home-row-card home-memory-entry" bindtap="openChildMemory">
         <view class="mp-icon-tile"><image src="/assets/ui/v4/book-accent.svg" /></view>
         <view class="home-row-copy">
           <text class="home-card-title">{{childMemoryName}}的记忆</text>
