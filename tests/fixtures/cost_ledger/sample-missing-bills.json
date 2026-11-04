@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "observation_window": {
+    "start": "2026-10-01",
+    "end": "2026-10-31"
+  },
+  "handling_rules": {
+    "unallocated_fees": "Keep unallocated and fixed/base_ops fees in a separate pool. Do not force-split them into household variable totals. Report the pool beside household lines.",
+    "free_tiers": "Record free-tier quantity with flag free_tier. Amount is 0 when the bill marks the line free. Quantity still counts toward intensity.",
+    "cancel_after_bill": "Include cancel_still_billed and generated_unplayed quantity in vendor reconciliation. Playback non-ack does not erase a billed call.",
+    "human_rescue": "Attribute support minutes with flag human_rescue to the household when the ticket names one. Otherwise leave the line unallocated and list it under gaps if verification is 未验."
+  },
+  "households": [
+    { "household_id": "hh_alpha01", "intensity_hint": "auto" },
+    { "household_id": "hh_beta0001", "intensity_hint": "auto" },
+    { "household_id": "hh_gamma01", "intensity_hint": "auto" }
+  ],
+  "usage_events": [
+    {
+      "event_id": "u-a-asr",
+      "household_id": "hh_alpha01",
+      "category": "asr",
+      "vendor": "volcengine",
+      "unit": "seconds",
+      "quantity": 50,
+      "flags": []
+    },
+    {
+      "event_id": "u-b-asr",
+      "household_id": "hh_beta0001",
+      "category": "asr",
+      "vendor": "volcengine",
+      "unit": "seconds",
+      "quantity": 200,
+      "flags": ["cancel_still_billed"]
+    },
+    {
+      "event_id": "u-b-tts",
+      "household_id": "hh_beta0001",
+      "category": "tts",
+      "vendor": "volcengine",
+      "unit": "characters",
+      "quantity": 4000,
+      "flags": ["generated_unplayed"]
+    },
+    {
+      "event_id": "u-c-asr",
+      "household_id": "hh_gamma01",
+      "category": "asr",
+      "vendor": "volcengine",
+      "unit": "seconds",
+      "quantity": 800,
+      "flags": []
+    },
+    {
+      "event_id": "u-c-chat",
+      "household_id": "hh_gamma01",
+      "category": "chat",
+      "vendor": "deepseek",
+      "unit": "tokens",
+      "quantity": 12000,
+      "flags": ["retry"]
+    }
+  ],
+  "vendor_bills": [],
+  "ops_lines": [
+    {
+      "line_id": "ops-mfg-a",
+      "category": "manufacturing",
+      "cost_class": "variable",
+      "household_id": "hh_alpha01",
+      "unit": "units",
+      "quantity": 1,
+      "amount_minor": null,
+      "currency": null,
+      "flags": [],
+      "verification": "未验"
+    },
+    {
+      "line_id": "ops-support-unalloc",
+      "category": "support",
+      "cost_class": "unallocated",
+      "household_id": null,
+      "unit": "minutes",
+      "quantity": 40,
+      "amount_minor": null,
+      "currency": null,
+      "flags": ["human_rescue"],
+      "verification": "未验"
+    },
+    {
+      "line_id": "ops-rd",
+      "category": "rd_fixed",
+      "cost_class": "fixed",
+      "household_id": null,
+      "unit": "cents",
+      "quantity": 1,
+      "amount_minor": null,
+      "currency": null,
+      "flags": [],
+      "verification": "未验"
+    }
+  ],
+  "receipts": {
+    "net_receipts": [
+      {
+        "household_id": "hh_alpha01",
+        "amount_minor": null,
+        "currency": null,
+        "verification": "未验"
+      },
+      {
+        "household_id": "hh_beta0001",
+        "amount_minor": null,
+        "currency": null,
+        "verification": "未验"
+      },
+      {
+        "household_id": "hh_gamma01",
+        "amount_minor": null,
+        "currency": null,
+        "verification": "未验"
+      }
+    ]
+  }
+}
