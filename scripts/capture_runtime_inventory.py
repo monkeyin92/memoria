@@ -15,9 +15,7 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = 1
-EVIDENCE_CLASSES = frozenset(
-    {"live_capture", "lab_fixture", "handoff_reconstruction"}
-)
+EVIDENCE_CLASSES = frozenset({"live_capture", "lab_fixture", "handoff_reconstruction"})
 UNKNOWN = "unknown"
 
 INSPECT_FORMATS: dict[str, str] = {
@@ -27,7 +25,7 @@ INSPECT_FORMATS: dict[str, str] = {
     "image": "{{.Config.Image}}",
     "image-id": "{{.Image}}",
     "release-tag": (
-        '{{range .Config.Env}}{{if and (ge (len .) 20) '
+        "{{range .Config.Env}}{{if and (ge (len .) 20) "
         '(eq (slice . 0 20) "MEMORIA_RELEASE_TAG=")}}{{slice . 20}}{{end}}{{end}}'
     ),
     "running": "{{.State.Running}}",
@@ -59,6 +57,7 @@ _OVERRIDE_IMAGE = re.compile(
 )
 _OPT_MEMORIA = "/opt/memoria/"
 
+
 def _utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat()
 
@@ -79,10 +78,10 @@ def flag_env_format(key: str) -> str:
     prefix = f"{key}="
     n = len(prefix)
     return (
-        f'{{{{range .Config.Env}}}}'
+        f"{{{{range .Config.Env}}}}"
         f'{{{{if and (ge (len .) {n}) (eq (slice . 0 {n}) "{prefix}")}}}}'
-        f'{{{{slice . {n}}}}}'
-        f'{{{{end}}}}{{{{end}}}}'
+        f"{{{{slice . {n}}}}}"
+        f"{{{{end}}}}{{{{end}}}}"
     )
 
 
@@ -117,10 +116,7 @@ class DockerBackend:
         ).rstrip("\n")
 
     def inspect_health(self, container: str) -> str:
-        fmt = (
-            "{{if .State.Health}}{{.State.Health.Status}}"
-            "{{else}}no-healthcheck{{end}}"
-        )
+        fmt = "{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck{{end}}"
         return subprocess.check_output(
             ["docker", "inspect", container, "--format", fmt],
             text=True,
@@ -134,7 +130,7 @@ class DockerBackend:
         return int(raw)
 
     def inspect_repo_digest(self, container: str) -> str:
-        fmt = '{{index .RepoDigests 0}}'
+        fmt = "{{index .RepoDigests 0}}"
         try:
             raw = subprocess.check_output(
                 ["docker", "inspect", container, "--format", fmt],
@@ -339,9 +335,7 @@ def build_inventory(
             unknowns,
         )
         registry_digest = _or_unknown(
-            obs.get("registry_digest")
-            if isinstance(obs.get("registry_digest"), str)
-            else None
+            obs.get("registry_digest") if isinstance(obs.get("registry_digest"), str) else None
         )
         revision = obs.get("revision")
         if isinstance(revision, str) and _HEX40.match(revision):
@@ -379,19 +373,13 @@ def build_inventory(
             "registry_digest": registry_digest,
             "revision_commit": revision_commit,
             "override_sha256": _or_unknown(
-                obs.get("override_sha256")
-                if isinstance(obs.get("override_sha256"), str)
-                else None
+                obs.get("override_sha256") if isinstance(obs.get("override_sha256"), str) else None
             ),
             "compose_chain": _or_unknown(
-                obs.get("compose_chain")
-                if isinstance(obs.get("compose_chain"), str)
-                else None
+                obs.get("compose_chain") if isinstance(obs.get("compose_chain"), str) else None
             ),
             "override_path": _or_unknown(
-                obs.get("override_path")
-                if isinstance(obs.get("override_path"), str)
-                else None
+                obs.get("override_path") if isinstance(obs.get("override_path"), str) else None
             ),
             "started_at": _or_unknown(
                 obs.get("started_at") if isinstance(obs.get("started_at"), str) else None
@@ -399,9 +387,7 @@ def build_inventory(
             "health": _or_unknown(
                 obs.get("health") if isinstance(obs.get("health"), str) else None
             ),
-            "restarts": obs.get("restarts")
-            if isinstance(obs.get("restarts"), int)
-            else UNKNOWN,
+            "restarts": obs.get("restarts") if isinstance(obs.get("restarts"), int) else UNKNOWN,
             "effective_flags": flags,
             "status": {
                 "code": status.get("code", UNKNOWN),
@@ -428,9 +414,7 @@ def build_inventory(
             stack_out[key] = _or_unknown(val if isinstance(val, str) else None)
             if stack_out[key] == UNKNOWN:
                 unknowns.append(f"stack.{key} unknown")
-        if stack_out["current_commit"] != UNKNOWN and not _HEX40.match(
-            stack_out["current_commit"]
-        ):
+        if stack_out["current_commit"] != UNKNOWN and not _HEX40.match(stack_out["current_commit"]):
             unknowns.append("stack.current_commit not 40-hex; cleared to unknown")
             stack_out["current_commit"] = UNKNOWN
 
@@ -567,9 +551,7 @@ def capture_from_backend(
             stack["current_commit"] = env.get("MEMORIA_RELEASE_COMMIT", UNKNOWN)
             prev_path = resolved / ".cutover" / "prev-release"
             if prev_path.is_file():
-                rollback["stack_prev"] = parse_prev_release(
-                    prev_path.read_text(encoding="utf-8")
-                )
+                rollback["stack_prev"] = parse_prev_release(prev_path.read_text(encoding="utf-8"))
             else:
                 rollback["stack_prev"] = parse_prev_release("")
         prev = rollback.get("stack_prev")
@@ -626,9 +608,7 @@ def validate_inventory(doc: Mapping[str, Any]) -> list[str]:
                 errors.append(f"component missing {key}")
         role = comp.get("role")
         rev = comp.get("revision_commit")
-        if rev not in (None, UNKNOWN) and not (
-            isinstance(rev, str) and _HEX40.match(rev)
-        ):
+        if rev not in (None, UNKNOWN) and not (isinstance(rev, str) and _HEX40.match(rev)):
             errors.append(f"{role}: revision_commit must be 40-hex or unknown")
         _check_recorded_image_id(comp, doc.get("unknowns"), errors)
         image_ref = comp.get("image_ref")
@@ -643,9 +623,7 @@ def validate_inventory(doc: Mapping[str, Any]) -> list[str]:
     stack = doc.get("stack")
     if isinstance(stack, Mapping):
         commit = stack.get("current_commit")
-        if commit not in (None, UNKNOWN) and not (
-            isinstance(commit, str) and _HEX40.match(commit)
-        ):
+        if commit not in (None, UNKNOWN) and not (isinstance(commit, str) and _HEX40.match(commit)):
             errors.append("stack.current_commit must be 40-hex or unknown")
     rollback = doc.get("rollback")
     if isinstance(rollback, Mapping):
@@ -659,9 +637,7 @@ def validate_inventory(doc: Mapping[str, Any]) -> list[str]:
     return errors
 
 
-def _check_recorded_image_id(
-    comp: Mapping[str, Any], unknowns: object, errors: list[str]
-) -> None:
+def _check_recorded_image_id(comp: Mapping[str, Any], unknowns: object, errors: list[str]) -> None:
     image_id = comp.get("image_id")
     complete = comp.get("image_id_complete", None)
     role = comp.get("role")
@@ -682,9 +658,7 @@ def _check_recorded_image_id(
         if "prefix" not in text:
             errors.append(f"{role}: prefix image id must be named in unknowns")
         return
-    errors.append(
-        f"{role}: image_id must be sha256 and 64 hex, an 8 to 63 hex prefix, or unknown"
-    )
+    errors.append(f"{role}: image_id must be sha256 and 64 hex, an 8 to 63 hex prefix, or unknown")
 
 
 def _md(value: object) -> str:
@@ -755,14 +729,10 @@ def render_markdown(doc: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def compare_inventories(
-    left: Mapping[str, Any], right: Mapping[str, Any]
-) -> list[str]:
+def compare_inventories(left: Mapping[str, Any], right: Mapping[str, Any]) -> list[str]:
     diffs: list[str] = []
     left_map = {
-        c["role"]: c
-        for c in left.get("components") or []
-        if isinstance(c, Mapping) and "role" in c
+        c["role"]: c for c in left.get("components") or [] if isinstance(c, Mapping) and "role" in c
     }
     right_map = {
         c["role"]: c
@@ -795,9 +765,7 @@ def compare_inventories(
     if isinstance(lsp, Mapping) and isinstance(rsp, Mapping):
         for key in ("tag", "commit"):
             if lsp.get(key) != rsp.get(key):
-                diffs.append(
-                    f"rollback.stack_prev.{key}: {lsp.get(key)!r} != {rsp.get(key)!r}"
-                )
+                diffs.append(f"rollback.stack_prev.{key}: {lsp.get(key)!r} != {rsp.get(key)!r}")
     return diffs
 
 

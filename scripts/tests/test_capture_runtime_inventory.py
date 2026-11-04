@@ -32,9 +32,17 @@ def test_inspect_formats_match_release_ops_case_arms() -> None:
     end = script.index("\n}\n", start)
     body = script[start:end]
 
-    assert 'version|revision) format="{{index .Config.Labels \\"org.opencontainers.image.$2\\"}}"' in body
-    assert INSPECT_FORMATS["version"] == '{{index .Config.Labels "org.opencontainers.image.version"}}'
-    assert INSPECT_FORMATS["revision"] == '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+    assert (
+        'version|revision) format="{{index .Config.Labels \\"org.opencontainers.image.$2\\"}}"'
+        in body
+    )
+    assert (
+        INSPECT_FORMATS["version"] == '{{index .Config.Labels "org.opencontainers.image.version"}}'
+    )
+    assert (
+        INSPECT_FORMATS["revision"]
+        == '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+    )
 
     for field in ("chain", "image", "image-id", "release-tag", "running"):
         expected = INSPECT_FORMATS[field]
