@@ -85,6 +85,7 @@ from services.agent.src.speculative_reply import (
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_profile_client import VoiceProfileClient
 from services.agent.src.weather_thread import AskCity, WeatherSearch
+from services.common.attachment_ban import filter_attachment_output
 from services.common.companion_response_safety import (
     assistant_text_repeats_or_dilutes_safety,
     strip_soothing_from_follow_up,
@@ -2373,9 +2374,18 @@ class ReplyPipeline:
             )
             first_phrase_marked = True
 
+        attachment_ban_rewrote = False
+
         def _ready_segment(text: str) -> str | None:
+            nonlocal attachment_ban_rewrote
+            if attachment_ban_rewrote:
+                return None
             if not cancellation.is_current(self._runtime.fence):
                 return None
+            filtered = filter_attachment_output(text)
+            if filtered.hit is not None:
+                attachment_ban_rewrote = True
+                text = filtered.text
             accepted = _accept_segment(text)
             if accepted is None:
                 return None
