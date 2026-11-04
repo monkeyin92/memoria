@@ -19,6 +19,7 @@ ALLOWED_DOCS_FILES = {
     "docs/eval.md",
     "docs/handoff-archive.md",
     "docs/product.md",
+    "docs/ops/runtime-inventory.md",
     "docs/runbooks.md",
     "docs/strategy.md",
 }
