@@ -58,6 +58,14 @@
   text-align: left;
 }
 
+.attention-stage {
+  display: block;
+  margin-top: 8px;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-small);
+  line-height: var(--mp-lh-body);
+}
+
 .attention-category {
   display: block;
   margin-top: 12px;

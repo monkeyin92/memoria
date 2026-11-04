@@ -66,6 +66,45 @@ test("the detail shows category, summary, what the robot said and what to do, ne
   }
 });
 
+test("attention detail shows delivery_receipt stage labels from #543", async () => {
+  const withReceipt = {
+    ...fx.SAFETY_ALERT,
+    notification_id: "n1",
+    delivery_receipt: {
+      notification_id: "n1",
+      crisis_event_id: "c1",
+      evidence_event_id: "guardian-crisis:c1",
+      current_stage: "fail_or_auth_insufficient",
+      attempts: 1,
+      last_error_code: "no_subscription",
+      channel_accepted: false,
+      guardian_confirmed: false,
+      stages: [
+        { stage: "recorded", event_id: "e0", at: "2026-10-14T11:42:00+00:00", result: "recorded", attempt: null, reason: null },
+        { stage: "queued", event_id: "n1", at: "2026-10-14T11:42:00+00:00", result: "queued", attempt: null, reason: null },
+        {
+          stage: "fail_or_auth_insufficient",
+          event_id: "n1:settle",
+          at: "2026-10-14T11:43:00+00:00",
+          result: "no_subscription",
+          attempt: 1,
+          reason: "no_subscription",
+        },
+      ],
+    },
+  };
+  const harness = await openAttention({ id: "n1" }, fx.safetyAlertApi([withReceipt]));
+  try {
+    assert.equal(harness.page.data.alert.stageLabel, "无订阅");
+    const text = visibleText(renderPage("pages/attention/index", harness.page.data));
+    assert.ok(text.includes("无订阅"));
+    assert.ok(text.indexOf("10月14日 19:42") < text.indexOf("无订阅"));
+    assert.ok(text.indexOf("无订阅") < text.indexOf("情绪和安全"));
+  } finally {
+    harness.restore();
+  }
+});
+
 test("an interrupted crisis script keeps the headline and shows the server sentence verbatim", async () => {
   const harness = await openAttention(
     { id: "n1" },
