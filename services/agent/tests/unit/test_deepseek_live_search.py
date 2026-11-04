@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -158,7 +159,6 @@ _STALE_AS_FRESH_ANSWER = {
 
 @pytest.mark.asyncio
 async def test_stale_only_results_do_not_answer_a_recency_query() -> None:
-    """Repro for 神舟最近消息: May-dated hits must not become a spoken「最近」answer."""
     paths: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -203,12 +203,14 @@ async def test_fresh_hits_still_answer_a_recency_query() -> None:
 @pytest.mark.asyncio
 async def test_non_recency_queries_still_label_old_dates_for_the_model() -> None:
     paths: list[str] = []
-    chat_bodies: list[dict[str, object]] = []
+    chat_bodies: list[dict[str, Any]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         paths.append(request.url.path)
         if request.url.path == "/chat/completions":
-            chat_bodies.append(json.loads(request.content))
+            body = json.loads(request.content)
+            assert isinstance(body, dict)
+            chat_bodies.append(body)
             return httpx.Response(
                 200,
                 json={
@@ -227,8 +229,10 @@ async def test_non_recency_queries_still_label_old_dates_for_the_model() -> None
     spoken = await resolver.resolve(query="神舟飞船什么时候对接的")
     assert spoken is not None
     assert "五月" in spoken or "2025" in spoken or "二零二五" in spoken
-    system = str(chat_bodies[0]["messages"][0]["content"])  # type: ignore[index]
-    user = str(chat_bodies[0]["messages"][1]["content"])  # type: ignore[index]
-    assert "不要说成最近" in system
-    assert "（2025-05-12）" in user
+    messages = chat_bodies[0]["messages"]
+    assert isinstance(messages, list) and len(messages) >= 2
+    system_msg, user_msg = messages[0], messages[1]
+    assert isinstance(system_msg, dict) and isinstance(user_msg, dict)
+    assert "不要说成最近" in str(system_msg["content"])
+    assert "（2025-05-12）" in str(user_msg["content"])
     await client.aclose()
