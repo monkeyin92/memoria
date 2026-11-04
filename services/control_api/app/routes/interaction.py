@@ -94,6 +94,7 @@ from services.digital_self.response_planner import (
 from services.evolution.receipt import sign_resolution_receipt
 from services.evolution.resolver import EvolutionResolver, ResolvedEvolutionArtifact
 from services.evolution.store import EvolutionStore
+from services.guardian.child_archive_recall import grounded_items_from_archive_views
 from services.guardian.crisis import CrisisNotificationService
 from services.guardian.domain import GuardianStorePort
 from services.guardian.retention import (
@@ -116,6 +117,7 @@ from services.legacy.domain import (
     LegacyNotFoundError,
     LegacyRegistryPort,
 )
+from services.memory_scope.child_layers import ChildLayerStore
 from services.persona.custom_persona_fields import (
     custom_persona_definition,
     custom_persona_envelope,
@@ -485,6 +487,13 @@ def _registry(request: Request) -> RegistryPort:
 
 def _catalog(request: Request) -> MemoryCatalogPort:
     return cast(MemoryCatalogPort, request.app.state.memory_catalog)
+
+
+def _child_layer_store(request: Request) -> ChildLayerStore | None:
+    store = getattr(request.app.state, "child_layer_store", None)
+    if store is None:
+        return None
+    return cast(ChildLayerStore, store)
 
 
 def _legacy_registry(request: Request) -> LegacyRegistryPort:
@@ -1600,6 +1609,44 @@ def _source_ref_payload(ref: Any) -> dict[str, Any]:
     }
 
 
+async def _child_archive_consent_active(
+    request: Request,
+    *,
+    scope: _SubjectMemoryScope,
+    subject_id: str,
+) -> bool:
+    """Child-archive dialogue recall needs the separate child_archive grant."""
+
+    if scope.subject_category != "minor":
+        return False
+    return (
+        await cast(GuardianStorePort, request.app.state.guardian_store).active_consent(
+            minor_user_id=subject_id,
+            consent_kind="child_archive",
+        )
+        is not None
+    )
+
+
+async def _fetch_child_archive_grounded(
+    request: Request,
+    *,
+    subject_id: str,
+) -> tuple[GroundedItem, ...]:
+    """Read parent-confirmed child_archive facts only; never dialogue_summary."""
+
+    layers = _child_layer_store(request)
+    if layers is None or not hasattr(layers, "list_archive_views"):
+        return ()
+    views = await layers.list_archive_views(
+        subject_id=subject_id,
+        viewer_subject_id=subject_id,
+        limit=20,
+        include_withdrawn=False,
+    )
+    return grounded_items_from_archive_views(views)
+
+
 async def _companion_items(
     *,
     request: Request,
@@ -1621,6 +1668,11 @@ async def _companion_items(
     # defaults to None, and None means "the whole account", so a missing subject
     # must never be passed through as that default.
     confirmed_subject_id = _confirmed_subject_id(scope.subject_id)
+    private_readable = (
+        capabilities["private_memory"]
+        and scope.catalog_readable
+        and confirmed_subject_id is not None
+    )
 
     async def fetch_memory() -> MemorySearchResult:
         # The query carries the subject the turn was resolved for.  The legacy
@@ -1649,11 +1701,7 @@ async def _companion_items(
             )
         )
 
-    memory_task = (
-        asyncio.create_task(fetch_memory())
-        if capabilities["private_memory"] and scope.catalog_readable and confirmed_subject_id is not None
-        else None
-    )
+    memory_task = asyncio.create_task(fetch_memory()) if private_readable else None
     # P1-03: another subject's persona reads only under its long-term-memory grant.
     persona_readable = scope.bound_subject_trusted or confirmed_subject_id == account_id
     persona_subject = confirmed_subject_id if persona_readable else None
@@ -1672,17 +1720,42 @@ async def _companion_items(
         and persona_subject is not None
         else None
     )
-    completed = await gather_companion_context(memory_task, persona_task)
+    archive_task: asyncio.Task[tuple[GroundedItem, ...]] | None = None
+    if private_readable and confirmed_subject_id is not None:
+        subject_for_archive = confirmed_subject_id
+
+        async def fetch_archive() -> tuple[GroundedItem, ...]:
+            if not await _child_archive_consent_active(
+                request, scope=scope, subject_id=subject_for_archive
+            ):
+                return ()
+            return await _fetch_child_archive_grounded(
+                request, subject_id=subject_for_archive
+            )
+
+        archive_task = asyncio.create_task(fetch_archive())
+    completed = await gather_companion_context(memory_task, persona_task, archive_task)
     if completed is None:
         logger.warning("response planner companion context exceeded budget")
         completed = []
         memory_task = None
         persona_task = None
+        archive_task = None
     cursor = iter(completed)
     memory_result = next(cursor) if memory_task is not None else None
     persona_result = next(cursor) if persona_task is not None else None
+    archive_result = next(cursor) if archive_task is not None else None
 
     items: list[GroundedItem] = []
+    # Parent-confirmed child-archive facts first so dialogue recall prefers the
+    # authorized whitelist over catalog hits when the planner later truncates.
+    if archive_result is not None and not isinstance(archive_result, BaseException):
+        items.extend(cast(tuple[GroundedItem, ...], archive_result))
+    elif isinstance(archive_result, BaseException):
+        logger.warning(
+            "response planner child-archive recall unavailable",
+            exc_info=archive_result,
+        )
     if memory_result is not None and not isinstance(memory_result, BaseException):
         for item in cast(MemorySearchResult, memory_result).items:
             items.append(
