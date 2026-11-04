@@ -1,9 +1,3 @@
-"""A05 closed loop: write → display → recall → correct → withdraw.
-
-Offline acceptance over preference extract, archive review semantics, and the
-A04 grounded-item mapper. Live guardian WeChat token stays 未验.
-"""
-
 from __future__ import annotations
 
 import sys
@@ -35,7 +29,6 @@ from services.guardian.preference_extract import (  # noqa: E402
 )
 from services.guardian.session_recap import SessionTurn  # noqa: E402
 
-# Three parent-review samples that preference-extract-v2 keeps (A02 allowlist).
 _REVIEW_UTTERANCES: tuple[str, ...] = (
     "我喜欢画画",
     "我喜欢小狗",
@@ -269,8 +262,6 @@ def test_closed_loop_write_display_recall_correct_withdraw() -> None:
         item.item_id for item in grounded_items_from_archive_views(after_withdraw)
     }
 
-    # Fresh list + mapper call stands in for a new dialogue session (offline).
-    # Process-local agent cache bust beyond this mapper is still 未验.
     new_session_views = _default_list(after_withdraw)
     new_session_items = grounded_items_from_archive_views(new_session_views)
     assert {item.item_id for item in new_session_items} == {
