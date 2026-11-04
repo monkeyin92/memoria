@@ -744,6 +744,19 @@ function deleteChildArchiveFact(minorUserId, recordId) {
   );
 }
 
+function reviewChildArchiveFact(minorUserId, recordId, body) {
+  if (typeof minorUserId !== "string" || !minorUserId || typeof recordId !== "string" || !recordId) {
+    return Promise.reject(new TypeError("长期记忆复核参数无效"));
+  }
+  if (!body || typeof body !== "object" || typeof body.action !== "string") {
+    return Promise.reject(new TypeError("长期记忆复核动作无效"));
+  }
+  return rawRequest(
+    `/v1/guardian/minors/${encodeURIComponent(minorUserId)}/child-archive/${encodeURIComponent(recordId)}/review`,
+    { method: "POST", data: body },
+  );
+}
+
 function clearChildArchive(minorUserId) {
   if (typeof minorUserId !== "string" || !minorUserId) {
     return Promise.reject(new TypeError("长期小档案清空参数无效"));
@@ -1473,6 +1486,7 @@ module.exports = {
   clearChildSessionSummaries,
   getChildArchive,
   deleteChildArchiveFact,
+  reviewChildArchiveFact,
   clearChildArchive,
   touchChildActivity,
   getConversationReview,

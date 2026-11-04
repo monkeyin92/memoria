@@ -210,6 +210,42 @@
   box-sizing: border-box;
 }
 
+.cm-fact-review {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.cm-fact-status {
+  display: block;
+  margin-top: 4px;
+  color: var(--mp-accent);
+  font-size: var(--mp-type-meta);
+  line-height: var(--mp-lh-caption);
+}
+
+.cm-fact-meta {
+  display: block;
+  margin-top: 2px;
+  color: var(--mp-ink-3);
+  font-size: var(--mp-type-meta);
+  line-height: var(--mp-lh-caption);
+  word-break: break-all;
+}
+
+.cm-fact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: center;
+}
+
+.cm-action {
+  color: var(--mp-accent);
+  font-size: var(--mp-type-meta);
+  line-height: var(--mp-lh-caption);
+}
+
 .cm-note {
   display: flex;
   align-items: center;

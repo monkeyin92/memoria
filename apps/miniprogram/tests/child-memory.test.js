@@ -174,6 +174,30 @@ test("normalizeSessionSummaries uses spaced Chinese dates and newest first", () 
   assert.match(items[0].dateLabel, /10 月 13 日/);
 });
 
+test("auto-extract archive facts never normalize to a bare confirmed label", () => {
+  const flat = childMemory.normalizeChildArchive({
+    items: [
+      {
+        record_id: "auto-1",
+        field: "preference",
+        text: "喜欢恐龙",
+        provenance: "auto_extract",
+        display_lifecycle: "auto_pending",
+        display_label: "已确认",
+        status: "candidate",
+        source_session_id: "sess-a",
+        rule_version: "preference-extract-v2",
+        fact_version: 1,
+        recall_eligible: false,
+      },
+    ],
+  });
+  assert.equal(flat[0].statusLabel, "自动提取·待确认");
+  assert.equal(flat[0].pending, true);
+  assert.equal(flat[0].recallEligible, false);
+  assert.doesNotMatch(flat[0].statusLabel, /^已确认$/);
+});
+
 test("archive facts group under whitelist categories", () => {
   const flat = childMemory.normalizeChildArchive({
     items: [
