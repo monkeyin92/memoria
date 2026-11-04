@@ -84,6 +84,8 @@ def assess_interruption(bridge: str, serial: str, attempt: Mapping[str, Any]) ->
         "stop_reason": "missing_reply_start",
         "stop_delay_s": None,
         "stop_delay_origin": "interrupt_start",
+        "stop_delay_from_interrupt_start_s": None,
+        "stop_delay_from_speech_end_s": None,
     }
 
     def finish(reason: str, stopped: bool | None = None) -> dict[str, Any]:
@@ -210,7 +212,7 @@ def assess_interruption(bridge: str, serial: str, attempt: Mapping[str, Any]) ->
     result["stop_delay_origin"] = "interrupt_start"
     result["stop_delay_from_interrupt_start_s"] = from_start
     speech_end = attempt.get("interrupt_end_ts")
-    if isinstance(speech_end, (int, float)):
+    if isinstance(speech_end, (int, float)) and not isinstance(speech_end, bool):
         result["stop_delay_from_speech_end_s"] = round(returned - speech_end, 3)
     else:
         result["stop_delay_from_speech_end_s"] = None
