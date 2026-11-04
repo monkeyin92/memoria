@@ -113,6 +113,7 @@ class ASRStreamSupervisor:
         default_factory=dict,
         init=False,
     )
+    _committed_turn_texts: list[str] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
         if self.sample_rate <= 0 or self.reconnect_audio_ms <= 0 or self.max_result_history <= 0:
@@ -153,7 +154,22 @@ class ASRStreamSupervisor:
     def mark_committed(self, sample: int) -> None:
         if sample < 0:
             raise ValueError("committed sample must be non-negative")
+        previous = self.last_committed_sample
         self.last_committed_sample = max(self.last_committed_sample, sample)
+        if self.last_committed_sample > previous:
+            # Endpoint commit can sit inside a longer ASR interval (#527). Any
+            # accepted text that started before the new watermark and overlaps
+            # the newly committed span is a committed turn clause.
+            for (_epoch, _task, start_sample), (end_sample, text) in self._accepted_text.items():
+                cleaned = text.strip()
+                if (
+                    cleaned
+                    and start_sample < self.last_committed_sample
+                    and end_sample > previous
+                ):
+                    self._committed_turn_texts.append(cleaned)
+            while len(self._committed_turn_texts) > 8:
+                self._committed_turn_texts.pop(0)
         self.timeline.commit_range(
             stream_epoch=self.stream_epoch,
             start_sample=0,
@@ -166,13 +182,18 @@ class ASRStreamSupervisor:
         A sentence that straddles the committed watermark cannot be split by
         character count or provider callback order. Only complete words with
         absolute sample boundaries are safe to forward.
+
+        Post-watermark finals still need a text strip: Volc can advance
+        ``capture_start_sample`` to the watermark while ``.text`` keeps earlier
+        committed clauses (card5 dense victim→other, #527 residual).
         """
 
         committed = self.last_committed_sample
         if result.capture_end_sample <= committed:
             return ASRAcceptDecision(None, ASRDecisionReason.FULLY_COMMITTED)
         if result.capture_start_sample >= committed:
-            return ASRAcceptDecision(result, ASRDecisionReason.ACCEPTED)
+            stripped = self._strip_leading_committed_turn_texts(result)
+            return ASRAcceptDecision(stripped, ASRDecisionReason.ACCEPTED)
         evidence = result.timing_evidence
         if (
             not result.word_timings
@@ -209,6 +230,66 @@ class ASRStreamSupervisor:
         )
         return ASRAcceptDecision(tail, ASRDecisionReason.ACCEPTED)
 
+    @staticmethod
+    def _alnum_chars(text: str) -> list[str]:
+        return [char for char in text if char.isalnum()]
+
+    @classmethod
+    def _tail_after_alnum_prefix(cls, text: str, prefix: str) -> str | None:
+        """Return ``text`` after ``prefix``'s alphanumeric spine, or None."""
+
+        wanted = cls._alnum_chars(prefix)
+        if not wanted:
+            return None
+        matched = 0
+        for index, char in enumerate(text):
+            if not char.isalnum():
+                continue
+            if matched == len(wanted):
+                return text[index:]
+            if char != wanted[matched]:
+                return None
+            matched += 1
+        if matched == len(wanted):
+            return ""
+        return None
+
+    def _strip_leading_committed_turn_texts(self, result: ASRResult) -> ASRResult:
+        """Peel committed turn clauses from a post-watermark final's text.
+
+        Dense victim→other handoffs can emit a longer final whose sample range
+        already clears the watermark while ``.text`` still prepends the victim
+        line. Leave only the new clause so crisis classification sees one turn.
+        """
+
+        text = result.text
+        prefixes = list(self._committed_turn_texts)
+        changed = True
+        while changed and prefixes:
+            changed = False
+            for prior in sorted(
+                prefixes,
+                key=lambda item: len(self._alnum_chars(item)),
+                reverse=True,
+            ):
+                tail = self._tail_after_alnum_prefix(text, prior)
+                if tail is None or tail == text:
+                    continue
+                text = tail
+                changed = True
+                break
+        if text == result.text:
+            return result
+        return replace(
+            result,
+            capture_start_sample=max(
+                result.capture_start_sample,
+                self.last_committed_sample,
+            ),
+            text=text,
+            timeline_segment_id=f"{result.sentence_id}:tail:{self.last_committed_sample}",
+        )
+
     def _untimed_tail_after_committed_prefix(
         self,
         result: ASRResult,
@@ -226,23 +307,18 @@ class ASRStreamSupervisor:
         )
         if prefix is None or prefix[0] > committed:
             return rejected
-        wanted = [char for char in prefix[1] if char.isalnum()]
-        matched = 0
-        for index, char in enumerate(result.text):
-            if not char.isalnum():
-                continue
-            if matched == len(wanted):
-                tail = replace(
-                    result,
-                    capture_start_sample=committed,
-                    text=result.text[index:],
-                    timeline_segment_id=f"{result.sentence_id}:tail:{committed}",
-                )
-                return ASRAcceptDecision(tail, ASRDecisionReason.ACCEPTED)
-            if char != wanted[matched]:
-                return rejected
-            matched += 1
-        return rejected
+        tail_text = self._tail_after_alnum_prefix(result.text, prefix[1])
+        if tail_text is None or not self._alnum_chars(tail_text):
+            return rejected
+        return ASRAcceptDecision(
+            replace(
+                result,
+                capture_start_sample=committed,
+                text=tail_text,
+                timeline_segment_id=f"{result.sentence_id}:tail:{committed}",
+            ),
+            ASRDecisionReason.ACCEPTED,
+        )
 
     @staticmethod
     def _should_supersede_cross_sentence(
@@ -538,6 +614,7 @@ class ASRStreamSupervisor:
         self._revision_order.clear()
         self._segment_order.clear()
         self._accepted_text.clear()
+        self._committed_turn_texts.clear()
         self.timeline.start_stream_epoch(stream_epoch)
         return True
 
