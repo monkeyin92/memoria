@@ -185,16 +185,34 @@ def test_required_logs_missing_is_incomplete(tmp_path: Path, capsys: pytest.Capt
     assert "incomplete: missing_log: serial.log" in report["failures"]
 
 
-def test_a00_minimal_reply_idle_without_manifest_is_incomplete(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(None, id="missing"),
+        pytest.param("", id="empty"),
+        pytest.param("{", id="broken-json"),
+        pytest.param('{"scenario_hash": "abc"}', id="partial"),
+    ],
+)
+def test_a00_one_reply_idle_without_a_usable_manifest_is_incomplete(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], body: str | None
 ) -> None:
     run = tmp_path / "run-a00-incomplete"
     _write(run, [{"kind": "reply", "tag": "t001", "latency_s": 1.0}, _tail()])
+    if body is not None:
+        (run / "manifest.json").write_text(body, encoding="utf-8")
     assert voice_soak_verdict.main([str(run)]) == 1
     report = json.loads(capsys.readouterr().out)
     assert report["passed"] is False
     assert report["status"] == "incomplete"
-    assert report["failures"] == ["incomplete: manifest missing"]
+    assert report["failures"]
+    assert all(item.startswith("incomplete:") for item in report["failures"])
+    assert not any(
+        item.startswith(("reply_latency", "tail_idle", "no_reply:", "stop_not"))
+        for item in report["failures"]
+    )
+    if body is None:
+        assert report["failures"] == ["incomplete: manifest missing"]
 
 
 def test_manifest_missing_expected_step_is_incomplete(
@@ -225,6 +243,163 @@ def test_manifest_requiring_interrupt_sample_without_one_is_incomplete(
     report = json.loads(capsys.readouterr().out)
     assert report["status"] == "incomplete"
     assert report["failures"] == ["incomplete: valid_interrupt_samples: 0 < 1"]
+
+
+@pytest.mark.parametrize("content", [None, "", "\n", "   "])
+def test_required_bridge_log_missing_or_blank_is_incomplete(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], content: str | None
+) -> None:
+    run = tmp_path / "run-blank-log"
+    rows = [{"kind": "reply", "tag": "t001", "latency_s": 1.0}, _tail()]
+    _write(run, rows)
+    voice_soak_verdict.write_manifest(
+        run,
+        scenario_hash="test-fixture",
+        expected_step_tags=("t001",),
+        required_logs=("bridge.log",),
+    )
+    if content is not None:
+        (run / "bridge.log").write_text(content, encoding="utf-8")
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["passed"] is False
+    assert report["status"] == "incomplete"
+    assert report["failures"] == ["incomplete: missing_log: bridge.log"]
+
+
+def test_log_path_outside_the_run_is_incomplete(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    outside = tmp_path / "bridge.log"
+    outside.write_text("bridge\n", encoding="utf-8")
+    run = tmp_path / "run-escape"
+    _write(run, [{"kind": "reply", "tag": "t001", "latency_s": 1.0}, _tail()])
+    voice_soak_verdict.write_manifest(
+        run,
+        scenario_hash="test-fixture",
+        expected_step_tags=("t001",),
+        required_logs=("../bridge.log",),
+    )
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "incomplete"
+    assert report["passed"] is False
+    assert report["failures"] == ["incomplete: missing_log: ../bridge.log"]
+
+
+def test_only_unverifiable_interrupt_misses_the_sample_floor(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _, serial = _confirmed_stop_logs()
+    bridge = _delivery(-0.1, "first_frame_sent") + _delivery(
+        5, "playback_ended", "playback_ended", "playback_completed"
+    )
+    rows = _passing_rows()
+    rows[1]["interrupt_start_ts"] = BASE + 5 - 2.0
+    run = tmp_path / "run-unverifiable-interrupt"
+    _write(
+        run,
+        rows,
+        bridge,
+        serial,
+        manifest=_manifest(
+            "t001",
+            "t002",
+            required_logs=("bridge.log", "serial.log"),
+            min_valid_interrupt_samples=1,
+        ),
+    )
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["passed"] is False
+    assert report["status"] == "incomplete"
+    assert report["failures"] == ["incomplete: valid_interrupt_samples: 0 < 1"]
+
+
+def test_step_failed_without_speech_or_silence_is_not_started(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run = tmp_path / "run-not-started"
+    _write(
+        run,
+        [
+            {"kind": "step_failed", "tag": "t001", "reason": "could not wake the device"},
+            _tail(),
+        ],
+        manifest=_manifest("t001"),
+    )
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "incomplete"
+    assert report["failures"] == ["incomplete: run_not_started"]
+
+
+def test_missing_completion_skips_the_tail_metric(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run = tmp_path / "run-not-completed"
+    _write(
+        run,
+        [{"kind": "reply", "tag": "t001", "latency_s": 1.0}],
+        manifest=_manifest("t001"),
+    )
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "incomplete"
+    assert report["failures"] == ["incomplete: run_not_completed"]
+
+
+def test_scenario_done_counts_as_completed_and_the_tail_metric_still_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run = tmp_path / "run-scenario-done"
+    _write(
+        run,
+        [{"kind": "reply", "tag": "t001", "latency_s": 1.0}, {"kind": "scenario_done"}],
+        manifest=_manifest("t001"),
+    )
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "fail"
+    assert "tail_idle: missing" in report["failures"]
+    assert all(not item.startswith("incomplete:") for item in report["failures"])
+
+
+def test_short_duration_and_missing_timestamps_are_incomplete(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    short = tmp_path / "run-short"
+    _write(
+        short,
+        [
+            {"kind": "reply", "tag": "t001", "latency_s": 1.0, "ts": 10.0},
+            {**_tail(), "ts": 12.0},
+        ],
+        manifest=voice_soak_verdict.manifest_dict(
+            scenario_hash="test-fixture",
+            expected_step_tags=["t001"],
+            min_duration_s=5,
+        ),
+    )
+    assert voice_soak_verdict.main([str(short)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "incomplete"
+    assert report["failures"] == ["incomplete: duration_s: 2.0 < 5.0"]
+
+    unmeasured = tmp_path / "run-unmeasured"
+    _write(
+        unmeasured,
+        [{"kind": "reply", "tag": "t001", "latency_s": 1.0}, _tail()],
+        manifest=voice_soak_verdict.manifest_dict(
+            scenario_hash="test-fixture",
+            expected_step_tags=["t001"],
+            min_duration_s=5,
+        ),
+    )
+    assert voice_soak_verdict.main([str(unmeasured)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "incomplete"
+    assert report["failures"] == ["incomplete: duration_unmeasurable"]
 
 
 @pytest.mark.parametrize("left_s,failures", [
@@ -387,7 +562,9 @@ def test_invalid_timeline_json_fails_closed(tmp_path: Path, capsys: pytest.Captu
     run.mkdir()
     (run / "timeline.jsonl").write_text('{"kind": "start"}\nnot-json\n', encoding="utf-8")
     assert voice_soak_verdict.main([str(run)]) == 1
-    assert json.loads(capsys.readouterr().out)["failures"] == ["timeline.jsonl:2: invalid json"]
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "fail"
+    assert report["failures"] == ["timeline.jsonl:2: invalid json"]
 
 
 def test_missing_timeline_is_a_usage_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

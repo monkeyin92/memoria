@@ -35,7 +35,7 @@ MAX_REPLY_LATENCY_MAX_S: float | None = 3.0
 VerdictStatus = Literal["pass", "fail", "incomplete"]
 
 _OUTCOME_KINDS = frozenset({"reply", "no_reply", "silence", "step_failed"})
-_STARTED_KINDS = frozenset({"start", "said", "reply", "silence", "no_reply", "step_failed"})
+_STARTED_KINDS = frozenset({"start", "said", "reply", "silence"})
 
 
 @dataclass(frozen=True)
@@ -130,6 +130,24 @@ def write_manifest(run: Path, **fields: object) -> Path:
     return path
 
 
+def _as_float(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def _log_inside_run(run: Path, name: str) -> Path | None:
+    relative = Path(name)
+    if relative.is_absolute() or ".." in relative.parts or not relative.parts:
+        return None
+    path = run / relative
+    try:
+        path.resolve().relative_to(run.resolve())
+    except (OSError, ValueError):
+        return None
+    return path
+
+
 def load_manifest(run: Path) -> SoakManifest | tuple[str, ...]:
     path = run / "manifest.json"
     if not path.is_file():
@@ -163,8 +181,11 @@ def load_manifest(run: Path) -> SoakManifest | tuple[str, ...]:
         return ("incomplete: manifest.require_started/require_completed must be bool",)
 
     min_duration_s = raw.get("min_duration_s")
-    if min_duration_s is not None and not isinstance(min_duration_s, (int, float)):
-        return ("incomplete: manifest.min_duration_s must be a number",)
+    parsed_duration = None
+    if min_duration_s is not None:
+        parsed_duration = _as_float(min_duration_s)
+        if parsed_duration is None or parsed_duration < 0:
+            return ("incomplete: manifest.min_duration_s must be a number >= 0",)
 
     return SoakManifest(
         scenario_hash.strip(),
@@ -173,7 +194,7 @@ def load_manifest(run: Path) -> SoakManifest | tuple[str, ...]:
         samples,
         require_started,
         require_completed,
-        float(min_duration_s) if min_duration_s is not None else None,
+        parsed_duration,
     )
 
 
@@ -190,8 +211,8 @@ def check_completeness(
             reasons.append(f"incomplete: missing_step: {tag}")
 
     for name in manifest.required_logs:
-        path = run / name
-        if not path.is_file() or path.stat().st_size == 0:
+        path = _log_inside_run(run, name)
+        if path is None or not path.is_file() or not _text(path).strip():
             reasons.append(f"incomplete: missing_log: {name}")
 
     bridge = _text(run / "bridge.log")
@@ -218,7 +239,7 @@ def check_completeness(
             reasons.append("incomplete: run_not_completed")
 
     if manifest.min_duration_s is not None:
-        stamps = [float(row["ts"]) for row in rows if isinstance(row.get("ts"), (int, float))]
+        stamps = [stamp for row in rows if (stamp := _as_float(row.get("ts"))) is not None]
         if len(stamps) < 2:
             reasons.append("incomplete: duration_unmeasurable")
         else:
