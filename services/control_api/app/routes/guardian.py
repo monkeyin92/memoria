@@ -65,6 +65,11 @@ from services.governance.subject_deletion import (
     SubjectDeletionService,
 )
 from services.governance.subject_ports import SubjectScope
+from services.guardian.child_archive_review import (
+    ChildArchiveReviewCommand,
+    ChildArchiveReviewError,
+    view_to_api,
+)
 from services.guardian.child_memory import (
     KIND_CHILD_ARCHIVE,
     KIND_DIALOGUE_SUMMARY,
@@ -1409,6 +1414,22 @@ class ChildArchiveFactCreate(BaseModel):
     text: str = Field(min_length=1, max_length=40)
 
 
+class ChildArchiveFactReview(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    action: Literal["confirm", "correct", "withdraw"]
+    text: str | None = Field(default=None, min_length=1, max_length=40)
+    field: Literal["appellation", "preference", "pet_name"] | None = None
+    polarity: Literal["positive", "negative", "substituted", "unknown"] | None = None
+    history_change: bool = False
+
+    @model_validator(mode="after")
+    def _correct_needs_patch(self) -> ChildArchiveFactReview:
+        if self.action == "correct" and self.text is None and self.field is None and self.polarity is None:
+            raise ValueError("correct requires text, field, or polarity")
+        return self
+
+
 def _child_layers(request: Request) -> ChildLayerStore:
     store = getattr(request.app.state, "child_layer_store", None)
     if store is None:
@@ -1420,6 +1441,19 @@ def _payload_iso(payload: Mapping[str, object], key: str) -> str | None:
     value = payload.get(key)
     if isinstance(value, str) and value.strip():
         return value.strip()
+    return None
+
+
+def _consent_id(consent: object) -> str | None:
+    if consent is None:
+        return None
+    value = getattr(consent, "consent_id", None)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if isinstance(consent, Mapping):
+        raw = consent.get("consent_id")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
     return None
 
 
@@ -1586,11 +1620,21 @@ async def list_child_archive(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    include_withdrawn: Annotated[bool, Query()] = False,
 ) -> dict[str, Any]:
     """Whitelist long-term archive facts (appellation, preference, pet_name)."""
 
     account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
-    items = await _child_layers(request).list(
+    layers = _child_layers(request)
+    if hasattr(layers, "list_archive_views"):
+        views = await layers.list_archive_views(
+            subject_id=minor_user_id,
+            viewer_subject_id=account_id,
+            limit=limit,
+            include_withdrawn=include_withdrawn,
+        )
+        return {"items": [view_to_api(view) for view in views]}
+    items = await layers.list(
         subject_id=minor_user_id,
         kind=KIND_CHILD_ARCHIVE,
         viewer_subject_id=account_id,
@@ -1604,6 +1648,19 @@ async def list_child_archive(
                 "text": item.text,
                 "created_at": item.created_at.isoformat(),
                 "last_mentioned_at": _payload_iso(item.payload, "last_mentioned_at"),
+                "status": "confirmed",
+                "display_lifecycle": "parent_confirmed",
+                "display_label": "家长已确认",
+                "provenance": _payload_iso(item.payload, "provenance") or "parent_entry",
+                "source_session_id": _payload_iso(item.payload, "source_session_id"),
+                "rule_version": _payload_iso(item.payload, "rule_version"),
+                "fact_version": 1,
+                "polarity": _payload_iso(item.payload, "polarity"),
+                "confidence": None,
+                "handled_at": None,
+                "reason_code": None,
+                "supersedes_record_id": None,
+                "recall_eligible": True,
             }
             for item in items
         ]
@@ -1643,6 +1700,66 @@ async def create_child_archive_fact(
     }
 
 
+@router.post("/minors/{minor_user_id}/child-archive/{record_id}/review")
+async def review_child_archive_fact(
+    minor_user_id: str,
+    record_id: str,
+    body: ChildArchiveFactReview,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
+) -> dict[str, Any]:
+    """Parent confirm, correct (supersede), or withdraw one archive fact."""
+
+    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    consent = await _store(request).active_consent(
+        minor_user_id=minor_user_id, consent_kind="child_archive"
+    )
+    consent_id = _consent_id(consent)
+    if consent is None or not consent_id:
+        raise HTTPException(status_code=403, detail={"code": "child_archive_consent_required"})
+    layers = _child_layers(request)
+    if not hasattr(layers, "review_archive_fact"):
+        raise HTTPException(status_code=503, detail={"code": "child_archive_review_unavailable"})
+    try:
+        receipt = await layers.review_archive_fact(
+            subject_id=minor_user_id,
+            resource_owner_id=account_id,
+            consent_snapshot_id=consent_id,
+            command=ChildArchiveReviewCommand(
+                action=body.action,
+                record_id=record_id,
+                actor_id=account_id,
+                text=body.text,
+                field=body.field,
+                polarity=body.polarity,
+                history_change=body.history_change,
+            ),
+        )
+    except ChildArchiveReviewError as exc:
+        code = exc.code
+        if code in {"child_archive_not_found"}:
+            raise HTTPException(status_code=404, detail={"code": code}) from exc
+        if code in {"child_archive_already_withdrawn", "correct_noop", "correct_requires_change"}:
+            raise HTTPException(status_code=409, detail={"code": code}) from exc
+        raise HTTPException(status_code=422, detail={"code": code}) from exc
+    forget_subject_plans(minor_user_id)
+    return {
+        "action": receipt.action,
+        "record_id": receipt.record_id,
+        "status": receipt.status,
+        "display_lifecycle": receipt.display_lifecycle,
+        "display_label": receipt.display_label,
+        "reviewed_at": receipt.reviewed_at.isoformat(),
+        "audit_event_id": receipt.audit_event_id,
+        "old_record_id": receipt.old_record_id,
+        "new_record_id": receipt.new_record_id,
+        "old_version": receipt.old_version,
+        "new_version": receipt.new_version,
+        "auth": "binding_owner",
+        "r09_guardian_token": "未验",
+    }
+
+
 @router.delete("/minors/{minor_user_id}/child-archive/{record_id}")
 async def delete_child_archive_fact(
     minor_user_id: str,
@@ -1658,7 +1775,14 @@ async def delete_child_archive_fact(
     if existing is None or existing.kind != KIND_CHILD_ARCHIVE:
         raise HTTPException(status_code=404, detail={"code": "child_archive_not_found"})
     erased = await layers.delete_record(subject_id=minor_user_id, record_id=record_id)
-    return {"deleted": True, "record_id": record_id, "erased": dict(erased)}
+    forget_subject_plans(minor_user_id)
+    return {
+        "deleted": True,
+        "record_id": record_id,
+        "erased": dict(erased),
+        "auth": "binding_owner",
+        "a05_handoff": "new_session_and_cache_proof",
+    }
 
 
 @router.delete("/minors/{minor_user_id}/child-archive")
