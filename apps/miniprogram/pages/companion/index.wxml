@@ -1,27 +1,24 @@
-<view class="page-shell tab-page" style="{{statusBarStyle}}">
+<view class="page-shell tab-page companion-page" style="{{statusBarStyle}}">
+  <view class="page-heading"><view class="page-heading-copy">
   <text class="eyebrow">声音与表达</text>
   <text class="page-title">声音</text>
   <text class="page-lede">选择一种音色与说话方式。点选即可保存，下次对话生效。</text>
+  </view></view>
   <text wx:if="{{saving}}" class="caption role-hint">正在保存…</text>
 
   <view class="voice-list">
     <view
       wx:for="{{cards}}"
       wx:key="id"
-      class="voice-option {{profile.companion_id === item.id ? 'voice-option-on' : ''}}"
+      class="voice-option voice-{{item.id}} {{profile.companion_id === item.id ? 'voice-option-on' : ''}}"
       aria-disabled="{{saving}}"
       data-id="{{item.id}}"
       bindtap="chooseCompanion"
     >
-      <view class="voice-bars" aria-hidden="true">
-        <view class="voice-bar"></view>
-        <view class="voice-bar"></view>
-        <view class="voice-bar"></view>
-        <view class="voice-bar"></view>
-        <view class="voice-bar"></view>
-      </view>
+      <view class="voice-portrait"><face-badge role="{{item.id}}" size="portrait" plain="{{true}}"></face-badge></view>
       <view class="voice-copy">
-        <text class="voice-name">{{item.tone}}<text class="voice-catalog-name"> {{item.name}}</text></text>
+        <text class="voice-name">{{item.name}}</text>
+        <text class="voice-catalog-name">{{item.tone}}</text>
         <text class="voice-tagline">{{item.tagline}}</text>
       </view>
       <text wx:if="{{profile.companion_id === item.id}}" class="voice-current">已选</text>

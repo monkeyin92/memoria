@@ -407,3 +407,30 @@
 }
 .wake-mode-note { margin-top: 8px; }
 .wake-mode-note-warn { color: var(--mp-sun); }
+.device-page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+.device-add { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 44px; height: 44px; margin: 36px 0 0; padding: 0; border-radius: 50%; background: var(--mp-paper); color: var(--mp-forest); font-size: var(--mp-type-display); line-height: 1; }
+.device-hero { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 20px; border-radius: 24px; background: var(--mp-paper); }
+.device-hero-copy { flex: 1; min-width: 0; }
+.device-hero-name { display: block; margin-bottom: 12px; font-size: var(--mp-type-heading); font-weight: 600; line-height: 1.4; }
+.device-hero-hint { display: block; margin-top: 14px; font-size: var(--mp-type-meta); color: var(--mp-ink-2); }
+.device-hero-art { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 96px; min-height: 108px; }
+.device-volume-label { display: flex; align-items: center; gap: 10px; }
+.device-volume-card .setting-row { justify-content: space-between; margin-bottom: 4px; }
+.device-controls { margin-top: 12px; }
+.device-usage-card { margin-top: 10px; gap: 16px; padding: 16px; }
+.device-ring { width: 80px; height: 80px; }
+.device-ring-inner { width: 66px; height: 66px; }
+.device-ring-num { font-size: var(--mp-type-headline); }
+.device-ring-cap { margin-top: 0; font-size: var(--mp-type-micro); }
+.device-usage-title { font-size: var(--mp-type-small); }
+.device-limit-card { padding: 16px; }
+.device-limit-num { font-size: var(--mp-type-heading); }
+.device-quiet-card { background: var(--mp-lilac); gap: 10px; }
+.device-quiet-card .device-setting-copy { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.device-quiet-description { flex: 1; min-width: 110px; }
+.device-quiet-chip { background: var(--mp-glass); font-size: var(--mp-type-meta); }
+.device-quiet-title { font-size: var(--mp-type-small); }
+.device-quiet-card .trial-caption { font-size: var(--mp-type-meta); line-height: 1.6; }
+.device-member-entry { background: var(--mp-peach); }
+.device-help { font-size: var(--mp-type-meta); text-align: center; }
+.device-more-entry { margin-top: 16px; background: var(--mp-peach); }

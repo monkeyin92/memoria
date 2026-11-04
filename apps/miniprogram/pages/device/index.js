@@ -423,6 +423,10 @@ Page({
     wakeSheetSelection: "",
     sheetOpen: false,
     diagExpanded: false,
+    usageExpanded: false,
+    memberSettingsExpanded: false,
+    storiesExpanded: false,
+    managementExpanded: false,
     unbindSheetVisible: false,
     unbinding: false,
     unbindError: "",
@@ -464,6 +468,10 @@ Page({
   _enterGuestState() {
     this._flowSeq = (this._flowSeq || 0) + 1;
     this.setData({
+      usageExpanded: false,
+      memberSettingsExpanded: false,
+      storiesExpanded: false,
+      managementExpanded: false,
       authenticated: false,
       loading: false,
       syncingBindings: false,
@@ -1850,6 +1858,18 @@ Page({
     }
   },
   noop() {},
+  toggleUsage() {
+    this.setData({ usageExpanded: !this.data.usageExpanded });
+  },
+  toggleMemberSettings() {
+    this.setData({ memberSettingsExpanded: !this.data.memberSettingsExpanded });
+  },
+  toggleStories() {
+    this.setData({ storiesExpanded: !this.data.storiesExpanded });
+  },
+  toggleManagement() {
+    this.setData({ managementExpanded: !this.data.managementExpanded });
+  },
   toggleDiag() {
     this.setData({ diagExpanded: !this.data.diagExpanded });
   },

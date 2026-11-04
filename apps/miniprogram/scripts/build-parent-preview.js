@@ -1,0 +1,95 @@
+const fs = require("node:fs");
+const path = require("node:path");
+const { renderPage, ROOT } = require("./mp-harness/render");
+const { scenarioData } = require("./mp-harness/shoot");
+const { PAGES } = require("./mp-harness/pages");
+
+const OUTPUT = path.resolve(__dirname, "../../../docs/design/parent-ui-20261104/preview.html");
+const VIEW = { width: 390, height: 844, safeTop: 47, safeBottom: 34 };
+const assets = {};
+const screens = {};
+const flags = ["usageExpanded", "managementExpanded", "memberSettingsExpanded", "storiesExpanded", "diagExpanded"];
+
+function portable(html) {
+  return html.replace(/file:\/\/([^"<>\s]+)/g, (match, filename) => {
+    const file = decodeURI(filename);
+    if (!file.startsWith(`${ROOT}/`)) throw new Error(`Asset outside miniprogram: ${file}`);
+    if (!assets[file]) {
+      const mime = { ".svg": "image/svg+xml", ".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg" }[path.extname(file)];
+      if (!mime) throw new Error(`Unsupported preview asset: ${file}`);
+      assets[file] = `data:${mime};base64,${fs.readFileSync(file).toString("base64")}`;
+    }
+    return `memoria-asset:${file}`;
+  });
+}
+
+function snapshot(slug, page, data, options = {}) {
+  screens[slug] = portable(renderPage(page, data, { ...VIEW, eventHandlers: true, ...options }));
+}
+
+async function main() {
+  process.env.TZ = "Asia/Shanghai";
+  for (const slug of ["home", "memory", "companion", "device", "profile"]) {
+    const scenario = PAGES.find((item) => item.slug === slug);
+    const { data } = await scenarioData(scenario, VIEW);
+    snapshot(slug, scenario.page, data);
+    if (slug !== "device") continue;
+    for (let mask = 0; mask < 2 ** flags.length; mask += 1) {
+      const expanded = Object.fromEntries(flags.map((flag, index) => [flag, Boolean(mask & (1 << index))]));
+      snapshot(`device-${mask}`, scenario.page, { ...data, ...expanded });
+    }
+    const quiet = await scenarioData({ ...scenario, actions: [["openLimitsSheet"]] }, VIEW);
+    snapshot("device-quiet", scenario.page, quiet.data, { tabBar: false });
+  }
+  const payload = JSON.stringify({ screens, assets }).replace(/</g, "\\u003c");
+  const html = `<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="Memoria 设计预览"><title>Memoria · 日常陪伴</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#e9e5dc;color:#234b40;font-family:-apple-system,"PingFang SC",sans-serif}
+main{display:flex;align-items:center;justify-content:center;gap:64px;min-height:100vh;padding:40px}
+aside{max-width:330px}h1{font-size:38px;line-height:1.3;letter-spacing:-1px;font-weight:600;margin:16px 0}p{font-size:14px;line-height:1.9;color:#536a6c}small{letter-spacing:2px;font-size:12px}
+nav{display:flex;flex-wrap:wrap;gap:8px;margin-top:28px}button{border:1px solid #c5cfc6;background:transparent;border-radius:30px;color:#234b40;padding:10px 18px;min-height:44px;cursor:pointer;font:inherit;font-size:13px}button[aria-pressed="true"]{background:#234b40;color:#fffefa;border-color:#234b40}
+.phone{position:relative;flex-shrink:0;width:390px;height:844px;border-radius:36px;overflow:hidden;box-shadow:0 24px 70px #234b4026;background:#f8f5ef}iframe{border:0;width:390px;height:844px;display:block}.label{font-size:12px;color:#536a6c;margin-top:24px}
+#toast{position:absolute;bottom:114px;left:20px;right:20px;padding:12px 18px;background:#234b40;color:white;font-size:13px;line-height:1.6;border-radius:14px;display:none;z-index:100}
+@media(max-width:760px){main{padding:0;display:block}aside{max-width:none;padding:20px}h1{font-size:24px;margin:10px 0}aside p{margin:8px 0}nav{margin-top:12px}.label{margin-top:12px}.phone{margin:auto;border-radius:0;box-shadow:none}}
+@media(max-width:389px){.phone{width:100%;overflow-x:auto}}
+</style></head><body>
+<main><aside><small>MEMORIA / 2026.11</small><h1>把陪伴的日常，<br>轻轻收好。</h1><p>暖纸色、分区色卡与已有角色插画。首页看回顾，设备页只展开此刻需要的设置。</p><nav aria-label="预览页面"><button data-screen="home">首页</button><button data-screen="memory">回顾</button><button data-screen="companion">声音</button><button data-screen="device">设备</button><button data-screen="profile">我的</button></nav><p class="label">由实际 WXML / WXSS 生成。底部导航与设备折叠项可点击；数据来自本地测试样例，未连接真实账号。保存、试听与权限流程请在微信中验证。</p></aside>
+<section class="phone" data-screen-label="小程序交互预览"><iframe title="Memoria 小程序预览" sandbox="allow-scripts"></iframe><div id="toast" role="status"></div></section></main>
+<script>
+const payload=${payload};
+const frame=document.querySelector("iframe");
+const tabSlugs=["home","memory","companion","device","profile"];
+const toggles={toggleUsage:0,toggleManagement:1,toggleMemberSettings:2,toggleStories:3,toggleDiag:4};
+let screen="home",mask=0,toastTimer;
+function show(next,keepScroll=false){
+ screen=next;const scroll=keepScroll?lastScroll:0;lastScroll=0;
+ let html=payload.screens[next==="device"?"device-"+mask:next];
+ html=html.replace(/memoria-asset:([^"<>\\s]+)/g,(_,file)=>payload.assets[file]);
+ const bridge='<script>document.addEventListener("click",function(event){const target=event.target.closest("[data-handler]");if(!target)return;event.preventDefault();parent.postMessage({type:"memoria-preview",handler:target.dataset.handler,index:target.dataset.index,scroll:window.scrollY},"*")});window.scrollTo(0,'+scroll+');<'+"/script>";
+ frame.srcdoc=html.replace("</body>",bridge+"</body>");
+ for(const button of document.querySelectorAll("[data-screen]"))button.setAttribute("aria-pressed",String(button.dataset.screen===(next.startsWith("device")?"device":next)));
+}
+let lastScroll=0;
+for(const button of document.querySelectorAll("[data-screen]"))button.addEventListener("click",()=>show(button.dataset.screen));
+window.addEventListener("message",event=>{
+ if(event.source!==frame.contentWindow||event.data?.type!=="memoria-preview")return;
+ const {handler,index,scroll}=event.data;lastScroll=scroll;
+ if(handler==="onTapTab"){show(tabSlugs[Number(index)]||"home");return}
+ if(Object.hasOwn(toggles,handler)){mask^=1<<toggles[handler];show("device",true);return}
+ const links={openMemory:"memory",openProfile:"profile",openDevice:"device",openCompanion:"companion",openLimitsSheet:"device-quiet",openNightSettings:"device-quiet",closeLimitsSheet:"device"};
+ if(links[handler]){show(links[handler]);return}
+ const toast=document.querySelector("#toast");toast.textContent="这是界面预览。此操作需要在微信小程序中完成。";toast.style.display="block";clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.style.display="none",2600);
+});
+show("home");
+</script></body></html>`;
+  fs.mkdirSync(path.dirname(OUTPUT), { recursive: true });
+  fs.writeFileSync(OUTPUT, html);
+  console.log(`${OUTPUT}: ${Object.keys(screens).length} screens, ${Object.keys(assets).length} local assets`);
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

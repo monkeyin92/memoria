@@ -33,7 +33,7 @@ for (const scenario of PAGES) {
 test(`memory renders all ${LONG_LIST_SIZE} days and keeps each setData under WeChat's 256 KiB guidance`, async (t) => {
   const m = await measure(LONG_LISTS.find((item) => item.slug === "memory-200"));
   t.diagnostic(`calls=${m.calls} largest=${m.largest}B render=${m.renderMs.toFixed(1)}ms`);
-  assert.equal((stripStyle(m.html).match(/class="card memory-day"/g) || []).length, LONG_LIST_SIZE);
+  assert.equal((stripStyle(m.html).match(/class="card memory-day /g) || []).length, LONG_LIST_SIZE);
   assert.ok(m.largest < 256 * KiB, `largest setData ${m.largest} bytes`);
   assert.ok(m.renderMs < 500, `render ${m.renderMs}ms`);
 });

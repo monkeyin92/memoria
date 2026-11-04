@@ -1,10 +1,24 @@
 /* ============================================================
-   Memoria parent UI — calm guardian palette.
+   Memoria parent UI — warm journal palette.
    Lengths are design px (390pt frame), not rpx.
    ============================================================ */
 page {
-  --mp-bg: #f2f6f5;
-  --mp-surface: #ffffff;
+  --mp-bg: #f8f5ef;
+  --mp-surface: #fffefa;
+  --mp-paper: #efe8da;
+  --mp-peach: #f5e3d0;
+  --mp-lilac: #eae6f3;
+  --mp-forest: #234b40;
+  --mp-on-forest: #e0eadd;
+  --mp-on-forest-line: rgba(255, 254, 250, 0.16);
+  --mp-glass: rgba(255, 254, 250, 0.85);
+  --mp-soft-line: rgba(23, 46, 50, 0.09);
+  --mp-dash: #c5cfc6;
+  --mp-voice-starlight: #e9eee4;
+  --mp-voice-taoxi: #f7e7db;
+  --mp-voice-mianmian: #eee8f3;
+  --mp-voice-axu: #e4edf1;
+  --mp-voice-xuanmo: #eae8e2;
   --mp-accent: #176b5b;
   --mp-accent-soft: #e3f0ed;
   --mp-on-accent: #ffffff;
@@ -22,15 +36,15 @@ page {
   --mp-ink-2: #536a6c;
   --mp-ink-3: #536a6c;
   --mp-ink-4: #a9b8b5;
-  --mp-line: #dfe8e4;
-  --mp-fill: #f2f6f5;
-  --mp-fill-art: #eef4f2;
+  --mp-line: #e8e3d9;
+  --mp-fill: #f1eee7;
+  --mp-fill-art: #ede8dd;
   --mp-track: #dfe8e4;
   --mp-scrim: rgba(23, 46, 50, 0.42);
-  --mp-tabbar-bg: rgba(255, 255, 255, 0.92);
+  --mp-tabbar-bg: rgba(255, 254, 250, 0.97);
   --mp-tab-ink: #536a6c;
   --mp-hairline: rgba(23, 46, 50, 0.06);
-  --mp-radius-card: 20px;
+  --mp-radius-card: 22px;
   --mp-radius-card-xl: 24px;
   --mp-radius-inset: 16px;
   --mp-radius-icon: 12px;
@@ -38,32 +52,33 @@ page {
   --mp-radius-pill: 499.5px;
   --mp-pad-page: 20px;
   --mp-tab-top: 17px;
-  --mp-gap-card: 16px;
+  --mp-gap-card: 12px;
   --mp-pad-card: 16px;
   --mp-pad-card-lg: 20px;
-  --mp-tap: 56px;
+  --mp-tap: 48px;
   --mp-icon: 40px;
   --mp-tab-clearance: calc(88px + 24px + env(safe-area-inset-bottom));
   --mp-page-foot: calc(32px + env(safe-area-inset-bottom));
-  --mp-shadow-card: 0 0 0 1px var(--mp-line);
+  --mp-shadow-card: 0 2px 12px rgba(63, 50, 26, 0.035);
   --mp-shadow-float: 0 2px 8px rgba(23, 46, 50, 0.06);
   --mp-shadow-thumb: 0 2px 8px rgba(23, 46, 50, 0.12);
   --mp-shadow-button: 0 1px 2px rgba(23, 46, 50, 0.04);
   --mp-shadow-hero: 0 8px 24px rgba(23, 46, 50, 0.08);
+  --mp-shadow-forest: 0 8px 24px rgba(35, 75, 64, 0.12);
   --mp-hero-scrim: rgba(23, 46, 50, 0.32);
   --mp-shadow-selected: 0 0 0 2px var(--mp-accent);
   --mp-type-num-xl: 28px;
-  --mp-type-display: 24px;
+  --mp-type-display: 26px;
   --mp-type-headline: 24px;
   --mp-type-heading: 20px;
   --mp-type-title: 18px;
   --mp-type-button: 16px;
   --mp-type-lead: 16px;
-  --mp-type-card: 16px;
-  --mp-type-body: 16px;
+  --mp-type-card: 15px;
+  --mp-type-body: 14px;
   --mp-type-small: 14px;
   --mp-type-caption: 13px;
-  --mp-type-meta: 13px;
+  --mp-type-meta: 12px;
   --mp-type-micro: 11px;
   --mp-type-tab: 10px;
   --mp-lh-display: 32px;
@@ -74,7 +89,7 @@ page {
   min-height: 100%;
   color: var(--mp-ink);
   background: var(--mp-bg);
-  font-family: "PingFang SC", "HarmonyOS Sans SC", "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-family: -apple-system, "SF Pro Text", "PingFang SC", "HarmonyOS Sans SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
   font-size: var(--mp-type-body);
   line-height: normal;
   font-feature-settings: "tnum";
@@ -90,6 +105,20 @@ button { font-family: inherit; }
   padding: 12px var(--mp-pad-page) var(--mp-page-foot);
   background: var(--mp-bg);
   color: var(--mp-ink);
+}
+.page-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.page-heading-copy { min-width: 0; }
+.page-heading-mark {
+  flex-shrink: 0;
+  width: 50px;
+  height: 62px;
+  margin-top: 36px;
 }
 .page-shell.tab-page {
   padding-top: calc(var(--mp-status-bar, 20px) + var(--mp-tab-top));

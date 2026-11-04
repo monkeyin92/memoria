@@ -880,6 +880,7 @@ async function showDailyLimits(limits, profile) {
   resolutionPayload = null;
   const page = instantiate(pageDefinition);
   await page.onShow();
+  page.toggleUsage();
   return { page, text: visibleText(renderPage("pages/device/index", page.data)) };
 }
 
@@ -971,20 +972,22 @@ test("the device lists its offline story titles, and says so when it has none to
   storiesFailure = false;
   const page = instantiate(pageDefinition);
   await page.onShow();
+  page.toggleManagement();
+  page.toggleStories();
   assert.deepEqual(page.data.offlineStories, [
     { id: "story_01", title: "小星星的枕头" },
     { id: "story_02", title: "月亮不着急" },
     { id: "story_03", title: "大熊和森林里的悄悄话" },
   ]);
   const text = visibleText(renderPage("pages/device/index", page.data));
-  assert.match(text, /离线故事 不联网也能听 小星星的枕头 月亮不着急 大熊和森林里的悄悄话 隐私说明/);
+  assert.match(text, /离线故事 不联网也能听 小星星的枕头 月亮不着急 大熊和森林里的悄悄话/);
   assert.doesNotMatch(text, /暂无可显示的离线故事/);
 
   storiesFailure = true;
   try {
     await page.onShow();
     assert.deepEqual(page.data.offlineStories, []);
-    assert.match(visibleText(renderPage("pages/device/index", page.data)), /离线故事 不联网也能听 暂无可显示的离线故事 隐私说明/);
+    assert.match(visibleText(renderPage("pages/device/index", page.data)), /离线故事 不联网也能听 暂无可显示的离线故事/);
   } finally {
     storiesFailure = false;
   }

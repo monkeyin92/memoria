@@ -163,3 +163,12 @@
   padding: 12px var(--mp-pad-card);
   border-bottom: none;
 }
+.memory-day { position: relative; padding: 20px; border-radius: 4px 22px 22px 22px; }
+.memory-day-0 { background: var(--mp-peach); }
+.memory-day-1 { background: var(--mp-surface); }
+.memory-day-2 { background: var(--mp-lilac); }
+.memory-day-head { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--mp-soft-line); }
+.memory-day-label { font-size: var(--mp-type-title); }
+.memory-line-text { line-height: 1.85; }
+.memory-claims-row { background: var(--mp-lilac); }
+.memory-empty { padding: 28px 20px; background: var(--mp-paper); }

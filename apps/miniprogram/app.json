@@ -21,11 +21,11 @@
     "pages/memory-lifecycle/index"
   ],
   "window": {
-    "backgroundColor": "#F2F6F5",
-    "backgroundColorTop": "#F2F6F5",
-    "backgroundColorBottom": "#F2F6F5",
+    "backgroundColor": "#F8F5EF",
+    "backgroundColorTop": "#F8F5EF",
+    "backgroundColorBottom": "#F8F5EF",
     "backgroundTextStyle": "dark",
-    "navigationBarBackgroundColor": "#F2F6F5",
+    "navigationBarBackgroundColor": "#F8F5EF",
     "navigationBarTextStyle": "black",
     "navigationBarTitleText": "Memoria"
   },

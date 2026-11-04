@@ -71,12 +71,13 @@ test("the full expression frame set stays out of the package and out of pages", 
   }
 });
 
-test("v4 home keeps the mascot off the dashboard; settings keep none", () => {
+test("home uses packed brand art while device and private archive stay hardware focused", () => {
   const home = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const homeJson = require("../pages/home/index.json");
   const device = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
   const memory = fs.readFileSync(path.join(root, "pages/child-memory/index.wxml"), "utf8");
-  assert.doesNotMatch(home, /<face-badge/);
+  assert.match(home, /<face-badge role="starlight" size="review"/);
+  assert.ok(homeJson.usingComponents["face-badge"]);
   assert.ok(homeJson.usingComponents["device-screen"]);
   assert.equal(homeJson.usingComponents["mp-icon"], undefined);
   assert.doesNotMatch(device, /<face-badge/);

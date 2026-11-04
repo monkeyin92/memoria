@@ -33,3 +33,18 @@
 .companion-voice .setting-row {
   gap: 16px;
 }
+.voice-list { gap: 12px; }
+.voice-option { position: relative; min-height: 104px; padding: 16px 14px; gap: 12px; overflow: hidden; }
+.voice-portrait { flex-shrink: 0; width: 48px; height: 66px; }
+.voice-name { font-size: var(--mp-type-title); }
+.voice-catalog-name { display: block; margin-top: 3px; font-size: var(--mp-type-meta); }
+.voice-tagline { margin-top: 6px; font-size: var(--mp-type-meta); }
+.voice-starlight { background: var(--mp-voice-starlight); }
+.voice-taoxi { background: var(--mp-voice-taoxi); }
+.voice-mianmian { background: var(--mp-voice-mianmian); }
+.voice-axu { background: var(--mp-voice-axu); }
+.voice-xuanmo { background: var(--mp-voice-xuanmo); }
+.voice-current { position: absolute; top: 0; right: 0; padding: 3px 10px; border-radius: 0 14px 0 12px; background: var(--mp-accent); color: var(--mp-on-accent); font-size: var(--mp-type-micro); }
+.voice-chip { min-height: 44px; background: var(--mp-glass); font-size: var(--mp-type-meta); }
+.voice-option-on { box-shadow: inset 0 0 0 1.5px var(--mp-accent); }
+.role-new { background: transparent; border: 1px dashed var(--mp-dash); box-shadow: none; font-size: var(--mp-type-small); font-weight: 500; }
