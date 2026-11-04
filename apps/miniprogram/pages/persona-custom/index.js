@@ -4,7 +4,12 @@ const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
 const { requireLogin } = require("../../utils/auth-gate");
-const { defaultCompanionId } = require("../../utils/companions");
+const { companions, defaultCompanionId } = require("../../utils/companions");
+
+function voiceNameForFallback(fallback) {
+  const match = companions.find((item) => item.id === fallback);
+  return match ? match.voiceName : "";
+}
 
 const ENUM_FIELDS = Object.freeze([
   {
@@ -104,6 +109,8 @@ Page({
     enumFields: ENUM_FIELDS.map((field) => ({ ...field, index: 0 })),
     textFields: TEXT_FIELDS,
     rateValue: 100,
+    voiceOptions: companions.map((item) => ({ id: item.id, name: item.voiceName })),
+    voiceIndex: 0,
   },
 
   goBack() {
@@ -128,7 +135,12 @@ Page({
     try {
       const payload = await api.listPersonas();
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      const personas = Array.isArray(payload?.custom_personas) ? payload.custom_personas : [];
+      const personas = (Array.isArray(payload?.custom_personas) ? payload.custom_personas : []).map(
+        (persona) => ({
+          ...persona,
+          voiceName: voiceNameForFallback(persona?.fallback_designed_voice),
+        }),
+      );
       this.setData({ personas });
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
@@ -165,6 +177,12 @@ Page({
       enumFields,
       error: "",
     });
+  },
+
+  onVoiceChange(event) {
+    const index = Number(event.detail.value);
+    if (!Number.isInteger(index) || !this.data.voiceOptions[index]) return;
+    this.setData({ voiceIndex: index });
   },
 
   onRateChange(event) {
@@ -232,7 +250,7 @@ Page({
       const record = await api.createCustomPersona({
         displayName: name,
         structured: { ...this.data.fields },
-        fallbackDesignedVoice: defaultCompanionId,
+        fallbackDesignedVoice: this.data.voiceOptions[this.data.voiceIndex]?.id || defaultCompanionId,
       });
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({

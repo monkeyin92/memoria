@@ -22,15 +22,16 @@ async function openChildMemory(overrides, query = CHILD) {
 test("the archive leads the page with the design's three labels and footer, summaries follow below", async () => {
   const harness = await openChildMemory(fx.archiveApi);
   try {
-    const text = visibleText(renderPage("pages/child-memory/index", harness.page.data, { tabBar: false }));
+    const html = renderPage("pages/child-memory/index", harness.page.data, { tabBar: false });
+    const text = visibleText(html);
     assert.match(text, /^长期记住的事 乐乐的记忆 机器人长期只记住这三件事/);
     assert.match(text, /称呼[\s\S]*乐乐[\s\S]*孩子喜欢被这样叫/);
     assert.match(text, /喜好[\s\S]*恐龙[\s\S]*画画[\s\S]*聊天时会提到/);
     assert.match(text, /宠物名[\s\S]*小乐宝[\s\S]*讲故事时可能出现/);
     assert.match(text, /除这三项外，不长期保存其他信息。 长期记忆[\s\S]*清空长期记忆 近期摘要 讲了/);
-    assert.match(text, /这条不对/);
-    assert.match(text, /撤回/);
-    assert.doesNotMatch(text, /兴趣|小名|共 \d+ 条/);
+    assert.match(text, /清空全部摘要/);
+    assert.match(html, /class="cm-delete"/);
+    assert.doesNotMatch(text, /这条不对|兴趣|小名|共 \d+ 条/);
   } finally {
     harness.restore();
   }

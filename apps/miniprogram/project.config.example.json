@@ -15,23 +15,11 @@
         "type": "folder"
       },
       {
-        "value": "assets/mascots",
-        "type": "folder"
-      },
-      {
         "value": "assets/voices",
         "type": "folder"
       },
       {
-        "value": "components/face-badge",
-        "type": "folder"
-      },
-      {
         "value": "assets/robots",
-        "type": "folder"
-      },
-      {
-        "value": "components/device-screen",
         "type": "folder"
       }
     ],
@@ -43,6 +31,10 @@
       {
         "value": "assets/bg/night-stars.png",
         "type": "file"
+      },
+      {
+        "value": "assets/mascots",
+        "type": "folder"
       }
     ]
   },

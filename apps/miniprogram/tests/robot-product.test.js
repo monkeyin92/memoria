@@ -23,19 +23,24 @@ test("legacy role keys resolve to one default voice presentation without body me
   }
 });
 
-test("control pages never render or register robot artwork, face screens, or mascots", () => {
+test("pages render the robot through face-badge and device-screen, not loose asset paths", () => {
   for (const page of require("../app.json").pages) {
     const template = fs.readFileSync(path.join(root, `${page}.wxml`), "utf8");
-    const config = JSON.parse(fs.readFileSync(path.join(root, `${page}.json`), "utf8"));
-    assert.doesNotMatch(template, /face-badge|device-screen|\/assets\/(?:mascots|companions|robots)\//, page);
-    assert.equal(config.usingComponents?.["face-badge"], undefined, page);
-    assert.equal(config.usingComponents?.["device-screen"], undefined, page);
+    assert.doesNotMatch(template, /\/assets\/(?:mascots|companions|robots)\//, page);
   }
+  const home = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
+  const companion = fs.readFileSync(path.join(root, "pages/companion/index.wxml"), "utf8");
+  assert.match(home, /<face-badge/);
+  assert.match(home, /<device-screen/);
+  assert.match(companion, /<face-badge/);
 });
 
-test("the production package excludes robot artwork, face screens, mascots, and old voice samples", () => {
+test("the production package keeps retired companion art and old voice samples out", () => {
   const shipped = shippedFiles();
-  assert.equal(shipped.some((file) => /^(assets\/(?:mascots|companions|robots|voices)|components\/(?:face-badge|device-screen))\//.test(file)), false);
+  assert.equal(shipped.some((file) => /^assets\/(?:companions|robots|voices)\//.test(file)), false);
+  assert.equal(shipped.some((file) => /^components\/face-badge\//.test(file)), true);
+  assert.equal(shipped.some((file) => /^components\/device-screen\//.test(file)), true);
+  assert.equal(shipped.some((file) => /^assets\/mascots\/starlight\//.test(file)), true);
 });
 
 test("the home status card keeps device identity, connection state, and working device navigation", async () => {
@@ -48,9 +53,8 @@ test("the home status card keeps device identity, connection state, and working 
       assert.equal(data.online, online);
       const html = renderPage("pages/home/index", data, { eventHandlers: true });
       const text = visibleText(html);
-      assert.ok(text.includes(data.devicePlaceName));
-      assert.ok(text.includes(online ? "设备在线" : "设备离线"));
-      assert.match(text, /今日用量/);
+      assert.ok(text.includes(`${data.devicePlaceName} · ${online ? "在线" : "离线"}`));
+      assert.match(text, /今日聊天用量/);
       assert.match(html, /data-handler="openDevice"/);
       harness.page.openDevice();
       assert.equal(harness.wxCalls.filter((call) => call.name === "switchTab").at(-1)?.args[0].url, "/pages/device/index");
@@ -60,22 +64,18 @@ test("the home status card keeps device identity, connection state, and working 
   }
 });
 
-test("default voice information needs no profile reads, writes, login, or audio playback", async () => {
-  const accesses = [];
-  const harness = loadPage("pages/companion/index", fx.guest({
-    getProfile: async () => accesses.push("read"),
-    updateProfile: async () => accesses.push("write"),
-  }));
+test("the companion tab lists the default voice with a sample preview and the current pick", async () => {
+  const harness = loadPage("pages/companion/index", fx.guest());
   try {
     const data = await harness.run();
     const text = visibleText(renderPage("pages/companion/index", data));
-    assert.match(text, /所有机器人共用默认声音/);
-    assert.doesNotMatch(text, /试听|已选|选这个|星澜|桃喜|绵绵|阿序|玄墨/);
-    assert.deepEqual(accesses, []);
-    assert.equal(harness.page.chooseCompanion, undefined);
-    assert.equal(harness.page.togglePreview, undefined);
-    assert.equal(harness.wxCalls.some((call) => /login|request|AudioContext/.test(call.name)), false);
-    assert.equal(require("../utils/tab-routes").isTabRoute("/pages/companion/index"), false);
+    assert.match(text, /Memoria/);
+    assert.match(text, /已选/);
+    assert.match(text, /试听/);
+    assert.doesNotMatch(text, /星澜|桃喜|绵绵|阿序|玄墨/);
+    assert.equal(typeof harness.page.chooseCompanion, "function");
+    assert.equal(typeof harness.page.togglePreview, "function");
+    assert.equal(require("../utils/tab-routes").isTabRoute("/pages/companion/index"), true);
   } finally {
     harness.restore();
   }

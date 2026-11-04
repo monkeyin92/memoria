@@ -8,6 +8,7 @@ const api = require("../utils/api");
 const binding = require("../utils/device-binding");
 const { canonicalManifest } = require("./manifest-fixtures");
 const { readSubjectLabel } = require("../utils/subject-label");
+const { defaultCompanionId } = require("../utils/companions");
 const { consentStamp } = require("../utils/child-consent");
 
 const storage = { "memoria:miniprogram:child-info-consent": consentStamp() };
@@ -256,18 +257,15 @@ test("binding page collects a required subject remark after choosing who it is f
   assert.equal(readSubjectLabel(page.data.manifest), "亲爱的儿子");
 });
 
-test("the companion picked while binding becomes the account's companion", async () => {
+test("binding submits the shared default voice", async () => {
   nextResponse = successResponse(defaultManifestResponse("self_use"));
   profileWrites.length = 0;
   const page = await bootSelfUseReady("阿宁");
-  const index = page.data.personaOptions.findIndex((option) => option.id === "mianmian");
-  page.onPersonaTap({ currentTarget: { dataset: { index } } });
   await page.goToReview();
   await page.submitBinding();
   assert.equal(page.data.step, "done");
-  assert.equal(lastWxRequest.data.persona_selection, "mianmian");
-  // 首页、设备、伙伴页读的是账号伙伴；不写它，这些页面会停在旧伙伴上。
-  assert.deepEqual(profileWrites, [{ method: "PUT", data: { companion_id: "mianmian" } }]);
+  assert.equal(lastWxRequest.data.persona_selection, defaultCompanionId);
+  assert.deepEqual(profileWrites, []);
 });
 
 test("self_use flow keeps sensitive offers off by default and submits clean payload", async () => {
@@ -806,31 +804,24 @@ test("the finish step keeps the selected voice summary alongside the device illu
   const template = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
   const done = template.slice(template.indexOf("<!-- 步骤 5"));
   assert.match(done, /<device-screen online="\{\{true\}\}" size="220"><\/device-screen>/);
-  assert.match(done, /声音与表达<\/text><text class="summary-value">\{\{personaOptions\[personaIndex\]\.name\}\}/);
+  assert.match(done, /<text class="summary-key">声音<\/text><text class="summary-value">默认声音<\/text>/);
   assert.doesNotMatch(done, /<face-badge/);
+  assert.doesNotMatch(done, /personaOptions|onPersonaTap|togglePreview/);
   const components = JSON.parse(fs.readFileSync(path.join(root, "pages/bind/index.json"), "utf8")).usingComponents;
   assert.ok(components["device-screen"]);
   assert.equal(components["face-badge"], undefined);
 
   nextResponse = successResponse(defaultManifestResponse("self_use"));
   const page = await bootSelfUseReady("阿宁");
-  const index = page.data.personaOptions.findIndex((option) => option.id === "taoxi");
-  assert.ok(index >= 0);
-  page.onPersonaTap({ currentTarget: { dataset: { index } } });
   await page.goToReview();
   await page.submitBinding();
   assert.equal(page.data.step, "done");
-  // The two bindings the finish card reads.
-  const picked = page.data.personaOptions[page.data.personaIndex];
-  assert.equal(picked.id, "taoxi");
-  assert.equal(picked.name, "桃喜");
+  assert.equal(lastWxRequest.data.persona_selection, defaultCompanionId);
 });
 
 test("continuing to activation hands the picked companion to the onboarding page", async () => {
   nextResponse = successResponse(defaultManifestResponse("self_use"));
   const page = await bootSelfUseReady("阿宁");
-  const index = page.data.personaOptions.findIndex((option) => option.id === "taoxi");
-  page.onPersonaTap({ currentTarget: { dataset: { index } } });
   await page.goToReview();
   await page.submitBinding();
 
@@ -852,7 +843,7 @@ test("continuing to activation hands the picked companion to the onboarding page
   }
   assert.equal(handedOver.length, 1);
   assert.equal(handedOver[0].manifest.binding_id, "bd_test_1");
-  assert.deepEqual(handedOver[0].extra, { companionId: "taoxi" });
+  assert.deepEqual(handedOver[0].extra, { companionId: defaultCompanionId });
 });
 
 test("child_for_parent defaults proxy memory consent off and keeps admin scope", async () => {

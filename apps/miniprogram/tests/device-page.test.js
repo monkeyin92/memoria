@@ -1775,7 +1775,7 @@ test("persona assignment failure keeps the sheet open and reports the error", as
   personaFailure = false;
 });
 
-test("default voice information opens as a device subpage", async () => {
+test("default voice opens on the companion tab", async () => {
   const switched = [];
   const navigated = [];
   const previous = { switchTab: global.wx.switchTab, navigateTo: global.wx.navigateTo };
@@ -1784,10 +1784,10 @@ test("default voice information opens as a device subpage", async () => {
   try {
     const page = instantiate(pageDefinition);
     page.openCompanion();
-    assert.deepEqual(switched, []);
-    assert.deepEqual(navigated, ["/pages/companion/index"]);
+    assert.deepEqual(navigated, []);
+    assert.deepEqual(switched, ["/pages/companion/index"]);
     const appConfig = JSON.parse(fs.readFileSync(path.join(root, "app.json"), "utf8"));
-    assert.equal(appConfig.tabBar.list.some((tab) => tab.pagePath === "pages/companion/index"), false);
+    assert.equal(appConfig.tabBar.list.some((tab) => tab.pagePath === "pages/companion/index"), true);
   } finally {
     global.wx.switchTab = previous.switchTab;
     global.wx.navigateTo = previous.navigateTo;
