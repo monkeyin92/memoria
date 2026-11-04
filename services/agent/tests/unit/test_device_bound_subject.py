@@ -1,4 +1,4 @@
-"""A device serves its one bound person: owner data authority without a voiceprint."""
+"""Device bind proves config only: never speaker owner for private authority (A06)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from services.agent.tests.unit.runtime_profile_test_helpers import (
 )
 from services.agent.tests.unit.runtime_state_helpers import set_floor
 from services.speaker.domain import (
-    DEVICE_BOUND_SUBJECT_REASON,
     SpeakerDecision,
     permissions_for_speaker,
 )
@@ -26,28 +25,25 @@ def _device_runtime(session_id: str) -> DuplexRuntime:
 
 
 @pytest.mark.asyncio
-async def test_bound_subject_carries_owner_data_authority_but_not_a_verified_voice() -> None:
-    runtime = _device_runtime("device-bound-owner")
+async def test_bound_profile_does_not_become_owner_or_open_private_history() -> None:
+    runtime = _device_runtime("device-bound-not-owner")
     bind_owner_policy(runtime)
 
     decision = await runtime.await_speaker_classification()
 
-    assert decision.classification == "owner"
-    assert decision.reason_code == DEVICE_BOUND_SUBJECT_REASON
-    assert runtime.current_speaker_class == "owner"
-    # History and memory follow the signed profile ...
-    assert runtime.current_history_eligible is True
-    # ... but the robot's own echo must never count as an owner voice.
+    assert decision.classification == "uncertain"
+    assert decision.reason_code == "authority_unconfigured"
+    assert runtime.current_speaker_class == "uncertain"
+    assert runtime.current_history_eligible is False
     assert runtime.current_speaker_authority_verified is False
+    assert runtime.mode_policy.allows_conversation("uncertain") is True
     await runtime.close()
 
 
 @pytest.mark.asyncio
-async def test_bound_subject_needs_private_recall_in_the_signed_profile() -> None:
+async def test_chat_only_profile_stays_uncertain_without_private_history() -> None:
     runtime = _device_runtime("device-bound-no-recall")
     bind_owner_policy(runtime)
-    verified = runtime.mode_policy.runtime_profile
-    assert verified is not None
     from dataclasses import replace
 
     from services.agent.src.runtime_profile import parse_runtime_profile
@@ -71,7 +67,6 @@ async def test_bound_subject_needs_private_recall_in_the_signed_profile() -> Non
     decision = await runtime.await_speaker_classification()
 
     assert decision.classification == "uncertain"
-    assert decision.reason_code == "authority_unconfigured"
     assert runtime.current_history_eligible is False
     await runtime.close()
 
@@ -130,7 +125,6 @@ async def test_farewell_echo_right_after_playback_cannot_close_the_device() -> N
     now_ns = _just_played(runtime, "好的，那我们明天见，再见！", ago_ms=1_200)
 
     assert runtime._close_phrase_is_playback_echo("再见", now_ns=now_ns) is True  # noqa: SLF001
-    # A farewell the robot did not just say is the user's own.
     assert runtime._close_phrase_is_playback_echo("拜拜", now_ns=now_ns) is False  # noqa: SLF001
     await runtime.close()
 

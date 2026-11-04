@@ -935,7 +935,9 @@ class DuplexRuntime(
         decision = self._speaker_decision
         return (
             decision is not None
-            and self._mode_policy.owner_projection_eligible(decision.classification)
+            and self._mode_policy.owner_projection_eligible(
+                decision.classification, reason_code=decision.reason_code
+            )
             and self.profile_permits(self.fence, capability="memory_recall_private")
         )
 
@@ -1701,10 +1703,15 @@ class DuplexRuntime(
         )
 
     def _owner_acoustic_evidence(self) -> dict[str, int | float]:
+        reason = (
+            self._speaker_decision.reason_code if self._speaker_decision is not None else None
+        )
         return owner_acoustic_evidence(
             speaker_class=self._speaker_class,
             decision=self._speaker_decision,
-            owner_projection_eligible=self._mode_policy.owner_projection_eligible("owner"),
+            owner_projection_eligible=self._mode_policy.owner_projection_eligible(
+                "owner", reason_code=reason
+            ),
             profile_permits_memory_capture=self.profile_permits(
                 self.fence, capability="memory_capture"
             ),

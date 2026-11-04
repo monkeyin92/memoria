@@ -26,6 +26,7 @@ from services.common.companions import (
 )
 from services.identity.domain import is_custom_persona_id
 from services.persona.custom_persona_fields import companion_definition_from_envelope
+from services.speaker.domain import DEVICE_BOUND_SUBJECT_REASON
 from services.tutor.domain import SESSION_FOCUSES, TUTOR_FOCUSES, SessionFocus
 
 InteractionMode = Literal[
@@ -139,8 +140,17 @@ class ModePolicy:
     def capability(self, name: str) -> bool:
         return self.available and dict(self.capabilities).get(name, False)
 
-    def allows_private_context(self, speaker_class: SpeakerClass) -> bool:
-        return speaker_class == "owner" and self.capability("private_memory")
+    def allows_private_context(
+        self,
+        speaker_class: SpeakerClass,
+        *,
+        reason_code: str | None = None,
+    ) -> bool:
+        return (
+            speaker_class == "owner"
+            and self.capability("private_memory")
+            and not _device_bind_only(reason_code)
+        )
 
     def allows_conversation(self, speaker_class: SpeakerClass | None = None) -> bool:
         if not self.capability("conversation"):
@@ -190,11 +200,23 @@ class ModePolicy:
         *,
         reason_code: str | None = None,
     ) -> bool:
-        del reason_code
-        return speaker_class == "owner" and self.capability("history")
+        return (
+            speaker_class == "owner"
+            and self.capability("history")
+            and not _device_bind_only(reason_code)
+        )
 
-    def owner_projection_eligible(self, speaker_class: SpeakerClass) -> bool:
-        return speaker_class == "owner" and self.capability("history")
+    def owner_projection_eligible(
+        self,
+        speaker_class: SpeakerClass,
+        *,
+        reason_code: str | None = None,
+    ) -> bool:
+        return (
+            speaker_class == "owner"
+            and self.capability("history")
+            and not _device_bind_only(reason_code)
+        )
 
     def allows_learning(
         self,
@@ -202,8 +224,11 @@ class ModePolicy:
         *,
         reason_code: str | None = None,
     ) -> bool:
-        del reason_code
-        return speaker_class == "owner" and self.capability("learning")
+        return (
+            speaker_class == "owner"
+            and self.capability("learning")
+            and not _device_bind_only(reason_code)
+        )
 
     @classmethod
     def unavailable(cls, reason: str) -> ModePolicy:
@@ -980,3 +1005,9 @@ def parse_mode_policy(payload: Any, runtime_profile_verify_key: str | None = Non
     """Validate one control-API mode-policy payload exactly as ``fetch`` does."""
 
     return ModePolicyClient._parse(payload, runtime_profile_verify_key)
+
+
+def _device_bind_only(reason_code: str | None) -> bool:
+    """Device bind proves config, not the current speaker (A06)."""
+
+    return reason_code == DEVICE_BOUND_SUBJECT_REASON

@@ -330,7 +330,9 @@ def build_local_safe_plan(
         instructions = companion_plan_instructions(
             owner=speaker_class == "owner",
             device_bound=speaker_reason == DEVICE_BOUND_SUBJECT_REASON,
-            private_memory=policy.allows_private_context(speaker_class),
+            private_memory=policy.allows_private_context(
+                speaker_class, reason_code=speaker_reason
+            ),
             query=query,
             minor=runtime_profile is not None and runtime_profile.profile.subject_category == "minor",
         )

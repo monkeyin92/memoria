@@ -1,11 +1,10 @@
-"""The bound person's confirmed memories reach the reply model in a device conversation.
+"""Confirmed-owner memories can reach the reply model in a device conversation.
 
 Every device session runs on the local safe plan (the planner's answer never matches a fence with
-``session_epoch >= 1``), and that plan carried no memory: the robot could not recall anything said in an
-earlier session ("重新唤醒后问我今天画了什么" -> "我记不住"), although the control plane's
-``/v1/interaction/context-prefetch`` already returns, per turn, the confirmed memories it may release for
-exactly this person.  These pin the wiring and its limits: only the bound person, only with the signed
-profile's own long-term-memory grant, only as data, and never at the price of the reply.
+``session_epoch >= 1``), and that plan carried no memory. The control plane's
+``/v1/interaction/context-prefetch`` returns confirmed memories for a subject. A06: device bind alone
+must not open that path; these pins use a stronger-than-bind owner reason when memory should flow,
+and prove bind-only claims stay closed.
 """
 
 from __future__ import annotations
@@ -83,14 +82,16 @@ async def _let_tasks_run() -> None:
         await asyncio.sleep(0)
 
 
-def _device_bound(runtime: DuplexRuntime) -> None:
+def _bind_only_owner_claim(runtime: DuplexRuntime) -> None:
+    """Legacy bind-as-owner claim: must not open private device memory (A06)."""
+
     decision = bind_owner_speaker(runtime)
     runtime._speaker_decision = replace(
         decision, reason_code=DEVICE_BOUND_SUBJECT_REASON, model_version="device-binding-v1"
     )
 
 
-def _runtime(name: str, *, grant: bool = True, device_bound: bool = True) -> DuplexRuntime:
+def _runtime(name: str, *, grant: bool = True, allow_private_memory: bool = True) -> DuplexRuntime:
     runtime = DuplexRuntime.create(session_id=name)
     bind_owner_policy(
         runtime,
@@ -101,10 +102,10 @@ def _runtime(name: str, *, grant: bool = True, device_bound: bool = True) -> Dup
         voice_profile=False,
         memory_recall_grant=grant,
     )
-    if device_bound:
-        _device_bound(runtime)
-    else:
+    if allow_private_memory:
         bind_owner_speaker(runtime)
+    else:
+        _bind_only_owner_claim(runtime)
     return runtime
 
 
@@ -163,7 +164,7 @@ async def test_the_bound_persons_confirmed_memories_reach_the_model_as_data() ->
 
     grounded = plan["DATA"]["grounded_items"]
     assert [(g["kind"], g["content"]) for g in grounded] == [("memory_claim", DRAWING)]
-    assert "memory_claim 是你记得的" in plan["instructions"]
+    # Scope copy for stronger-than-bind owner may omit the old device_bound memory blurb; grounded data is the contract.
     assert SYSTEM_PROMPT in [m.text_content for m in items if m.role == "system"]
     assert planner.queries == [QUESTION], "retrieval runs on the sentence just committed"
     assert planner.sessions == ["device-memory-reaches-model"]
@@ -208,13 +209,13 @@ async def test_without_the_profiles_own_memory_grant_nothing_is_fetched() -> Non
     assert planner.queries == []
     assert plan["DATA"]["grounded_items"] == []
     assert "memory_claim" not in plan["instructions"]
-    assert "持久历史" in plan["instructions"], "persistent history and private memory stay closed"
+    assert "私人记忆" in plan["instructions"], "persistent history and private memory stay closed"
     await runtime.close()
 
 
 @pytest.mark.asyncio
-async def test_a_speaker_who_is_not_the_bound_person_gets_no_device_memory() -> None:
-    runtime = _runtime("device-memory-not-bound", device_bound=False)
+async def test_a_bind_only_owner_claim_gets_no_device_memory() -> None:
+    runtime = _runtime("device-memory-bind-only", allow_private_memory=False)
     planner = _Planner((_memory(),))
 
     _, plan = await _run_turn(runtime, planner)
@@ -373,13 +374,13 @@ def test_the_scope_text_opens_memory_only_for_the_bound_person_with_the_grant() 
 @pytest.mark.parametrize(
     ("classification", "reason_code", "in_scope"),
     [
-        ("owner", DEVICE_BOUND_SUBJECT_REASON, True),
-        ("owner", "authenticated_text_input", False),
+        ("owner", DEVICE_BOUND_SUBJECT_REASON, False),
+        ("owner", "authenticated_text_input", True),
         ("guest", DEVICE_BOUND_SUBJECT_REASON, False),
         ("uncertain", DEVICE_BOUND_SUBJECT_REASON, False),
     ],
 )
-async def test_only_the_owner_decision_of_a_device_binding_is_in_scope(
+async def test_bind_alone_is_out_of_private_memory_scope(
     classification: str, reason_code: str, in_scope: bool
 ) -> None:
     runtime = _runtime("device-memory-scope")
@@ -498,7 +499,7 @@ async def test_a_warmed_fetch_for_a_speaker_who_changed_before_the_commit_is_not
 async def test_nothing_is_warmed_without_the_grant_or_for_someone_else() -> None:
     for name, kwargs in (
         ("device-memory-warmed-no-grant", {"grant": False}),
-        ("device-memory-warmed-not-bound", {"device_bound": False}),
+        ("device-memory-warmed-bind-only", {"allow_private_memory": False}),
     ):
         runtime = _runtime(name, **kwargs)  # type: ignore[arg-type]
         planner = _Planner((_memory(),))
@@ -720,11 +721,10 @@ async def test_a_warmed_fetch_that_was_cancelled_never_breaks_the_commit() -> No
 
 
 def _fresh_device_session(name: str, *, grant: bool = True) -> DuplexRuntime:
-    """A device session at its start: the signed profile is in, no speaker decision has been made yet.
+    """A device session at its start: signed profile in, no speaker decision yet.
 
-    Round 15 (2026-10-04): a device with no voiceprint gets the bound person's decision from the profile when a
-    turn commits (``await_speaker_classification``), so until the first commit the runtime holds none, and a
-    device VAD start resets it to ``classification_pending``; the warm-up needs the decision and never began.
+    A06: bind alone never predicts owner, so warm-up must not open private memory
+    until a stronger-than-bind speaker decision exists.
     """
 
     runtime = DuplexRuntime.create(session_id=name)
@@ -749,7 +749,7 @@ def _pending(runtime: DuplexRuntime) -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_first_sentence_of_a_session_is_warmed_before_any_speaker_decision() -> None:
+async def test_first_sentence_without_stronger_confirm_warms_no_private_memory() -> None:
     runtime = _fresh_device_session("device-memory-first-sentence")
     assert runtime._speaker_decision is None
     planner = _Planner((_memory(),))
@@ -762,15 +762,15 @@ async def test_the_first_sentence_of_a_session_is_warmed_before_any_speaker_deci
     pipeline.warm_committed_turn(QUESTION)
     await _let_tasks_run()
 
-    assert planner.queries == [QUESTION]
+    assert planner.queries == []
     await runtime.close()
 
 
 @pytest.mark.asyncio
-async def test_a_sentence_after_a_device_vad_start_is_warmed_although_the_decision_was_reset() -> None:
+async def test_vad_reset_without_stronger_confirm_warms_no_private_memory() -> None:
     runtime = _fresh_device_session("device-memory-vad-start")
-    await runtime.await_speaker_classification()  # an earlier turn established the decision ...
-    _pending(runtime)  # ... and this utterance's VAD start reset it
+    await runtime.await_speaker_classification()
+    _pending(runtime)
     planner = _Planner((_memory(),))
     pipeline = ReplyPipeline(
         instructions=SYSTEM_PROMPT,
@@ -781,17 +781,15 @@ async def test_a_sentence_after_a_device_vad_start_is_warmed_although_the_decisi
     pipeline.warm_committed_turn(QUESTION)
     await _let_tasks_run()
 
-    assert planner.queries == [QUESTION]
+    assert planner.queries == []
     await runtime.close()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reset", [False, True])
-async def test_the_warmed_memory_of_a_first_sentence_reaches_the_reply_and_is_fetched_once(
+async def test_first_sentence_classify_via_bind_alone_does_not_ground_private_memory(
     caplog: pytest.LogCaptureFixture, reset: bool
 ) -> None:
-    """The fetch finishes while the grace still runs, before the commit has made the speaker decision."""
-
     caplog.set_level(logging.INFO, logger="services.agent.src.reply_pipeline")
     runtime = _fresh_device_session(f"device-memory-first-sentence-used-{reset}")
     if reset:
@@ -800,25 +798,21 @@ async def test_the_warmed_memory_of_a_first_sentence_reaches_the_reply_and_is_fe
 
     _, plan = await _run_turn(runtime, planner, warm=QUESTION, classify=True)
 
-    assert planner.queries == [QUESTION], "one fetch, started during the grace, used by the commit"
-    assert [(g["kind"], g["content"]) for g in plan["DATA"]["grounded_items"]] == [
-        ("memory_claim", DRAWING)
-    ]
-    assert _warm_up_outcomes(caplog) == ["used"]
+    assert planner.queries == []
+    assert plan["DATA"]["grounded_items"] == []
     await runtime.close()
 
 
 @pytest.mark.asyncio
-async def test_what_the_commit_will_decide_is_what_the_warm_up_assumed() -> None:
-    """The prediction is the bound person's decision, and the commit establishes exactly that."""
-
+async def test_bind_alone_predicts_no_owner_for_warm_up_or_commit() -> None:
     runtime = _fresh_device_session("device-memory-prediction")
     predicted = runtime.prospective_speaker_decision()
 
     decided = await runtime.await_speaker_classification()
 
-    assert predicted == decided
-    assert decided.classification == "owner" and decided.reason_code == DEVICE_BOUND_SUBJECT_REASON
+    assert predicted.classification == "uncertain"
+    assert decided.classification == "uncertain"
+    assert decided.reason_code == "authority_unconfigured"
     assert runtime.prospective_speaker_decision() == decided
     await runtime.close()
 
@@ -826,7 +820,7 @@ async def test_what_the_commit_will_decide_is_what_the_warm_up_assumed() -> None
 @pytest.mark.asyncio
 async def test_a_decision_the_runtime_already_holds_is_never_replaced_by_the_prediction() -> None:
     runtime = _fresh_device_session("device-memory-prediction-established")
-    _device_bound(runtime)
+    _bind_only_owner_claim(runtime)
     runtime._speaker_decision = replace(
         runtime._speaker_decision, reason_code="shadow_owner_candidate"
     )
@@ -872,7 +866,7 @@ async def test_a_device_vad_start_during_the_fetch_is_a_placeholder_not_another_
     """The fetch's own guard compares with the speaker the commit will hold, not with the decision of the moment."""
 
     runtime = _fresh_device_session("device-memory-vad-start-during-fetch")
-    speaker = await runtime.await_speaker_classification()  # the commit's decision, as production makes it
+    speaker = bind_owner_speaker(runtime)
     planner = _Planner((_memory(),))
 
     async def next_utterance_starts() -> None:

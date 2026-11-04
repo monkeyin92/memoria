@@ -60,7 +60,9 @@ def mode_policy_provenance(
         "owner_projection_eligible": (
             owner_projection_eligible
             if owner_projection_eligible is not None
-            else policy.owner_projection_eligible(supported_speaker)
+            else policy.owner_projection_eligible(
+                supported_speaker, reason_code=reason_code
+            )
         ),
     }
 
