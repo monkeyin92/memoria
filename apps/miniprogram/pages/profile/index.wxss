@@ -142,10 +142,10 @@
 .privacy-note + .profile-version {
   margin-top: 8px;
 }
-.account-card { background: var(--mp-peach); box-shadow: none; padding: 22px 20px; }
+.account-card { background: var(--mp-cobalt); color: var(--mp-on-accent); box-shadow: none; padding: 26px 20px; }
 .hero-initial { width: 56px; height: 56px; background: var(--mp-surface); }
-.account-name { font-size: var(--mp-type-heading); }
-.account-sub { font-size: var(--mp-type-meta); }
-.device-card { background: var(--mp-paper); }
-.device-art { background: var(--mp-surface); }
+.account-name { font-size: var(--mp-type-heading); color: var(--mp-on-accent); }
+.account-sub { font-size: var(--mp-type-meta); color: var(--mp-on-accent); }
+.device-card { background: var(--mp-surface); }
+.device-art { width: 44px; height: 44px; border-radius: 14px; background: var(--mp-paper); }
 .profile-menu { margin-top: 24px; }

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root{font-family:var(--font-sans)}
+html,body{margin:0}
+nav{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+button{font:inherit;font-size:14px;min-height:44px;padding:8px 20px;border:1px solid var(--border);border-radius:var(--radius);background:var(--secondary);color:var(--foreground);cursor:pointer}
+button[aria-pressed="true"]{background:var(--primary);color:var(--primary-foreground)}
+.viewport{max-width:390px;height:670px;overflow:auto;margin:auto;border-radius:var(--radius)}
+img{display:block;width:100%;height:auto}
+p{color:var(--muted-foreground);font-size:12px;line-height:1.6}
+</style>
+</head>
+<body>
+<nav aria-label="页面截图"><button aria-pressed="true" data-page="home">今天</button><button aria-pressed="false" data-page="memory">回顾</button><button aria-pressed="false" data-page="device">设备</button><button aria-pressed="false" data-page="profile">我的</button></nav>
+<div class="viewport"><img src="/Users/monkeyin/projects/memoria/docs/design/robot-ui-20261104/after/home-390.png" alt="今天页面截图" data-image="home"><img hidden style="display:none" src="/Users/monkeyin/projects/memoria/docs/design/robot-ui-20261104/after/memory-390.png" alt="回顾页面截图" data-image="memory"><img hidden style="display:none" src="/Users/monkeyin/projects/memoria/docs/design/robot-ui-20261104/after/device-390.png" alt="设备页面截图" data-image="device"><img hidden style="display:none" src="/Users/monkeyin/projects/memoria/docs/design/robot-ui-20261104/after/profile-390.png" alt="我的页面截图" data-image="profile"></div>
+<p>实际小程序源码的布局截图，可切换页面并滚动查看。今天与设备聚焦状态、用量和控制，所有页面均已移除机器人外观与表情屏。日期、设备状态与回顾来自测试样例。</p>
+<script>
+for(const button of document.querySelectorAll("button"))button.onclick=()=>{for(const other of document.querySelectorAll("button"))other.setAttribute("aria-pressed",String(other===button));for(const image of document.images){image.hidden=image.dataset.image!==button.dataset.page;image.style.display=image.hidden?"none":"block"}document.querySelector(".viewport").scrollTop=0};
+</script>
+</body>
+</html>

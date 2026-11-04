@@ -1,39 +1,14 @@
-<view class="page-shell tab-page companion-page" style="{{statusBarStyle}}">
-  <view class="page-heading"><view class="page-heading-copy">
-  <text class="eyebrow">声音与表达</text>
-  <text class="page-title">声音</text>
-  <text class="page-lede">选择一种音色与说话方式。点选即可保存，下次对话生效。</text>
-  </view></view>
-  <text wx:if="{{saving}}" class="caption role-hint">正在保存…</text>
-
-  <view class="voice-list">
-    <view
-      wx:for="{{cards}}"
-      wx:key="id"
-      class="voice-option voice-{{item.id}} {{profile.companion_id === item.id ? 'voice-option-on' : ''}}"
-      aria-disabled="{{saving}}"
-      data-id="{{item.id}}"
-      bindtap="chooseCompanion"
-    >
-      <view class="voice-portrait"><face-badge role="{{item.id}}" size="portrait" plain="{{true}}"></face-badge></view>
-      <view class="voice-copy">
-        <text class="voice-name">{{item.name}}</text>
-        <text class="voice-catalog-name">{{item.tone}}</text>
-        <text class="voice-tagline">{{item.tagline}}</text>
-      </view>
-      <text wx:if="{{profile.companion_id === item.id}}" class="voice-current">已选</text>
-      <view
-        class="pill pill-neutral voice-chip"
-        data-id="{{item.id}}"
-        catchtap="togglePreview"
-      >{{previewingId === item.id ? '停止' : '试听'}}</view>
-    </view>
+<view class="page-shell sub-page default-voice-page" style="{{statusBarStyle}}">
+  <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
+  <text class="page-title">默认声音</text>
+  <view class="default-voice-stage">
+    <view class="default-voice-wave" aria-hidden="true"><view></view><view></view><view></view><view></view><view></view><view></view><view></view></view>
   </view>
-
-  <view class="role-new" bindtap="openCustomPersona">
-    <image class="role-new-icon" src="/assets/ui/v4/plus-accent.svg" aria-hidden="true"></image>
-    <text>自定义表达</text>
+  <text class="default-voice-title">默认声音，直接使用。</text>
+  <text class="page-lede">所有机器人共用默认声音，连接后直接对话，无需选择音色。</text>
+  <view class="list">
+    <view class="list-row"><mp-icon name="wave"></mp-icon><view class="row-copy"><text class="row-title">声音在机器人上播放</text><text class="row-meta">手机端不录音，也不发起对话</text></view></view>
+    <view class="list-row"><mp-icon name="note"></mp-icon><view class="row-copy"><text class="row-title">表达方式可以独立设置</text><text class="row-meta">不会切换声音、权限或记忆归属</text></view></view>
   </view>
-  <text class="caption role-hint">试听只播放示例，不会切换设置。</text>
-  <text class="privacy-note">声音由 AI 生成。表达风格不改变权限与记忆规则。</text>
+  <text class="privacy-note">声音与回应由 AI 生成。</text>
 </view>

@@ -22,7 +22,7 @@ function visibleText(html) {
   return html.replace(/<head>[\s\S]*?<\/head>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 }
 
-test("home leaves the usage bar hidden when the ledger could not read today's minutes", async () => {
+test("home reports unknown usage without inventing zero minutes", async () => {
   const { data } = await loadHome({
     api: {
       getSessionLimits: async () => ({
@@ -39,12 +39,12 @@ test("home leaves the usage bar hidden when the ledger could not read today's mi
   assert.equal(data.usageLimitMinutes, 30);
   const html = renderPage("pages/home/index", data);
   const text = visibleText(html);
-  assert.match(text, /今日聊天用量 用量暂未统计 上限 30 分钟/);
+  assert.match(text, /今日用量 待统计/);
   assert.doesNotMatch(text, /\d+%|单次上限/);
   assert.doesNotMatch(html, /class="progress-fill"/);
 });
 
-test("home shows today's used minutes and daily cap", async () => {
+test("home shows today's used minutes without duplicating device budget controls", async () => {
   const { data } = await loadHome({
     api: {
       getSessionLimits: async () => ({
@@ -56,10 +56,11 @@ test("home shows today's used minutes and daily cap", async () => {
     },
   });
   const text = visibleText(renderPage("pages/home/index", data));
-  assert.match(text, /18 \/ 30 分钟 上限 30 分钟/);
+  assert.match(text, /今日用量 18 分钟/);
+  assert.doesNotMatch(text, /上限|\/ 30/);
 });
 
-test("home ring fills the used share of the daily budget", async () => {
+test("home keeps ledger values available while showing a compact usage summary", async () => {
   const { data } = await loadHome({
     api: {
       getSessionLimits: async () => ({
@@ -74,8 +75,8 @@ test("home ring fills the used share of the daily budget", async () => {
   assert.equal(data.usageLimitMinutes, 30);
   assert.equal(data.usageFillPercent, 13);
   const html = renderPage("pages/home/index", data);
-  assert.match(html, /class="progress-fill"[^>]*style="width: 13%;/);
-  assert.match(visibleText(html), /4 \/ 30 分钟 上限 30 分钟/);
+  assert.doesNotMatch(html, /class="progress-fill"/);
+  assert.match(visibleText(html), /今日用量 4 分钟/);
 });
 
 test("home shows today's minutes only when the session-limits read carries them", async () => {
@@ -93,10 +94,10 @@ test("home shows today's minutes only when the session-limits read carries them"
   assert.equal(data.usageUsedMinutes, 18);
   const html = renderPage("pages/home/index", data);
   const text = visibleText(html);
-  assert.match(text, /18 \/ 30 分钟/);
-  assert.doesNotMatch(text, /用量暂未统计/);
+  assert.match(text, /今日用量 18 分钟/);
+  assert.doesNotMatch(text, /待统计/);
   assert.equal(data.usageFillPercent, 60);
-  assert.match(html, /class="progress-fill"[^>]*style="width: 60%;/);
+  assert.doesNotMatch(html, /class="progress-fill"/);
 
   const failed = await loadHome({
     api: {
@@ -106,7 +107,7 @@ test("home shows today's minutes only when the session-limits read carries them"
     },
   });
   assert.equal(failed.data.usageKnown, false);
-  assert.match(visibleText(renderPage("pages/home/index", failed.data)), /用量暂未统计/);
+  assert.match(visibleText(renderPage("pages/home/index", failed.data)), /今日用量 待统计/);
 });
 
 test("home links to device settings when the signed profile has no daily budget", async () => {
@@ -122,7 +123,7 @@ test("home links to device settings when the signed profile has no daily budget"
   assert.equal(data.usageLimitMinutes, null);
   assert.equal(data.quietHoursLabel, "");
   const text = visibleText(renderPage("pages/home/index", data));
-  assert.match(text, /查看设备设置/);
+  assert.match(text, /查看设备/);
   assert.match(text, /18 分钟/);
   assert.match(text, /安静时段 未设置/);
   assert.doesNotMatch(text, /21:00|\b30\b/);
@@ -152,7 +153,8 @@ test("home counts all recent summaries and today's conversations separately", as
   );
   const homeText = visibleText(renderPage("pages/home/index", data));
   assert.match(homeText, /近期回顾/);
-  assert.match(homeText, /今天对话 0 次 近期摘要 4 条/);
+  assert.match(homeText, /今日对话 0 次/);
+  assert.match(homeText, /近期摘要 4 条/);
   const empty = await loadHome({ api: { getChildSessionSummaries: async () => ({ items: [] }), getMemoryDays: async () => ({ items: [] }) } });
   assert.equal(empty.data.summaryCount, 0);
   assert.equal(empty.data.todayCount, 0);

@@ -1,0 +1,122 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const test = require("node:test");
+const { loadPage } = require("../scripts/mp-harness/runtime");
+const { renderPage } = require("../scripts/mp-harness/render");
+const { shippedFiles } = require("../scripts/package-size");
+const { companions, companionById, defaultCompanionId } = require("../utils/companions");
+const fx = require("../scripts/mp-harness/fixtures");
+
+const root = path.join(__dirname, "..");
+const visibleText = (html) => html.replace(/<head>[\s\S]*?<\/head>/g, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+
+test("legacy role keys resolve to one default voice presentation without body metadata", () => {
+  assert.equal(companions.length, 1);
+  for (const identifier of [defaultCompanionId, "taoxi", "mianmian", "axu", "xuanmo", "cu_0123", "unknown"]) {
+    const companion = companionById(identifier);
+    assert.equal(companion.voiceId, "warm_companion");
+    assert.equal(companion.voiceName, "默认声音");
+    assert.equal(companion.name, "Memoria");
+    assert.equal(companion.image, undefined);
+    assert.equal(companion.bodyStyleId, undefined);
+  }
+});
+
+test("control pages never render or register robot artwork, face screens, or mascots", () => {
+  for (const page of require("../app.json").pages) {
+    const template = fs.readFileSync(path.join(root, `${page}.wxml`), "utf8");
+    const config = JSON.parse(fs.readFileSync(path.join(root, `${page}.json`), "utf8"));
+    assert.doesNotMatch(template, /face-badge|device-screen|\/assets\/(?:mascots|companions|robots)\//, page);
+    assert.equal(config.usingComponents?.["face-badge"], undefined, page);
+    assert.equal(config.usingComponents?.["device-screen"], undefined, page);
+  }
+});
+
+test("the production package excludes robot artwork, face screens, mascots, and old voice samples", () => {
+  const shipped = shippedFiles();
+  assert.equal(shipped.some((file) => /^(assets\/(?:mascots|companions|robots|voices)|components\/(?:face-badge|device-screen))\//.test(file)), false);
+});
+
+test("the home status card keeps device identity, connection state, and working device navigation", async () => {
+  for (const online of [true, false]) {
+    const harness = loadPage("pages/home/index", fx.authed(online ? {} : {
+      getActivationStatus: async () => ({ status: "failed", network: { internet: false } }),
+    }));
+    try {
+      const data = await harness.run();
+      assert.equal(data.online, online);
+      const html = renderPage("pages/home/index", data, { eventHandlers: true });
+      const text = visibleText(html);
+      assert.ok(text.includes(data.devicePlaceName));
+      assert.ok(text.includes(online ? "设备在线" : "设备离线"));
+      assert.match(text, /今日用量/);
+      assert.match(html, /data-handler="openDevice"/);
+      harness.page.openDevice();
+      assert.equal(harness.wxCalls.filter((call) => call.name === "switchTab").at(-1)?.args[0].url, "/pages/device/index");
+    } finally {
+      harness.restore();
+    }
+  }
+});
+
+test("default voice information needs no profile reads, writes, login, or audio playback", async () => {
+  const accesses = [];
+  const harness = loadPage("pages/companion/index", fx.guest({
+    getProfile: async () => accesses.push("read"),
+    updateProfile: async () => accesses.push("write"),
+  }));
+  try {
+    const data = await harness.run();
+    const text = visibleText(renderPage("pages/companion/index", data));
+    assert.match(text, /所有机器人共用默认声音/);
+    assert.doesNotMatch(text, /试听|已选|选这个|星澜|桃喜|绵绵|阿序|玄墨/);
+    assert.deepEqual(accesses, []);
+    assert.equal(harness.page.chooseCompanion, undefined);
+    assert.equal(harness.page.togglePreview, undefined);
+    assert.equal(harness.wxCalls.some((call) => /login|request|AudioContext/.test(call.name)), false);
+    assert.equal(require("../utils/tab-routes").isTabRoute("/pages/companion/index"), false);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("binding has no role picker or prerecorded sample and submits the default key", async () => {
+  const harness = loadPage("pages/bind/index", fx.authed(fx.bindApi));
+  try {
+    await harness.run(fx.BIND_QUERY);
+    await harness.page.chooseMode({ currentTarget: { dataset: { mode: "parent_for_child" } } });
+    await harness.settle();
+    const text = visibleText(renderPage("pages/bind/index", harness.page.data));
+    assert.match(text, /默认声音 所有机器人共用/);
+    assert.doesNotMatch(text, /试听|已选择|选这个|星澜|桃喜/);
+    assert.equal(harness.page.onPersonaTap, undefined);
+    harness.page.setData({ "form.childNickname": "乐乐" });
+    await harness.page.goToReview();
+    assert.equal(harness.page._buildRequest().persona_selection, "starlight");
+    assert.match(visibleText(renderPage("pages/bind/index", harness.page.data)), /声音 默认声音/);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("custom expression management remains reachable from device assignment without changing voices", async () => {
+  const harness = loadPage("pages/device/index", fx.authed());
+  try {
+    await harness.run();
+    harness.page.setData({ personaSheetVisible: true, sheetOpen: true, personaSaving: false });
+    const html = renderPage("pages/device/index", harness.page.data, { eventHandlers: true });
+    assert.match(html, /data-handler="openCustomPersona"/);
+    assert.match(visibleText(html), /创建或管理自定义表达/);
+    harness.page.openCustomPersona();
+    assert.equal(harness.page.data.personaSheetVisible, false);
+    assert.equal(harness.page.data.sheetOpen, false);
+    assert.equal(harness.wxCalls.filter((call) => call.name === "navigateTo").at(-1)?.args[0].url, "/pages/persona-custom/index");
+    const count = harness.wxCalls.filter((call) => call.name === "navigateTo").length;
+    harness.page.setData({ personaSaving: true });
+    harness.page.openCustomPersona();
+    assert.equal(harness.wxCalls.filter((call) => call.name === "navigateTo").length, count);
+  } finally {
+    harness.restore();
+  }
+});

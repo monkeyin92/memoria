@@ -1,7 +1,7 @@
 {
-  "navigationBarTitleText": "声音",
+  "navigationBarTitleText": "默认声音",
   "navigationStyle": "custom",
   "usingComponents": {
-    "face-badge": "/components/face-badge/index"
+    "mp-icon": "/components/mp-icon/index"
   }
 }

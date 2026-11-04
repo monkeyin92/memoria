@@ -1,6 +1,6 @@
 <view class="page-shell trial-page tab-page home-v4" style="{{statusBarStyle}}">
   <view wx:if="{{!authenticated}}" class="home-guest">
-    <view class="guest-brand-art"><face-badge role="starlight" size="brand" plain="{{true}}"></face-badge></view>
+    <text class="home-wordmark">Memoria</text>
     <text class="page-title">{{guestHome.productTitle}}</text>
     <text class="page-lede">{{guestHome.productBody}}</text>
     <view class="card guest-features">
@@ -34,10 +34,10 @@
   <block wx:else>
     <view class="home-head">
       <view class="home-head-copy">
-        <text class="eyebrow">{{pageLede}}</text>
+        <text class="home-wordmark">Memoria</text>
         <text class="trial-title">今天</text>
       </view>
-      <view class="home-avatar" bindtap="openProfile" aria-label="打开我的资料">{{avatarGlyph}}</view>
+      <text class="home-date">{{pageLede}}</text>
     </view>
 
     <view wx:if="{{loading}}" class="trial-card home-pad">
@@ -90,9 +90,29 @@
         <image class="home-chev" src="/assets/ui/v4/chev-rust.svg" />
       </view>
 
+      <view class="home-status-card">
+        <view class="home-status-top">
+          <text class="home-status-label">当前设备</text>
+          <view class="home-status-state"><view class="home-status-dot {{online ? '' : 'home-status-dot-off'}}"></view><text>{{online ? '设备在线' : '设备离线'}}</text></view>
+        </view>
+        <text class="home-status-title">{{devicePlaceName}}</text>
+        <view class="home-status-bottom">
+          <text class="home-status-caption">{{online ? '查看用量与设备设置。' : '检查电源与网络后重试。'}}</text>
+          <button class="home-status-button" bindtap="openDevice">查看设备</button>
+        </view>
+      </view>
+
+      <view class="home-daily-strip" bindtap="openDevice">
+        <view class="home-daily-item"><text class="home-lbl">今日对话</text><text class="home-daily-value">{{todayCount}}<text class="home-daily-unit"> 次</text></text></view>
+        <view class="home-daily-item"><text class="home-lbl">今日用量</text><text class="home-daily-value">{{usageKnown ? usageUsedMinutes : '待统计'}}<text wx:if="{{usageKnown}}" class="home-daily-unit"> 分钟</text></text></view>
+        <view class="home-daily-more"><image class="home-chev" src="/assets/ui/v4/chev-faint.svg" /></view>
+      </view>
+
+      <view class="home-section-head"><text>近期回顾</text><button class="home-section-link" bindtap="openMemory">查看全部</button></view>
       <view class="trial-card trial-card-xl home-review-card" bindtap="openMemory">
         <view class="home-review-top">
-          <text class="home-lbl">近期回顾</text>
+          <view class="home-review-icon"><image src="/assets/ui/v4/note-ink.svg" aria-hidden="true"></image></view>
+          <text class="home-lbl">{{memoryPreviews.length ? '最近聊到的事' : '对话留下的片段'}}</text>
         </view>
         <view class="home-review-body">
           <view class="home-review-copy">
@@ -100,40 +120,14 @@
             <text wx:elif="{{dailySummaryText}}" class="home-review-lead">{{dailySummaryText}}</text>
             <text wx:else class="home-review-empty">还没有摘要，聊过之后会出现在这里</text>
           </view>
-          <view class="home-review-art"><face-badge role="starlight" size="review" plain="{{true}}"></face-badge></view>
         </view>
         <view class="home-review-meta">
-          <text class="home-review-stat">今天对话 {{todayCount}} 次</text>
           <text wx:if="{{showChildMemory}}" class="home-review-stat">近期摘要 {{summaryCount}} 条</text>
-          <text class="home-review-open">打开回顾 ↗</text>
+          <text class="home-review-open">打开回顾</text>
+          <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
       </view>
 
-      <view class="home-section-head"><text>陪伴日常</text><text class="home-section-meta">在这里，慢慢了解 TA</text></view>
-      <view class="trial-card home-device-card" bindtap="openDevice">
-        <view class="home-device-illustration"><device-screen online="{{online}}" size="120"></device-screen></view>
-        <view class="home-device-copy">
-          <view class="trial-status-pill {{online ? '' : 'is-off'}}">
-            <view class="trial-status-dot"></view>
-            <text>{{devicePlaceName}} · {{online ? '在线' : '离线'}}</text>
-          </view>
-          <text class="home-lbl">今日聊天用量</text>
-          <view wx:if="{{usageKnown}}" class="home-usage-compact">
-            <text class="home-usage-compact-num">{{usageUsedMinutes}}</text>
-            <text wx:if="{{usageLimitMinutes}}" class="home-usage-compact-unit"> / {{usageLimitMinutes}} 分钟</text>
-            <text wx:else class="home-usage-compact-unit"> 分钟</text>
-          </view>
-          <text wx:else class="home-usage-pending">用量暂未统计</text>
-          <text class="home-usage-cap-hint">{{usageLimitMinutes ? usageCapLabel : '查看设备设置'}}</text>
-          <view wx:if="{{usageKnown && usageLimitMinutes}}" class="progress-track home-usage-track">
-            <view
-              class="progress-fill"
-              style="width: {{usageKnown && usageFillPercent ? usageFillPercent : 0}}%;"
-            ></view>
-          </view>
-        </view>
-        <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
-      </view>
 
       <view wx:if="{{showChildMemory}}" class="trial-card home-row-card home-memory-entry" bindtap="openChildMemory">
         <view class="mp-icon-tile"><image src="/assets/ui/v4/book-accent.svg" /></view>
@@ -152,7 +146,7 @@
           </view>
           <switch
             checked="{{safetySubscribeKnown && safetySubscribeOn}}"
-            color="#176B5B"
+            color="#2455EF"
             disabled="{{!safetySubscribeKnown || safetySubscribeBusy}}"
             bindchange="onSafetySubscribeChange"
           />

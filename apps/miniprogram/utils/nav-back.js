@@ -3,7 +3,6 @@
 const TAB_PAGES = Object.freeze([
   "/pages/home/index",
   "/pages/memory/index",
-  "/pages/companion/index",
   "/pages/device/index",
   "/pages/profile/index",
 ]);

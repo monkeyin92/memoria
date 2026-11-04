@@ -163,12 +163,16 @@
   padding: 12px var(--mp-pad-card);
   border-bottom: none;
 }
-.memory-day { position: relative; padding: 20px; border-radius: 4px 22px 22px 22px; }
-.memory-day-0 { background: var(--mp-peach); }
-.memory-day-1 { background: var(--mp-surface); }
-.memory-day-2 { background: var(--mp-lilac); }
+.memory-page .page-heading { padding: 0 0 20px; border-bottom: 1px solid var(--mp-line); }
+.memory-heading-icon { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 56px; height: 64px; margin-top: 38px; border-radius: 24px 24px 8px 8px; background: var(--mp-peach); }
+.memory-day { position: relative; padding: 20px; border-radius: 20px; }
+.memory-day-featured { background: var(--mp-paper); margin-bottom: 8px; }
+.memory-day-plain { margin: 0 0 0 8px; padding: 16px 4px 16px 20px; border-left: 2px solid var(--mp-line); border-bottom: 1px solid var(--mp-line); border-radius: 0; background: transparent; box-shadow: none; }
+.memory-day-plain::before { content: ""; position: absolute; left: -5px; top: 24px; width: 8px; height: 8px; border-radius: 50%; background: var(--mp-accent); }
+.memory-day-plain .memory-day-head { padding-bottom: 0; margin-bottom: 4px; border-bottom: none; }
+.memory-day-plain .memory-day-label { font-size: var(--mp-type-card); }
 .memory-day-head { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--mp-soft-line); }
 .memory-day-label { font-size: var(--mp-type-title); }
 .memory-line-text { line-height: 1.85; }
-.memory-claims-row { background: var(--mp-lilac); }
+.memory-claims-row { background: var(--mp-lime); }
 .memory-empty { padding: 28px 20px; background: var(--mp-paper); }

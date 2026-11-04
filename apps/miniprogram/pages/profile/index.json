@@ -2,7 +2,6 @@
   "navigationBarTitleText": "我的",
   "navigationStyle": "custom",
   "usingComponents": {
-    "mp-icon": "/components/mp-icon/index",
-    "device-screen": "/components/device-screen/index"
+    "mp-icon": "/components/mp-icon/index"
   }
 }

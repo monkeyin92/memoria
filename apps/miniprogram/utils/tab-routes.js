@@ -5,7 +5,6 @@
 const TAB_ROUTES = new Set([
   "/pages/home/index",
   "/pages/memory/index",
-  "/pages/companion/index",
   "/pages/device/index",
   "/pages/profile/index",
 ]);

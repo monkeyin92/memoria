@@ -1,0 +1,11 @@
+   174.0 KiB  assets/ui
+   166.1 KiB  utils/device-onboarding
+   138.7 KiB  assets/bg
+   110.1 KiB  pages/device
+    61.4 KiB  utils/device-binding.js
+    52.5 KiB  utils/api.js
+    43.6 KiB  pages/bind
+    42.5 KiB  generated/multi-subject-contracts.js
+    37.3 KiB  pages/memory
+    37.3 KiB  pages/profile
+1170.1 KiB of 2048 KiB main package limit

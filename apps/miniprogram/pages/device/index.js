@@ -151,12 +151,12 @@ function personaRows(binding, payload, options, accountCompanionId = "") {
       role_label: subject.role_label,
       assignment_id: assignmentId,
       persona_id: personaId,
-      persona_name: labels.get(personaId) || personaId || "未设置",
+      persona_name: labels.get(personaId) || (personaId && !personaId.startsWith("cu_") ? "已有表达方式" : personaId) || "未设置",
       is_override: Boolean(override),
       source_label: !override
         ? "跟随设备默认"
         : accountCompanionId && personaId === accountCompanionId
-          ? "跟随陪伴选择"
+          ? "已有账号设置"
           : "已单独分配",
     };
   });
@@ -169,7 +169,7 @@ function personaOptionItems(personas) {
     ...companions.map((companion) => ({
       id: companion.id,
       label: companion.name,
-      note: companion.tagline,
+      note: "设备默认表达",
     })),
     ...custom
       .filter(
@@ -319,8 +319,8 @@ Page({
     authenticated: false,
     loading: true,
     devicePlaceName: "设备",
-    personaName: "星澜",
-    personaVoice: "角色默认声音",
+    personaName: "Memoria",
+    personaVoice: "默认声音",
     heroRoleId: defaultCompanionId,
     currentUserLabelConfirmed: false,
     online: false,
@@ -443,7 +443,7 @@ Page({
 
   async onShow() {
     if (typeof this.getTabBar === "function" && this.getTabBar()) {
-      this.getTabBar().setData({ selected: 3, hidden: Boolean(this.data.sheetOpen) });
+      this.getTabBar().setData({ selected: 2, hidden: Boolean(this.data.sheetOpen) });
     }
     const app = getApp();
     const openUnbindSheet = Boolean(app?.globalData?.openUnbindSheetOnDevice);
@@ -1172,9 +1172,14 @@ Page({
     this.loadDevice().finally(() => wx.stopPullDownRefresh());
   },
 
-  // 角色页是 tabBar 页，navigateTo 打不开它。
   openCompanion() {
-    wx.switchTab({ url: "/pages/companion/index" });
+    wx.navigateTo({ url: "/pages/companion/index" });
+  },
+
+  openCustomPersona() {
+    if (this.data.personaSaving) return;
+    this.closePersonaSheet();
+    wx.navigateTo({ url: "/pages/persona-custom/index" });
   },
 
   openGuardian() {

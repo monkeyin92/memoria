@@ -15,7 +15,7 @@ const ICONS = {
   home: '<path d="M3.5 10.5 12 4l8.5 6.5V19a1.5 1.5 0 0 1-1.5 1.5h-4v-6h-6v6H5A1.5 1.5 0 0 1 3.5 19z"/>',
   book: '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v16h5.5a1.5 1.5 0 0 0 1.5-1.5z"/>',
   face: '<rect x="4" y="6" width="16" height="13" rx="5"/><path d="M12 6V3.5"/><circle cx="12" cy="3" r=".6"/><path d="M9 12v1M15 12v1M10 16c1.2.8 2.8.8 4 0"/>',
-  dev: '<rect x="5" y="3.5" width="14" height="17" rx="4"/><circle cx="12" cy="10" r="3"/><path d="M9.5 16.5h5"/>',
+  dev: '<path d="M4 7h4M12 7h8M4 17h8M16 17h4"/><circle cx="10" cy="7" r="2"/><circle cx="14" cy="17" r="2"/>',
   user: '<circle cx="12" cy="8.5" r="4"/><path d="M4.5 20c1.3-3.6 4.2-5.5 7.5-5.5s6.2 1.9 7.5 5.5"/>',
   heart: '<path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.4 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"/>',
   note: '<path d="M7 3.5h7l4 4V19a1.5 1.5 0 0 1-1.5 1.5h-9.5A1.5 1.5 0 0 1 5.5 19V5A1.5 1.5 0 0 1 7 3.5z"/><path d="M9 12h6M9 15.5h4"/>',
@@ -46,12 +46,12 @@ const ICONS = {
 };
 
 const VARIANTS = {
-  "tab-off": { stroke: "#536A6C", fill: "none" },
-  "tab-on": { stroke: "#176B5B", fill: "#E3F0ED" },
-  accent: { stroke: "#176B5B", fill: "none" },
-  strong: { stroke: "#172E32", fill: "none" },
-  ink: { stroke: "#536A6C", fill: "none" },
-  faint: { stroke: "#9DAFAD", fill: "none" },
+  "tab-off": { stroke: "#566079", fill: "none" },
+  "tab-on": { stroke: "#214CDB", fill: "#E5EBFF" },
+  accent: { stroke: "#214CDB", fill: "none" },
+  strong: { stroke: "#1A2440", fill: "none" },
+  ink: { stroke: "#566079", fill: "none" },
+  faint: { stroke: "#8996AF", fill: "none" },
   rust: { stroke: "#9A4732", fill: "none" },
   white: { stroke: "#FFFFFF", fill: "none" },
   "white-bold": { stroke: "#FFFFFF", fill: "none", width: 2.6 },

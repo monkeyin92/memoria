@@ -75,7 +75,7 @@ test("with no summaries yet the section explains when they appear", async () => 
   const harness = await openChildMemory({ ...fx.archiveApi, ...fx.emptyMemoryApi });
   try {
     const text = visibleText(renderPage("pages/child-memory/index", harness.page.data, { tabBar: false }));
-    assert.match(text, / 近期摘要 星澜还没有记住乐乐的事 还没有记忆。孩子和 Memoria 聊过之后，这里会出现摘要。 孩子说的原话/);
+    assert.match(text, / 近期摘要 Memoria还没有记住乐乐的事 还没有记忆。孩子和 Memoria 聊过之后，这里会出现摘要。 孩子说的原话/);
   } finally {
     harness.restore();
   }
