@@ -14,7 +14,7 @@ from services.common.memory_decision_contract import (  # noqa: E402
     recall_for,
     save_receipt,
 )
-from services.guardian.child_archive_recall import (  # noqa: E402
+from services.control_api.app.child_archive_companion_recall import (  # noqa: E402
     FACT_VERSION_PREFIX,
     grounded_items_from_archive_views,
 )
