@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import uuid
 from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -137,17 +138,17 @@ async def ingest_session_recap(
                 )
             except ValueError:
                 continue
-            # Session-recap archive facts are auto-extract births: never confirmed
-            # and never confidence/accuracy=1.0 (A01 contract / A02 wiring).
+            record_id = f"charch:{uuid.uuid4()}"
             birth = decide_auto_extract(
                 subject_key=body.subject_id,
                 predicate=item.field,
                 object_text=item.text,
                 polarity="positive",
                 rule_version=RULE_VERSION,
-                lifecycle="eligible_unwritten",
+                lifecycle="pending_confirm",
                 source_session_id=body.session_id,
                 confidence=DEFAULT_AUTO_CONFIDENCE,
+                record_id=record_id,
             )
             written = await layers.upsert_archive_fact(
                 fact,

@@ -1,57 +1,50 @@
-"""A02: auto-extract decisions never claim confirmed or confidence 1.0."""
+"""Auto-extract archive births stay candidate and below confidence 1.0."""
 
 from __future__ import annotations
 
-import sys
-import types
-
-sys.modules.setdefault("services.guardian", types.ModuleType("services.guardian"))
-sys.modules["services.guardian"].__path__ = ["services/guardian"]
-
-from services.guardian.preference_extract import (
-    DEFAULT_AUTO_CONFIDENCE,
-    RULE_VERSION,
-    extract_preference_decisions,
-)
-from services.guardian.session_recap import SessionTurn
+from services.common.memory_decision_contract import decide_auto_extract
+from services.guardian.preference_extract import DEFAULT_AUTO_CONFIDENCE, RULE_VERSION
+from services.memory_scope.child_layers import archive_birth_stamp
 
 
-def test_auto_extract_decisions_are_pending_or_eligible_never_confirmed() -> None:
-    decisions = extract_preference_decisions(
-        subject_key="child-1",
-        turns=[SessionTurn(role="user", text="我喜欢画画")],
-        source_session_id="sess-1",
-    )
-    assert len(decisions) == 1
-    decision = decisions[0]
-    assert decision.fact.provenance == "auto_extract"
-    assert decision.fact.rule_version == RULE_VERSION
-    assert decision.lifecycle in {"eligible_unwritten", "pending_confirm"}
-    assert decision.lifecycle != "confirmed"
-    assert decision.fact.confidence == DEFAULT_AUTO_CONFIDENCE
-    assert decision.fact.confidence is not None
-    assert decision.fact.confidence < 1.0
+def test_parent_archive_birth_stays_confirmed() -> None:
+    assert archive_birth_stamp(None) == ("confirmed", 1.0, "child_archive_fact")
 
 
-def test_write_archive_fact_rejects_confirmed_auto_birth() -> None:
-    from services.common.memory_decision_contract import (
-        CandidateFact,
-        MemoryDecision,
-        MemoryDecisionContractError,
-    )
-
-    fact = CandidateFact(
+def test_auto_extract_archive_birth_is_candidate_below_one() -> None:
+    decision = decide_auto_extract(
         subject_key="child-1",
         predicate="preference",
         object_text="喜欢画画",
         polarity="positive",
-        provenance="auto_extract",
         rule_version=RULE_VERSION,
-        confidence=0.75,
+        lifecycle="pending_confirm",
+        source_session_id="sess-1",
+        confidence=DEFAULT_AUTO_CONFIDENCE,
+        record_id="charch:auto-1",
     )
-    try:
-        MemoryDecision(fact=fact, lifecycle="confirmed", record_id="rec-1")
-        raised = False
-    except MemoryDecisionContractError:
-        raised = True
-    assert raised
+    status, confidence, reason = archive_birth_stamp(decision)
+    assert decision.fact.provenance == "auto_extract"
+    assert decision.lifecycle == "pending_confirm"
+    assert decision.record_id == "charch:auto-1"
+    assert status == "candidate"
+    assert confidence == DEFAULT_AUTO_CONFIDENCE
+    assert confidence < 1.0
+    assert reason == "child_archive_auto_extract"
+
+
+def test_missing_auto_confidence_stays_below_one() -> None:
+    decision = decide_auto_extract(
+        subject_key="child-1",
+        predicate="preference",
+        object_text="喜欢画画",
+        polarity="positive",
+        rule_version=RULE_VERSION,
+        lifecycle="pending_confirm",
+        confidence=None,
+        record_id="charch:auto-2",
+    )
+    status, confidence, _reason = archive_birth_stamp(decision)
+    assert status == "candidate"
+    assert confidence == DEFAULT_AUTO_CONFIDENCE
+    assert confidence < 1.0

@@ -29,11 +29,29 @@ from services.guardian.child_memory import (
     summary_expires_at,
     summary_payload,
 )
+from services.guardian.preference_extract import DEFAULT_AUTO_CONFIDENCE
 from services.memory_scope.subject_erasure import MAINTENANCE_ROLE, _require_subject
 
 ChildLayerEraseReason = Literal[
     "unbind_purge", "retention_expiry", "child_layer_erase"
 ]
+
+
+def archive_birth_stamp(birth_decision: MemoryDecision | None) -> tuple[str, float, str]:
+    """Status, confidence, and reason for one child-archive insert.
+
+    Parent writes omit the decision and stay confirmed at 1.0. An auto-extract
+    birth is a candidate below 1.0.
+    """
+
+    if birth_decision is None:
+        return "confirmed", 1.0, "child_archive_fact"
+    if birth_decision.fact.provenance != "auto_extract":
+        raise ValueError("birth_decision provenance must be auto_extract")
+    confidence = birth_decision.fact.confidence
+    if confidence is None:
+        confidence = DEFAULT_AUTO_CONFIDENCE
+    return "candidate", confidence, "child_archive_auto_extract"
 
 
 async def _scope(connection: asyncpg.Connection, **values: str | None) -> None:
@@ -255,18 +273,16 @@ class ChildLayerStore:
         birth_decision: MemoryDecision | None = None,
     ) -> ChildLayerRecord:
         stamped = created_at or datetime.now(UTC)
+        status, confidence, reason_code = archive_birth_stamp(birth_decision)
         record_id = f"charch:{uuid.uuid4()}"
+        if birth_decision is not None and birth_decision.record_id:
+            stripped = birth_decision.record_id.strip()
+            if stripped:
+                record_id = stripped
         receipt = f"{policy_receipt_id}:{record_id}"
-        if birth_decision is not None:
-            if birth_decision.fact.provenance != "auto_extract":
-                raise ValueError("birth_decision provenance must be auto_extract")
-            if birth_decision.lifecycle == "confirmed":
-                raise ValueError("auto_extract must not be written as confirmed")
-            confidence = float(birth_decision.fact.confidence or 0.75)
-            if confidence >= 1.0:
-                raise ValueError("auto_extract must not claim confidence/accuracy=1.0")
-            status = "candidate"
-            reason_code = "child_archive_auto_extract"
+        if birth_decision is None:
+            payload = archive_payload(fact, created_at=stamped, last_mentioned_at=stamped)
+        else:
             payload = archive_payload(
                 fact,
                 created_at=stamped,
@@ -274,11 +290,6 @@ class ChildLayerStore:
                 provenance=birth_decision.fact.provenance,
                 rule_version=birth_decision.fact.rule_version,
             )
-        else:
-            confidence = 1.0
-            status = "confirmed"
-            reason_code = "child_archive_fact"
-            payload = archive_payload(fact, created_at=stamped, last_mentioned_at=stamped)
         async with (await self._api()).acquire() as connection:
             async with connection.transaction():
                 await _scope(
