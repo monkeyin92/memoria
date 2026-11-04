@@ -273,7 +273,10 @@ class ASRStreamSupervisor:
                 reverse=True,
             ):
                 tail = self._tail_after_alnum_prefix(text, prior)
-                if tail is None or tail == text:
+                # Exact repeats of a committed clause (tail "") must stay —
+                # same words on a new turn are legitimate (warmup regression).
+                # Only peel when a non-empty new clause follows the prefix.
+                if tail is None or tail == text or not self._alnum_chars(tail):
                     continue
                 text = tail
                 changed = True
