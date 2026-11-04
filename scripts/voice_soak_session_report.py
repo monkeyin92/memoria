@@ -32,6 +32,20 @@ REPEAT_RATIO = 0.8
 MIN_TURNS_FOR_HALF = 4
 
 ReportStatus = Literal["pass", "fail", "incomplete"]
+ADVISORY_THRESHOLD_STATUS = "待产品确认"
+
+
+def _outcome(status: ReportStatus, failures: list[str]) -> dict[str, Any]:
+    if status == "pass":
+        if failures:
+            raise ValueError("pass cannot carry failures")
+    elif not failures:
+        raise ValueError("non-pass requires a reason")
+    elif status == "incomplete" and any(
+        not str(item).startswith("incomplete:") for item in failures
+    ):
+        raise ValueError("incomplete reasons must start with incomplete:")
+    return {"passed": status == "pass", "status": status, "failures": list(failures)}
 
 
 def _sha256(path: Path) -> str | None:
@@ -105,55 +119,69 @@ def slope(xs: list[float], ys: list[float]) -> tuple[float | None, float | None]
         return b, None
     resid = sum((y - my - b * (x - mx)) ** 2 for x, y in zip(xs, ys, strict=True))
     se = (resid / (n - 2) / sxx) ** 0.5
-    return b, (b / se if se else float("inf"))
+    if se == 0:
+        return b, None
+    return b, b / se
+
+
+def _latency(turn: dict[str, Any]) -> float | None:
+    if turn.get("kind") != "reply":
+        return None
+    value = turn.get("latency_s")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
 
 
 def half_stats(turns: list[dict[str, Any]]) -> dict[str, Any]:
-    lat = [
-        float(t["latency_s"])
-        for t in turns
-        if t["kind"] == "reply" and isinstance(t.get("latency_s"), (int, float))
-    ]
-    texts = [t["reply_text"] for t in turns if t["kind"] == "reply" and t.get("reply_text")]
-    pairs = list(zip(texts, texts[1:], strict=False))
-    if not pairs:
+    replies = [t for t in turns if t["kind"] == "reply"]
+    lat = [value for t in replies if (value := _latency(t)) is not None]
+    texts_missing = any(
+        not isinstance(t.get("reply_text"), str) or not t.get("reply_text") for t in replies
+    )
+    if texts_missing:
         repeat_rate: float | str | None = "缺"
         repeat_pairs = 0
     else:
-        rep = sum(difflib.SequenceMatcher(None, a, b).ratio() >= REPEAT_RATIO for a, b in pairs)
-        repeat_rate = round(rep / len(pairs), 3)
-        repeat_pairs = len(pairs)
+        texts = [str(t["reply_text"]) for t in replies]
+        pairs = list(zip(texts, texts[1:], strict=False))
+        if not pairs:
+            repeat_rate = "缺"
+            repeat_pairs = 0
+        else:
+            rep = sum(
+                difflib.SequenceMatcher(None, a, b).ratio() >= REPEAT_RATIO for a, b in pairs
+            )
+            repeat_rate = round(rep / len(pairs), 3)
+            repeat_pairs = len(pairs)
+    reply_count = len(replies)
     return {
         "turns": len(turns),
-        "replies": sum(t["kind"] == "reply" for t in turns),
-        "reply_rate": round(sum(t["kind"] == "reply" for t in turns) / len(turns), 3) if turns else None,
+        "replies": reply_count,
+        "reply_rate": round(reply_count / len(turns), 3) if turns else None,
         "repeat_rate": repeat_rate,
+        "adjacent_repeat_rate": repeat_rate,
         "repeat_pairs": repeat_pairs,
         "latency_p50_s": pct(lat, 0.5) if lat else None,
         "latency_p95_s": pct(lat, 0.95) if lat else None,
-        "threshold_status": {
-            "reply_rate": "待产品确认",
-            "repeat_rate": "待产品确认",
-        },
+        "threshold_status": ADVISORY_THRESHOLD_STATUS,
     }
 
 
 def long_session_metrics(turns: list[dict[str, Any]]) -> dict[str, Any]:
+    turns = sorted(turns, key=lambda turn: turn["anchor_ts"])
     if len(turns) < MIN_TURNS_FOR_HALF:
         return {
             "verdict": "incomplete",
             "reasons": [f"incomplete: sample_turns: {len(turns)} < {MIN_TURNS_FOR_HALF}"],
             "turns": len(turns),
+            "threshold_status": ADVISORY_THRESHOLD_STATUS,
         }
     mid = (turns[0]["anchor_ts"] + turns[-1]["anchor_ts"]) / 2
     first = half_stats([t for t in turns if t["anchor_ts"] < mid])
     second = half_stats([t for t in turns if t["anchor_ts"] >= mid])
-    pts = [
-        (i + 1, float(t["latency_s"]))
-        for i, t in enumerate(turns)
-        if t["kind"] == "reply" and isinstance(t.get("latency_s"), (int, float))
-    ]
-    b, tval = slope([x for x, _ in pts], [y for _, y in pts])
+    latencies = [latency for t in turns if (latency := _latency(t)) is not None]
+    b, tval = slope([float(i) for i in range(1, len(latencies) + 1)], latencies)
     first_p50 = first["latency_p50_s"]
     second_p50 = second["latency_p50_s"]
     delta = None
@@ -176,10 +204,11 @@ def long_session_metrics(turns: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "thresholds": {
             "half_p50_delta_max_s": HALF_P50_DELTA_MAX_S,
-            "reply_rate": "待产品确认",
-            "repeat_rate": "待产品确认",
-            "latency_slope_s_per_turn": "待产品确认",
+            "reply_rate": ADVISORY_THRESHOLD_STATUS,
+            "repeat_rate": ADVISORY_THRESHOLD_STATUS,
+            "latency_slope_s_per_turn": ADVISORY_THRESHOLD_STATUS,
         },
+        "threshold_status": ADVISORY_THRESHOLD_STATUS,
         "split_at": round(mid, 3),
         "first_half": first,
         "second_half": second,
@@ -272,21 +301,21 @@ def report_run(run: Path) -> dict[str, Any]:
         "bridge.log": _sha256(run / "bridge.log"),
         "serial.log": _sha256(run / "serial.log"),
     }
+    params = _meta_fields(run)
     base: dict[str, Any] = {
         "schema_version": "voice-soak-session-report-v1",
         "run_id": run.name,
         "path": str(run.resolve()),
         "source_sha256": source_sha,
-        "params": _meta_fields(run),
+        "version": params.get("version") or params.get("agent") or None,
+        "params": params,
         "gates": {"half_p50_delta_max_s": HALF_P50_DELTA_MAX_S, "min_duration_s": MIN_DURATION_S},
     }
 
     if not timeline.is_file() or timeline.stat().st_size == 0:
         return {
             **base,
-            "passed": False,
-            "status": "incomplete",
-            "failures": ["incomplete: missing_log: timeline.jsonl"],
+            **_outcome("incomplete", ["incomplete: missing_log: timeline.jsonl"]),
             "duration_s": None,
             "long_session": None,
             "interrupt": None,
@@ -297,9 +326,7 @@ def report_run(run: Path) -> dict[str, Any]:
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
         return {
             **base,
-            "passed": False,
-            "status": "fail",
-            "failures": [str(exc)],
+            **_outcome("fail", [str(exc)]),
             "duration_s": None,
             "long_session": None,
             "interrupt": None,
@@ -328,7 +355,11 @@ def report_run(run: Path) -> dict[str, Any]:
     long_session = long_session_metrics(turns)
 
     if long_session.get("verdict") == "incomplete":
-        incomplete.extend(str(r) for r in long_session.get("reasons", []) if str(r).startswith("incomplete:"))
+        incomplete.extend(
+            str(reason)
+            for reason in long_session.get("reasons", [])
+            if str(reason).startswith("incomplete:")
+        )
 
     failures: list[str] = []
     if incomplete:
@@ -343,13 +374,10 @@ def report_run(run: Path) -> dict[str, Any]:
 
     return {
         **base,
-        "passed": status == "pass",
-        "status": status,
-        "failures": failures,
+        **_outcome(status, failures),
         "duration_s": round(duration, 3) if duration is not None else None,
         "long_session": long_session,
         "interrupt": interrupt,
-        "version": base["params"].get("version") or base["params"].get("agent") or None,
     }
 
 

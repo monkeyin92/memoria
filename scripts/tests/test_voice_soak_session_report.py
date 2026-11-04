@@ -206,5 +206,52 @@ def test_incomplete_when_interrupt_logs_missing(tmp_path: Path) -> None:
     _write(run, rows)  # no bridge/serial
     result = report.report_run(run)
     assert result["status"] == "incomplete"
+    assert result["passed"] is False
     assert "incomplete: missing_log: bridge.log" in result["failures"]
     assert "incomplete: missing_log: serial.log" in result["failures"]
+    assert not any(str(item).startswith("half_p50_delta_s") for item in result["failures"])
+
+
+def test_incomplete_when_fewer_than_four_turns(tmp_path: Path) -> None:
+    run = tmp_path / "run-few"
+    rows: list[dict[str, object]] = []
+    for index in range(1, 4):
+        rows.extend(_turn_pair(index, offset_s=400 * index, latency_s=2.0, reply_text=f"少{index}"))
+    rows.append({"kind": "post_scenario_observation", "verdict": "verified_idle", "ts": BASE + 1600})
+    _write(run, rows)
+    result = report.report_run(run)
+    assert result["status"] == "incomplete"
+    assert result["passed"] is False
+    assert any(item.startswith("incomplete: sample_turns:") for item in result["failures"])
+    assert report.main([str(run)]) == 1
+
+
+def test_missing_reply_text_is_marked_and_does_not_fail(tmp_path: Path) -> None:
+    bridge, serial = _confirmed_stop_logs()
+    run = tmp_path / "run-missing-text"
+    rows = _long_run_rows(
+        first_latencies=[2.0, 2.0, 2.0, 2.0],
+        second_latencies=[2.0, 2.0, 2.0, 2.0],
+    )
+    replies = [row for row in rows if row.get("kind") == "reply"]
+    del replies[1]["reply_text"]
+    _write(run, rows, bridge, serial)
+    result = report.report_run(run)
+    assert result["status"] == "pass"
+    assert result["passed"] is True
+    assert result["long_session"]["first_half"]["adjacent_repeat_rate"] == "缺"
+    assert isinstance(result["long_session"]["second_half"]["adjacent_repeat_rate"], float)
+    assert result["long_session"]["threshold_status"] == "待产品确认"
+    assert result["long_session"]["repeat_note"]
+
+
+def test_latency_slope_counts_replies_with_latency() -> None:
+    turns = [
+        {"kind": "reply", "latency_s": 1.0, "reply_text": "甲", "anchor_ts": 0.0},
+        {"kind": "no_reply", "anchor_ts": 10.0},
+        {"kind": "reply", "latency_s": 2.0, "reply_text": "乙", "anchor_ts": 20.0},
+        {"kind": "reply", "latency_s": 3.0, "reply_text": "丙", "anchor_ts": 30.0},
+        {"kind": "reply", "latency_s": 4.0, "reply_text": "丁", "anchor_ts": 40.0},
+    ]
+    metrics = report.long_session_metrics(turns)
+    assert metrics["latency_slope_s_per_turn"] == 1.0
