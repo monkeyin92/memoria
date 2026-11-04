@@ -1,4 +1,6 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 
 process.env.TZ = "Asia/Shanghai";
@@ -8,6 +10,10 @@ const { renderPage } = require("../scripts/mp-harness/render");
 const fx = require("../scripts/mp-harness/fixtures");
 
 const CHILD = { minorId: "p_child", name: "乐乐" };
+const CHILD_MEMORY_WXML = fs.readFileSync(
+  path.join(__dirname, "../pages/child-memory/index.wxml"),
+  "utf8",
+);
 
 function visibleText(html) {
   return html.replace(/<head>[\s\S]*?<\/head>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -92,16 +98,33 @@ test("archive lifecycle rows bind status and the review action set", async () =>
     assert.match(text, /这条不对/);
     assert.match(text, /历史变更/);
     assert.match(text, /撤回/);
-    assert.match(html, /data-record-id="auto-1"[\s\S]*?bindtap="askConfirmArchive"|bindtap="askConfirmArchive"[\s\S]*?data-record-id="auto-1"/);
-    assert.match(html, /data-record-id="pend-1"[\s\S]*?bindtap="askConfirmArchive"|bindtap="askConfirmArchive"[\s\S]*?data-record-id="pend-1"/);
-    assert.match(html, /data-record-id="ok-1"[\s\S]*?bindtap="askCorrectArchive"|bindtap="askCorrectArchive"[\s\S]*?data-record-id="ok-1"/);
-    assert.match(html, /data-record-id="ok-1"[\s\S]*?bindtap="askWithdrawArchive"|bindtap="askWithdrawArchive"[\s\S]*?data-record-id="ok-1"/);
-    assert.match(html, /data-record-id="ok-1"[\s\S]*?bindtap="askDeleteArchive"|bindtap="askDeleteArchive"[\s\S]*?data-record-id="ok-1"/);
-    assert.match(html, /data-record-id="ok-1"[\s\S]*?bindtap="askHistoryChange"|bindtap="askHistoryChange"[\s\S]*?data-record-id="ok-1"/);
-    assert.match(html, /data-record-id="out-1"[\s\S]*?bindtap="askHistoryChange"|bindtap="askHistoryChange"[\s\S]*?data-record-id="out-1"/);
-    assert.match(html, /data-record-id="exp-1"[\s\S]*?bindtap="askConfirmArchive"|bindtap="askConfirmArchive"[\s\S]*?data-record-id="exp-1"/);
-    assert.match(html, /data-record-id="exp-1"[\s\S]*?bindtap="askDeleteArchive"|bindtap="askDeleteArchive"[\s\S]*?data-record-id="exp-1"/);
-    assert.equal(harness.page.data.archiveFlat.find((item) => item.recordId === "out-1").pending, false);
+    assert.match(CHILD_MEMORY_WXML, /bindtap="askConfirmArchive"/);
+    assert.match(CHILD_MEMORY_WXML, /bindtap="askCorrectArchive"/);
+    assert.match(CHILD_MEMORY_WXML, /bindtap="askHistoryChange"/);
+    assert.match(CHILD_MEMORY_WXML, /bindtap="askWithdrawArchive"/);
+    assert.match(CHILD_MEMORY_WXML, /bindtap="askDeleteArchive"/);
+    assert.match(CHILD_MEMORY_WXML, /fact\.pending \|\| fact\.displayLifecycle === 'expired'/);
+    assert.match(CHILD_MEMORY_WXML, /fact\.displayLifecycle === 'parent_confirmed' \|\| fact\.displayLifecycle === 'withdrawn'/);
+    assert.match(html, /data-record-id="auto-1"[^>]*>确认这条记忆</);
+    assert.match(html, /data-record-id="pend-1"[^>]*>确认这条记忆</);
+    assert.match(html, /data-record-id="ok-1"[^>]*>这条不对</);
+    assert.match(html, /data-record-id="ok-1"[^>]*>历史变更</);
+    assert.match(html, /data-record-id="ok-1"[^>]*>撤回</);
+    assert.match(html, /class="cm-delete"[^>]*data-record-id="ok-1"|data-record-id="ok-1"[^>]*class="cm-delete"/);
+    assert.match(html, /data-record-id="out-1"[^>]*>历史变更</);
+    assert.doesNotMatch(html, /data-record-id="out-1"[^>]*>确认这条记忆</);
+    assert.doesNotMatch(html, /data-record-id="out-1"[^>]*>这条不对</);
+    assert.doesNotMatch(html, /data-record-id="out-1"[^>]*>撤回</);
+    assert.doesNotMatch(html, /class="cm-delete"[^>]*data-record-id="out-1"|data-record-id="out-1"[^>]*class="cm-delete"/);
+    assert.match(html, /data-record-id="exp-1"[^>]*>确认这条记忆</);
+    assert.match(html, /class="cm-delete"[^>]*data-record-id="exp-1"|data-record-id="exp-1"[^>]*class="cm-delete"/);
+    harness.page.askConfirmArchive({ currentTarget: { dataset: { recordId: "auto-1" } } });
+    assert.equal(harness.page.data.confirm.kind, "confirm-archive");
+    assert.equal(harness.page.data.confirm.title, "确认这条记忆？");
+    harness.page.closeConfirm();
+    harness.page.askHistoryChange({ currentTarget: { dataset: { recordId: "out-1" } } });
+    assert.equal(harness.page.data.confirm.kind, "correct-archive");
+    assert.equal(harness.page.data.confirm.historyChange, true);
   } finally {
     harness.restore();
   }

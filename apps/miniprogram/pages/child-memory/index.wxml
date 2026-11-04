@@ -29,19 +29,47 @@
             <mp-icon name="{{item.field === 'appellation' ? 'tag' : item.field === 'preference' ? 'heart' : 'note'}}"></mp-icon>
             <view class="cm-field-body">
               <text class="cm-field-label">{{item.label}}</text>
-              <view wx:for="{{item.facts}}" wx:for-item="fact" wx:key="recordId" class="cm-fact">
+              <view wx:for="{{item.facts}}" wx:for-item="fact" wx:key="recordId" class="cm-fact cm-fact-review">
                 <view class="cm-fact-copy">
                   <text class="cm-fact-text">{{fact.text}}</text>
+                  <text class="cm-fact-status">{{fact.statusLabel}}</text>
                 </view>
-                <view
-                  class="cm-delete"
-                  data-record-id="{{fact.recordId}}"
-                  bindtap="askDeleteArchive"
-                  aria-label="删除"
-                >
-                  <view class="cm-trash" aria-hidden="true">
-                    <view class="cm-trash-lid"></view>
-                    <view class="cm-trash-body"></view>
+                <view class="cm-fact-actions">
+                  <text
+                    wx:if="{{fact.pending || fact.displayLifecycle === 'expired'}}"
+                    class="cm-action"
+                    data-record-id="{{fact.recordId}}"
+                    bindtap="askConfirmArchive"
+                  >确认这条记忆</text>
+                  <text
+                    wx:if="{{fact.displayLifecycle !== 'withdrawn' && fact.displayLifecycle !== 'expired'}}"
+                    class="cm-action"
+                    data-record-id="{{fact.recordId}}"
+                    bindtap="askCorrectArchive"
+                  >这条不对</text>
+                  <text
+                    wx:if="{{fact.displayLifecycle === 'parent_confirmed' || fact.displayLifecycle === 'withdrawn'}}"
+                    class="cm-action"
+                    data-record-id="{{fact.recordId}}"
+                    bindtap="askHistoryChange"
+                  >历史变更</text>
+                  <text
+                    wx:if="{{fact.displayLifecycle !== 'withdrawn' && fact.displayLifecycle !== 'expired'}}"
+                    class="cm-action"
+                    data-record-id="{{fact.recordId}}"
+                    bindtap="askWithdrawArchive"
+                  >撤回</text>
+                  <view
+                    wx:if="{{fact.displayLifecycle === 'parent_confirmed' || fact.displayLifecycle === 'expired'}}"
+                    class="cm-delete"
+                    data-record-id="{{fact.recordId}}"
+                    bindtap="askDeleteArchive"
+                    aria-label="删除"
+                  >
+                    <view class="cm-trash" aria-hidden="true">
+                      <view class="cm-trash-lid"></view>
+                      <view class="cm-trash-body"></view>
+                    </view>
                   </view>
                 </view>
               </view>
