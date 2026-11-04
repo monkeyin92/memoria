@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from services.common.memory_decision_contract import (
     CONTRACT_VERSION,
     PRODUCT_PROMISE_MATRIX,
