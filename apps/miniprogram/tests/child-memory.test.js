@@ -140,8 +140,14 @@ test("page copy and structure match product acceptance", () => {
   assert.match(wxml, /<mp-icon name="\{\{item\.field === 'appellation' \? 'tag'/);
   assert.equal(
     childMemory.DELETE_CONFIRM,
-    "删除后，这条记忆会从服务器上删除，无法恢复，不影响其他记忆。",
+    "删除后，这条在线记忆会从服务器上移除，不影响其他记忆。备份中的副本按其轮换策略清除。",
   );
+  assert.equal(
+    childMemory.CLEAR_CONFIRM,
+    "清空后，这些在线记忆会从服务器上移除。备份中的副本按其轮换策略清除。",
+  );
+  assert.doesNotMatch(childMemory.DELETE_CONFIRM, /无法恢复|不可恢复/);
+  assert.doesNotMatch(childMemory.CLEAR_CONFIRM, /无法恢复|不可恢复|不影响其他记忆/);
   assert.equal(childMemory.CLEARED_TOAST, "已清空，剩余 0 条");
   assert.equal(
     childMemory.CONSENT_OFF_DIALOG,
@@ -312,6 +318,7 @@ test("recent summaries list, delete sheet confirms, clear-all shows remaining 0"
       ];
       await page.refresh();
       page.askClearSummaries();
+      assert.equal(page.data.confirm.body, childMemory.CLEAR_CONFIRM);
       await page.runConfirm();
       assert.equal(page.data.statusBanner, childMemory.CLEARED_TOAST);
       assert.equal(page.data.summaries.length, 0);
