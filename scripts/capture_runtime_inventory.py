@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -50,11 +51,16 @@ ROLE_BY_IMAGE_PREFIX: tuple[tuple[str, str], ...] = (
 
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
-# Docker .Image is sha256:<64 hex>. Short HANDOFF prefixes are not image ids.
+# A full docker id. A HANDOFF prefix is shorter and must be marked incomplete.
 _IMAGE_ID = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
+_PREFIX_ID = re.compile(r"^[0-9a-f]{8,63}$")
+_OVERRIDE_IMAGE = re.compile(
+    r'services:\n  ([A-Za-z0-9_.-]+):\n    image: (?:"([^"\s]+)"|([^\s"]+))\n\Z'
+)
+_OPT_MEMORIA = "/opt/memoria/"
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def _canonical(value: object) -> str:
@@ -212,6 +218,100 @@ def _or_unknown(value: str | None) -> str:
     return value
 
 
+def _image_id_fields(raw: str | None, role: str, unknowns: list[str]) -> tuple[str, Any]:
+    if raw is None or raw in {"", "<no value>", UNKNOWN}:
+        unknowns.append(f"{role}: image_id unknown")
+        return UNKNOWN, UNKNOWN
+    if _IMAGE_ID.match(raw):
+        return raw, True
+    if _PREFIX_ID.match(raw):
+        # Record the prefix HANDOFF or docker printed. It is not a full digest.
+        unknowns.append(f"{role}.image_id: prefix only, full digest unknown")
+        return raw, False
+    unknowns.append(f"{role}: image_id unknown")
+    return UNKNOWN, UNKNOWN
+
+
+def _rebase_host(root: Path, path: str) -> Path:
+    if path.startswith(_OPT_MEMORIA):
+        return root / path[len(_OPT_MEMORIA) :]
+    return Path(path)
+
+
+def _sha256_file(path: Path) -> str | None:
+    if path.is_symlink() or not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _read_override_rows(root: Path) -> list[tuple[str, str, str, str]]:
+    path = root / "state" / "component-overrides.tsv"
+    if path.is_symlink() or not path.is_file():
+        return []
+    rows: list[tuple[str, str, str, str]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        parts = line.split(" ")
+        if len(parts) == 4:
+            rows.append((parts[0], parts[1], parts[2], parts[3]))
+    return rows
+
+
+def _image_in_override(path: Path) -> str | None:
+    if path.is_symlink() or not path.is_file():
+        return None
+    match = _OVERRIDE_IMAGE.fullmatch(path.read_text(encoding="utf-8"))
+    if match is None:
+        return None
+    _service, quoted, bare = match.groups()
+    return quoted or bare
+
+
+def _attach_override_files(
+    root: Path,
+    observations: list[dict[str, Any]],
+    extra_unknowns: list[str],
+) -> list[dict[str, str]]:
+    rows = _read_override_rows(root)
+    found: list[dict[str, str]] = []
+    for obs in observations:
+        override = obs.get("override_path")
+        role = str(obs.get("role"))
+        if not isinstance(override, str) or override in {"", UNKNOWN}:
+            continue
+        local = _rebase_host(root, override)
+        sha = _sha256_file(local)
+        obs["override_sha256"] = sha or UNKNOWN
+        if sha is None:
+            extra_unknowns.append(f"{role}: override file not readable")
+        for service, path, tsv_sha, _origin in rows:
+            if service != role:
+                continue
+            if path != override and _rebase_host(root, path) != local:
+                continue
+            if sha is not None and tsv_sha != sha:
+                extra_unknowns.append(
+                    f"{role}.override_sha256: file sha {sha} disagrees with "
+                    f"component-overrides.tsv {tsv_sha}"
+                )
+        if "-component.override.yml" not in local.name:
+            continue
+        sibling = local.with_name(
+            local.name.replace("-component.override.yml", "-rollback.override.yml")
+        )
+        image = _image_in_override(sibling)
+        if image is None:
+            extra_unknowns.append(f"{role}: rollback override not readable")
+            continue
+        found.append({"role": role, "method": sibling.name, "target": image})
+    return found
+
+
 def build_inventory(
     *,
     evidence_class: str,
@@ -233,8 +333,10 @@ def build_inventory(
     for obs in observations:
         role = str(obs.get("role") or role_for_image(str(obs.get("image") or "")))
         image_ref = _or_unknown(obs.get("image") if isinstance(obs.get("image"), str) else None)
-        image_id = _or_unknown(
-            obs.get("image_id") if isinstance(obs.get("image_id"), str) else None
+        image_id, image_id_complete = _image_id_fields(
+            obs.get("image_id") if isinstance(obs.get("image_id"), str) else None,
+            role,
+            unknowns,
         )
         registry_digest = _or_unknown(
             obs.get("registry_digest")
@@ -243,26 +345,18 @@ def build_inventory(
         )
         revision = obs.get("revision")
         if isinstance(revision, str) and _HEX40.match(revision):
-            image_revision = revision
+            revision_commit = revision
         else:
-            image_revision = UNKNOWN
+            revision_commit = UNKNOWN
             if revision not in (None, "", UNKNOWN):
                 unknowns.append(
-                    f"{role}: OCI revision not a 40-hex commit (got {revision!r}); "
+                    f"{role}: revision_commit not a 40-hex commit (got {revision!r}); "
                     "not inferred from image name"
                 )
             elif image_ref != UNKNOWN:
                 unknowns.append(
-                    f"{role}: image_revision unknown; not inferred from image name {image_ref}"
+                    f"{role}: revision_commit unknown; not inferred from image name {image_ref}"
                 )
-
-        stack_commit = obs.get("stack_commit")
-        if isinstance(stack_commit, str) and _HEX40.match(stack_commit):
-            stack_commit_v = stack_commit
-        else:
-            stack_commit_v = UNKNOWN
-            if role in {"control-api", "voice-core-media-bridge", "media-edge"}:
-                unknowns.append(f"{role}: stack_commit unknown")
 
         flags_raw = obs.get("effective_flags") or {}
         flags: dict[str, str] = {}
@@ -281,9 +375,14 @@ def build_inventory(
             ),
             "image_ref": image_ref,
             "image_id": image_id,
+            "image_id_complete": image_id_complete,
             "registry_digest": registry_digest,
-            "image_revision": image_revision,
-            "stack_commit": stack_commit_v,
+            "revision_commit": revision_commit,
+            "override_sha256": _or_unknown(
+                obs.get("override_sha256")
+                if isinstance(obs.get("override_sha256"), str)
+                else None
+            ),
             "compose_chain": _or_unknown(
                 obs.get("compose_chain")
                 if isinstance(obs.get("compose_chain"), str)
@@ -314,8 +413,6 @@ def build_inventory(
                 else {},
             },
         }
-        if image_id == UNKNOWN:
-            unknowns.append(f"{role}: image_id unknown")
         if registry_digest == UNKNOWN:
             unknowns.append(f"{role}: registry_digest unknown")
         components.append(component)
@@ -432,8 +529,11 @@ def capture_from_backend(
             parts = chain.split(",")
             if len(parts) >= 2:
                 override_path = parts[1]
-        flags = backend.inspect_flags(name)
-        stack_commit = flags.get("MEMORIA_RELEASE_COMMIT", UNKNOWN)
+        raw_flags = backend.inspect_flags(name)
+        flags = {
+            key: str(raw_flags.get(key, UNKNOWN)) if isinstance(raw_flags, Mapping) else UNKNOWN
+            for key in FLAG_ALLOWLIST
+        }
         observations.append(
             {
                 "role": role,
@@ -442,7 +542,6 @@ def capture_from_backend(
                 "image_id": backend.inspect_field(name, "image-id"),
                 "registry_digest": backend.inspect_repo_digest(name),
                 "revision": backend.inspect_field(name, "revision"),
-                "stack_commit": stack_commit,
                 "compose_chain": chain,
                 "override_path": override_path,
                 "started_at": backend.inspect_started_at(name),
@@ -454,8 +553,11 @@ def capture_from_backend(
 
     stack: dict[str, Any] = {}
     rollback: dict[str, Any] = {}
+    extra_unknowns: list[str] = []
     root_s = str(memoria_root) if memoria_root else None
+    per_component: list[dict[str, str]] = []
     if memoria_root is not None:
+        per_component.extend(_attach_override_files(memoria_root, observations, extra_unknowns))
         current = memoria_root / "current"
         if current.is_symlink() or current.is_dir():
             resolved = current.resolve()
@@ -470,6 +572,20 @@ def capture_from_backend(
                 )
             else:
                 rollback["stack_prev"] = parse_prev_release("")
+        prev = rollback.get("stack_prev")
+        if isinstance(prev, Mapping):
+            services = prev.get("services") if isinstance(prev.get("services"), list) else []
+            commit = prev.get("commit") if isinstance(prev.get("commit"), str) else UNKNOWN
+            tag = prev.get("tag") if isinstance(prev.get("tag"), str) else UNKNOWN
+            for service in services:
+                if service not in {"control-api", "voice-core-media-bridge", "media-edge"}:
+                    continue
+                target = tag if commit in {"", UNKNOWN} else f"{tag}@{commit}"
+                per_component.append(
+                    {"role": str(service), "method": "release_ops.rollback", "target": target}
+                )
+        if per_component:
+            rollback["per_component"] = per_component
 
     return build_inventory(
         evidence_class=evidence_class,
@@ -478,6 +594,7 @@ def capture_from_backend(
         rollback=rollback or None,
         captured_at=captured_at or _utc_now(),
         memoria_root=root_s,
+        extra_unknowns=extra_unknowns,
     )
 
 
@@ -503,26 +620,17 @@ def validate_inventory(doc: Mapping[str, Any]) -> list[str]:
             "image_ref",
             "image_id",
             "registry_digest",
-            "image_revision",
-            "stack_commit",
+            "revision_commit",
         ):
             if key not in comp:
                 errors.append(f"component missing {key}")
-        rev = comp.get("image_revision")
+        role = comp.get("role")
+        rev = comp.get("revision_commit")
         if rev not in (None, UNKNOWN) and not (
             isinstance(rev, str) and _HEX40.match(rev)
         ):
-            errors.append(
-                f"{comp.get('role')}: image_revision must be 40-hex or unknown"
-            )
-        image_id = comp.get("image_id")
-        if image_id not in (None, UNKNOWN) and not (
-            isinstance(image_id, str) and _IMAGE_ID.match(image_id)
-        ):
-            errors.append(
-                f"{comp.get('role')}: image_id must be sha256:64-hex, bare 64-hex, "
-                "or unknown (short HANDOFF prefixes are not ids)"
-            )
+            errors.append(f"{role}: revision_commit must be 40-hex or unknown")
+        _check_recorded_image_id(comp, doc.get("unknowns"), errors)
         image_ref = comp.get("image_ref")
         if (
             isinstance(image_ref, str)
@@ -531,20 +639,67 @@ def validate_inventory(doc: Mapping[str, Any]) -> list[str]:
             and rev != UNKNOWN
             and rev == image_ref.rsplit(":", 1)[-1]
         ):
-            errors.append(
-                f"{comp.get('role')}: image_revision must not equal image tag"
-            )
+            errors.append(f"{role}: revision_commit must not equal image tag")
+    stack = doc.get("stack")
+    if isinstance(stack, Mapping):
+        commit = stack.get("current_commit")
+        if commit not in (None, UNKNOWN) and not (
+            isinstance(commit, str) and _HEX40.match(commit)
+        ):
+            errors.append("stack.current_commit must be 40-hex or unknown")
+    rollback = doc.get("rollback")
+    if isinstance(rollback, Mapping):
+        prev = rollback.get("stack_prev")
+        if isinstance(prev, Mapping):
+            commit = prev.get("commit")
+            if commit not in (None, UNKNOWN) and not (
+                isinstance(commit, str) and _HEX40.match(commit)
+            ):
+                errors.append("rollback.stack_prev.commit must be 40-hex or unknown")
     return errors
+
+
+def _check_recorded_image_id(
+    comp: Mapping[str, Any], unknowns: object, errors: list[str]
+) -> None:
+    image_id = comp.get("image_id")
+    complete = comp.get("image_id_complete", None)
+    role = comp.get("role")
+    if image_id in (None, UNKNOWN):
+        return
+    if isinstance(image_id, str) and _IMAGE_ID.match(image_id):
+        if complete is False:
+            errors.append(f"{role}: image_id_complete is false on a full image id")
+        return
+    if isinstance(image_id, str) and _PREFIX_ID.match(image_id):
+        if complete is not False:
+            errors.append(
+                f"{role}: image id prefix requires image_id_complete false "
+                "(a short prefix is not a full id)"
+            )
+            return
+        text = "\n".join(unknowns) if isinstance(unknowns, list) else ""
+        if "prefix" not in text:
+            errors.append(f"{role}: prefix image id must be named in unknowns")
+        return
+    errors.append(
+        f"{role}: image_id must be sha256 and 64 hex, an 8 to 63 hex prefix, or unknown"
+    )
+
+
+def _md(value: object) -> str:
+    # JSON null must not render as Python None.
+    return "null" if value is None else str(value)
 
 
 def render_markdown(doc: Mapping[str, Any]) -> str:
     lines = [
-        f"# Runtime component inventory",
+        "# Runtime component inventory",
         "",
-        f"- schema_version: `{doc.get('schema_version')}`",
-        f"- evidence_class: `{doc.get('evidence_class')}`",
-        f"- captured_at: `{doc.get('captured_at')}`",
-        f"- memoria_root: `{doc.get('memoria_root')}`",
+        f"- schema_version: `{_md(doc.get('schema_version'))}`",
+        f"- evidence_class: `{_md(doc.get('evidence_class'))}`",
+        f"- captured_at: `{_md(doc.get('captured_at'))}`",
+        f"- memoria_root: `{_md(doc.get('memoria_root'))}`",
         "",
         "## Stack",
         "",
@@ -557,21 +712,19 @@ def render_markdown(doc: Mapping[str, Any]) -> str:
     )
     lines.extend(["", "## Components", ""])
     lines.append(
-        "| role | image_ref | image_id | image_revision | stack_commit | "
-        "override | health | started_at |"
+        "| role | image_ref | image_id | revision_commit | override | health | started_at |"
     )
-    lines.append("|---|---|---|---|---|---|---|---|")
+    lines.append("|---|---|---|---|---|---|---|")
     for comp in doc.get("components") or []:
         if not isinstance(comp, Mapping):
             continue
         lines.append(
-            "| {role} | `{image_ref}` | `{image_id}` | `{image_revision}` | "
-            "`{stack_commit}` | `{override_path}` | {health} | `{started_at}` |".format(
+            "| {role} | `{image_ref}` | `{image_id}` | `{revision_commit}` | "
+            "`{override_path}` | {health} | `{started_at}` |".format(
                 role=comp.get("role", UNKNOWN),
                 image_ref=comp.get("image_ref", UNKNOWN),
                 image_id=comp.get("image_id", UNKNOWN),
-                image_revision=comp.get("image_revision", UNKNOWN),
-                stack_commit=comp.get("stack_commit", UNKNOWN),
+                revision_commit=comp.get("revision_commit", UNKNOWN),
                 override_path=comp.get("override_path", UNKNOWN),
                 health=comp.get("health", UNKNOWN),
                 started_at=comp.get("started_at", UNKNOWN),
@@ -620,9 +773,9 @@ def compare_inventories(
     keys = (
         "image_ref",
         "image_id",
-        "image_revision",
-        "stack_commit",
+        "revision_commit",
         "override_path",
+        "override_sha256",
         "health",
     )
     for role in roles:
@@ -661,8 +814,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     cap.add_argument("--memoria-root", type=Path, default=None)
     cap.add_argument(
         "--evidence-class",
+        required=True,
         choices=sorted(EVIDENCE_CLASSES),
-        default="live_capture",
     )
 
     val = sub.add_parser("validate", help="validate inventory schema")

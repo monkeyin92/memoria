@@ -1,20 +1,24 @@
-# Runtime component inventory
+# Capture a runtime component inventory
 
-Single source for “what is running” across the full stack and overlays. Machine file: [`current-runtime-inventory.json`](current-runtime-inventory.json). Historical dated HANDOFF sections stay historical receipts. They are not a second current table.
+The machine record is [`current-runtime-inventory.json`](current-runtime-inventory.json). Dated sections in `HANDOFF.md` stay receipts. Use this page to capture a host and compare it with that file.
 
-## Evidence classes
+The copy in git is `handoff_reconstruction`, assembled from dated HANDOFF receipts. Production `live_capture` is not done in this change. It needs Monkey auth on the host.
+
+## Choose an evidence class
 
 | Class | Meaning |
 | --- | --- |
-| `live_capture` | Written by `scripts/capture_runtime_inventory.py capture` against docker + `/opt/memoria` on a host. |
-| `lab_fixture` | Tests with an injectable backend / fixture host tree. |
-| `handoff_reconstruction` | Assembled only from dated HANDOFF (or similar) prose. Explicit unknowns. Not production verified. |
+| `live_capture` | `capture` read docker and `/opt/memoria` on a host. |
+| `lab_fixture` | A test called the library with a stub backend and a fixture tree. |
+| `handoff_reconstruction` | The JSON was assembled from dated HANDOFF prose. `unknowns` lists every gap. The file is not production verified. |
 
-Never promote reconstruction to `live_capture` without a fresh host capture. Never invent a commit from an image name or tag alone.
+`capture` accepts only `live_capture`. Build the other two classes in process, or write the JSON and run `validate`.
 
-## Capture on a host
+Do not copy a commit out of an image name or tag. A missing OCI `org.opencontainers.image.revision` label is `revision_commit: unknown`, plus a line in `unknowns`. An image id of 8 to 63 hex digits stays a prefix, with `image_id_complete` false, and `unknowns` must contain the word `prefix`. A full id is `sha256:` plus 64 hex digits, or 64 hex digits alone. Do not invent a registry digest.
 
-Read-only. Does not cut over, freeze, or rewrite overrides.
+## Capture on the host
+
+The command is read-only. It does not cut over, freeze, or rewrite overrides.
 
 ```bash
 sudo python3 scripts/capture_runtime_inventory.py capture \
@@ -23,49 +27,40 @@ sudo python3 scripts/capture_runtime_inventory.py capture \
   --output /tmp/runtime-inventory.json
 
 python3 scripts/capture_runtime_inventory.py validate /tmp/runtime-inventory.json
+```
+
+Image, image id, OCI revision, OCI version, the compose chain label, and `MEMORIA_RELEASE_TAG` use the same `docker inspect` formats as `inspect_container` in `scripts/release_ops.sh`. The command also reads `StartedAt`, health, and restart count.
+
+Env values are filtered inside the inspect format. Only these keys are kept:
+
+- `TTS_PROVIDER`
+- `STEPFUN_TTS_ENABLED`
+- `STEPFUN_TTS_VOICE`
+- `MEMORIA_SPEAKER_AUTHORITY_ENABLED`
+- `MEMORIA_RELEASE_TAG`
+- `MEMORIA_RELEASE_COMMIT`
+
+With `--memoria-root`, the command reads `current`, `MEMORIA_RELEASE_TAG` and `MEMORIA_RELEASE_COMMIT` from that release's `.env`, `.cutover/prev-release`, `state/component-overrides.tsv`, and a `*-rollback.override.yml` sibling when the compose chain names a `*-component.override.yml` file. It does not call `derive_prev`.
+
+## Compare with a running instance
+
+```bash
 python3 scripts/capture_runtime_inventory.py compare \
   docs/ops/current-runtime-inventory.json /tmp/runtime-inventory.json
 ```
 
-To publish the capture into the repo (after review):
+Compare pairs rows by `role`. It reports `image_ref`, `image_id`, `revision_commit`, `override_path`, `override_sha256`, `health`, and `rollback.stack_prev` tag and commit. Exit 0 means those fields match. Exit 1 prints one line per difference. `unknown` against a concrete value is a difference.
+
+`render-md` prints a markdown table on stdout. Pass `--output` only for a scratch path outside `docs/`. Do not commit a second rendered markdown file under `docs/`.
+
+## Sync a local checkout
 
 ```bash
-cp /tmp/runtime-inventory.json docs/ops/current-runtime-inventory.json
-python3 scripts/capture_runtime_inventory.py render-md \
-  docs/ops/current-runtime-inventory.json \
-  --output docs/ops/current-runtime-inventory.rendered.md
+cd ~/projects/memoria && git fetch && git checkout <branch> && git pull
 ```
 
-Inspect fields match `scripts/release_ops.sh` `inspect_container`. Rollback is read from the frozen `current/.cutover/prev-release` file. The tool does not call `derive_prev`.
+Replace `<branch>` with the branch you want. After the branch merges, check out `main` and pull that.
 
-## Compare to a running instance
+## Related commands
 
-`compare` diffs by component role on `image_ref`, `image_id`, `image_revision`, `stack_commit`, `override_path`, and `health`, plus `rollback.stack_prev.{tag,commit}`. Exit 0 on match, 1 on diff. Unknown on either side still shows as a mismatch when the other side has a concrete value.
-
-## Lab / isolation proof
-
-This unit’s automated proof is `scripts/tests/test_capture_runtime_inventory.py` (`lab_fixture`): mixed stack+overlay, missing OCI revision → `unknown`, `prev-release` rollback anchor, format-string contract against `release_ops.sh`, and compare diffs. No Monkey production auth. No live production cutover.
-
-## code / wired / enabled / verified
-
-Each component row carries those four status fields plus optional `evidence_dates`. Fill them from real receipts. Leave `verified` as `not_live_captured` until a `live_capture` inventory exists.
-
-## Local sync after cloud land
-
-On the MacBook checkout:
-
-```bash
-cd ~/projects/memoria
-git fetch origin
-git checkout cursor/a12-runtime-component-inventory-cbd1
-git pull --ff-only origin cursor/a12-runtime-component-inventory-cbd1
-```
-
-After merge to main, pull `main` instead.
-
-## Related tools (not this inventory)
-
-- `scripts/create_release_manifest.py` — publish-time whole-stack artifact set.
-- `scripts/deploy_*_component.sh` `component-manifest.txt` — pre-build component bind.
-- `scripts/release_ops.sh` — cutover / freeze / rollback.
-- `scripts/production_layout_audit.sh` — path + container name listing only.
+`scripts/create_release_manifest.py` records a publish. `scripts/deploy_*_component.sh` writes a pre-build `component-manifest.txt`. `scripts/release_ops.sh` cuts over, freezes, and rolls back. `scripts/production_layout_audit.sh` lists paths and container names. None of those writes this inventory.
