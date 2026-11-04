@@ -7,12 +7,13 @@ through the maintenance kind-erase ports so append-only triggers stay closed.
 
 from __future__ import annotations
 
+import builtins
 import json
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import asyncpg
 from packages.contracts.generated.python.multi_subject_contracts import MemoryScope
@@ -27,9 +28,11 @@ from services.guardian.child_archive_review import (
     validate_correct_patch,
 )
 from services.guardian.child_memory import (
+    ARCHIVE_FIELDS,
     KIND_CHILD_ARCHIVE,
     KIND_DIALOGUE_SUMMARY,
     ArchiveFact,
+    ArchiveField,
     ChildMemoryKind,
     DialogueSummary,
     archive_payload,
@@ -463,7 +466,7 @@ class ChildLayerStore:
         viewer_subject_id: str,
         limit: int = 50,
         include_withdrawn: bool = False,
-    ) -> list[ChildArchiveFactView]:
+    ) -> builtins.list[ChildArchiveFactView]:
         """Parent-facing archive cards with status, provenance, and version."""
 
         _require_subject(subject_id)
@@ -494,7 +497,7 @@ class ChildLayerStore:
                     include_withdrawn,
                     limit,
                 )
-        views: list[ChildArchiveFactView] = []
+        views: builtins.list[ChildArchiveFactView] = []
         for row in rows:
             parsed = _row_to_record(row)
             if parsed is None or parsed.field is None:
@@ -773,7 +776,10 @@ class ChildLayerStore:
             field=command.field,
             polarity=command.polarity,
         )
-        field = next_field or current.field  # type: ignore[assignment]
+        candidate_field = next_field if next_field is not None else current.field
+        if candidate_field not in ARCHIVE_FIELDS:
+            raise ChildArchiveReviewError("invalid_archive_field")
+        field = cast(ArchiveField, candidate_field)
         text = next_text or current.text
         polarity = next_polarity or current.polarity or "unknown"
         if field == current.field and text == current.text and polarity == (

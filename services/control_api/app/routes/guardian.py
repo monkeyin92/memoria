@@ -1626,45 +1626,13 @@ async def list_child_archive(
 
     account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
     layers = _child_layers(request)
-    if hasattr(layers, "list_archive_views"):
-        views = await layers.list_archive_views(
-            subject_id=minor_user_id,
-            viewer_subject_id=account_id,
-            limit=limit,
-            include_withdrawn=include_withdrawn,
-        )
-        return {"items": [view_to_api(view) for view in views]}
-    items = await layers.list(
+    views = await layers.list_archive_views(
         subject_id=minor_user_id,
-        kind=KIND_CHILD_ARCHIVE,
         viewer_subject_id=account_id,
         limit=limit,
+        include_withdrawn=include_withdrawn,
     )
-    return {
-        "items": [
-            {
-                "record_id": item.record_id,
-                "field": item.field,
-                "text": item.text,
-                "created_at": item.created_at.isoformat(),
-                "last_mentioned_at": _payload_iso(item.payload, "last_mentioned_at"),
-                "status": "confirmed",
-                "display_lifecycle": "parent_confirmed",
-                "display_label": "家长已确认",
-                "provenance": _payload_iso(item.payload, "provenance") or "parent_entry",
-                "source_session_id": _payload_iso(item.payload, "source_session_id"),
-                "rule_version": _payload_iso(item.payload, "rule_version"),
-                "fact_version": 1,
-                "polarity": _payload_iso(item.payload, "polarity"),
-                "confidence": None,
-                "handled_at": None,
-                "reason_code": None,
-                "supersedes_record_id": None,
-                "recall_eligible": True,
-            }
-            for item in items
-        ]
-    }
+    return {"items": [view_to_api(view) for view in views]}
 
 
 @router.post("/minors/{minor_user_id}/child-archive")
