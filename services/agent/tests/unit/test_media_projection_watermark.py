@@ -163,13 +163,7 @@ async def test_dense_victim_then_other_commit_does_not_inherit_victim_text(
 
 
 def test_post_watermark_final_strips_knife_hua_slip_before_victim() -> None:
-    """MEM-80: SenseVoice 划→画 must not block self→victim peel.
-
-    Sticky escalation commits tip orthography (划). The next dense final can
-    re-decode the same knife clause as 画 while prepending it to the victim
-    line. Exact alnum peel then leaves the crisis prefix, so local crisis
-    stays crisis-self-escalation on the first victim turn.
-    """
+    """Committed 划 must peel a post-watermark 画+victim final to victim only."""
 
     supervisor = ASRStreamSupervisor()
     supervisor.start_task()
@@ -190,7 +184,7 @@ def test_post_watermark_final_strips_knife_hua_slip_before_victim() -> None:
 
 
 def test_post_watermark_hua_exact_repeat_of_dao_commit_is_kept() -> None:
-    """划/画 slip on an exact same-words repeat must not peel to empty."""
+    """Same-words 画 after a 划 commit must not peel to empty."""
 
     supervisor = ASRStreamSupervisor()
     supervisor.start_task()
@@ -212,7 +206,7 @@ def test_post_watermark_hua_exact_repeat_of_dao_commit_is_kept() -> None:
 async def test_dense_self_then_victim_commit_does_not_inherit_escalation_text(
     device_media_session: Any,
 ) -> None:
-    """Card5 victim=4/5: self→victim handoff must not inflate victim text_len."""
+    """Self then victim dense handoff must commit victim-only text."""
 
     window = await device_media_session("media-self-victim-bleed", during_playback=False)
     registry = window.registry
@@ -261,8 +255,6 @@ async def test_dense_self_then_victim_commit_does_not_inherit_escalation_text(
     assert fence is not None, reason
     assert window.provider.prepared == [_SELF, _ESC_DAO]
 
-    # Post-watermark cumulative final: sample range clears the watermark, but
-    # SenseVoice re-decodes the knife clause as 画 and still prepends it.
     victim_start = window.context.runtime.speech_timeline.committed_sample
     await _accept_media_asr_final(
         registry,
