@@ -189,6 +189,7 @@ class EffectiveCapabilities:
     history: bool
     learning: bool
     voice_profile: bool
+    child_archive_confirmed_only: bool
 
     def payload(self) -> dict[str, bool]:
         return asdict(self)
@@ -409,7 +410,8 @@ class ModePolicy:
             and _personal_voice_contract_valid(frozen)
         )
         # `uncertain` may retain S1's explicitly curated low-sensitivity style
-        # path, but is never a private-owner authority.
+        # path, but is never a private-owner authority. Confirmed child-archive
+        # facts use their own turn bit so catalog, tools, and history stay shut.
         return EffectiveCapabilities(
             conversation=account_active
             and (
@@ -428,6 +430,9 @@ class ModePolicy:
                 companion
                 or (self_preview and speaker_class == "owner")
                 or legacy_personal_voice
+            ),
+            child_archive_confirmed_only=(
+                account_active and companion and speaker_class == "uncertain"
             ),
         )
 
@@ -492,6 +497,9 @@ class ModePolicy:
                 history=companion,
                 learning=companion,
                 voice_profile=companion or self_preview or legacy_personal_voice,
+                # Confirmed-archive reads follow the speaker of this turn.
+                # A session ceiling must not grant them.
+                child_archive_confirmed_only=False,
             ).payload(),
         }
 
