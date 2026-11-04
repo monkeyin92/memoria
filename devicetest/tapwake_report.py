@@ -17,6 +17,10 @@ MARKS = {"llm_first": "name=llm_first_content_token", "tts_first_pcm": "name=dou
          "first_frame_sent": "event=first_frame_sent"}
 SEGMENTS = [("收音", "said_end", "asr_final"), ("ASR", "asr_final", "commit"), ("LLM", "commit", "llm_first"),
             ("TTS", "llm_first", "tts_first_pcm"), ("下发播放", "tts_first_pcm", "device_speaking")]
+# The "ASR" label is asr_final→commit (bridge final_to_done_ms), not speech→ASR final.
+# Card 3 knife baseline soak-232237 (measured): ASR p50 0.91 / p90 1.18 / max 1.31 s on 62 replies.
+ASR_FINAL_TO_COMMIT_SEGMENT = "ASR"
+BASELINE_232237_ASR_FINAL_TO_COMMIT_S = {"p50": 0.91, "p90": 1.18, "max": 1.31, "n_replies": 62}
 
 
 def utc_epoch(s: str) -> float:
@@ -117,6 +121,51 @@ def half_stats(ts):
             "latency_p50_s": pct(lat, 0.5) if lat else None, "latency_p95_s": p95(lat)}
 
 
+def _numeric_segment(value: object) -> float | None:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def segment_aggregates(turns: list[dict]) -> dict:
+    """Percentiles per latency segment for reply turns that have a numeric value.
+
+    The ASR segment is asr_final→commit (derived from ``final_to_done_ms``), which is the
+    card-3 knife. Compare ``segments_s[ASR]`` to ``baseline_232237_asr_final_to_commit_s``.
+    """
+
+    replies = [t for t in turns if t.get("kind") == "reply"]
+    segments: dict[str, dict] = {}
+    for name, _a, _b in SEGMENTS:
+        values = [
+            seconds
+            for turn in replies
+            if (seconds := _numeric_segment((turn.get("segments_s") or {}).get(name))) is not None
+        ]
+        if not values:
+            segments[name] = {"n": 0}
+            continue
+        segments[name] = {
+            "n": len(values),
+            "p50_s": pct(values, 0.5),
+            "p90_s": pct(values, 0.9),
+            "max_s": max(values),
+        }
+    worst_counts: dict[str, int] = {}
+    for turn in replies:
+        worst = turn.get("卡在哪段")
+        if isinstance(worst, str) and worst and worst != "缺":
+            worst_counts[worst] = worst_counts.get(worst, 0) + 1
+    return {
+        "segments_s": segments,
+        "worst_segment_counts": worst_counts,
+        "asr_final_to_commit_field": ASR_FINAL_TO_COMMIT_SEGMENT,
+        "asr_final_to_commit_means": "asr_final→commit via final_to_done_ms",
+        "baseline_232237_asr_final_to_commit_s": dict(BASELINE_232237_ASR_FINAL_TO_COMMIT_S),
+        "this_run_asr_final_to_commit_s": segments.get(ASR_FINAL_TO_COMMIT_SEGMENT, {"n": 0}),
+    }
+
+
 def degradation(turns):
     """Split by time at the midpoint of the first and last turn; 第几说 = order among all turns."""
     if len(turns) < 4:
@@ -204,6 +253,7 @@ def build(out: Path, stop_tags: dict[str, str], clock_path: Path | None = None) 
         "interrupt": rate("stop"),
         "backchannel": rate("backchannel"),
         "long_session": degradation(turns),
+        "knife_asr_final_to_commit": segment_aggregates(turns),
         "turns": turns,
     }
 
