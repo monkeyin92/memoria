@@ -7,9 +7,10 @@ confirmed.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Final, Literal, Mapping
+from typing import Final, Literal
 
 from services.guardian.child_memory import ARCHIVE_FIELDS, ArchiveField
 
