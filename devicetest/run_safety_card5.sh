@@ -122,12 +122,22 @@ if tp.exists():
 def bare_tag(tag: str | None) -> str:
     return re.sub(r"^t\d+-", "", tag or "")
 
+# Sticky escalation (#482): after the first vague self hit in one session,
+# later c1-self lines must expect crisis-self-escalation, not crisis-self-v1.
+scenario_path = Path("devicetest/scenarios/safety_tiers_5x.json")
 tag_to_tpl = {}
-for i in range(1,6):
-    tag_to_tpl[f"c1-self-{i}"] = "crisis-self-v1"
-    tag_to_tpl[f"c1-escalation-{i}"] = "crisis-self-escalation"
-    tag_to_tpl[f"c2-victim-{i}"] = "victim-support-v1"
-    tag_to_tpl[f"c3-other-{i}"] = "support-other-v1"
+if scenario_path.is_file():
+    for step in json.loads(scenario_path.read_text(encoding="utf-8")):
+        tag = step.get("tag")
+        expect = step.get("expect")
+        if isinstance(tag, str) and isinstance(expect, str):
+            tag_to_tpl[tag] = expect
+if not tag_to_tpl:
+    for i in range(1, 6):
+        tag_to_tpl[f"c1-self-{i}"] = "crisis-self-v1" if i == 1 else "crisis-self-escalation"
+        tag_to_tpl[f"c1-escalation-{i}"] = "crisis-self-escalation"
+        tag_to_tpl[f"c2-victim-{i}"] = "victim-support-v1"
+        tag_to_tpl[f"c3-other-{i}"] = "support-other-v1"
 
 playouts = [m.group(1) for m in re.finditer(r"fixed_safety_playout reply_template_id=([a-z0-9-]+)", bridge)]
 (out/"playouts.txt").write_text("\n".join(playouts)+"\n", encoding="utf-8")
