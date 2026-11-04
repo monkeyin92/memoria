@@ -1,0 +1,94 @@
+...........................................................sssssssssssss [ 77%]
+ssssssssssssssss.....                                                    [100%]
+==================================== PASSES ====================================
+=========================== short test summary info ============================
+PASSED services/common/tests/test_companions.py::test_each_companion_has_a_distinct_in_character_welcome_and_delivery
+PASSED services/common/tests/test_companions.py::test_clock_reply_does_not_hide_a_second_live_information_request
+PASSED services/common/tests/test_companions.py::test_realtime_lookup_predicate_keeps_safety_requests_out_of_network_search
+PASSED services/common/tests/test_companions.py::test_unknown_realtime_reply_is_retried_by_the_live_lookup_path
+PASSED services/agent/tests/unit/test_doubao_voice_catalog.py::test_all_companion_voices_are_unique_and_approved
+PASSED services/agent/tests/unit/test_doubao_voice_catalog.py::test_registry_must_match_reviewed_catalog
+PASSED services/agent/tests/unit/test_doubao_voice_catalog.py::test_every_designed_profile_uses_the_child_story_voice
+PASSED services/agent/tests/unit/test_doubao_voice_catalog.py::test_catalog_covers_stable_profile_keys
+PASSED services/agent/tests/unit/test_doubao_voice_catalog.py::test_catalog_reuses_the_common_canonical_speaker_mapping
+PASSED services/agent/tests/unit/test_provider_config.py::test_funasr_config_from_env
+PASSED services/agent/tests/unit/test_provider_config.py::test_funasr_config_defaults_to_fun_asr_and_validates_vad_model
+PASSED services/agent/tests/unit/test_provider_config.py::test_funasr_default_sentence_silence_matches_turn_endpointing
+PASSED services/agent/tests/unit/test_provider_config.py::test_funasr_rejects_invalid_speech_noise_threshold[-1.1]
+PASSED services/agent/tests/unit/test_provider_config.py::test_funasr_rejects_invalid_speech_noise_threshold[1.1]
+PASSED services/agent/tests/unit/test_provider_config.py::test_funasr_rejects_invalid_speech_noise_threshold[nan]
+PASSED services/agent/tests/unit/test_provider_config.py::test_doubao_config_uses_approved_profile_and_old_console_auth
+PASSED services/agent/tests/unit/test_provider_config.py::test_doubao_config_requires_exactly_one_complete_auth_mode[auth0]
+PASSED services/agent/tests/unit/test_provider_config.py::test_doubao_config_requires_exactly_one_complete_auth_mode[auth1]
+PASSED services/agent/tests/unit/test_provider_config.py::test_doubao_config_requires_exactly_one_complete_auth_mode[auth2]
+PASSED services/agent/tests/unit/test_provider_config.py::test_doubao_speech_plan_keeps_context_instruction_disabled_and_clamps_rate
+PASSED services/agent/tests/unit/test_provider_config.py::test_doubao_style_control_is_opt_in
+PASSED services/agent/tests/unit/test_provider_config.py::test_doubao_speech_plan_applies_bounded_style_and_reference_context
+PASSED services/agent/tests/unit/test_provider_config.py::test_late_old_generation_plan_cannot_overwrite_the_new_generation
+PASSED services/agent/tests/unit/test_provider_config.py::test_doubao_personal_voice_never_receives_context_texts
+PASSED services/agent/tests/unit/test_provider_config.py::test_production_doubao_rejects_unapproved_explicit_voice
+PASSED services/agent/tests/unit/test_provider_config.py::test_doubao_config_rejects_unsafe_websocket_urls[production-DOUBAO_TTS_WS_URL-ws://openspeech.bytedance.com/api/v3/tts/bidirection]
+PASSED services/agent/tests/unit/test_provider_config.py::test_doubao_config_rejects_unsafe_websocket_urls[production-DOUBAO_TTS_WS_URL-wss://user:password@openspeech.bytedance.com/api/v3/tts/bidirection]
+PASSED services/agent/tests/unit/test_provider_config.py::test_doubao_config_rejects_unsafe_websocket_urls[development-DOUBAO_TTS_MOCK_WS_URL-ws://mock/path#credentials]
+PASSED services/agent/tests/unit/test_provider_config.py::test_cosyvoice_config_from_env_prefers_mock_url
+PASSED services/agent/tests/unit/test_provider_config.py::test_cosyvoice_applies_a_valid_generation_speech_plan
+PASSED services/agent/tests/unit/test_provider_config.py::test_longanyang_rejects_free_form_instruction
+PASSED services/agent/tests/unit/test_provider_config.py::test_v3_5_applies_freeform_speech_plan
+PASSED services/agent/tests/unit/test_provider_config.py::test_v3_5_from_env_requires_designed_voice
+PASSED services/agent/tests/unit/test_provider_config.py::test_v3_5_from_env_accepts_explicit_voice_id
+PASSED services/agent/tests/unit/test_provider_config.py::test_production_rejects_an_unapproved_clone_as_the_baseline
+PASSED services/agent/tests/unit/test_provider_config.py::test_production_accepts_the_whitelisted_designed_baseline
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_resolution_sends_only_session_id_and_caches_active_profile
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_resolver_failure_evicts_cached_personal_voice_immediately
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_http_5xx_evicts_cached_personal_voice_and_restores_baseline
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_cosyvoice_clone_is_not_applied_on_doubao_tts
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_legacy_personal_voice_revocation_switches_to_frozen_designed_fallback
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_personal_voice_requires_exact_provider_marker_and_clone_resource[provider-None]
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_personal_voice_requires_exact_provider_marker_and_clone_resource[voice_kind-None]
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_personal_voice_requires_exact_provider_marker_and_clone_resource[voice_kind-designed]
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_personal_voice_requires_exact_provider_marker_and_clone_resource[model-seed-tts-2.0]
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_personal_voice_requires_exact_provider_marker_and_clone_resource[resource_id-seed-tts-2.0]
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_personal_voice_requires_exact_provider_marker_and_clone_resource[voice_id-zh_female_shaoergushi_uranus_bigtts]
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_designed_companion_voice_resolves_from_approved_local_registry
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_active_personal_voice_rejects_forged_speaker_digest
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_voice_resolution_rejects_missing_digest_field
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_doubao_resolver_failure_restores_selected_companion_voice
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_self_preview_applies_selected_designed_fallback_from_resolver
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_doubao_applied_profile_does_not_replace_configured_baseline
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_doubao_accepts_only_explicit_personal_clone_resolution
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_companion_mode_never_applies_a_personal_clone
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_companion_mode_applies_a_matching_frozen_personal_clone
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_wake_aligns_tts_to_the_frozen_catalog_companion
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_voice_profile_client_accepts_a_cosyvoice_personal_clone
+PASSED services/agent/tests/unit/test_voice_profile_client.py::test_tts_switches_to_approved_clone_and_restores_exact_baseline
+PASSED services/control_api/tests/test_archive_event_conflicts.py::test_content_conflict_409_reports_its_cause_code
+PASSED services/control_api/tests/test_archive_event_conflicts.py::test_stepfun_provenance_is_accepted_for_the_designed_voice
+PASSED services/control_api/tests/test_archive_event_conflicts.py::test_sentence_list_on_playout_provenance_is_rejected
+PASSED services/control_api/tests/test_archive_event_conflicts.py::test_stepfun_male_model_is_accepted_for_the_designed_voice
+PASSED services/control_api/tests/test_archive_event_conflicts.py::test_stepfun_personal_voice_snapshot_is_rejected
+SKIPPED [1] services/control_api/tests/test_voice_profile_api.py:11: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_voice_profile_api.py:27: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_companion_device_sync.py:97: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_companion_device_sync.py:148: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_companion_device_sync.py:171: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_companion_device_sync.py:191: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_companion_device_sync.py:215: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_persona_companion_readends.py:81: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_persona_companion_readends.py:95: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_persona_companion_readends.py:115: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_persona_companion_readends.py:129: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_persona_companion_readends.py:141: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_persona_companion_readends.py:153: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_persona_companion_readends.py:175: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_device_display_profile.py:104: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_device_display_profile.py:165: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_device_display_profile.py:232: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [5] services/control_api/tests/test_device_display_profile.py:284: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_device_display_profile.py:290: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_device_display_profile.py: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_device_display_profile.py:332: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_device_display_profile.py:363: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_device_display_profile.py:395: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_device_display_profile.py:443: API tests need MEMORIA_TEST_POSTGRES_DSN
+SKIPPED [1] services/control_api/tests/test_device_display_profile.py:464: API tests need MEMORIA_TEST_POSTGRES_DSN
+64 passed, 29 skipped in 1.03s

@@ -9,7 +9,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const ROOT = path.join(__dirname, "..", "..");
-const TAB_PAGES = ["pages/home/index", "pages/memory/index", "pages/companion/index", "pages/device/index", "pages/profile/index"];
+const TAB_PAGES = ["pages/home/index", "pages/memory/index", "pages/device/index", "pages/profile/index"];
 
 function parseWxml(source) {
   const root = { type: "root", name: "#root", children: [] };

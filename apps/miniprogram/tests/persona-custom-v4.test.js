@@ -17,27 +17,28 @@ async function render(overrides) {
   return { html, text: visibleText(html) };
 }
 
-test("my personas list the version and voice name, never the persona or voice id", async () => {
+test("custom expressions show the default voice without a voice selector", async () => {
   const { text } = await render(fx.personaApi);
-  assert.match(text, /声音与表达 自定义表达 写下名字和说话方式。/);
-  assert.match(text, /我的人格 小北 v1 · 音色 星澜 删除/);
+  assert.match(text, /说话方式 自定义表达 写下名字和说话方式。/);
+  assert.match(text, /我的人格 小北 v1 · 默认声音 删除/);
+  assert.doesNotMatch(text, /克隆|用谁的音色/);
   assert.doesNotMatch(text, /cu_0123|回落|starlight|不落库/);
 });
 
-test("a persona whose fallback voice is unknown shows no voice instead of the first companion", async () => {
+test("legacy fallback voice keys never appear as a selectable sound", async () => {
   const { text } = await render({
     listPersonas: async () => ({
       custom_personas: [{ persona_id: "cu_x", display_name: "阿木", persona_version: 2, fallback_designed_voice: "retired_voice" }],
     }),
   });
-  assert.match(text, /阿木 v2 删除/);
-  assert.doesNotMatch(text, /阿木 v2 · 音色/);
+  assert.match(text, /阿木 v2 · 默认声音 删除/);
+  assert.doesNotMatch(text, /retired_voice|音色 阿木/);
 });
 
 test("pickers and the rate slider use the shared v4 field chrome", async () => {
   const { html } = await render(fx.personaApi);
   const body = html.replace(/<style>[\s\S]*?<\/style>/g, "");
-  assert.equal((body.match(/class="picker-row"/g) || []).length, 7);
-  assert.equal((body.match(/chev-faint\.svg/g) || []).length, 7);
+  assert.equal((body.match(/class="picker-row"/g) || []).length, 6);
+  assert.equal((body.match(/chev-faint\.svg/g) || []).length, 6);
   assert.doesNotMatch(body, /row-chevron|page-head/);
 });

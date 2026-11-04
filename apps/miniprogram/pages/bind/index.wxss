@@ -193,12 +193,6 @@
   text-align: center;
 }
 
-.done-device {
-  display: flex;
-  justify-content: center;
-  margin-top: 4px;
-}
-
 .done-badge {
   display: inline-flex;
   margin-top: 12px;

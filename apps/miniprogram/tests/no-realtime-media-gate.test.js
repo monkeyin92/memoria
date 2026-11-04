@@ -52,34 +52,15 @@ test("production package contains no realtime voice surface at all", () => {
   const files = productionSources();
   assert.ok(files.length > 20, "生产包扫描应覆盖 pages 与 utils");
 
-  // §4.5 静态门禁：实时对话、媒体 WSS 与实时音频播放一律禁止。
-  // 自定义声音样本允许在「我的」页使用有界录音，不在此一律封死。
   matches(files, /wx\.connectSocket|connectSocket\s*\(/, "媒体 WSS 连接");
   matches(files, /wss:\/\//, "媒体 Gateway WSS 地址");
   matches(files, /MiniProgramMediaSession/, "小程序媒体会话");
   matches(files, /MINIPROGRAM_MEDIA_GATEWAY_URL/, "媒体网关环境变量");
-  // The only audio surfaces are the persona previews on the bind and 伙伴
-  // pages: short clips bundled with the package, never a stream or a
-  // remote/TTS source.
-  const PREVIEW_PAGES = new Map([
-    [path.join(root, "pages", "bind", "index.js"), /audio\.src = persona\.previewSrc;/],
-    [path.join(root, "pages", "companion", "index.js"), /audio\.src = card\.previewSrc;/],
-  ]);
   matches(
-    files.filter((file) => !PREVIEW_PAGES.has(file)),
+    files,
     /createWebAudioContext|createInnerAudioContext|InnerAudioContext/,
     "实时 TTS 播放",
   );
-  for (const [file, assignment] of PREVIEW_PAGES) {
-    const preview = fs.readFileSync(file, "utf8");
-    assert.doesNotMatch(preview, /createWebAudioContext/);
-    assert.match(preview, /previewSrc: `\/assets\/voices\/\$\{companion\.voiceId\}\.mp3`/);
-    assert.match(preview, assignment);
-    assert.equal((preview.match(/\.src = /g) || []).length, 1, "试听只能播放包内音频");
-  }
-  for (const companion of require("../utils/companions").companions) {
-    assert.ok(fs.existsSync(path.join(root, "assets", "voices", `${companion.voiceId}.mp3`)), companion.voiceId);
-  }
   matches(files, /require\(["'][^"']*(media-gateway|media-protocol|pcm-player|transcript-events)["']\)/, "媒体工具依赖");
   matches(files, /bindtap="(startVoice|startText|stopVoice|retryVoice|sendText)"/, "实时会话入口");
 });

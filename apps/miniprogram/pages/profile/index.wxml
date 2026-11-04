@@ -1,5 +1,5 @@
 <view class="page-shell tab-page profile-page" style="{{statusBarStyle}}">
-  <text class="eyebrow">Memoria · 个人中心</text>
+  <text class="eyebrow">账号与服务</text>
   <text class="page-title">我的</text>
 
   <block wx:if="{{!authenticated}}">
@@ -21,7 +21,7 @@
     </view>
 
     <view class="card device-card" bindtap="openDevice">
-      <view class="device-art" aria-hidden="true"><device-screen online="{{deviceBindingState === 'ready' || deviceBindingState === 'cached'}}" size="112"></device-screen></view>
+      <view class="device-art" aria-hidden="true"><mp-icon name="dev" tone="ink"></mp-icon></view>
       <view class="row-copy">
         <text class="device-name">{{deviceName || '我的设备'}}</text>
         <view class="device-pill pill {{deviceBindingState === 'ready' || deviceBindingState === 'cached' ? 'pill-online' : 'pill-neutral'}}">{{deviceBindingStateLabel}}</view>

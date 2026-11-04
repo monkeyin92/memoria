@@ -770,11 +770,12 @@ test("the activation card talks to people, not to the protocol", () => {
   assert.match(card, /电源拔掉再插上/);
 });
 
-test("the finish card shows the companion picked on the bind page", () => {
+test("the finish card shows activation and reprovision results without device artwork", () => {
   const template = fs.readFileSync(path.join(root, "pages/device-onboarding/index.wxml"), "utf8");
   const finish = template.slice(template.indexOf(`<view wx:if="{{state === 'complete'}}" class="l2-card done-card">`));
-  assert.match(finish, /<device-screen online="\{\{true\}\}" size="220"><\/device-screen>/);
-  assert.doesNotMatch(finish, /<face-badge/);
+  assert.match(finish, /reprovision \? '已联网' : '已就绪'/);
+  assert.match(finish, /reprovision \? '网络已更新' : '机器人可以开始对话了'/);
+  assert.doesNotMatch(finish, /device-screen|face-badge|assets\/robots/);
 
   const previousPage = global.Page;
   const previousWx = global.wx;

@@ -1,10 +1,9 @@
 {
   "navigationBarTitleText": "孩子的记忆",
   "navigationStyle": "custom",
-  "backgroundColor": "#F8F5EF",
+  "backgroundColor": "#F2F4F8",
   "enablePullDownRefresh": true,
   "usingComponents": {
-    "device-screen": "/components/device-screen/index",
     "mp-icon": "/components/mp-icon/index"
   }
 }

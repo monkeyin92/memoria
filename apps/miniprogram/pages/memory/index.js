@@ -552,7 +552,7 @@ Page({
   },
 
   goCompanion() {
-    wx.switchTab({ url: "/pages/companion/index" });
+    wx.switchTab({ url: "/pages/device/index" });
   },
 
   async loginForReview() {

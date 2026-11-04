@@ -3,7 +3,7 @@
   justify-content: space-around;
   box-sizing: border-box;
   height: calc(62px + env(safe-area-inset-bottom));
-  padding: 7px 12px env(safe-area-inset-bottom);
+  padding: 7px 16px env(safe-area-inset-bottom);
   background: var(--mp-tabbar-bg, rgba(250, 250, 252, 0.86));
   box-shadow: inset 0 1px 0 var(--mp-hairline, rgba(22, 24, 43, 0.06));
   backdrop-filter: blur(24px);
@@ -35,4 +35,4 @@
 .mem-tabbar-hidden {
   display: none;
 }
-.mem-tab-on { background: var(--mp-accent-soft, #e3f0ed); border-radius: 18px; }
+.mem-tab-on { background: var(--mp-accent-soft, #e5ebff); border-radius: 16px; }

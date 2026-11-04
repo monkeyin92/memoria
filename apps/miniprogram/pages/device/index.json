@@ -3,7 +3,6 @@
   "navigationStyle": "custom",
   "enablePullDownRefresh": true,
   "usingComponents": {
-    "device-screen": "/components/device-screen/index",
     "mp-icon": "/components/mp-icon/index",
     "mp-slider": "/components/mp-slider/index"
   }

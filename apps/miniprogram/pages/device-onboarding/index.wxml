@@ -175,7 +175,7 @@
       <mp-icon name="leaf"></mp-icon>
       <text class="l2-card-title">设置使用方式</text>
     </view>
-    <text class="l2-card-sub">接下来选择机器人给谁用，再设置声音与表达风格，不需要再扫码。</text>
+    <text class="l2-card-sub">接下来选择机器人给谁用并确认授权，不需要再扫码。声音使用统一默认设置。</text>
     <button class="primary-button onboarding-button" bindtap="continueInitialize">去设置</button>
   </view>
 
@@ -191,9 +191,6 @@
   </view>
 
   <view wx:if="{{state === 'complete'}}" class="l2-card done-card">
-    <view class="done-device">
-      <device-screen online="{{true}}" size="220"></device-screen>
-    </view>
     <text class="done-badge">{{reprovision ? '已联网' : '已就绪'}}</text>
     <text class="done-title">{{reprovision ? '网络已更新' : '机器人可以开始对话了'}}</text>
     <text wx:if="{{reprovision}}" class="done-note">机器人已经用新的 Wi‑Fi 连上 Memoria。绑定关系、使用人和记忆都没有变化，唤醒它就能继续聊天。</text>

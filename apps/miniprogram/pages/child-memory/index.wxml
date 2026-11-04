@@ -18,7 +18,6 @@
   <block wx:else>
     <block wx:if="{{archiveConsent.active}}">
       <view wx:if="{{!archiveFlat.length}}" class="cm-empty-state">
-        <device-screen online="{{false}}" size="120"></device-screen>
         <text class="cm-empty-title">暂无长期记忆</text>
         <text class="cm-empty-copy">{{emptyArchiveOn}}</text>
       </view>
@@ -57,7 +56,6 @@
       </block>
     </block>
     <view wx:else class="cm-empty-state">
-      <device-screen online="{{false}}" size="120"></device-screen>
       <text class="cm-empty-title">{{emptyArchiveOffTitle}}</text>
       <text class="cm-empty-copy">{{emptyArchiveOff}}</text>
     </view>
@@ -70,7 +68,7 @@
         </view>
         <switch
           checked="{{archiveConsent.active}}"
-          color="#176B5B"
+          color="#2455EF"
           disabled="{{working}}"
           bindchange="onArchiveConsentChange"
           aria-label="长期记忆"
@@ -84,7 +82,6 @@
 
     <text id="cm-recent" class="section-title">近期摘要</text>
     <view wx:if="{{!summaries.length}}" class="cm-empty-state">
-      <device-screen online="{{false}}" size="120"></device-screen>
       <text class="cm-empty-title">{{emptyTitle}}</text>
       <text class="cm-empty-copy">{{emptyRecent}}</text>
     </view>

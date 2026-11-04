@@ -17,13 +17,13 @@ test("profile hero uses the WeChat avatar or a name initial, not a robot mascot"
   assert.match(styles, /\.user-avatar\s*\{[^}]*border-radius:\s*50%/s);
 });
 
-test("roles and custom personas live on the 角色 tab, not on the profile", () => {
-  assert.match(companionTemplate, /bindtap="openCustomPersona"/);
+test("profile and default voice information do not offer roles or voice choices", () => {
+  assert.doesNotMatch(companionTemplate, /chooseCompanion|voice-option|face-badge|togglePreview/);
   assert.doesNotMatch(template, /自定义人格|openCompanion|openCustomPersona/);
   assert.doesNotMatch(template, /对着麦克风录|上传音频|我的自定义声音/);
   assert.doesNotMatch(template, /class="persona-row/);
   assert.doesNotMatch(template, /companion-mascot-shell|companion-face|character-photo/);
   assert.doesNotMatch(template, /assets\/companions/);
-  assert.match(companionTemplate, /item\.tone/);
+  assert.match(companionTemplate, /所有机器人共用默认声音/);
   assert.doesNotMatch(companionTemplate, /我的自定义声音/);
 });

@@ -507,7 +507,7 @@ Page({
     const custom = await this._resolveCustomPersona(runtime);
     if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
     const personaName = custom ? custom.display_name : companion.name;
-    const personaVoice = custom ? "你提供的声音样本" : companion.voiceName;
+    const personaVoice = companion.voiceName;
     const personaSummary = custom
       ? custom.style_description || companion.description || companion.tagline
       : companion.description || companion.tagline;
