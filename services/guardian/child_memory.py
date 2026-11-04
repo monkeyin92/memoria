@@ -6,6 +6,7 @@ Dialogue summaries and whitelist archive facts are the only retained text.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
@@ -218,6 +219,37 @@ def archive_idle_deadline(last_active_at: datetime) -> datetime:
     return last_active_at.astimezone(UTC) + ARCHIVE_IDLE_TTL
 
 
+_POLICY_RECEIPT_MAX: Final = 128
+
+
+def _stable_policy_receipt(prefix: str, *parts: str) -> str:
+    cleaned = [part.strip() for part in parts]
+    if not all(cleaned):
+        raise ValueError("policy receipt parts must be non-empty")
+    candidate = f"{prefix}:{':'.join(cleaned)}"
+    if len(candidate) <= _POLICY_RECEIPT_MAX:
+        return candidate
+    digest = hashlib.sha256("\0".join(cleaned).encode("utf-8")).hexdigest()
+    hashed = f"{prefix}:{digest}"
+    if len(hashed) > _POLICY_RECEIPT_MAX:
+        raise ValueError("policy receipt prefix too long")
+    return hashed
+
+
+def dialogue_summary_policy_receipt(*, subject_id: str, session_id: str) -> str:
+    """Stable unique key for one dialogue summary per subject session."""
+
+    return _stable_policy_receipt("child-dialogue-summary", subject_id, session_id)
+
+
+def archive_fact_policy_receipt(*, subject_id: str, field: str, text: str) -> str:
+    """Stable unique key for one whitelist archive fact per subject."""
+
+    return _stable_policy_receipt(
+        "child-archive-fact", subject_id, field, text.strip()
+    )
+
+
 __all__ = [
     "ARCHIVE_FIELDS",
     "ARCHIVE_IDLE_TTL",
@@ -234,8 +266,10 @@ __all__ = [
     "TRANSCRIPT_KEYS",
     "TurnFacts",
     "accept_persistent_audio",
+    "archive_fact_policy_receipt",
     "archive_idle_deadline",
     "archive_payload",
+    "dialogue_summary_policy_receipt",
     "durable_event",
     "forbidden_topic",
     "is_ephemeral_subject",

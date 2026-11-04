@@ -12,7 +12,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from services.common.memory_decision_contract import decide_auto_extract
 from services.control_api.app.config import ControlSettings
 from services.guardian.child_memory import (
-    KIND_DIALOGUE_SUMMARY,
     ArchiveFact,
     DialogueSummary,
 )
@@ -72,36 +71,29 @@ async def ingest_session_recap(
     request: Request,
     _: Annotated[None, Depends(_require_archive_write_token)],
 ) -> dict[str, Any]:
-    """Accept one session-end paraphrase (+ optional whitelist facts). Never stores transcripts."""
+    """Accept one session-end paraphrase (+ optional whitelist facts). Never stores transcripts.
+
+    Summary writes are keyed by ``(subject_id, session_id)`` via a stable
+    ``policy_receipt_id``. Retries resume archive upserts even when the summary
+    row already exists. Response write modes follow A01 SaveReceipt vocabulary
+    for what actually persisted (``sync_persisted`` vs ``not_written``).
+    """
 
     if body.skipped_reason:
         return {
             "skipped": True,
             "reason": body.skipped_reason,
             "summary_record_id": None,
+            "summary_created": False,
+            "summary_write_mode": "not_written",
             "archive_record_ids": [],
+            "archive_write_mode": "not_written",
         }
     if not body.summary_text:
         raise HTTPException(status_code=422, detail={"code": "summary_required_unless_skipped"})
 
     layers = _layers(request)
     guardian = _guardian(request)
-    existing = await layers.list(
-        subject_id=body.subject_id,
-        kind=KIND_DIALOGUE_SUMMARY,
-        viewer_subject_id=body.resource_owner_id,
-        limit=20,
-    )
-    if any(item.session_id == body.session_id for item in existing):
-        return {
-            "skipped": True,
-            "reason": "session_summary_already_written",
-            "summary_record_id": next(
-                item.record_id for item in existing if item.session_id == body.session_id
-            ),
-            "archive_record_ids": [],
-        }
-
     memory_consent = await guardian.active_consent(
         minor_user_id=body.subject_id, consent_kind="memory_retention"
     )
@@ -119,7 +111,7 @@ async def ingest_session_recap(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail={"code": "invalid_dialogue_summary"}) from exc
 
-    summary_record = await layers.write_summary(
+    ensured = await layers.ensure_summary(
         summary,
         resource_owner_id=body.resource_owner_id,
         actor_id=body.resource_owner_id,
@@ -127,10 +119,11 @@ async def ingest_session_recap(
     )
 
     archive_ids: list[str] = []
+    archive_write_mode: Literal["sync_persisted", "not_written"] = "not_written"
     archive_consent = await guardian.active_consent(
         minor_user_id=body.subject_id, consent_kind="child_archive"
     )
-    if archive_consent is not None:
+    if archive_consent is not None and body.archive_facts:
         for item in body.archive_facts:
             try:
                 fact = ArchiveFact(
@@ -158,6 +151,10 @@ async def ingest_session_recap(
                 birth_decision=birth,
             )
             archive_ids.append(written.record_id)
+        if archive_ids:
+            archive_write_mode = "sync_persisted"
+    elif archive_consent is not None and not body.archive_facts:
+        archive_write_mode = "not_written"
 
     activity = getattr(request.app.state, "subject_activity_store", None)
     if activity is not None:
@@ -165,7 +162,10 @@ async def ingest_session_recap(
 
     return {
         "skipped": False,
-        "reason": None,
-        "summary_record_id": summary_record.record_id,
+        "reason": None if ensured.created else "session_summary_already_written",
+        "summary_record_id": ensured.record.record_id,
+        "summary_created": ensured.created,
+        "summary_write_mode": "sync_persisted",
         "archive_record_ids": archive_ids,
+        "archive_write_mode": archive_write_mode,
     }
