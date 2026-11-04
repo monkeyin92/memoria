@@ -262,14 +262,14 @@ def test_closed_loop_write_display_recall_correct_withdraw() -> None:
         item.item_id for item in grounded_items_from_archive_views(after_withdraw)
     }
 
-    new_session_views = _default_list(after_withdraw)
-    new_session_items = grounded_items_from_archive_views(new_session_views)
-    assert {item.item_id for item in new_session_items} == {
+    listed_after_withdraw = _default_list(after_withdraw)
+    grounded_after_withdraw = grounded_items_from_archive_views(listed_after_withdraw)
+    assert {item.item_id for item in grounded_after_withdraw} == {
         replacement.record_id,
         confirmed[2].record_id,
     }
-    assert withdrawn.record_id not in {item.item_id for item in new_session_items}
-    assert target.record_id not in {item.item_id for item in new_session_items}
+    assert withdrawn.record_id not in {item.item_id for item in grounded_after_withdraw}
+    assert target.record_id not in {item.item_id for item in grounded_after_withdraw}
 
 
 @pytest.mark.parametrize("utterance", _REVIEW_UTTERANCES)
