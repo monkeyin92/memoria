@@ -28,19 +28,47 @@
             <mp-icon name="{{item.field === 'appellation' ? 'tag' : item.field === 'preference' ? 'heart' : 'note'}}"></mp-icon>
             <view class="cm-field-body">
               <text class="cm-field-label">{{item.label}}</text>
-              <view wx:for="{{item.facts}}" wx:for-item="fact" wx:key="recordId" class="cm-fact">
+              <view wx:for="{{item.facts}}" wx:for-item="fact" wx:key="recordId" class="cm-fact cm-fact-review">
                 <view class="cm-fact-copy">
                   <text class="cm-fact-text">{{fact.text}}</text>
+                  <text class="cm-fact-status">{{fact.statusLabel}}</text>
+                  <text wx:if="{{fact.sourceSessionId}}" class="cm-fact-meta">会话 {{fact.sourceSessionId}}</text>
+                  <text wx:if="{{fact.ruleVersion}}" class="cm-fact-meta">规则 {{fact.ruleVersion}}</text>
+                  <text class="cm-fact-meta">记录 {{fact.recordId}}</text>
+                  <text wx:if="{{fact.factVersion}}" class="cm-fact-meta">版本 {{fact.factVersion}}</text>
                 </view>
-                <view
-                  class="cm-delete"
-                  data-record-id="{{fact.recordId}}"
-                  bindtap="askDeleteArchive"
-                  aria-label="删除"
-                >
-                  <view class="cm-trash" aria-hidden="true">
-                    <view class="cm-trash-lid"></view>
-                    <view class="cm-trash-body"></view>
+                <view class="cm-fact-actions">
+                  <text
+                    wx:if="{{fact.pending}}"
+                    class="cm-action"
+                    data-record-id="{{fact.recordId}}"
+                    bindtap="askConfirmArchive"
+                  >确认</text>
+                  <text
+                    class="cm-action"
+                    data-record-id="{{fact.recordId}}"
+                    bindtap="askCorrectArchive"
+                  >这条不对</text>
+                  <text
+                    class="cm-action"
+                    data-record-id="{{fact.recordId}}"
+                    bindtap="askHistoryChange"
+                  >以前喜欢现在不喜欢</text>
+                  <text
+                    class="cm-action"
+                    data-record-id="{{fact.recordId}}"
+                    bindtap="askWithdrawArchive"
+                  >撤回</text>
+                  <view
+                    class="cm-delete"
+                    data-record-id="{{fact.recordId}}"
+                    bindtap="askDeleteArchive"
+                    aria-label="删除"
+                  >
+                    <view class="cm-trash" aria-hidden="true">
+                      <view class="cm-trash-lid"></view>
+                      <view class="cm-trash-body"></view>
+                    </view>
                   </view>
                 </view>
               </view>
