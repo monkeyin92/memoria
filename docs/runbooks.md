@@ -433,6 +433,38 @@ sudo journalctl -u memoria-backup-freshness.service -n 100
 
 现在 failed 只在主机上可见，不推手机也不进群；招 30 户之前必须接一个有人会收到的提醒渠道，否则夜间的备份失败可能一周都没人发现。
 
+#### A15 隔离恢复 + 删除台账重放演练（实验室，可重复）
+
+目标：在干净实验室证明「恢复数据 → 先合并/重放删除台账 → 再开放读取」后，已删除主体不会回到儿童召回、家长界面或缓存；未删除主体仍可见。复用既有 `SubjectDeletionLedger` 导出/合并/重放，不另建备份系统，不碰生产。
+
+```bash
+## 无 A12 清单时（PR #539 未合入）允许缺省并记 unmet
+uv run python -m scripts.run_isolation_restore_deletion_drill \
+  --report outputs/acceptance/run-$(date -u +%Y%m%dT%H%M%SZ)-a15-isolation-restore-deletion/report.json \
+  --allow-missing-inventory
+
+## 有 docs/ops/current-runtime-inventory.json 时引用角色/标签作重建清单
+uv run python -m scripts.run_isolation_restore_deletion_drill \
+  --report /tmp/a15-report.json \
+  --inventory docs/ops/current-runtime-inventory.json
+
+uv run pytest scripts/tests/test_isolation_restore_deletion_drill.py -q --import-mode=importlib
+```
+
+报告（`0600`）含 `git_head`、`rto_seconds`、账本 export/merge/replay 计数、表面断言、`failure_points`、回滚说明（丢弃 lab 目录）、以及 A14 产品文案等 `未验`/`unmet` 项。stdout 只有 `{passed, report, rto_seconds}`。
+
+诚实边界（本卡不声称已验）：A14 删除阶段文案仍进行中，不写「全部不可恢复」；生产/异地 RTO、按 live digest 整栈 docker 重建、线上账本不可导出窗口，均标 unmet。Hold `#514`/`#448`；无儿童可听内容。生产恢复仍走下一节，且须另有授权。
+
+本地同步（MacBook）：
+
+```bash
+cd ~/projects/memoria
+git fetch origin
+git checkout cursor/a15-isolation-restore-deletion-drill-5873
+git pull --ff-only origin cursor/a15-isolation-restore-deletion-drill-5873
+uv run pytest scripts/tests/test_isolation_restore_deletion_drill.py -q --import-mode=importlib
+```
+
 #### 从备份恢复
 
 恢复顺序固定，不能跳步：
