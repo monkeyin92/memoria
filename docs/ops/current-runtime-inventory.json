@@ -47,7 +47,7 @@
       "role": "voice-core-media-bridge",
       "container": "unknown",
       "image_ref": "memoria-agent:20261102-card-1-3-overlay-v1",
-      "image_id": "263748d8bb79",
+      "image_id": "unknown",
       "registry_digest": "unknown",
       "image_revision": "unknown",
       "stack_commit": "2c6ff2ccf3212e9d8b9b45f94ffad28dd8b0c82d",

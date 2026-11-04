@@ -157,6 +157,25 @@ def test_build_inventory_records_unknowns_and_media_edge() -> None:
     assert "Unknowns" in md
 
 
+def test_validate_rejects_short_image_id_prefix() -> None:
+    doc = build_inventory(
+        evidence_class="handoff_reconstruction",
+        observations=[
+            {
+                "role": "voice-core-media-bridge",
+                "image": "memoria-agent:20261102-card-1-3-overlay-v1",
+                "image_id": "sha256:" + "2" * 64,
+                "revision": "1111111111111111111111111111111111111111",
+                "stack_commit": "2c6ff2ccf3212e9d8b9b45f94ffad28dd8b0c82d",
+                "effective_flags": {k: "x" for k in FLAG_ALLOWLIST},
+            }
+        ],
+    )
+    doc["components"][0]["image_id"] = "263748d8bb79"
+    errors = validate_inventory(doc)
+    assert any("short HANDOFF prefixes are not ids" in e for e in errors)
+
+
 def test_validate_rejects_revision_equal_to_image_tag() -> None:
     doc = build_inventory(
         evidence_class="lab_fixture",

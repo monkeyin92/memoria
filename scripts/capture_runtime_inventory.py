@@ -59,7 +59,8 @@ ROLE_BY_IMAGE_PREFIX: tuple[tuple[str, str], ...] = (
 
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
-
+# Docker .Image is sha256:<64 hex>. Short HANDOFF prefixes are not image ids.
+_IMAGE_ID = re.compile(r"^(?:sha256:)?[0-9a-f]{64}$")
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -558,6 +559,14 @@ def validate_inventory(doc: Mapping[str, Any]) -> list[str]:
         ):
             errors.append(
                 f"{comp.get('role')}: image_revision must be 40-hex or unknown"
+            )
+        image_id = comp.get("image_id")
+        if image_id not in (None, UNKNOWN) and not (
+            isinstance(image_id, str) and _IMAGE_ID.match(image_id)
+        ):
+            errors.append(
+                f"{comp.get('role')}: image_id must be sha256:64-hex, bare 64-hex, "
+                "or unknown (short HANDOFF prefixes are not ids)"
             )
         # Reject commit-from-tag smuggling: revision equal to a tag-looking string.
         image_ref = comp.get("image_ref")
