@@ -113,7 +113,12 @@ def test_name_and_health_post_check_does_not_mangle_unrelated_words() -> None:
     assert accept_parent_summary("聊了被打和被性侵", turns) is None
     assert accept_parent_summary("提到了危机情况", turns) is None
     assert accept_parent_summary("和小明聊了画画", turns) is None
+    assert accept_parent_summary("和张伟聊了画画和恐龙", turns) is None
+    assert accept_parent_summary("孩子认识了李雷还聊了恐龙", turns) is None
+    assert accept_parent_summary("提到了幸福大道12号", turns) is None
+    assert accept_parent_summary("提到了3栋201室", turns) is None
     assert accept_parent_summary("孩子今天聊了画画", turns) == "孩子今天聊了画画"
+    assert accept_parent_summary("聊了小恐龙和火箭", turns) == "聊了小恐龙和火箭"
     prompt = __import__(
         "services.guardian.session_recap", fromlist=["SESSION_SUMMARY_USER_PROMPT_PREFIX"]
     ).SESSION_SUMMARY_USER_PROMPT_PREFIX

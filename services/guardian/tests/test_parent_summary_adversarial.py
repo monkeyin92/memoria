@@ -71,6 +71,34 @@ FIXTURES: tuple[Fixture, ...] = (
         forbidden=("王老师",),
     ),
     Fixture(
+        fixture_id="friend-zhangwei",
+        kind="friend_name",
+        turns=(("user", "张伟来找我玩"), ("assistant", "好玩吗"), ("user", "我们画恐龙"), ("assistant", "棒")),
+        candidate_summary="和张伟聊了画画和恐龙",
+        forbidden=("张伟",),
+    ),
+    Fixture(
+        fixture_id="friend-lilei",
+        kind="friend_name",
+        turns=(("user", "我认识了李雷"), ("assistant", "嗯"), ("user", "还聊了太空"), ("assistant", "好")),
+        candidate_summary="孩子认识了李雷还聊了恐龙",
+        forbidden=("李雷",),
+    ),
+    Fixture(
+        fixture_id="location-avenue",
+        kind="synonym_or_implied",
+        turns=(("user", "在幸福大道玩"), ("assistant", "嗯"), ("user", "还画了火箭"), ("assistant", "好")),
+        candidate_summary="提到了幸福大道12号旁边的公园",
+        forbidden=("幸福大道", "12号"),
+    ),
+    Fixture(
+        fixture_id="location-building-room",
+        kind="synonym_or_implied",
+        turns=(("user", "我家在3栋"), ("assistant", "嗯"), ("user", "想听故事"), ("assistant", "好")),
+        candidate_summary="提到了3栋201室还听了故事",
+        forbidden=("3栋", "201室"),
+    ),
+    Fixture(
         fixture_id="victim-implied",
         kind="synonym_or_implied",
         turns=(("user", "有人欺负我"), ("assistant", "我在这儿"), ("user", "我想画画"), ("assistant", "好")),
@@ -184,9 +212,9 @@ def test_adversarial_parent_summary_rates() -> None:
     assert over_deletes == 0, report
     # Degrades are expected on sensitive samples; document denominator.
     assert degrade_count >= len(sensitive) - 1, report
-    assert report["sensitive_n"] == 8
+    assert report["sensitive_n"] == 12
     assert report["normal_n"] == 4
-    assert report["all_n"] == 12
+    assert report["all_n"] == 16
 
 
 def test_crisis_and_failure_have_explicit_info_state() -> None:

@@ -68,9 +68,24 @@ _NAMED_ROLE_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:[\u4e00-\u9fff]{1,3}(?:老师|同学|班主任|校长)(?!们)"
     r"|(?:老师|同学|班主任|校长)(?!们)[\u4e00-\u9fff]{1,3})"
 )
-# Friend / peer nicknames such as 小明 / 小红. Animals and 小学 etc. are not names.
+# Friend / peer nicknames such as 小明 / 小红. Animals, 小学, play themes are not names.
 _FRIEND_NICK_RE: Final[re.Pattern[str]] = re.compile(
-    r"小(?!学|时|心|朋友|孩|狗|猫|鸟|兔|熊|鸡|鸭|鱼|马)[\u4e00-\u9fff]{1,2}"
+    r"小(?!学|时|心|朋友|孩|狗|猫|鸟|兔|熊|鸡|鸭|鱼|马|龙|恐|火|车|花|草|树|河|山)"
+    r"[\u4e00-\u9fff]{1,2}"
+)
+# Bare given names introduced as people (张伟 / 李雷), not theme words.
+# Surname scan is person-cued only so 周末 / 霸王龙 do not false-hit.
+_INTRODUCED_PERSON_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:和|跟|与|找|叫|认识了)([\u4e00-\u9fff]{2,3})(?:聊|玩|说|一起|还|,|，|$)"
+)
+# 和/跟/与 stay on _INTRODUCED_PERSON_RE so 「和周末」 is not a surname hit.
+_CUED_SURNAME_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:叫|认识了|朋友|同学)"
+    r"(?:张|王|李|赵|刘|陈|杨|黄|周|吴|徐|孙|马|朱|胡|郭|何|高|林|罗|郑|梁|谢|宋|"
+    r"唐|许|韩|冯|邓|曹|彭|曾|肖|田|董|袁|潘|蒋|蔡|余|杜|叶|程|苏|魏|吕|丁|任|"
+    r"沈|姚|卢|姜|崔|钟|谭|陆|汪|范|金|石|廖|贾|夏|韦|方|白|邹|孟|熊|秦|邱|"
+    r"江|尹|薛|闫|段|雷|侯|史|陶|黎|贺|顾|毛|郝|龚|邵|万|钱|严|覃|武|戴|莫|"
+    r"孔|向|汤)([\u4e00-\u9fff]{1,2})"
 )
 _HEALTH_TERMS: Final[tuple[str, ...]] = (
     "生病",
@@ -152,13 +167,15 @@ SESSION_SUMMARY_USER_PROMPT_PREFIX: Final = """
 
 _ADDRESS_OR_SCHOOL_NAME_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:"
-    r"[\u4e00-\u9fff]{2,12}(?:小学|中学|大学|幼儿园)"
-    r"|[\u4e00-\u9fff]{1,12}(?:路|街|巷|弄)\d{1,4}号"
+    r"[\u4e00-\u9fff]{0,12}幼儿园"
+    r"|[\u4e00-\u9fff]{2,12}(?:小学|中学|大学)"
+    r"|[\u4e00-\u9fff]{1,12}(?:大道|路|街|巷|弄)\d{1,4}号"
+    r"|\d{1,3}栋\d{1,4}室"
     r"|[\u4e00-\u9fff]{2,8}市[\u4e00-\u9fff]{1,8}区"
     r")"
 )
 _LOCATION_UNCERTAIN_RE: Final[re.Pattern[str]] = re.compile(
-    r"(?:[\u4e00-\u9fff]{2,8}(?:路|街|巷|弄)|门口|小区|几号楼)"
+    r"(?:[\u4e00-\u9fff]{2,8}(?:大道|路|街|巷|弄)|门口|小区|几号楼|\d{1,3}栋)"
 )
 
 
@@ -257,8 +274,23 @@ def copied_transcript_fragments(summary: str, turns: Sequence[SessionTurn]) -> l
     return fragments
 
 
+_THEME_TOKEN_EXCLUDE: Final[frozenset[str]] = frozenset(
+    needle
+    for _theme_id, _label, needles in ALLOWED_THEMES
+    for needle in needles
+) | frozenset(topic for topic, _label in INTEREST_TOPICS) | frozenset(
+    {"孩子", "爸爸", "妈妈", "爷爷", "奶奶", "故事", "游戏", "玩具"}
+)
+
+
 def detect_names(text: str) -> DetectorFinding | None:
     if _NAMED_ROLE_RE.search(text) is not None or _FRIEND_NICK_RE.search(text) is not None:
+        return DetectorFinding("names", "hit")
+    introduced = _INTRODUCED_PERSON_RE.search(text)
+    if introduced is not None and introduced.group(1) not in _THEME_TOKEN_EXCLUDE:
+        return DetectorFinding("names", "hit")
+    cued = _CUED_SURNAME_RE.search(text)
+    if cued is not None and cued.group(1) not in _THEME_TOKEN_EXCLUDE:
         return DetectorFinding("names", "hit")
     return None
 
