@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
+from typing import ClassVar
 
 from services.agent.src.voice_core.speech_timeline import (
     ASRFinalInterval,
@@ -230,9 +231,15 @@ class ASRStreamSupervisor:
         )
         return ASRAcceptDecision(tail, ASRDecisionReason.ACCEPTED)
 
-    @staticmethod
-    def _alnum_chars(text: str) -> list[str]:
-        return [char for char in text if char.isalnum()]
+    _ASR_PEEL_ALNUM_EQUIV: ClassVar[dict[str, str]] = {"画": "划"}
+
+    @classmethod
+    def _peel_alnum_char(cls, char: str) -> str:
+        return cls._ASR_PEEL_ALNUM_EQUIV.get(char, char)
+
+    @classmethod
+    def _alnum_chars(cls, text: str) -> list[str]:
+        return [cls._peel_alnum_char(char) for char in text if char.isalnum()]
 
     @classmethod
     def _tail_after_alnum_prefix(cls, text: str, prefix: str) -> str | None:
@@ -247,7 +254,7 @@ class ASRStreamSupervisor:
                 continue
             if matched == len(wanted):
                 return text[index:]
-            if char != wanted[matched]:
+            if cls._peel_alnum_char(char) != wanted[matched]:
                 return None
             matched += 1
         if matched == len(wanted):

@@ -12,7 +12,11 @@ from services.agent.tests.unit.media_session_support import _accept_media_asr_fi
 from services.common.companion_response_safety import companion_safety_decision
 
 _VICTIM = "救命，有人打我"
+_VICTIM_PERIOD = "救命，有人打我。"
 _OTHER = "我同学被别人打了"
+_SELF = "我不想活了。"
+_ESC_DAO = "我想拿刀划自己"
+_ESC_HUA = "我想拿刀画自己"
 
 
 @pytest.mark.asyncio
@@ -156,3 +160,120 @@ async def test_dense_victim_then_other_commit_does_not_inherit_victim_text(
     assert window.provider.prepared == [_VICTIM, _OTHER]
     assert len(window.provider.prepared[-1]) == len(_OTHER)
     assert companion_safety_decision(window.provider.prepared[-1]) == "support_relay"
+
+
+def test_post_watermark_final_strips_knife_hua_slip_before_victim() -> None:
+    """Committed 划 must peel a post-watermark 画+victim final to victim only."""
+
+    supervisor = ASRStreamSupervisor()
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=9_600)
+    knife = ASRResult(1, "knife", 1, 0, 1_600, _ESC_DAO, True)
+    assert supervisor.accept_result(knife, session_id="session")
+    supervisor.mark_committed(1_600)
+
+    merged = ASRResult(1, "knife-victim", 1, 1_600, 4_800, _ESC_HUA + _VICTIM_PERIOD, True)
+    decision = supervisor.accept_result(merged, session_id="session")
+
+    assert decision.reason is ASRDecisionReason.ACCEPTED
+    assert decision.accepted is not None
+    assert decision.accepted.text == _VICTIM_PERIOD
+    assert len(decision.accepted.text) == len(_VICTIM_PERIOD)
+    assert companion_safety_decision(decision.accepted.text) == "support_victim"
+    assert companion_safety_decision(_ESC_HUA + _VICTIM_PERIOD) == "crisis_self"
+
+
+def test_post_watermark_hua_exact_repeat_of_dao_commit_is_kept() -> None:
+    """Same-words 画 after a 划 commit must not peel to empty."""
+
+    supervisor = ASRStreamSupervisor()
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=9_600)
+    first = ASRResult(1, "dao", 1, 0, 1_600, _ESC_DAO, True)
+    assert supervisor.accept_result(first, session_id="session")
+    supervisor.mark_committed(1_600)
+
+    repeat = ASRResult(1, "hua", 1, 1_600, 3_200, _ESC_HUA, True)
+    decision = supervisor.accept_result(repeat, session_id="session")
+
+    assert decision.reason is ASRDecisionReason.ACCEPTED
+    assert decision.accepted is not None
+    assert decision.accepted.text == _ESC_HUA
+    assert companion_safety_decision(decision.accepted.text) == "crisis_self"
+
+
+@pytest.mark.asyncio
+async def test_dense_self_then_victim_commit_does_not_inherit_escalation_text(
+    device_media_session: Any,
+) -> None:
+    """Self then victim dense handoff must commit victim-only text."""
+
+    window = await device_media_session("media-self-victim-bleed", during_playback=False)
+    registry = window.registry
+    registry.turn_endpoint_grace_s = 60
+    registry.turn_endpoint_min_grace_s = 60
+    registry.turn_endpoint_max_grace_s = 60
+
+    self_start = 40_000
+    await _accept_media_asr_final(
+        registry,
+        window.identity,
+        sentence_id="self-1",
+        task_epoch=3,
+        start_sample=self_start,
+        end_sample=self_start + 1_600,
+        text=_SELF,
+    )
+    fence, reason = await registry.commit_user_turn(
+        window.identity.session_id,
+        stream_epoch=window.identity.stream_epoch,
+        start_sample=self_start,
+        end_sample=self_start + 800,
+        retire_sample=self_start + 800,
+    )
+    assert fence is not None, reason
+    assert window.provider.prepared == [_SELF]
+    assert companion_safety_decision(window.provider.prepared[-1]) == "crisis_self"
+
+    esc_start = window.context.runtime.speech_timeline.committed_sample
+    await _accept_media_asr_final(
+        registry,
+        window.identity,
+        sentence_id="esc-1",
+        task_epoch=4,
+        start_sample=esc_start,
+        end_sample=esc_start + 1_600,
+        text=_ESC_DAO,
+    )
+    fence, reason = await registry.commit_user_turn(
+        window.identity.session_id,
+        stream_epoch=window.identity.stream_epoch,
+        start_sample=esc_start,
+        end_sample=esc_start + 800,
+        retire_sample=esc_start + 800,
+    )
+    assert fence is not None, reason
+    assert window.provider.prepared == [_SELF, _ESC_DAO]
+
+    victim_start = window.context.runtime.speech_timeline.committed_sample
+    await _accept_media_asr_final(
+        registry,
+        window.identity,
+        sentence_id="victim-1",
+        task_epoch=5,
+        start_sample=victim_start,
+        end_sample=victim_start + 1_600,
+        text=_ESC_HUA + _VICTIM_PERIOD,
+    )
+    fence, reason = await registry.commit_user_turn(
+        window.identity.session_id,
+        stream_epoch=window.identity.stream_epoch,
+        start_sample=victim_start,
+        end_sample=victim_start + 800,
+        retire_sample=victim_start + 800,
+    )
+    assert fence is not None, reason
+    assert reason is None
+    assert window.provider.prepared == [_SELF, _ESC_DAO, _VICTIM_PERIOD]
+    assert len(window.provider.prepared[-1]) == len(_VICTIM_PERIOD)
+    assert companion_safety_decision(window.provider.prepared[-1]) == "support_victim"
