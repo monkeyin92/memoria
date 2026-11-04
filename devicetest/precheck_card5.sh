@@ -1,10 +1,10 @@
 #!/bin/bash
-# Precheck for board card 5 (vol30 retest) against the deployed card 1-3 overlay.
-# Expectations read from the live stack on 2026-11-02, not copied from an older batch script.
+# Precheck for board card 5 (vol30 retest) against the live MEM-52 wave cutover image.
+# Expectations match memoria-prod after 20261104-card5-wave-main-v1 (commit ddaf683b).
 set -uo pipefail
 cd "$HOME/projects/memoria"
 TAG=card5-overlay
-EXPECT_IMAGE=memoria-agent:20261102-card-1-3-overlay-v1
+EXPECT_IMAGE=memoria-agent:20261104-card5-wave-main-v1
 EXPECT_BUILD=28
 EXPECT_ELF=d0e90d73a
 EXPECT_BYPASS=ed2b4c0e
