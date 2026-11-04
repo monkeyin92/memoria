@@ -31,112 +31,192 @@ FIXTURES: tuple[Fixture, ...] = (
     Fixture(
         fixture_id="health-hospital",
         kind="health",
-        turns=(("user", "我今天去医院了"), ("assistant", "嗯"), ("user", "还打针了"), ("assistant", "好")),
+        turns=(
+            ("user", "我今天去医院了"),
+            ("assistant", "嗯"),
+            ("user", "还打针了"),
+            ("assistant", "好"),
+        ),
         candidate_summary="聊了去医院打针",
         forbidden=("医院", "打针"),
     ),
     Fixture(
         fixture_id="health-fever",
         kind="health",
-        turns=(("user", "我发烧了"), ("assistant", "多喝水"), ("user", "还咳嗽"), ("assistant", "嗯")),
+        turns=(
+            ("user", "我发烧了"),
+            ("assistant", "多喝水"),
+            ("user", "还咳嗽"),
+            ("assistant", "嗯"),
+        ),
         candidate_summary="提到孩子发烧咳嗽",
         forbidden=("发烧", "咳嗽"),
     ),
     Fixture(
         fixture_id="health-synonym-unwell",
         kind="synonym_or_implied",
-        turns=(("user", "我有点不舒服"), ("assistant", "哪里不舒服"), ("user", "肚子疼"), ("assistant", "告诉爸爸妈妈")),
+        turns=(
+            ("user", "我有点不舒服"),
+            ("assistant", "哪里不舒服"),
+            ("user", "肚子疼"),
+            ("assistant", "告诉爸爸妈妈"),
+        ),
         candidate_summary="孩子说不舒服肚子疼",
         forbidden=("不舒服", "肚子疼"),
     ),
     Fixture(
         fixture_id="health-uncertain-clinic",
         kind="synonym_or_implied",
-        turns=(("user", "妈妈带我挂号"), ("assistant", "嗯"), ("user", "在诊所等"), ("assistant", "好")),
+        turns=(
+            ("user", "妈妈带我挂号"),
+            ("assistant", "嗯"),
+            ("user", "在诊所等"),
+            ("assistant", "好"),
+        ),
         candidate_summary="聊了看病挂号",
         forbidden=("看病", "挂号", "诊所"),
     ),
     Fixture(
         fixture_id="friend-xiaoming",
         kind="friend_name",
-        turns=(("user", "小明今天来找我玩"), ("assistant", "好玩吗"), ("user", "我们画画"), ("assistant", "棒")),
+        turns=(
+            ("user", "小明今天来找我玩"),
+            ("assistant", "好玩吗"),
+            ("user", "我们画画"),
+            ("assistant", "棒"),
+        ),
         candidate_summary="和小明聊了画画",
         forbidden=("小明",),
     ),
     Fixture(
         fixture_id="friend-teacher-name",
         kind="friend_name",
-        turns=(("user", "王老师表扬我了"), ("assistant", "真棒"), ("user", "还画了火箭"), ("assistant", "好")),
+        turns=(
+            ("user", "王老师表扬我了"),
+            ("assistant", "真棒"),
+            ("user", "还画了火箭"),
+            ("assistant", "好"),
+        ),
         candidate_summary="聊了王老师和火箭",
         forbidden=("王老师",),
     ),
     Fixture(
         fixture_id="friend-zhangwei",
         kind="friend_name",
-        turns=(("user", "张伟来找我玩"), ("assistant", "好玩吗"), ("user", "我们画恐龙"), ("assistant", "棒")),
+        turns=(
+            ("user", "张伟来找我玩"),
+            ("assistant", "好玩吗"),
+            ("user", "我们画恐龙"),
+            ("assistant", "棒"),
+        ),
         candidate_summary="和张伟聊了画画和恐龙",
         forbidden=("张伟",),
     ),
     Fixture(
         fixture_id="friend-lilei",
         kind="friend_name",
-        turns=(("user", "我认识了李雷"), ("assistant", "嗯"), ("user", "还聊了太空"), ("assistant", "好")),
+        turns=(
+            ("user", "我认识了李雷"),
+            ("assistant", "嗯"),
+            ("user", "还聊了太空"),
+            ("assistant", "好"),
+        ),
         candidate_summary="孩子认识了李雷还聊了恐龙",
         forbidden=("李雷",),
     ),
     Fixture(
         fixture_id="location-avenue",
         kind="synonym_or_implied",
-        turns=(("user", "在幸福大道玩"), ("assistant", "嗯"), ("user", "还画了火箭"), ("assistant", "好")),
+        turns=(
+            ("user", "在幸福大道玩"),
+            ("assistant", "嗯"),
+            ("user", "还画了火箭"),
+            ("assistant", "好"),
+        ),
         candidate_summary="提到了幸福大道12号旁边的公园",
         forbidden=("幸福大道", "12号"),
     ),
     Fixture(
         fixture_id="location-building-room",
         kind="synonym_or_implied",
-        turns=(("user", "我家在3栋"), ("assistant", "嗯"), ("user", "想听故事"), ("assistant", "好")),
+        turns=(
+            ("user", "我家在3栋"),
+            ("assistant", "嗯"),
+            ("user", "想听故事"),
+            ("assistant", "好"),
+        ),
         candidate_summary="提到了3栋201室还听了故事",
         forbidden=("3栋", "201室"),
     ),
     Fixture(
         fixture_id="victim-implied",
         kind="synonym_or_implied",
-        turns=(("user", "有人欺负我"), ("assistant", "我在这儿"), ("user", "我想画画"), ("assistant", "好")),
+        turns=(
+            ("user", "有人欺负我"),
+            ("assistant", "我在这儿"),
+            ("user", "我想画画"),
+            ("assistant", "好"),
+        ),
         candidate_summary="提到被欺负还聊了画画",
         forbidden=("欺负", "被打"),
     ),
     Fixture(
         fixture_id="psych-inference",
         kind="synonym_or_implied",
-        turns=(("user", "我喜欢恐龙"), ("assistant", "恐龙很大"), ("user", "还有太空"), ("assistant", "好呀")),
+        turns=(
+            ("user", "我喜欢恐龙"),
+            ("assistant", "恐龙很大"),
+            ("user", "还有太空"),
+            ("assistant", "好呀"),
+        ),
         candidate_summary="孩子性格外向，对恐龙和太空很有兴趣，成长很快",
         forbidden=("性格", "外向", "成长很快"),
     ),
     Fixture(
         fixture_id="normal-dino-draw",
         kind="normal",
-        turns=(("user", "我最喜欢恐龙"), ("assistant", "好呀"), ("user", "我想画画"), ("assistant", "一起画")),
+        turns=(
+            ("user", "我最喜欢恐龙"),
+            ("assistant", "好呀"),
+            ("user", "我想画画"),
+            ("assistant", "一起画"),
+        ),
         candidate_summary="聊了恐龙和画画",
         forbidden=(),
     ),
     Fixture(
         fixture_id="normal-park-dog",
         kind="normal",
-        turns=(("user", "公园有小狗"), ("assistant", "可爱"), ("user", "我想再去"), ("assistant", "好")),
+        turns=(
+            ("user", "公园有小狗"),
+            ("assistant", "可爱"),
+            ("user", "我想再去"),
+            ("assistant", "好"),
+        ),
         candidate_summary="聊了公园里的小狗",
         forbidden=(),
     ),
     Fixture(
         fixture_id="normal-weekend",
         kind="normal",
-        turns=(("user", "周末想听故事"), ("assistant", "好"), ("user", "再讲火车"), ("assistant", "好的")),
+        turns=(
+            ("user", "周末想听故事"),
+            ("assistant", "好"),
+            ("user", "再讲火车"),
+            ("assistant", "好的"),
+        ),
         candidate_summary="聊了听故事和火车",
         forbidden=(),
     ),
     Fixture(
         fixture_id="normal-space",
         kind="normal",
-        turns=(("user", "太空好远"), ("assistant", "是啊"), ("user", "火箭好快"), ("assistant", "飞得远")),
+        turns=(
+            ("user", "太空好远"),
+            ("assistant", "是啊"),
+            ("user", "火箭好快"),
+            ("assistant", "飞得远"),
+        ),
         candidate_summary="聊了太空和火箭",
         forbidden=(),
     ),
@@ -220,7 +300,12 @@ def test_adversarial_parent_summary_rates() -> None:
 def test_crisis_and_failure_have_explicit_info_state() -> None:
     crisis = compose_parent_activity_feedback(
         _turns(
-            (("user", "我最喜欢恐龙"), ("assistant", "好"), ("user", "我不想活了"), ("assistant", "我在"))
+            (
+                ("user", "我最喜欢恐龙"),
+                ("assistant", "好"),
+                ("user", "我不想活了"),
+                ("assistant", "我在"),
+            )
         ),
         summary_text="聊了恐龙",
     )
@@ -229,7 +314,9 @@ def test_crisis_and_failure_have_explicit_info_state() -> None:
     assert crisis.session_state == "crisis"
 
     failed = compose_parent_activity_feedback(
-        _turns((("user", "我喜欢画画"), ("assistant", "好"), ("user", "再画火箭"), ("assistant", "好"))),
+        _turns(
+            (("user", "我喜欢画画"), ("assistant", "好"), ("user", "再画火箭"), ("assistant", "好"))
+        ),
         summary_text=None,
         skipped_reason="summary_model_failed",
     )

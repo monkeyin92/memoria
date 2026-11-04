@@ -19,7 +19,9 @@ def _turns(*pairs: tuple[str, str]) -> list[SessionTurn]:
 
 
 def test_skip_fewer_than_two_user_turns() -> None:
-    assert skip_session_recap(_turns(("user", "你好"), ("assistant", "嗨"))) == "fewer_than_two_turns"
+    assert (
+        skip_session_recap(_turns(("user", "你好"), ("assistant", "嗨"))) == "fewer_than_two_turns"
+    )
 
 
 def test_skip_story_playback_only() -> None:

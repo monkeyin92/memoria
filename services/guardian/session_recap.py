@@ -274,12 +274,10 @@ def copied_transcript_fragments(summary: str, turns: Sequence[SessionTurn]) -> l
     return fragments
 
 
-_THEME_TOKEN_EXCLUDE: Final[frozenset[str]] = frozenset(
-    needle
-    for _theme_id, _label, needles in ALLOWED_THEMES
-    for needle in needles
-) | frozenset(topic for topic, _label in INTEREST_TOPICS) | frozenset(
-    {"孩子", "爸爸", "妈妈", "爷爷", "奶奶", "故事", "游戏", "玩具"}
+_THEME_TOKEN_EXCLUDE: Final[frozenset[str]] = (
+    frozenset(needle for _theme_id, _label, needles in ALLOWED_THEMES for needle in needles)
+    | frozenset(topic for topic, _label in INTEREST_TOPICS)
+    | frozenset({"孩子", "爸爸", "妈妈", "爷爷", "奶奶", "故事", "游戏", "玩具"})
 )
 
 
@@ -340,9 +338,7 @@ _DETECTORS: Final = (
 )
 
 
-def run_summary_detectors(
-    text: str, turns: Sequence[SessionTurn]
-) -> tuple[DetectorFinding, ...]:
+def run_summary_detectors(text: str, turns: Sequence[SessionTurn]) -> tuple[DetectorFinding, ...]:
     """Independent detectors. Callers treat any hit or uncertain as unsafe prose."""
 
     findings: list[DetectorFinding] = []
@@ -446,7 +442,6 @@ def compose_parent_activity_feedback(
 
     themes = extract_allowed_themes(turns)
     activities = theme_activity_labels(themes)
-    users = user_turns(turns)
     early = skip_session_recap(turns)
     if early == "fewer_than_two_turns":
         return ParentActivityFeedback(

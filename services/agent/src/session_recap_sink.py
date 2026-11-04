@@ -144,12 +144,8 @@ class SessionRecapSink:
             return None
         posted = dict(posted)
         posted.setdefault("info_state", info_state or "ready")
-        posted.setdefault(
-            "themes", list(draft.feedback.themes) if draft.feedback else []
-        )
-        posted.setdefault(
-            "activities", list(draft.feedback.activities) if draft.feedback else []
-        )
+        posted.setdefault("themes", list(draft.feedback.themes) if draft.feedback else [])
+        posted.setdefault("activities", list(draft.feedback.activities) if draft.feedback else [])
         return posted
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any] | None:
