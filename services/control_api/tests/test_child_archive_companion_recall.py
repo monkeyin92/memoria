@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from services.common.child_archive_claim_marker import FACT_VERSION_PREFIX
 from services.control_api.app.child_archive_companion_recall import (
-    FACT_VERSION_PREFIX,
     grounded_items_from_archive_views,
     merge_archive_ahead_of_catalog,
 )

@@ -1625,10 +1625,10 @@ async def _companion_items(
     # defaults to None, and None means "the whole account", so a missing subject
     # must never be passed through as that default.
     confirmed_subject_id = _confirmed_subject_id(scope.subject_id)
-    private_readable = (
-        capabilities["private_memory"]
-        and scope.catalog_readable
-        and confirmed_subject_id is not None
+    subject_ready = scope.catalog_readable and confirmed_subject_id is not None
+    private_readable = capabilities["private_memory"] and subject_ready
+    archive_readable = subject_ready and (
+        capabilities["private_memory"] or capabilities["child_archive_confirmed_only"]
     )
 
     async def fetch_memory() -> MemorySearchResult:
@@ -1679,7 +1679,7 @@ async def _companion_items(
     )
     archive_task = start_child_archive_recall_task(
         request,
-        private_readable=private_readable,
+        archive_readable=archive_readable,
         subject_id=confirmed_subject_id,
         subject_category=scope.subject_category,
     )

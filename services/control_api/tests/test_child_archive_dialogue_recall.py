@@ -23,8 +23,10 @@ from services.memory_scope.child_layers import ChildLayerRecord
 class _EmptyCatalog:
     def __init__(self) -> None:
         self.queries: list[object] = []
+        self.people_calls: list[dict[str, object]] = []
 
-    async def people(self, **_: object) -> tuple[Any, ...]:
+    async def people(self, **kwargs: object) -> tuple[Any, ...]:
+        self.people_calls.append(kwargs)
         return ()
 
     async def context(self, query: object) -> MemorySearchResult:
@@ -274,4 +276,156 @@ async def test_without_child_archive_consent_skips_archive_recall(
 
     assert response.status_code == 200, response.text
     assert response.json()["grounded_items"] == []
+    assert layers.list_calls == []
+
+
+def _confirmed_preference(*, fact_version: int = 2) -> Any:
+    return _archive_view(
+        record_id="charch:confirmed",
+        text="喜欢画画",
+        status="confirmed",
+        reason_code="parent_confirm",
+        provenance="parent_confirm",
+        fact_version=fact_version,
+    )
+
+
+async def _posted_child_archive_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    classification: str,
+    consent_kinds: set[str],
+) -> tuple[Any, Any, _EmptyCatalog, _ArchiveLayers, _ConsentGuardian, str]:
+    _configure(monkeypatch, tmp_path)
+    app = create_app()
+    catalog = _EmptyCatalog()
+    child_id = f"person-child-{uuid4().hex[:8]}"
+    layers = _ArchiveLayers([_confirmed_preference()])
+    guardian = _ConsentGuardian(kinds=consent_kinds)
+    app.state.memory_catalog = catalog
+    app.state.child_layer_store = layers
+    app.state.guardian_store = guardian
+    token = {"X-Memoria-Internal-Token": "response-plan-token-that-is-long-enough"}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        user_id, user_headers = await _identity(client)
+        session_id = (await client.post("/v1/sessions", headers=user_headers, json={})).json()[
+            "session_id"
+        ]
+        _attach_signed_runtime_profile(
+            app,
+            user_id=user_id,
+            session_id=session_id,
+            active_subject_id=child_id,
+            subject_category="minor",
+            age_band="under_14",
+            service_mode="student_minor",
+            capabilities=("chat", "memory_recall_private"),
+        )
+        body = _response_plan_body(session_id, classification=classification)
+        body["query"] = "我喜欢什么？"
+        planned = await client.post("/v1/interaction/response-plan", headers=token, json=body)
+        prefetched = await client.post(
+            "/v1/interaction/context-prefetch",
+            headers=token,
+            json={
+                "session_id": session_id,
+                "query": "我喜欢什么？",
+                "speaker_decision": body["speaker_decision"],
+            },
+        )
+    return planned, prefetched, catalog, layers, guardian, child_id
+
+
+def _memory_claims(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    return [item for item in payload["grounded_items"] if item["kind"] == "memory_claim"]
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_uncertain_speaker_receives_parent_confirmed_archive_without_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    planned, prefetched, catalog, layers, guardian, child_id = await _posted_child_archive_turn(
+        monkeypatch,
+        tmp_path,
+        classification="uncertain",
+        consent_kinds={"memory_retention", "child_archive"},
+    )
+
+    assert planned.status_code == 200, planned.text
+    assert prefetched.status_code == 200, prefetched.text
+    expected = [
+        {
+            "kind": "memory_claim",
+            "item_id": "charch:confirmed",
+            "content": "喜好：喜欢画画",
+            "use_as": "fact",
+            "source_event_ids": ["fact_version:2"],
+            "confidence": None,
+            "sharing_scope": None,
+        }
+    ]
+    assert _memory_claims(planned.json()) == expected
+    assert _memory_claims(prefetched.json()) == expected
+    assert planned.json()["direct_text"] is None
+    assert catalog.queries == []
+    assert catalog.people_calls == []
+    assert layers.list_calls
+    assert all(call["viewer_subject_id"] == child_id for call in layers.list_calls)
+    assert (child_id, "memory_retention") in guardian.calls
+    assert (child_id, "child_archive") in guardian.calls
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+async def test_guest_speaker_does_not_receive_child_archive(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    planned, prefetched, catalog, layers, _, _child_id = await _posted_child_archive_turn(
+        monkeypatch,
+        tmp_path,
+        classification="guest",
+        consent_kinds={"memory_retention", "child_archive"},
+    )
+
+    assert planned.status_code == 200, planned.text
+    assert prefetched.status_code == 200, prefetched.text
+    assert planned.json()["grounded_items"] == []
+    assert prefetched.json()["grounded_items"] == []
+    assert planned.json()["direct_text"] is None
+    assert catalog.queries == []
+    assert catalog.people_calls == []
+    assert layers.list_calls == []
+
+
+@pytest.mark.hermetic
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "consent_kinds",
+    (
+        {"memory_retention"},
+        {"child_archive"},
+    ),
+)
+async def test_uncertain_speaker_without_required_consent_gets_no_archive_fact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    consent_kinds: set[str],
+) -> None:
+    planned, prefetched, catalog, layers, _, _child_id = await _posted_child_archive_turn(
+        monkeypatch,
+        tmp_path,
+        classification="uncertain",
+        consent_kinds=consent_kinds,
+    )
+
+    assert planned.status_code == 200, planned.text
+    assert prefetched.status_code == 200, prefetched.text
+    assert planned.json()["grounded_items"] == []
+    assert prefetched.json()["grounded_items"] == []
+    assert catalog.queries == []
+    assert catalog.people_calls == []
     assert layers.list_calls == []

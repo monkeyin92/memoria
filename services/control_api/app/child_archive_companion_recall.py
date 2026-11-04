@@ -10,6 +10,7 @@ from typing import Any, Final, cast
 from fastapi import Request
 
 from services.archive.memory_domain import MemorySearchResult
+from services.common.child_archive_claim_marker import format_fact_version_source_id
 from services.digital_self.response_planner import GroundedItem, SourceRef
 from services.guardian.child_archive_recall import recall_ready_archive_views
 from services.guardian.child_archive_review import ChildArchiveFactView
@@ -22,13 +23,11 @@ ARCHIVE_FIELD_TITLES: Final[dict[str, str]] = {
     "pet_name": "小名",
 }
 
-FACT_VERSION_PREFIX: Final = "fact_version:"
 DEFAULT_ARCHIVE_RECALL_LIMIT: Final = 4
 
 __all__ = [
     "ARCHIVE_FIELD_TITLES",
     "DEFAULT_ARCHIVE_RECALL_LIMIT",
-    "FACT_VERSION_PREFIX",
     "grounded_items_from_archive_views",
     "merge_archive_ahead_of_catalog",
     "merge_companion_memory_claims",
@@ -55,7 +54,7 @@ def grounded_items_from_archive_views(
                     SourceRef(
                         "memory_claim",
                         view.record_id,
-                        (f"{FACT_VERSION_PREFIX}{view.fact_version}",),
+                        (format_fact_version_source_id(view.fact_version),),
                     ),
                 ),
             )
@@ -118,11 +117,11 @@ async def _fetch_child_archive_grounded(
 def start_child_archive_recall_task(
     request: Request,
     *,
-    private_readable: bool,
+    archive_readable: bool,
     subject_id: str | None,
     subject_category: str | None,
 ) -> asyncio.Task[tuple[GroundedItem, ...]] | None:
-    if not private_readable or subject_id is None:
+    if not archive_readable or subject_id is None:
         return None
     subject_for_archive = subject_id
 

@@ -6,7 +6,10 @@ from services.control_api.app.mode_policy import (
     LEGACY_POLICY_VERSION,
     FrozenMode,
     ModePolicy,
+    SpeakerClass,
 )
+
+pytestmark = pytest.mark.hermetic
 
 
 def _legacy(*, actor_role: str = "grantee", voice_allowed: bool = False) -> FrozenMode:
@@ -59,6 +62,7 @@ def test_legacy_is_available_only_from_a_complete_frozen_contract() -> None:
         "history": False,
         "learning": False,
         "voice_profile": False,
+        "child_archive_confirmed_only": False,
     }
 
 
@@ -136,6 +140,62 @@ def test_legacy_voice_capability_requires_permission_and_exact_personal_snapshot
         allowed_without_personal,
         speaker_class="owner",
     ).voice_profile is False
+
+
+@pytest.mark.parametrize(
+    ("speaker_class", "reason_code", "confirmed_only", "private_memory"),
+    [
+        ("uncertain", "authority_unconfigured", True, False),
+        ("uncertain", "no_audio", True, False),
+        ("uncertain", "shadow_owner_candidate", True, False),
+        ("owner", "trusted", False, True),
+        ("guest", "trusted", False, False),
+    ],
+)
+def test_companion_confirmed_archive_bit_follows_speaker_class(
+    speaker_class: SpeakerClass,
+    reason_code: str,
+    confirmed_only: bool,
+    private_memory: bool,
+) -> None:
+    frozen = ModePolicy.freeze_companion(COMPANIONS["zhiyao"])
+
+    caps = ModePolicy.effective_capabilities(
+        frozen,
+        speaker_class=speaker_class,
+        reason_code=reason_code,
+    )
+
+    assert caps.child_archive_confirmed_only is confirmed_only
+    assert caps.private_memory is private_memory
+    if speaker_class == "uncertain":
+        assert caps.persona is False
+        assert caps.tools is False
+        assert caps.history is False
+        assert caps.learning is False
+        assert caps.persona_low_sensitivity is (reason_code == "shadow_owner_candidate")
+    assert ModePolicy.session_context(frozen)["capabilities"]["child_archive_confirmed_only"] is False
+
+
+def test_confirmed_archive_bit_stays_off_without_an_active_companion_turn() -> None:
+    companion = ModePolicy.freeze_companion(COMPANIONS["zhiyao"])
+
+    inactive = ModePolicy.effective_capabilities(
+        companion,
+        speaker_class="uncertain",
+        reason_code="authority_unconfigured",
+        account_active=False,
+    )
+    legacy = ModePolicy.effective_capabilities(
+        _legacy(),
+        speaker_class="uncertain",
+        reason_code="authority_unconfigured",
+    )
+
+    assert inactive.child_archive_confirmed_only is False
+    assert inactive.private_memory is False
+    assert legacy.child_archive_confirmed_only is False
+    assert legacy.private_memory is False
 
 
 def test_owner_preview_requires_owner_actor_and_has_no_shell() -> None:
