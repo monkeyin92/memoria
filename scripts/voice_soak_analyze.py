@@ -135,11 +135,13 @@ def main() -> int:
                 f"，打断素材起点→退出说话 p50 {statistics.median(delays_start):.1f}s"
                 f"（stop_delay_origin=interrupt_start）"
             )
-        if delays_end:
-            delay_note += (
-                f"，说完后→退出说话 p50 {statistics.median(delays_end):.1f}s"
-                f"（stop_delay_origin=speech_end）"
-            )
+            if delays_end:
+                delay_note += (
+                    f"，说完后→退出说话 p50 {statistics.median(delays_end):.1f}s"
+                    f"（stop_delay_origin=speech_end）"
+                )
+            else:
+                delay_note += "，说完后→退出说话 缺（stop_delay_origin=speech_end）"
         if delay_note:
             delay_note += "（非声学测量）"
         print(
