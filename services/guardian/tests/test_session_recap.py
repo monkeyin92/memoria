@@ -171,7 +171,6 @@ def test_someone_elses_preference_is_not_the_childs() -> None:
 
 
 def test_same_subject_multi_topic_likes_are_kept_per_clause() -> None:
-    # Clause-scoped bind keeps same-subject multi-likes and drops bare dislikes.
     assert _facts(("user", "我喜欢小狗，也喜欢小猫"), ("assistant", "好")) == [
         "喜欢小狗",
         "喜欢小猫",

@@ -68,7 +68,7 @@ _NEG_DISLIKE = re.compile(r"(?:不|没|别|不太)(?:再|太|怎么|会)?(?:喜�
 _NEG_BARE = re.compile(r"(?:不喜欢|不中意|不钟意|讨厌|害怕|怕)(?:了|啦|啊|呢)?$")
 _PAST = re.compile(r"以前|之前|曾经|原来|早前|从前")
 _PRESENT = re.compile(r"现在|如今|目前")
-_REPORTED = re.compile(r"听说|据说|好像|有人说|.+说")
+_REPORTED = re.compile(r"听说|据说|好像|有人说")
 _HYPOTHETICAL = re.compile(r"如果|要是|假如|也许|可能")
 _CORRECTION = re.compile(r"说错了|不对|其实不是|更正")
 _CLAUSE_SPLIT = re.compile(r"[，,]|但|可是|不过|然而")
@@ -281,7 +281,7 @@ def _reduce_sentence(claims: Sequence[_BoundClaim]) -> list[_ReducedClaim]:
         by_topic.setdefault(claim.topic_needle, []).append(claim)
 
     reduced: list[_ReducedClaim] = []
-    for needle, group in by_topic.items():
+    for _needle, group in by_topic.items():
         ordered = sorted(group, key=lambda c: (c.turn_index, c.sentence_index, c.clause_index))
         is_current = False
         polarity: Polarity = "unknown"

@@ -15,8 +15,11 @@ import pytest
 sys.modules.setdefault("services.guardian", types.ModuleType("services.guardian"))
 sys.modules["services.guardian"].__path__ = ["services/guardian"]
 
-from services.guardian.session_recap import SessionTurn, extract_interest_facts
-from services.guardian.tests.preference_extract_cases import ALL_CASES, PreferenceExtractCase
+from services.guardian.session_recap import SessionTurn, extract_interest_facts  # noqa: E402
+from services.guardian.tests.preference_extract_cases import (  # noqa: E402
+    ALL_CASES,
+    PreferenceExtractCase,
+)
 
 
 def _labels(utterance: str) -> list[str]:
@@ -60,6 +63,28 @@ def test_preference_extract_annotated_and_holdout(case: PreferenceExtractCase) -
     # suite for annotated+holdout fixtures (product miss tolerance is separate;
     # these fixtures are the acceptance set, not a soft score).
     pytest.fail(f"{case.case_id}: {failure} — {case.note}")
+
+
+def test_auto_extract_decisions_never_confirmed_or_certain() -> None:
+    from services.guardian.preference_extract import (
+        DEFAULT_AUTO_CONFIDENCE,
+        RULE_VERSION,
+        extract_preference_decisions,
+    )
+
+    decisions = extract_preference_decisions(
+        subject_key="child-1",
+        turns=[SessionTurn(role="user", text="我最喜欢恐龙")],
+        source_session_id="sess-1",
+    )
+    assert [decision.fact.object_text for decision in decisions] == ["喜欢恐龙"]
+    for decision in decisions:
+        assert decision.fact.provenance == "auto_extract"
+        assert decision.fact.rule_version == RULE_VERSION
+        assert decision.lifecycle != "confirmed"
+        assert decision.fact.confidence == DEFAULT_AUTO_CONFIDENCE
+        assert decision.fact.confidence is not None
+        assert decision.fact.confidence < 1.0
 
 
 def test_original_three_a00_examples_no_wrong_subject_or_polarity() -> None:

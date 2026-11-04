@@ -21,23 +21,11 @@ from services.guardian.child_memory import (
     DialogueSummary,
     quotes_speech,
 )
+from services.guardian.preference_extract import TOPIC_ROWS, extract_interest_facts
+
+INTEREST_TOPICS: Final[tuple[tuple[str, str], ...]] = TOPIC_ROWS
 
 Role = Literal["user", "assistant"]
-
-# Interest topics that may become preference archive facts when the child names them.
-INTEREST_TOPICS: Final[tuple[tuple[str, str], ...]] = (
-    ("霸王龙", "喜欢霸王龙"),
-    ("恐龙", "喜欢恐龙"),
-    ("太空", "喜欢太空"),
-    ("火箭", "喜欢火箭"),
-    ("画画", "喜欢画画"),
-    ("积木", "喜欢积木"),
-    ("赛车", "喜欢赛车"),
-    ("火车", "喜欢火车"),
-    ("小狗", "喜欢小狗"),
-    ("小猫", "喜欢小猫"),
-    ("公园", "喜欢去公园"),
-)
 
 _STORY_ONLY_USER = re.compile(r"^(再)?(讲|说|读)(一)?(个|则|段)?(故事|童话|绘本).{0,8}$")
 # Named people only: a short name attached to the role word. Skip plurals like 同学们.
@@ -205,24 +193,6 @@ def accept_parent_summary(text: str, turns: Sequence[SessionTurn]) -> str | None
     if len(cleaned) > SUMMARY_MAX_CHARS:
         cleaned = cleaned[: SUMMARY_MAX_CHARS - 1] + "…"
     return cleaned
-
-
-def extract_interest_facts(
-    subject_id: str, turns: Sequence[SessionTurn]
-) -> tuple[ArchiveFact, ...]:
-    """Preference facts from clause-scoped self-statements (e.g. 我最喜欢恐龙).
-
-    A request (「给我讲个恐龙故事」), a fear (「我怕小狗」), another person's liking,
-    a negated or withdrawn topic, or a nickname / pet name writes nothing.
-    Implementation lives in ``preference_extract`` so subject/polarity/time
-    bind per clause, not over the whole sentence body.
-    """
-
-    from services.guardian.preference_extract import (
-        extract_interest_facts as _extract_interest_facts,
-    )
-
-    return _extract_interest_facts(subject_id, turns)
 
 
 def session_hits_crisis(turns: Sequence[SessionTurn]) -> bool:
