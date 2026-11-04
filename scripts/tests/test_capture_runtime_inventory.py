@@ -29,7 +29,6 @@ def test_inspect_formats_match_release_ops_case_arms() -> None:
     end = script.index("\n}\n", start)
     body = script[start:end]
 
-    # version|revision share one bash arm with $2 in the label name.
     assert 'version|revision) format="{{index .Config.Labels \\"org.opencontainers.image.$2\\"}}"' in body
     assert INSPECT_FORMATS["version"] == '{{index .Config.Labels "org.opencontainers.image.version"}}'
     assert INSPECT_FORMATS["revision"] == '{{index .Config.Labels "org.opencontainers.image.revision"}}'
@@ -91,7 +90,6 @@ def test_build_inventory_records_unknowns_and_media_edge() -> None:
                 "image": "memoria-agent:20261102-card-1-3-overlay-v1",
                 "image_id": "sha256:" + "b" * 64,
                 "registry_digest": UNKNOWN,
-                # Empty revision must stay unknown; never taken from the tag.
                 "revision": "",
                 "stack_commit": "2c6ff2ccf3212e9d8b9b45f94ffad28dd8b0c82d",
                 "compose_chain": (
@@ -177,21 +175,33 @@ def test_validate_rejects_short_image_id_prefix() -> None:
 
 
 def test_validate_rejects_revision_equal_to_image_tag() -> None:
-    doc = build_inventory(
-        evidence_class="lab_fixture",
-        observations=[
+    tag = "20261029-plan-head-start-v1"
+    doc = {
+        "schema_version": 1,
+        "evidence_class": "lab_fixture",
+        "captured_at": UNKNOWN,
+        "memoria_root": UNKNOWN,
+        "stack": {
+            "current_tag": UNKNOWN,
+            "current_commit": UNKNOWN,
+            "current_path": UNKNOWN,
+        },
+        "components": [
             {
                 "role": "control-api",
-                "image": "memoria-control-api:20261029-plan-head-start-v1",
+                "image_ref": f"memoria-control-api:{tag}",
                 "image_id": "sha256:" + "d" * 64,
-                "revision": "2c6ff2ccf3212e9d8b9b45f94ffad28dd8b0c82d",
+                "registry_digest": UNKNOWN,
+                "image_revision": tag,
                 "stack_commit": "2c6ff2ccf3212e9d8b9b45f94ffad28dd8b0c82d",
                 "effective_flags": {k: "x" for k in FLAG_ALLOWLIST},
             }
         ],
-    )
-    # Smuggle a bad revision after build.
-    doc["components"][0]["image_revision"] = "20261029-plan-head-start-v1"
+        "firmware": {},
+        "miniprogram": {},
+        "rollback": {"stack_prev": {}, "per_component": []},
+        "unknowns": [],
+    }
     errors = validate_inventory(doc)
     assert any("must not equal image tag" in e for e in errors)
 
@@ -216,7 +226,7 @@ def test_compare_reports_component_diffs() -> None:
 
 
 class _FixtureBackend:
-    def __init__(self, containers: dict[str, dict[str, object]]) -> None:
+    def __init__(self, containers: dict[str, dict[str, str | int | dict[str, str]]]) -> None:
         self._containers = containers
 
     def list_memoria_containers(self) -> list[str]:
@@ -232,7 +242,9 @@ class _FixtureBackend:
         return str(self._containers[container]["health"])
 
     def inspect_restarts(self, container: str) -> int:
-        return int(self._containers[container]["restarts"])  # type: ignore[arg-type]
+        restarts = self._containers[container]["restarts"]
+        assert isinstance(restarts, int)
+        return restarts
 
     def inspect_repo_digest(self, container: str) -> str:
         return str(self._containers[container].get("registry_digest", UNKNOWN))
@@ -343,7 +355,7 @@ def test_capture_from_backend_reads_prev_release(tmp_path: Path) -> None:
     roles = {c["role"] for c in doc["components"]}
     assert "control-api" in roles
     assert "voice-core-media-bridge" in roles
-    assert "other" not in roles  # redis skipped
+    assert "other" not in roles
     bridge = next(c for c in doc["components"] if c["role"] == "voice-core-media-bridge")
     assert bridge["override_path"].endswith("agent-component.override.yml")
 

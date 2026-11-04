@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
-"""Capture, validate, render, and compare a Memoria runtime component inventory.
-
-The inventory is the single machine-readable picture of what is running
-(full stack plus overlays). Publish-time manifests stay publish-time.
-release_ops.sh cutover stays cutover. This tool only observes.
-
-Docker inspect format strings must stay aligned with
-scripts/release_ops.sh inspect_container. See INSPECT_FORMATS.
-"""
+"""Capture, validate, render, and compare a Memoria runtime component inventory."""
 
 from __future__ import annotations
 
@@ -16,7 +8,7 @@ import json
 import re
 import subprocess
 import sys
-from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -27,7 +19,6 @@ EVIDENCE_CLASSES = frozenset(
 )
 UNKNOWN = "unknown"
 
-# Must match scripts/release_ops.sh inspect_container case arms.
 INSPECT_FORMATS: dict[str, str] = {
     "chain": '{{index .Config.Labels "com.docker.compose.project.config_files"}}',
     "version": '{{index .Config.Labels "org.opencontainers.image.version"}}',
@@ -77,8 +68,6 @@ def inspect_format(field: str) -> str:
 
 
 def flag_env_format(key: str) -> str:
-    """Docker --format that prints one allowlisted env value, nothing else."""
-
     if key not in FLAG_ALLOWLIST:
         raise KeyError(f"env key not allowlisted: {key}")
     prefix = f"{key}="
@@ -101,8 +90,6 @@ def role_for_image(image: str) -> str:
 
 
 class DockerBackend:
-    """Live docker inspect. Lab tests inject a different backend."""
-
     def list_memoria_containers(self) -> list[str]:
         out = subprocess.check_output(
             ["docker", "ps", "--format", "{{.Names}}"],
@@ -168,8 +155,6 @@ Backend = Any
 
 
 def parse_prev_release(text: str) -> dict[str, Any]:
-    """Parse frozen prev-release. Missing or malformed fields become unknown."""
-
     lines = [ln for ln in text.splitlines() if ln.strip()]
     result: dict[str, Any] = {
         "tag": UNKNOWN,
@@ -192,17 +177,15 @@ def parse_prev_release(text: str) -> dict[str, Any]:
         elif key == "overrides":
             parts = value.split()
             groups = []
-            # service path sha256 image-id
             i = 0
             while i + 3 < len(parts):
+                service, path, sha256, image_id = parts[i : i + 4]
                 groups.append(
                     {
-                        "service": parts[i],
-                        "path": parts[i + 1],
-                        "sha256": parts[i + 2]
-                        if _HEX64.match(parts[i + 2])
-                        else UNKNOWN,
-                        "image_id": parts[i + 3],
+                        "service": service,
+                        "path": path,
+                        "sha256": sha256 if _HEX64.match(sha256) else UNKNOWN,
+                        "image_id": image_id,
                     }
                 )
                 i += 4
@@ -221,27 +204,6 @@ def read_release_env(path: Path) -> dict[str, str]:
         if key in {"MEMORIA_RELEASE_TAG", "MEMORIA_RELEASE_COMMIT"}:
             values[key] = value.strip().strip('"').strip("'")
     return values
-
-
-def read_override_tsv(path: Path) -> list[dict[str, str]]:
-    rows: list[dict[str, str]] = []
-    if not path.is_file():
-        return rows
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        parts = line.split()
-        if len(parts) < 4:
-            continue
-        rows.append(
-            {
-                "service": parts[0],
-                "path": parts[1],
-                "sha256": parts[2],
-                "tmp_original": parts[3],
-            }
-        )
-    return rows
 
 
 def _or_unknown(value: str | None) -> str:
@@ -430,7 +392,6 @@ def build_inventory(
         if val == UNKNOWN:
             unknowns.append(f"miniprogram.{key} unknown")
 
-    # De-dupe unknowns while preserving order.
     seen: set[str] = set()
     uniq_unknowns: list[str] = []
     for item in unknowns:
@@ -463,11 +424,7 @@ def capture_from_backend(
     for name in backend.list_memoria_containers():
         image = backend.inspect_field(name, "image")
         role = role_for_image(image)
-        if role == "other" and not any(
-            image.startswith(p) or f"/{p}" in image
-            for p, _ in ROLE_BY_IMAGE_PREFIX
-        ):
-            # Skip sidecars (redis, sensevoice, …) unless they match a role.
+        if role == "other":
             continue
         chain = backend.inspect_field(name, "chain")
         override_path = UNKNOWN
@@ -513,8 +470,6 @@ def capture_from_backend(
                 )
             else:
                 rollback["stack_prev"] = parse_prev_release("")
-        # Whitelist is context only; live override is compose label on each row.
-        _ = read_override_tsv(memoria_root / "state" / "component-overrides.tsv")
 
     return build_inventory(
         evidence_class=evidence_class,
@@ -568,7 +523,6 @@ def validate_inventory(doc: Mapping[str, Any]) -> list[str]:
                 f"{comp.get('role')}: image_id must be sha256:64-hex, bare 64-hex, "
                 "or unknown (short HANDOFF prefixes are not ids)"
             )
-        # Reject commit-from-tag smuggling: revision equal to a tag-looking string.
         image_ref = comp.get("image_ref")
         if (
             isinstance(image_ref, str)
@@ -651,8 +605,6 @@ def render_markdown(doc: Mapping[str, Any]) -> str:
 def compare_inventories(
     left: Mapping[str, Any], right: Mapping[str, Any]
 ) -> list[str]:
-    """Component-by-component diff. Returns human-readable mismatch lines."""
-
     diffs: list[str] = []
     left_map = {
         c["role"]: c
