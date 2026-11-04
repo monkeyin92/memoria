@@ -17,7 +17,6 @@ def _bridge_line(ts: float, template: str) -> str:
 
 
 def test_match_turns_does_not_give_later_playout_to_earlier_audible_reply() -> None:
-    """Diagnosis (d): earlier audible non-fixed reply must not consume the next playout."""
     timeline = [
         {"kind": "said", "tag": "t002-c1-escalation-1", "ts": 10.0},
         {"kind": "reply", "tag": "t002-c1-escalation-1", "ts": 11.0},
@@ -87,7 +86,7 @@ def test_score_run_writes_card5_payload(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     payload, code = score_run(tmp_path, scenario)
-    assert code == 1  # not a full 5x5 card
+    assert code == 1
     assert payload["trials"][0]["got_tpl"] == "support-other-v1"
     assert payload["trials"][0]["pass"] is True
     assert (tmp_path / "safety_results.json").is_file()

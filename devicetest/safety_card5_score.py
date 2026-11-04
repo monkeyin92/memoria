@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Score a card5 safety OUT directory for run_safety_card5.sh.
-
-Assigns each turn's got_tpl via safety_soak_report.match_turns (said→reply
-time window), not by walking audible replies in order.
-"""
+"""Score a card5 safety OUT directory for run_safety_card5.sh."""
 
 from __future__ import annotations
 
@@ -59,7 +55,6 @@ def build_trials(
     bridge_text: str,
     tag_to_tpl: dict[str, str],
 ) -> list[dict[str, Any]]:
-    """Build per-tag trial rows with time-window got_tpl assignment."""
     results: list[dict[str, Any]] = []
     for i, ev in enumerate(timeline):
         if ev.get("kind") != "said":
