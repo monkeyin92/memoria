@@ -9,13 +9,13 @@ import pytest
 sys.modules.setdefault("services.guardian", types.ModuleType("services.guardian"))
 sys.modules["services.guardian"].__path__ = ["services/guardian"]
 
+from services.common.child_archive_claim_marker import FACT_VERSION_PREFIX  # noqa: E402
 from services.common.memory_decision_contract import (  # noqa: E402
     display_for,
     recall_for,
     save_receipt,
 )
 from services.control_api.app.child_archive_companion_recall import (  # noqa: E402
-    FACT_VERSION_PREFIX,
     grounded_items_from_archive_views,
 )
 from services.guardian.child_archive_review import (  # noqa: E402
