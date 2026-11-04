@@ -34,7 +34,14 @@ def test_child_scenario_is_the_dial_sheet_and_already_covers_twenty() -> None:
         assert isinstance(by_tag[tag]["say"], str) and by_tag[tag]["say"].strip()
 
 
-def _write(run: Path, rows: list[dict[str, object]], bridge: str = "", serial: str = "") -> None:
+def _write(
+    run: Path,
+    rows: list[dict[str, object]],
+    bridge: str = "",
+    serial: str = "",
+    *,
+    manifest: dict[str, object] | None = None,
+) -> None:
     run.mkdir()
     (run / "timeline.jsonl").write_text(
         "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8"
@@ -43,6 +50,24 @@ def _write(run: Path, rows: list[dict[str, object]], bridge: str = "", serial: s
         (run / "bridge.log").write_text(bridge, encoding="utf-8")
     if serial:
         (run / "serial.log").write_text(serial, encoding="utf-8")
+    if manifest is not None:
+        (run / "manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+
+
+def _manifest(
+    *tags: str,
+    required_logs: tuple[str, ...] = (),
+    min_valid_interrupt_samples: int = 0,
+    scenario_hash: str = "test-fixture",
+) -> dict[str, object]:
+    return voice_soak_verdict.manifest_dict(
+        scenario_hash=scenario_hash,
+        expected_step_tags=tags,
+        required_logs=required_logs,
+        min_valid_interrupt_samples=min_valid_interrupt_samples,
+    )
 
 
 def _tail(**extra: object) -> dict[str, object]:
@@ -104,13 +129,23 @@ def _passing_rows() -> list[dict[str, object]]:
     ]
 
 
+def _passing_manifest() -> dict[str, object]:
+    return _manifest(
+        "t001",
+        "t002",
+        required_logs=("bridge.log", "serial.log"),
+        min_valid_interrupt_samples=1,
+    )
+
+
 def test_a_run_with_a_confirmed_stop_and_idle_tail_passes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     bridge, serial = _confirmed_stop_logs()
     run = tmp_path / "run-pass"
-    _write(run, _passing_rows(), bridge, serial)
+    _write(run, _passing_rows(), bridge, serial, manifest=_passing_manifest())
     assert voice_soak_verdict.main([str(run)]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["passed"] is True
+    assert report["status"] == "pass"
     assert report["failures"] == []
     assert report["no_reply"] == 0
     assert report["reply_latency_p90_s"] == 1.25
@@ -123,10 +158,248 @@ def test_a_run_with_a_confirmed_stop_and_idle_tail_passes(tmp_path: Path, capsys
 
 def test_a_claimed_stop_without_log_evidence_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run = tmp_path / "run-unverified"
-    _write(run, _passing_rows())
+    _write(run, _passing_rows(), manifest=_manifest("t001", "t002"))
     assert voice_soak_verdict.main([str(run)]) == 1
     report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "fail"
     assert report["failures"] == ["stop_not_confirmed: t001 unverified"]
+
+
+def test_required_logs_missing_is_incomplete(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    run = tmp_path / "run-missing-logs"
+    _write(
+        run,
+        _passing_rows(),
+        manifest=_manifest(
+            "t001",
+            "t002",
+            required_logs=("bridge.log", "serial.log"),
+            min_valid_interrupt_samples=1,
+        ),
+    )
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["passed"] is False
+    assert report["status"] == "incomplete"
+    assert "incomplete: missing_log: bridge.log" in report["failures"]
+    assert "incomplete: missing_log: serial.log" in report["failures"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param(None, id="missing"),
+        pytest.param("", id="empty"),
+        pytest.param("{", id="broken-json"),
+        pytest.param('{"scenario_hash": "abc"}', id="partial"),
+    ],
+)
+def test_a00_one_reply_idle_without_a_usable_manifest_is_incomplete(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], body: str | None
+) -> None:
+    run = tmp_path / "run-a00-incomplete"
+    _write(run, [{"kind": "reply", "tag": "t001", "latency_s": 1.0}, _tail()])
+    if body is not None:
+        (run / "manifest.json").write_text(body, encoding="utf-8")
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["passed"] is False
+    assert report["status"] == "incomplete"
+    assert report["failures"]
+    assert all(item.startswith("incomplete:") for item in report["failures"])
+    assert not any(
+        item.startswith(("reply_latency", "tail_idle", "no_reply:", "stop_not"))
+        for item in report["failures"]
+    )
+    if body is None:
+        assert report["failures"] == ["incomplete: manifest missing"]
+
+
+def test_manifest_missing_expected_step_is_incomplete(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run = tmp_path / "run-missing-step"
+    _write(
+        run,
+        [{"kind": "reply", "tag": "t001", "latency_s": 1.0}, _tail()],
+        manifest=_manifest("t001", "t002"),
+    )
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "incomplete"
+    assert report["failures"] == ["incomplete: missing_step: t002"]
+
+
+def test_manifest_requiring_interrupt_sample_without_one_is_incomplete(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run = tmp_path / "run-no-interrupt"
+    _write(
+        run,
+        [{"kind": "reply", "tag": "t001", "latency_s": 1.0}, _tail()],
+        manifest=_manifest("t001", min_valid_interrupt_samples=1),
+    )
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "incomplete"
+    assert report["failures"] == ["incomplete: valid_interrupt_samples: 0 < 1"]
+
+
+@pytest.mark.parametrize("content", [None, "", "\n", "   "])
+def test_required_bridge_log_missing_or_blank_is_incomplete(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], content: str | None
+) -> None:
+    run = tmp_path / "run-blank-log"
+    rows = [{"kind": "reply", "tag": "t001", "latency_s": 1.0}, _tail()]
+    _write(run, rows)
+    voice_soak_verdict.write_manifest(
+        run,
+        scenario_hash="test-fixture",
+        expected_step_tags=("t001",),
+        required_logs=("bridge.log",),
+    )
+    if content is not None:
+        (run / "bridge.log").write_text(content, encoding="utf-8")
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["passed"] is False
+    assert report["status"] == "incomplete"
+    assert report["failures"] == ["incomplete: missing_log: bridge.log"]
+
+
+def test_log_path_outside_the_run_is_incomplete(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    outside = tmp_path / "bridge.log"
+    outside.write_text("bridge\n", encoding="utf-8")
+    run = tmp_path / "run-escape"
+    _write(run, [{"kind": "reply", "tag": "t001", "latency_s": 1.0}, _tail()])
+    voice_soak_verdict.write_manifest(
+        run,
+        scenario_hash="test-fixture",
+        expected_step_tags=("t001",),
+        required_logs=("../bridge.log",),
+    )
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "incomplete"
+    assert report["passed"] is False
+    assert report["failures"] == ["incomplete: missing_log: ../bridge.log"]
+
+
+def test_only_unverifiable_interrupt_misses_the_sample_floor(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _, serial = _confirmed_stop_logs()
+    bridge = _delivery(-0.1, "first_frame_sent") + _delivery(
+        5, "playback_ended", "playback_ended", "playback_completed"
+    )
+    rows = _passing_rows()
+    rows[1]["interrupt_start_ts"] = BASE + 5 - 2.0
+    run = tmp_path / "run-unverifiable-interrupt"
+    _write(
+        run,
+        rows,
+        bridge,
+        serial,
+        manifest=_manifest(
+            "t001",
+            "t002",
+            required_logs=("bridge.log", "serial.log"),
+            min_valid_interrupt_samples=1,
+        ),
+    )
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["passed"] is False
+    assert report["status"] == "incomplete"
+    assert report["failures"] == ["incomplete: valid_interrupt_samples: 0 < 1"]
+
+
+def test_step_failed_without_speech_or_silence_is_not_started(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run = tmp_path / "run-not-started"
+    _write(
+        run,
+        [
+            {"kind": "step_failed", "tag": "t001", "reason": "could not wake the device"},
+            _tail(),
+        ],
+        manifest=_manifest("t001"),
+    )
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "incomplete"
+    assert report["failures"] == ["incomplete: run_not_started"]
+
+
+def test_missing_completion_skips_the_tail_metric(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run = tmp_path / "run-not-completed"
+    _write(
+        run,
+        [{"kind": "reply", "tag": "t001", "latency_s": 1.0}],
+        manifest=_manifest("t001"),
+    )
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "incomplete"
+    assert report["failures"] == ["incomplete: run_not_completed"]
+
+
+def test_scenario_done_counts_as_completed_and_the_tail_metric_still_runs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run = tmp_path / "run-scenario-done"
+    _write(
+        run,
+        [{"kind": "reply", "tag": "t001", "latency_s": 1.0}, {"kind": "scenario_done"}],
+        manifest=_manifest("t001"),
+    )
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "fail"
+    assert "tail_idle: missing" in report["failures"]
+    assert all(not item.startswith("incomplete:") for item in report["failures"])
+
+
+def test_short_duration_and_missing_timestamps_are_incomplete(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    short = tmp_path / "run-short"
+    _write(
+        short,
+        [
+            {"kind": "reply", "tag": "t001", "latency_s": 1.0, "ts": 10.0},
+            {**_tail(), "ts": 12.0},
+        ],
+        manifest=voice_soak_verdict.manifest_dict(
+            scenario_hash="test-fixture",
+            expected_step_tags=["t001"],
+            min_duration_s=5,
+        ),
+    )
+    assert voice_soak_verdict.main([str(short)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "incomplete"
+    assert report["failures"] == ["incomplete: duration_s: 2.0 < 5.0"]
+
+    unmeasured = tmp_path / "run-unmeasured"
+    _write(
+        unmeasured,
+        [{"kind": "reply", "tag": "t001", "latency_s": 1.0}, _tail()],
+        manifest=voice_soak_verdict.manifest_dict(
+            scenario_hash="test-fixture",
+            expected_step_tags=["t001"],
+            min_duration_s=5,
+        ),
+    )
+    assert voice_soak_verdict.main([str(unmeasured)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "incomplete"
+    assert report["failures"] == ["incomplete: duration_unmeasurable"]
 
 
 @pytest.mark.parametrize("left_s,failures", [
@@ -143,7 +416,13 @@ def test_a_stop_clip_too_late_to_win_does_not_fail_the_run(
     rows = _passing_rows()
     rows[1]["interrupt_start_ts"] = BASE + 5 - left_s
     run = tmp_path / "run-late-clip"
-    _write(run, rows, bridge, serial)
+    _write(
+        run,
+        rows,
+        bridge,
+        serial,
+        manifest=_manifest("t001", "t002", required_logs=("bridge.log", "serial.log")),
+    )
     voice_soak_verdict.main([str(run)])
     assert json.loads(capsys.readouterr().out)["failures"] == failures
 
@@ -158,9 +437,11 @@ def test_abort_silence_and_tail_each_fail_the_run(tmp_path: Path, capsys: pytest
             {"kind": "silence", "tag": "t002", "went_idle": False},
             {"kind": "post_scenario_observation", "verdict": "timeout"},
         ],
+        manifest=_manifest("t001", "t002"),
     )
     assert voice_soak_verdict.main([str(run)]) == 1
     report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "fail"
     assert report["failures"] == [
         "abort: device never reached idle after the port open",
         "step_failed: t001 could not wake the device",
@@ -173,9 +454,22 @@ def test_abort_silence_and_tail_each_fail_the_run(tmp_path: Path, capsys: pytest
 
 def test_missing_tail_observation_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     run = tmp_path / "run-notail"
-    _write(run, [{"kind": "said", "tag": "t001", "text": "你好"}])
+    _write(
+        run,
+        [
+            {"kind": "said", "tag": "t001", "text": "你好"},
+            {"kind": "silence", "tag": "t001", "went_idle": True},
+        ],
+        manifest=voice_soak_verdict.manifest_dict(
+            scenario_hash="test-fixture",
+            expected_step_tags=["t001"],
+            require_completed=False,
+        ),
+    )
     assert voice_soak_verdict.main([str(run)]) == 1
-    assert json.loads(capsys.readouterr().out)["failures"] == [
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "fail"
+    assert report["failures"] == [
         "tail_idle: missing",
         "reply_latency_p90_s: missing > 2.0",
         "reply_latency_max_s: missing > 3.0",
@@ -186,10 +480,15 @@ def test_no_reply_zero_passes_and_one_fails(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     ok = tmp_path / "run-noreply-zero"
-    _write(ok, [{"kind": "reply", "tag": "t001", "latency_s": 2.0}, _tail()])
+    _write(
+        ok,
+        [{"kind": "reply", "tag": "t001", "latency_s": 2.0}, _tail()],
+        manifest=_manifest("t001"),
+    )
     assert voice_soak_verdict.main([str(ok)]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["passed"] is True
+    assert report["status"] == "pass"
     assert report["no_reply"] == 0
     assert report["failures"] == []
 
@@ -201,9 +500,11 @@ def test_no_reply_zero_passes_and_one_fails(
             {"kind": "reply", "tag": "t002", "latency_s": 2.0},
             _tail(),
         ],
+        manifest=_manifest("t001", "t002"),
     )
     assert voice_soak_verdict.main([str(bad)]) == 1
     report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "fail"
     assert report["no_reply"] == 1
     assert report["failures"] == ["no_reply: 1 > 0"]
     assert report["gates"]["max_no_reply"] == 0
@@ -216,32 +517,42 @@ def _replies(*latencies: float) -> list[dict[str, object]]:
     ] + [_tail()]
 
 
+def _reply_tags(*latencies: float) -> tuple[str, ...]:
+    return tuple(f"t{index:03d}" for index, _ in enumerate(latencies, 1))
+
+
 def test_one_slow_reply_under_3s_passes_when_p90_is_within_2s(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    latencies = (*([2.0] * 19), 2.9)
     run = tmp_path / "run-p90-ok"
-    _write(run, _replies(*([2.0] * 19), 2.9))
+    _write(run, _replies(*latencies), manifest=_manifest(*_reply_tags(*latencies)))
     assert voice_soak_verdict.main([str(run)]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["reply_latency_p90_s"] == 2.0
     assert report["reply_latency_max_s"] == 2.9
     assert report["failures"] == []
+    assert report["status"] == "pass"
 
 
 def test_p90_over_2s_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    latencies = (*([1.5] * 18), 2.01, 2.01)
     run = tmp_path / "run-p90-over"
-    _write(run, _replies(*([1.5] * 18), 2.01, 2.01))
+    _write(run, _replies(*latencies), manifest=_manifest(*_reply_tags(*latencies)))
     assert voice_soak_verdict.main([str(run)]) == 1
     report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "fail"
     assert report["failures"] == ["reply_latency_p90_s: 2.01 > 2.0"]
     assert report["gates"]["max_reply_latency_p90_s"] == 2.0
 
 
 def test_any_reply_over_3s_fails(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    latencies = (*([1.5] * 19), 3.01)
     run = tmp_path / "run-max-over"
-    _write(run, _replies(*([1.5] * 19), 3.01))
+    _write(run, _replies(*latencies), manifest=_manifest(*_reply_tags(*latencies)))
     assert voice_soak_verdict.main([str(run)]) == 1
     report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "fail"
     assert report["failures"] == ["reply_latency_max_s: 3.01 > 3.0"]
     assert report["gates"]["max_reply_latency_max_s"] == 3.0
 
@@ -251,7 +562,9 @@ def test_invalid_timeline_json_fails_closed(tmp_path: Path, capsys: pytest.Captu
     run.mkdir()
     (run / "timeline.jsonl").write_text('{"kind": "start"}\nnot-json\n', encoding="utf-8")
     assert voice_soak_verdict.main([str(run)]) == 1
-    assert json.loads(capsys.readouterr().out)["failures"] == ["timeline.jsonl:2: invalid json"]
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "fail"
+    assert report["failures"] == ["timeline.jsonl:2: invalid json"]
 
 
 def test_missing_timeline_is_a_usage_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -309,9 +622,11 @@ def test_a_backchannel_that_keeps_the_reply_playing_passes(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     run = tmp_path / "run-backchannel-continues"
-    _write(run, _backchannel_rows())
+    _write(run, _backchannel_rows(), manifest=_manifest("t001", "t002"))
     assert voice_soak_verdict.main([str(run)]) == 0
-    assert json.loads(capsys.readouterr().out)["failures"] == []
+    report = json.loads(capsys.readouterr().out)
+    assert report["failures"] == []
+    assert report["status"] == "pass"
 
 
 def test_a_backchannel_that_stops_the_reply_fails(
@@ -319,6 +634,14 @@ def test_a_backchannel_that_stops_the_reply_fails(
 ) -> None:
     bridge, serial = _confirmed_stop_logs()
     run = tmp_path / "run-backchannel-stopped"
-    _write(run, _backchannel_rows(), bridge, serial)
+    _write(
+        run,
+        _backchannel_rows(),
+        bridge,
+        serial,
+        manifest=_manifest("t001", "t002", required_logs=("bridge.log", "serial.log")),
+    )
     assert voice_soak_verdict.main([str(run)]) == 1
-    assert json.loads(capsys.readouterr().out)["failures"] == ["backchannel_stopped: t001"]
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "fail"
+    assert report["failures"] == ["backchannel_stopped: t001"]
