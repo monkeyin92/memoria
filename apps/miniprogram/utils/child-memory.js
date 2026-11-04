@@ -102,7 +102,7 @@ function normalizeSessionSummaries(payload) {
 
 const DISPLAY_LIFECYCLE_LABELS = Object.freeze({
   auto_pending: "自动提取·待确认",
-  pending_confirm: "待确认",
+  pending_confirm: "待家长确认",
   parent_confirmed: "家长已确认",
   withdrawn: "已撤回",
   expired: "已过期",
