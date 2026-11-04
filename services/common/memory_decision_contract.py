@@ -1,9 +1,4 @@
-"""Shared memory decision, save-receipt, and promise-matrix contract.
-
-Turn policy, session extract, catalog writes, parent display, and companion
-recall must agree on these shapes. Async acceptance is not a successful save.
-Auto-extract never enters confirmed, and never carries confidence/accuracy 1.0.
-"""
+"""Shared memory decision, save-receipt, and promise-matrix contract."""
 
 from __future__ import annotations
 
@@ -49,7 +44,7 @@ _AUTO_EXTRACT_BIRTH_LIFECYCLES: Final[frozenset[MemoryLifecycle]] = frozenset(
 
 
 class MemoryDecisionContractError(ValueError):
-    """Raised when a caller asks for an illegal memory decision or receipt."""
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,8 +162,6 @@ def decide_auto_extract(
     record_id: str | None = None,
     fact_version: int | None = None,
 ) -> MemoryDecision:
-    """Build a decision for rule/LLM auto-extract. Confirmed and accuracy=1.0 are illegal."""
-
     if lifecycle not in _AUTO_EXTRACT_BIRTH_LIFECYCLES:
         raise MemoryDecisionContractError(
             f"auto_extract lifecycle {lifecycle!r} is not allowed at birth"
@@ -239,8 +232,6 @@ def _row(
     )
 
 
-# Product-visible cases from A00 §4 / A01 close criteria. Values are measured
-# against explicit_remember_will_save for minors unless notes say otherwise.
 PRODUCT_PROMISE_MATRIX: Final[tuple[PromiseMatrixRow, ...]] = (
     _row(
         "blue-closed-vocab",

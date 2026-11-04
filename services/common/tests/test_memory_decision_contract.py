@@ -1,5 +1,3 @@
-"""Contract gates for memory decision, save receipts, and the promise matrix."""
-
 from __future__ import annotations
 
 import pytest
