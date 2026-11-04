@@ -7,6 +7,7 @@ from devicetest.safety_soak_report import (
     bare_tag,
     build_report,
     clip_windows,
+    expected_template,
     match_turns,
     post_scenario_ok,
 )
@@ -16,6 +17,38 @@ def test_bare_tag_strips_only_driver_prefix() -> None:
     assert bare_tag("t001-c1-self-1") == "c1-self-1"
     assert bare_tag("c1-self-1") == "c1-self-1"
     assert bare_tag("t12-t001-c1-self-1") == "t001-c1-self-1"
+
+
+def test_sticky_self_expects_first_round_then_escalation() -> None:
+    assert expected_template("c1-self-1") == "crisis-self-v1"
+    assert expected_template("t003-c1-self-2") == "crisis-self-escalation"
+    assert expected_template("c1-self-5") == "crisis-self-escalation"
+    assert expected_template("c1-escalation-1") == "crisis-self-escalation"
+    assert expected_template("c2-victim-1") == "victim-support-v1"
+    assert expected_template("c3-other-5") == "support-other-v1"
+
+
+def test_later_self_playout_counts_pass_under_sticky_expect(tmp_path: Path) -> None:
+    _write_run(
+        tmp_path,
+        [
+            {"kind": "start", "ts": 1793786400.0},
+            {"kind": "said", "tag": "t001-c1-self-1", "ts": 1793786401.0},
+            {"kind": "reply", "tag": "t001-c1-self-1", "ts": 1793786402.0},
+            {"kind": "said", "tag": "t003-c1-self-2", "ts": 1793786403.0},
+            {"kind": "reply", "tag": "t003-c1-self-2", "ts": 1793786404.0},
+            {
+                "kind": "post_scenario_observation",
+                "idle_observed": True,
+                "final_state": "idle",
+                "final_state_source": "serial_transition",
+            },
+        ],
+        "2026-11-04T10:00:01.000000Z fixed_safety_playout reply_template_id=crisis-self-v1\n"
+        "2026-11-04T10:00:03.000000Z fixed_safety_playout reply_template_id=crisis-self-escalation\n",
+    )
+    report, _warnings = build_report(tmp_path, extract_audio=False)
+    assert report["results"]["crisis_self"] == {"passed": 2, "total": 2}
 
 
 def test_single_round_matching_does_not_reuse_reply() -> None:
