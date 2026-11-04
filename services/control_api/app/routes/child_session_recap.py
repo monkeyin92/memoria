@@ -8,6 +8,7 @@ from typing import Annotated, Any, Literal, cast
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from services.common.memory_decision_contract import decide_auto_extract
 from services.control_api.app.config import ControlSettings
 from services.guardian.child_memory import (
     KIND_DIALOGUE_SUMMARY,
@@ -15,6 +16,10 @@ from services.guardian.child_memory import (
     DialogueSummary,
 )
 from services.guardian.domain import GuardianStorePort
+from services.guardian.preference_extract import (
+    DEFAULT_AUTO_CONFIDENCE,
+    RULE_VERSION,
+)
 from services.memory_scope.child_layers import ChildLayerStore
 
 router = APIRouter(prefix="/v1/internal/child-memory", tags=["child-memory-internal"])
@@ -132,11 +137,24 @@ async def ingest_session_recap(
                 )
             except ValueError:
                 continue
+            # Session-recap archive facts are auto-extract births: never confirmed
+            # and never confidence/accuracy=1.0 (A01 contract / A02 wiring).
+            birth = decide_auto_extract(
+                subject_key=body.subject_id,
+                predicate=item.field,
+                object_text=item.text,
+                polarity="positive",
+                rule_version=RULE_VERSION,
+                lifecycle="eligible_unwritten",
+                source_session_id=body.session_id,
+                confidence=DEFAULT_AUTO_CONFIDENCE,
+            )
             written = await layers.upsert_archive_fact(
                 fact,
                 resource_owner_id=body.resource_owner_id,
                 actor_id=body.resource_owner_id,
                 consent_snapshot_id=archive_consent.consent_id,
+                birth_decision=birth,
             )
             archive_ids.append(written.record_id)
 

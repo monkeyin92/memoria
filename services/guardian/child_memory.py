@@ -172,16 +172,23 @@ def archive_payload(
     *,
     created_at: datetime | None = None,
     last_mentioned_at: datetime | None = None,
+    provenance: str | None = None,
+    rule_version: str | None = None,
 ) -> dict[str, object]:
     stamped = created_at or datetime.now(UTC)
     mentioned = last_mentioned_at or stamped
-    return {
+    payload: dict[str, object] = {
         "kind": KIND_CHILD_ARCHIVE,
         "field": fact.field,
         "text": fact.text,
         "created_at": stamped.isoformat(),
         "last_mentioned_at": mentioned.isoformat(),
     }
+    if provenance:
+        payload["provenance"] = provenance
+    if rule_version:
+        payload["rule_version"] = rule_version
+    return payload
 
 
 def parse_child_kind(payload: Mapping[str, object]) -> ChildMemoryKind | None:

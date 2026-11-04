@@ -170,9 +170,8 @@ def test_someone_elses_preference_is_not_the_childs() -> None:
     assert _facts(("user", "我现在在恐龙博物馆"), ("assistant", "哇")) == []
 
 
-def test_a_sentence_is_read_whole_once_it_states_the_childs_liking() -> None:
-    # The sentence itself states the liking, so its topics are read together;
-    # 「我不喜欢」 on its own sentence is still a dislike.
+def test_same_subject_multi_topic_likes_are_kept_per_clause() -> None:
+    # Clause-scoped bind keeps same-subject multi-likes and drops bare dislikes.
     assert _facts(("user", "我喜欢小狗，也喜欢小猫"), ("assistant", "好")) == [
         "喜欢小狗",
         "喜欢小猫",
@@ -183,6 +182,9 @@ def test_a_sentence_is_read_whole_once_it_states_the_childs_liking() -> None:
         "喜欢小猫",
     ]
     assert _facts(("user", "小狗很可爱，我不喜欢它"), ("assistant", "嗯")) == []
+    assert _facts(("user", "我喜欢画画，妈妈也喜欢恐龙"), ("assistant", "好")) == [
+        "喜欢画画",
+    ]
 
 
 @pytest.mark.parametrize(

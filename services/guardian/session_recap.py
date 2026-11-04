@@ -19,7 +19,6 @@ from services.guardian.child_memory import (
     SUMMARY_MAX_CHARS,
     ArchiveFact,
     DialogueSummary,
-    forbidden_topic,
     quotes_speech,
 )
 
@@ -41,20 +40,6 @@ INTEREST_TOPICS: Final[tuple[tuple[str, str], ...]] = (
 )
 
 _STORY_ONLY_USER = re.compile(r"^(再)?(讲|说|读)(一)?(个|则|段)?(故事|童话|绘本).{0,8}$")
-# Child archive facts come only from what the child says about themselves. A
-# request such as 「给我讲个恐龙故事」 or a fear such as 「我怕小狗」 mentions the
-# same topic as a liking and must not become a preference.
-_SELF_STATEMENT_PREFIX = re.compile(r"^(?:嗯|那个|就是|其实|还有)+")
-_PREFERENCE_STATEMENT = re.compile(
-    r"(?:我|本人)(?:最|特别|超|很|非常|挺|比较|好|更|也|还|一直|就|可)?(?:喜欢|中意|钟意)"
-)
-_PREFERENCE_NEGATION = re.compile(r"(?:不|没|别)[再太怎么会]$")
-# Whose preference the sentence is about. A prefix before 「我」 only names people.
-_OTHER_PERSON = re.compile(
-    r"妈妈|爸爸|爷爷|奶奶|外公|外婆|姥姥|姥爷|姐姐|哥哥|弟弟|妹妹|老师|同学"
-    r"|朋友|阿姨|叔叔|舅舅|姑姑"
-)
-_TOPICS_IN_ORDER = tuple(sorted(INTEREST_TOPICS, key=lambda item: len(item[0]), reverse=True))
 # Named people only: a short name attached to the role word. Skip plurals like 同学们.
 _NAMED_ROLE_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:[\u4e00-\u9fff]{1,3}(?:老师|同学|班主任|校长)(?!们)"
@@ -222,56 +207,22 @@ def accept_parent_summary(text: str, turns: Sequence[SessionTurn]) -> str | None
     return cleaned
 
 
-def _self_preference_sentences(turns: Sequence[SessionTurn]) -> list[str]:
-    """Child sentences whose own statement about themselves names a liking.
-
-    A sentence without its own 「我喜欢」 (a request, a fear, a question to the
-    robot, a plain mention) is dropped whole, so its topic is never read.
-    """
-
-    found: list[str] = []
-    for turn in user_turns(turns):
-        for sentence in re.split(r"[。.!！?？;；\n]", turn.text):
-            body = _SELF_STATEMENT_PREFIX.sub("", " ".join(sentence.split()))
-            stating = False
-            for clause in re.split(r"[，,]", body):
-                match = _PREFERENCE_STATEMENT.search(clause)
-                if match is None or _PREFERENCE_NEGATION.search(clause[: match.start()]):
-                    continue
-                prefix = clause[: match.start()]
-                # 「我妈妈喜欢…」 and 「你喜欢…吗」 are about someone else.
-                if _OTHER_PERSON.search(prefix) is None and "你" not in prefix:
-                    stating = True
-            if stating:
-                found.append(body)
-    return found
-
-
 def extract_interest_facts(
     subject_id: str, turns: Sequence[SessionTurn]
 ) -> tuple[ArchiveFact, ...]:
-    """Preference facts from the child's own self-statements (e.g. 我最喜欢恐龙).
+    """Preference facts from clause-scoped self-statements (e.g. 我最喜欢恐龙).
 
-    A request (「给我讲个恐龙故事」), a fear (「我怕小狗」), a sentence about someone
-    else, or a nickname / pet name writes nothing. The conservative default
-    holds until Monkey decides the write direction for names.
+    A request (「给我讲个恐龙故事」), a fear (「我怕小狗」), another person's liking,
+    a negated or withdrawn topic, or a nickname / pet name writes nothing.
+    Implementation lives in ``preference_extract`` so subject/polarity/time
+    bind per clause, not over the whole sentence body.
     """
 
-    found: list[ArchiveFact] = []
-    seen: set[str] = set()
-    for body in _self_preference_sentences(turns):
-        for topic_needle, label in _TOPICS_IN_ORDER:
-            if topic_needle not in body or label in seen:
-                continue
-            if forbidden_topic(label) or quotes_speech(label):
-                continue
-            try:
-                fact = ArchiveFact(subject_id=subject_id, field="preference", text=label)
-            except ValueError:
-                continue
-            found.append(fact)
-            seen.add(label)
-    return tuple(found)
+    from services.guardian.preference_extract import (
+        extract_interest_facts as _extract_interest_facts,
+    )
+
+    return _extract_interest_facts(subject_id, turns)
 
 
 def session_hits_crisis(turns: Sequence[SessionTurn]) -> bool:

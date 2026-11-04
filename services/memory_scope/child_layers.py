@@ -17,6 +17,7 @@ from typing import Any, Literal
 import asyncpg
 from packages.contracts.generated.python.multi_subject_contracts import MemoryScope
 
+from services.common.memory_decision_contract import MemoryDecision
 from services.guardian.child_memory import (
     KIND_CHILD_ARCHIVE,
     KIND_DIALOGUE_SUMMARY,
@@ -251,11 +252,33 @@ class ChildLayerStore:
         consent_snapshot_id: str,
         policy_receipt_id: str = "child-archive-fact",
         created_at: datetime | None = None,
+        birth_decision: MemoryDecision | None = None,
     ) -> ChildLayerRecord:
         stamped = created_at or datetime.now(UTC)
         record_id = f"charch:{uuid.uuid4()}"
         receipt = f"{policy_receipt_id}:{record_id}"
-        payload = archive_payload(fact, created_at=stamped, last_mentioned_at=stamped)
+        if birth_decision is not None:
+            if birth_decision.fact.provenance != "auto_extract":
+                raise ValueError("birth_decision provenance must be auto_extract")
+            if birth_decision.lifecycle == "confirmed":
+                raise ValueError("auto_extract must not be written as confirmed")
+            confidence = float(birth_decision.fact.confidence or 0.75)
+            if confidence >= 1.0:
+                raise ValueError("auto_extract must not claim confidence/accuracy=1.0")
+            status = "candidate"
+            reason_code = "child_archive_auto_extract"
+            payload = archive_payload(
+                fact,
+                created_at=stamped,
+                last_mentioned_at=stamped,
+                provenance=birth_decision.fact.provenance,
+                rule_version=birth_decision.fact.rule_version,
+            )
+        else:
+            confidence = 1.0
+            status = "confirmed"
+            reason_code = "child_archive_fact"
+            payload = archive_payload(fact, created_at=stamped, last_mentioned_at=stamped)
         async with (await self._api()).acquire() as connection:
             async with connection.transaction():
                 await _scope(
@@ -274,14 +297,15 @@ class ChildLayerStore:
                     " created_at, shared_proposal_id)"
                     " VALUES ("
                     " $1, $2, $3, $4, NULL, '[]'::jsonb, '[]'::jsonb,"
-                    " $5, '', '', '[]'::jsonb, $6, 'child_archive', 1.0,"
-                    " 'indefinite', NULL, $7::jsonb, $8, $9, NULL)",
+                    " $5, '', '', '[]'::jsonb, $6, 'child_archive', $7,"
+                    " 'indefinite', NULL, $8::jsonb, $9, $10, NULL)",
                     record_id,
                     MemoryScope.MEMORY_SCOPE_PERSONAL_PRIVATE.value,
                     fact.subject_id,
                     resource_owner_id,
                     receipt,
                     consent_snapshot_id,
+                    confidence,
                     json.dumps(payload),
                     actor_id,
                     stamped,
@@ -289,9 +313,11 @@ class ChildLayerStore:
                 await connection.execute(
                     "INSERT INTO memory_status_events ("
                     " event_id, record_id, status, reason_code, created_at)"
-                    " VALUES ($1, $2, 'confirmed', 'child_archive_fact', $3)",
+                    " VALUES ($1, $2, $3, $4, $5)",
                     f"status:{record_id}",
                     record_id,
+                    status,
+                    reason_code,
                     stamped,
                 )
         listed = await self.get(
@@ -310,6 +336,7 @@ class ChildLayerStore:
         actor_id: str,
         consent_snapshot_id: str,
         created_at: datetime | None = None,
+        birth_decision: MemoryDecision | None = None,
     ) -> ChildLayerRecord:
         """Write a whitelist fact, or refresh ``last_mentioned_at`` in place.
 
@@ -346,6 +373,7 @@ class ChildLayerStore:
             actor_id=actor_id,
             consent_snapshot_id=consent_snapshot_id,
             created_at=stamped,
+            birth_decision=birth_decision,
         )
 
     async def list(
