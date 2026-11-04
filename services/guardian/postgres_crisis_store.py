@@ -46,7 +46,8 @@ _NOTIFICATION_SELECT = """
 SELECT outbox.*, crisis.minor_user_id, crisis.possibly_story_retell,
        crisis.reply_template_id, crisis.script_interrupted,
        crisis.reply_session_id, crisis.reply_turn_id,
-       crisis.reply_generation_id, crisis.reply_tool_epoch, reads.read_at
+       crisis.reply_generation_id, crisis.reply_tool_epoch,
+       crisis.evidence_event_id, crisis.occurred_at, reads.read_at
 FROM guardian_notification_outbox outbox
 JOIN guardian_crisis_events crisis
   ON crisis.crisis_event_id = outbox.crisis_event_id
@@ -136,6 +137,9 @@ class PostgresGuardianCrisisMixin:
             reply_template_id=parse_alert_template(str(row["reply_template_id"])),
             read_at=cast(datetime | None, row["read_at"]),
             delivered_at=cast(datetime | None, row["delivered_at"]),
+            settled_at=cast(datetime | None, row["settled_at"])
+            if "settled_at" in row.keys()
+            else None,
             last_error_code=(
                 str(row["last_error_code"])
                 if row["last_error_code"] is not None
@@ -148,6 +152,14 @@ class PostgresGuardianCrisisMixin:
             script_interrupted=bool(row["script_interrupted"])
             if "script_interrupted" in row.keys()
             else False,
+            evidence_event_id=(
+                str(row["evidence_event_id"])
+                if "evidence_event_id" in row.keys() and row["evidence_event_id"] is not None
+                else None
+            ),
+            occurred_at=cast(datetime | None, row["occurred_at"])
+            if "occurred_at" in row.keys()
+            else None,
         )
 
     async def enqueue_crisis_event(

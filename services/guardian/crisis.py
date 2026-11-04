@@ -45,10 +45,13 @@ class GuardianNotification:
     reply_template_id: FixedSafetyTemplateId | None
     read_at: datetime | None
     delivered_at: datetime | None = None
+    settled_at: datetime | None = None
     last_error_code: str | None = None
     possibly_story_retell: bool = False
     reply_fence: ReplyFence | None = None
     script_interrupted: bool = False
+    evidence_event_id: str | None = None
+    occurred_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

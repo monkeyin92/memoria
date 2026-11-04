@@ -80,6 +80,10 @@ from services.guardian.child_memory import (
 from services.guardian.consent import GuardianConsentService
 from services.guardian.corpus import CorpusRetentionService
 from services.guardian.crisis import CrisisNotificationStorePort, GuardianNotification
+from services.guardian.crisis_delivery_receipt import (
+    crisis_delivery_receipt_payload,
+    project_crisis_delivery_receipt,
+)
 from services.guardian.domain import (
     AgeEvidenceStatus,
     BirthYearBand,
@@ -657,6 +661,7 @@ def _safety_alert_item(
         if notification.reply_template_id is not None
         else None
     )
+    receipt = project_crisis_delivery_receipt(notification)
     return {
         "notification_id": notification.notification_id,
         "minor_user_id": notification.minor_user_id,
@@ -664,6 +669,7 @@ def _safety_alert_item(
         "occurred_at": notification.created_at.isoformat(),
         "occurred_label": alert_time_label(notification.created_at, zone),
         "delivery_status": notification.status,
+        "delivery_receipt": crisis_delivery_receipt_payload(receipt),
         "channel": notification.channel,
         "message": guardian_attention_copy(
             possibly_story_retell=notification.possibly_story_retell
