@@ -31,7 +31,77 @@ test("the archive leads the page with the design's three labels and footer, summ
     assert.match(text, /除这三项外，不长期保存其他信息。 长期记忆[\s\S]*清空长期记忆 近期摘要 讲了/);
     assert.match(text, /清空全部摘要/);
     assert.match(html, /class="cm-delete"/);
-    assert.doesNotMatch(text, /这条不对|兴趣|小名|共 \d+ 条/);
+    assert.match(text, /家长已确认/);
+    assert.match(text, /这条不对/);
+    assert.match(text, /历史变更/);
+    assert.match(text, /撤回/);
+    assert.doesNotMatch(text, /兴趣|小名|共 \d+ 条/);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("archive lifecycle rows bind status and the review action set", async () => {
+  const harness = await openChildMemory({
+    ...fx.archiveApi,
+    getChildArchive: async () => ({
+      items: [
+        {
+          record_id: "auto-1",
+          field: "preference",
+          text: "喜欢恐龙",
+          display_lifecycle: "auto_pending",
+          provenance: "auto_extract",
+        },
+        {
+          record_id: "pend-1",
+          field: "appellation",
+          text: "乐乐",
+          display_lifecycle: "pending_confirm",
+        },
+        {
+          record_id: "ok-1",
+          field: "pet_name",
+          text: "小乐宝",
+          display_lifecycle: "parent_confirmed",
+        },
+        {
+          record_id: "out-1",
+          field: "preference",
+          text: "不喜欢菠菜",
+          display_lifecycle: "withdrawn",
+        },
+        {
+          record_id: "exp-1",
+          field: "preference",
+          text: "旧喜好",
+          display_lifecycle: "expired",
+        },
+      ],
+    }),
+  });
+  try {
+    const html = renderPage("pages/child-memory/index", harness.page.data, { tabBar: false });
+    const text = visibleText(html);
+    assert.match(text, /自动提取·待确认/);
+    assert.match(text, /待家长确认/);
+    assert.match(text, /家长已确认/);
+    assert.match(text, /已撤回/);
+    assert.match(text, /已过期/);
+    assert.match(text, /确认这条记忆/);
+    assert.match(text, /这条不对/);
+    assert.match(text, /历史变更/);
+    assert.match(text, /撤回/);
+    assert.match(html, /data-record-id="auto-1"[\s\S]*?bindtap="askConfirmArchive"|bindtap="askConfirmArchive"[\s\S]*?data-record-id="auto-1"/);
+    assert.match(html, /data-record-id="pend-1"[\s\S]*?bindtap="askConfirmArchive"|bindtap="askConfirmArchive"[\s\S]*?data-record-id="pend-1"/);
+    assert.match(html, /data-record-id="ok-1"[\s\S]*?bindtap="askCorrectArchive"|bindtap="askCorrectArchive"[\s\S]*?data-record-id="ok-1"/);
+    assert.match(html, /data-record-id="ok-1"[\s\S]*?bindtap="askWithdrawArchive"|bindtap="askWithdrawArchive"[\s\S]*?data-record-id="ok-1"/);
+    assert.match(html, /data-record-id="ok-1"[\s\S]*?bindtap="askDeleteArchive"|bindtap="askDeleteArchive"[\s\S]*?data-record-id="ok-1"/);
+    assert.match(html, /data-record-id="ok-1"[\s\S]*?bindtap="askHistoryChange"|bindtap="askHistoryChange"[\s\S]*?data-record-id="ok-1"/);
+    assert.match(html, /data-record-id="out-1"[\s\S]*?bindtap="askHistoryChange"|bindtap="askHistoryChange"[\s\S]*?data-record-id="out-1"/);
+    assert.match(html, /data-record-id="exp-1"[\s\S]*?bindtap="askConfirmArchive"|bindtap="askConfirmArchive"[\s\S]*?data-record-id="exp-1"/);
+    assert.match(html, /data-record-id="exp-1"[\s\S]*?bindtap="askDeleteArchive"|bindtap="askDeleteArchive"[\s\S]*?data-record-id="exp-1"/);
+    assert.equal(harness.page.data.archiveFlat.find((item) => item.recordId === "out-1").pending, false);
   } finally {
     harness.restore();
   }
