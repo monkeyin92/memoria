@@ -85,6 +85,7 @@ from services.agent.src.speculative_reply import (
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_profile_client import VoiceProfileClient
 from services.agent.src.weather_thread import AskCity, WeatherSearch
+from services.common.attachment_ban import AttachmentOutputGate
 from services.common.companion_response_safety import (
     assistant_text_repeats_or_dilutes_safety,
     strip_soothing_from_follow_up,
@@ -2373,14 +2374,38 @@ class ReplyPipeline:
             )
             first_phrase_marked = True
 
-        def _ready_segment(text: str) -> str | None:
+        attachment_gate = AttachmentOutputGate()
+
+        def _ready_segments(text: str) -> list[str] | None:
+            """Speakable segments after the attachment gate. None stops the reply."""
+
             if not cancellation.is_current(self._runtime.fence):
                 return None
-            accepted = _accept_segment(text)
-            if accepted is None:
+            if attachment_gate.closed:
                 return None
-            _mark_first_phrase()
-            return accepted
+            parts = attachment_gate.feed(text)
+            if attachment_gate.closed and not parts:
+                return None
+            ready: list[str] = []
+            for part in parts:
+                accepted = _accept_segment(part)
+                if accepted is None:
+                    return None
+                _mark_first_phrase()
+                ready.append(accepted)
+            return ready
+
+        def _flush_attachment_gate() -> list[str] | None:
+            if not cancellation.is_current(self._runtime.fence):
+                return None
+            ready: list[str] = []
+            for part in attachment_gate.flush():
+                accepted = _accept_segment(part)
+                if accepted is None:
+                    return None
+                _mark_first_phrase()
+                ready.append(accepted)
+            return ready
 
         late_crisis_script: FixedSafetyScript | None = None
 
@@ -2455,12 +2480,13 @@ class ReplyPipeline:
                         _apply_assistant_emotion()
                         if _late_crisis_now() is not None:
                             break
-                        accepted_segment = _ready_segment(segment.text)
-                        if accepted_segment is None:
+                        ready = _ready_segments(segment.text)
+                        if ready is None:
                             break
                         if _late_crisis_now() is not None:
                             break
-                        yield accepted_segment
+                        for accepted_segment in ready:
+                            yield accepted_segment
                     if (
                         late_crisis_script is None
                         and cancellation.is_current(self._runtime.fence)
@@ -2470,12 +2496,17 @@ class ReplyPipeline:
                             _apply_assistant_emotion()
                             if _late_crisis_now() is not None:
                                 break
-                            accepted_segment = _ready_segment(segment.text)
-                            if accepted_segment is None:
+                            ready = _ready_segments(segment.text)
+                            if ready is None:
                                 break
                             if _late_crisis_now() is not None:
                                 break
-                            yield accepted_segment
+                            for accepted_segment in ready:
+                                yield accepted_segment
+                        held = _flush_attachment_gate()
+                        if held:
+                            for accepted_segment in held:
+                                yield accepted_segment
                 if late_crisis_script is not None:
                     async for item in _play_late_crisis(late_crisis_script):
                         yield item
@@ -2569,10 +2600,11 @@ class ReplyPipeline:
                         try:
                             for segment in segmenter.push_token(bridge):
                                 _apply_assistant_emotion()
-                                accepted_segment = _ready_segment(segment.text)
-                                if accepted_segment is None:
+                                ready = _ready_segments(segment.text)
+                                if ready is None:
                                     break
-                                yield accepted_segment
+                                for accepted_segment in ready:
+                                    yield accepted_segment
                         finally:
                             self._runtime.orchestrator.delegation.complete_output_intent(
                                 bridge_intent,
@@ -2673,12 +2705,13 @@ class ReplyPipeline:
                                 segment_text, blocked = _follow_up_blocked(segment.text)
                                 if blocked or segment_text is None:
                                     continue
-                                accepted_segment = _ready_segment(segment_text)
-                                if accepted_segment is None:
+                                ready = _ready_segments(segment_text)
+                                if ready is None:
                                     break
                                 if _late_crisis_now() is not None:
                                     break
-                                yield accepted_segment
+                                for accepted_segment in ready:
+                                    yield accepted_segment
                             if late_crisis_script is not None:
                                 break
                         if reply_budget_exhausted or realtime_buffer_exhausted:
@@ -2713,9 +2746,10 @@ class ReplyPipeline:
                     self._runtime.mark_audio_event("llm_first_content_token")
                 gated = self._runtime.gate_llm_token(cancellation, LLM_UNAVAILABLE_TEXT)
                 if gated is not None:
-                    accepted_segment = _ready_segment(gated)
-                    if accepted_segment is not None:
-                        yield accepted_segment
+                    ready = _ready_segments(gated)
+                    if ready:
+                        for accepted_segment in ready:
+                            yield accepted_segment
                 return
             if late_crisis_script is not None:
                 async for item in _play_late_crisis(late_crisis_script):
@@ -2739,11 +2773,12 @@ class ReplyPipeline:
                 realtime_current = True
                 for segment in segmenter.push_token(strip_realtime_bridge_prefix(realtime_reply)):
                     _apply_assistant_emotion()
-                    accepted_segment = _ready_segment(segment.text)
-                    if accepted_segment is None:
+                    ready = _ready_segments(segment.text)
+                    if ready is None:
                         realtime_current = False
                         break
-                    yield accepted_segment
+                    for accepted_segment in ready:
+                        yield accepted_segment
                 if (
                     realtime_completed
                     and realtime_current
@@ -2761,10 +2796,15 @@ class ReplyPipeline:
                     segment_text, blocked = _follow_up_blocked(segment.text)
                     if blocked or segment_text is None:
                         continue
-                    accepted_segment = _ready_segment(segment_text)
-                    if accepted_segment is None:
+                    ready = _ready_segments(segment_text)
+                    if ready is None:
                         break
-                    yield accepted_segment
+                    for accepted_segment in ready:
+                        yield accepted_segment
+                held = _flush_attachment_gate()
+                if held:
+                    for accepted_segment in held:
+                        yield accepted_segment
         except Exception:
             if realtime_request is None or not cancellation.is_current(self._runtime.fence):
                 raise
@@ -2781,17 +2821,23 @@ class ReplyPipeline:
                 )
             ):
                 _apply_assistant_emotion()
-                accepted_segment = _ready_segment(segment.text)
-                if accepted_segment is None:
+                ready = _ready_segments(segment.text)
+                if ready is None:
                     break
-                yield accepted_segment
+                for accepted_segment in ready:
+                    yield accepted_segment
             if cancellation.is_current(self._runtime.fence) and not reply_budget_exhausted:
                 for segment in segmenter.flush(end_of_stream=True):
                     _apply_assistant_emotion()
-                    accepted_segment = _ready_segment(segment.text)
-                    if accepted_segment is None:
+                    ready = _ready_segments(segment.text)
+                    if ready is None:
                         break
-                    yield accepted_segment
+                    for accepted_segment in ready:
+                        yield accepted_segment
+                held = _flush_attachment_gate()
+                if held:
+                    for accepted_segment in held:
+                        yield accepted_segment
         finally:
             if (
                 reply_budget_exhausted
