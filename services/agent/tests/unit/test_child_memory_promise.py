@@ -22,6 +22,7 @@ from services.agent.tests.unit.runtime_profile_test_helpers import (
     bind_owner_policy,
     canonical_wire_payload,
 )
+
 NOTE = "记不下来"
 
 

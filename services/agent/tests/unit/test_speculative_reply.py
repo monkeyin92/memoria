@@ -31,6 +31,7 @@ from services.agent.src.response_planner_client import (
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.agent.tests.unit.runtime_state_helpers import bind_owner_speaker
 from services.common.fixed_safety_scripts import FixedSafetyScript
+
 SYSTEM_PROMPT = "【不可变安全底线】不要输出 Markdown。【服务模式】孩子：一到两句短话。"
 EARLIER = "我今天画了一只黄色的小狗"
 EARLIER_REPLY = "哇，黄色的小狗一定很可爱。"
