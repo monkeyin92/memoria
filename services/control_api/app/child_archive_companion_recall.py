@@ -4,23 +4,74 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, cast
+from collections.abc import Sequence
+from typing import Any, Final, cast
 
 from fastapi import Request
 
 from services.archive.memory_domain import MemorySearchResult
 from services.digital_self.response_planner import GroundedItem, SourceRef
-from services.guardian.child_archive_recall import (
-    grounded_items_from_archive_views,
-    merge_archive_ahead_of_catalog,
-)
+from services.guardian.child_archive_recall import recall_ready_archive_views
+from services.guardian.child_archive_review import ChildArchiveFactView
 from services.guardian.domain import GuardianStorePort
 from services.memory_scope.child_layers import ChildLayerStore
 
+ARCHIVE_FIELD_TITLES: Final[dict[str, str]] = {
+    "appellation": "称呼",
+    "preference": "喜好",
+    "pet_name": "小名",
+}
+
+FACT_VERSION_PREFIX: Final = "fact_version:"
+DEFAULT_ARCHIVE_RECALL_LIMIT: Final = 4
+
 __all__ = [
+    "ARCHIVE_FIELD_TITLES",
+    "DEFAULT_ARCHIVE_RECALL_LIMIT",
+    "FACT_VERSION_PREFIX",
+    "grounded_items_from_archive_views",
+    "merge_archive_ahead_of_catalog",
     "merge_companion_memory_claims",
     "start_child_archive_recall_task",
 ]
+
+
+def grounded_items_from_archive_views(
+    views: Sequence[ChildArchiveFactView],
+    *,
+    limit: int = DEFAULT_ARCHIVE_RECALL_LIMIT,
+) -> tuple[GroundedItem, ...]:
+    if limit <= 0:
+        return ()
+    items: list[GroundedItem] = []
+    for view in recall_ready_archive_views(views):
+        title = ARCHIVE_FIELD_TITLES.get(view.field, view.field)
+        items.append(
+            GroundedItem(
+                item_id=view.record_id,
+                kind="memory_claim",
+                content=f"{title}：{view.text.strip()}",
+                source_refs=(
+                    SourceRef(
+                        "memory_claim",
+                        view.record_id,
+                        (f"{FACT_VERSION_PREFIX}{view.fact_version}",),
+                    ),
+                ),
+            )
+        )
+        if len(items) >= limit:
+            break
+    return tuple(items)
+
+
+def merge_archive_ahead_of_catalog(
+    archive_items: Sequence[GroundedItem],
+    catalog_items: Sequence[GroundedItem],
+) -> tuple[GroundedItem, ...]:
+    """Archive whitelist precedes catalog claims for planner truncation order."""
+
+    return tuple(archive_items) + tuple(catalog_items)
 
 
 def _child_layer_store(request: Request) -> ChildLayerStore | None:
