@@ -109,16 +109,21 @@ class SessionRecapSink:
             summary_text=summary_text,
             skipped_reason=model_skip,
         )
+        info_state = draft.feedback.info_state if draft.feedback is not None else None
         if draft.skipped_reason is not None or draft.summary is None:
             logger.info(
-                "session recap skipped session=%s reason=%s user_turns=%s",
+                "session recap skipped session=%s reason=%s info_state=%s user_turns=%s",
                 session_id,
                 draft.skipped_reason or "invalid_summary",
+                info_state or "-",
                 draft.user_turn_count,
             )
             return {
                 "skipped": True,
                 "reason": draft.skipped_reason or "invalid_summary",
+                "info_state": info_state or "failed",
+                "themes": list(draft.feedback.themes) if draft.feedback else [],
+                "activities": list(draft.feedback.activities) if draft.feedback else [],
                 "summary_record_id": None,
                 "archive_record_ids": [],
             }
@@ -134,7 +139,18 @@ class SessionRecapSink:
             ],
             "skipped_reason": None,
         }
-        return await self._post(payload)
+        posted = await self._post(payload)
+        if posted is None:
+            return None
+        posted = dict(posted)
+        posted.setdefault("info_state", info_state or "ready")
+        posted.setdefault(
+            "themes", list(draft.feedback.themes) if draft.feedback else []
+        )
+        posted.setdefault(
+            "activities", list(draft.feedback.activities) if draft.feedback else []
+        )
+        return posted
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any] | None:
         try:
