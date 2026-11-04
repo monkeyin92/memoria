@@ -35,7 +35,9 @@ from services.guardian.child_memory import (
     ArchiveField,
     ChildMemoryKind,
     DialogueSummary,
+    archive_fact_policy_receipt,
     archive_payload,
+    dialogue_summary_policy_receipt,
     parse_child_kind,
     summary_expires_at,
     summary_payload,
@@ -88,6 +90,14 @@ class ChildLayerRecord:
     created_at: datetime
     retention_expires_at: datetime | None
     payload: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class EnsuredChildLayer:
+    """Result of an idempotent child-layer write."""
+
+    record: ChildLayerRecord
+    created: bool
 
 
 def _parse_payload(raw: object) -> dict[str, object]:
@@ -187,6 +197,119 @@ class ChildLayerStore:
         assert self._maintenance_pool is not None
         return self._maintenance_pool
 
+    async def get_by_policy_receipt(
+        self,
+        *,
+        subject_id: str,
+        policy_receipt_id: str,
+        viewer_subject_id: str,
+    ) -> ChildLayerRecord | None:
+        _require_subject(subject_id)
+        _require_subject(viewer_subject_id)
+        async with (await self._api()).acquire() as connection:
+            async with connection.transaction():
+                await _scope(connection, actor_subject_id=viewer_subject_id)
+                row = await connection.fetchrow(
+                    "SELECT record_id, subject_id, payload, created_at,"
+                    " retention_expires_at FROM memory_records"
+                    " WHERE subject_id = $1 AND policy_receipt_id = $2",
+                    subject_id,
+                    policy_receipt_id,
+                )
+        if row is None:
+            return None
+        return _row_to_record(row)
+
+    async def ensure_summary(
+        self,
+        summary: DialogueSummary,
+        *,
+        resource_owner_id: str,
+        actor_id: str,
+        consent_snapshot_id: str,
+        created_at: datetime | None = None,
+    ) -> EnsuredChildLayer:
+        """Insert one dialogue summary, or return the existing row for the session.
+
+        Uniqueness is ``uq_memory_records_policy_receipt`` on the stable
+        ``dialogue_summary_policy_receipt`` key. Concurrent writers converge.
+        """
+
+        if not summary.session_id.strip():
+            raise ValueError("dialogue summary session_id is required")
+        receipt = dialogue_summary_policy_receipt(
+            subject_id=summary.subject_id, session_id=summary.session_id
+        )
+        existing = await self.get_by_policy_receipt(
+            subject_id=summary.subject_id,
+            policy_receipt_id=receipt,
+            viewer_subject_id=resource_owner_id,
+        )
+        if existing is not None:
+            return EnsuredChildLayer(record=existing, created=False)
+
+        stamped = created_at or datetime.now(UTC)
+        expires = summary_expires_at(stamped)
+        record_id = f"dlgsum:{uuid.uuid4()}"
+        payload = summary_payload(summary, created_at=stamped)
+        try:
+            async with (await self._api()).acquire() as connection:
+                async with connection.transaction():
+                    await _scope(
+                        connection,
+                        subject_id=summary.subject_id,
+                        actor_subject_id=actor_id,
+                    )
+                    await connection.execute(
+                        "INSERT INTO memory_records ("
+                        " record_id, scope, subject_id, resource_owner_id,"
+                        " family_space_id, co_subject_ids, source_evidence_ids,"
+                        " policy_receipt_id, promotion_receipt_id,"
+                        " promotion_fence_context_hash, approval_evidence_refs,"
+                        " consent_snapshot_id, memory_type, confidence, retention,"
+                        " retention_expires_at, payload, created_by_actor_id,"
+                        " created_at, shared_proposal_id)"
+                        " VALUES ("
+                        " $1, $2, $3, $4, NULL, '[]'::jsonb, $5::jsonb,"
+                        " $6, '', '', '[]'::jsonb, $7, 'dialogue_summary', 1.0,"
+                        " 'ttl', $8, $9::jsonb, $10, $11, NULL)",
+                        record_id,
+                        MemoryScope.MEMORY_SCOPE_GUARDIAN_SUMMARY.value,
+                        summary.subject_id,
+                        resource_owner_id,
+                        json.dumps([summary.source_event_id]),
+                        receipt,
+                        consent_snapshot_id,
+                        expires,
+                        json.dumps(payload),
+                        actor_id,
+                        stamped,
+                    )
+                    await connection.execute(
+                        "INSERT INTO memory_status_events ("
+                        " event_id, record_id, status, reason_code, created_at)"
+                        " VALUES ($1, $2, 'confirmed', 'child_dialogue_summary', $3)",
+                        f"status:{record_id}",
+                        record_id,
+                        stamped,
+                    )
+        except asyncpg.UniqueViolationError:
+            raced = await self.get_by_policy_receipt(
+                subject_id=summary.subject_id,
+                policy_receipt_id=receipt,
+                viewer_subject_id=resource_owner_id,
+            )
+            if raced is None:
+                raise
+            return EnsuredChildLayer(record=raced, created=False)
+        listed = await self.get(
+            subject_id=summary.subject_id,
+            record_id=record_id,
+            viewer_subject_id=resource_owner_id,
+        )
+        assert listed is not None
+        return EnsuredChildLayer(record=listed, created=True)
+
     async def write_summary(
         self,
         summary: DialogueSummary,
@@ -194,61 +317,16 @@ class ChildLayerStore:
         resource_owner_id: str,
         actor_id: str,
         consent_snapshot_id: str,
-        policy_receipt_id: str = "child-dialogue-summary",
         created_at: datetime | None = None,
     ) -> ChildLayerRecord:
-        stamped = created_at or datetime.now(UTC)
-        expires = summary_expires_at(stamped)
-        record_id = f"dlgsum:{uuid.uuid4()}"
-        receipt = f"{policy_receipt_id}:{record_id}"
-        payload = summary_payload(summary, created_at=stamped)
-        async with (await self._api()).acquire() as connection:
-            async with connection.transaction():
-                await _scope(
-                    connection,
-                    subject_id=summary.subject_id,
-                    actor_subject_id=actor_id,
-                )
-                await connection.execute(
-                    "INSERT INTO memory_records ("
-                    " record_id, scope, subject_id, resource_owner_id,"
-                    " family_space_id, co_subject_ids, source_evidence_ids,"
-                    " policy_receipt_id, promotion_receipt_id,"
-                    " promotion_fence_context_hash, approval_evidence_refs,"
-                    " consent_snapshot_id, memory_type, confidence, retention,"
-                    " retention_expires_at, payload, created_by_actor_id,"
-                    " created_at, shared_proposal_id)"
-                    " VALUES ("
-                    " $1, $2, $3, $4, NULL, '[]'::jsonb, $5::jsonb,"
-                    " $6, '', '', '[]'::jsonb, $7, 'dialogue_summary', 1.0,"
-                    " 'ttl', $8, $9::jsonb, $10, $11, NULL)",
-                    record_id,
-                    MemoryScope.MEMORY_SCOPE_GUARDIAN_SUMMARY.value,
-                    summary.subject_id,
-                    resource_owner_id,
-                    json.dumps([summary.source_event_id]),
-                    receipt,
-                    consent_snapshot_id,
-                    expires,
-                    json.dumps(payload),
-                    actor_id,
-                    stamped,
-                )
-                await connection.execute(
-                    "INSERT INTO memory_status_events ("
-                    " event_id, record_id, status, reason_code, created_at)"
-                    " VALUES ($1, $2, 'confirmed', 'child_dialogue_summary', $3)",
-                    f"status:{record_id}",
-                    record_id,
-                    stamped,
-                )
-        listed = await self.get(
-            subject_id=summary.subject_id,
-            record_id=record_id,
-            viewer_subject_id=resource_owner_id,
+        ensured = await self.ensure_summary(
+            summary,
+            resource_owner_id=resource_owner_id,
+            actor_id=actor_id,
+            consent_snapshot_id=consent_snapshot_id,
+            created_at=created_at,
         )
-        assert listed is not None
-        return listed
+        return ensured.record
 
     async def find_archive_fact(
         self,
@@ -260,29 +338,69 @@ class ChildLayerStore:
     ) -> ChildLayerRecord | None:
         """Return the existing whitelist fact with the same field and text, if any."""
 
-        items = await self.list(
-            subject_id=subject_id,
-            kind=KIND_CHILD_ARCHIVE,
-            viewer_subject_id=viewer_subject_id,
-            limit=50,
-        )
+        _require_subject(subject_id)
+        _require_subject(viewer_subject_id)
         needle = text.strip()
-        for item in items:
-            if item.field == field and item.text == needle:
-                return item
-        return None
+        receipt = archive_fact_policy_receipt(
+            subject_id=subject_id, field=field, text=needle
+        )
+        by_receipt = await self.get_by_policy_receipt(
+            subject_id=subject_id,
+            policy_receipt_id=receipt,
+            viewer_subject_id=viewer_subject_id,
+        )
+        if by_receipt is not None:
+            return by_receipt
+        async with (await self._api()).acquire() as connection:
+            async with connection.transaction():
+                await _scope(connection, actor_subject_id=viewer_subject_id)
+                row = await connection.fetchrow(
+                    "SELECT record_id, subject_id, payload, created_at,"
+                    " retention_expires_at FROM memory_records"
+                    " WHERE subject_id = $1"
+                    " AND payload ->> 'kind' = $2"
+                    " AND payload ->> 'field' = $3"
+                    " AND payload ->> 'text' = $4"
+                    " ORDER BY created_at ASC LIMIT 1",
+                    subject_id,
+                    KIND_CHILD_ARCHIVE,
+                    field,
+                    needle,
+                )
+        if row is None:
+            return None
+        return _row_to_record(row)
 
-    async def write_archive_fact(
+    async def ensure_archive_fact(
         self,
         fact: ArchiveFact,
         *,
         resource_owner_id: str,
         actor_id: str,
         consent_snapshot_id: str,
-        policy_receipt_id: str = "child-archive-fact",
         created_at: datetime | None = None,
         birth_decision: MemoryDecision | None = None,
-    ) -> ChildLayerRecord:
+    ) -> EnsuredChildLayer:
+        """Insert one archive fact, or return the existing unique row.
+
+        Uniqueness is ``uq_memory_records_policy_receipt`` on the stable
+        ``archive_fact_policy_receipt`` key. Concurrent writers converge.
+        ``birth_decision`` stamps candidate status on that insert. Parent
+        writes omit it and stay confirmed.
+        """
+
+        receipt = archive_fact_policy_receipt(
+            subject_id=fact.subject_id, field=fact.field, text=fact.text
+        )
+        existing = await self.find_archive_fact(
+            subject_id=fact.subject_id,
+            field=fact.field,
+            text=fact.text,
+            viewer_subject_id=resource_owner_id,
+        )
+        if existing is not None:
+            return EnsuredChildLayer(record=existing, created=False)
+
         stamped = created_at or datetime.now(UTC)
         status, confidence, reason_code = archive_birth_stamp(birth_decision)
         record_id = f"charch:{uuid.uuid4()}"
@@ -290,7 +408,6 @@ class ChildLayerStore:
             stripped = birth_decision.record_id.strip()
             if stripped:
                 record_id = stripped
-        receipt = f"{policy_receipt_id}:{record_id}"
         if birth_decision is None:
             payload = archive_payload(
                 fact,
@@ -310,54 +427,85 @@ class ChildLayerStore:
                 polarity=birth_decision.fact.polarity,
                 fact_version=birth_decision.fact_version or 1,
             )
-        async with (await self._api()).acquire() as connection:
-            async with connection.transaction():
-                await _scope(
-                    connection,
-                    subject_id=fact.subject_id,
-                    actor_subject_id=actor_id,
-                )
-                await connection.execute(
-                    "INSERT INTO memory_records ("
-                    " record_id, scope, subject_id, resource_owner_id,"
-                    " family_space_id, co_subject_ids, source_evidence_ids,"
-                    " policy_receipt_id, promotion_receipt_id,"
-                    " promotion_fence_context_hash, approval_evidence_refs,"
-                    " consent_snapshot_id, memory_type, confidence, retention,"
-                    " retention_expires_at, payload, created_by_actor_id,"
-                    " created_at, shared_proposal_id)"
-                    " VALUES ("
-                    " $1, $2, $3, $4, NULL, '[]'::jsonb, '[]'::jsonb,"
-                    " $5, '', '', '[]'::jsonb, $6, 'child_archive', $7,"
-                    " 'indefinite', NULL, $8::jsonb, $9, $10, NULL)",
-                    record_id,
-                    MemoryScope.MEMORY_SCOPE_PERSONAL_PRIVATE.value,
-                    fact.subject_id,
-                    resource_owner_id,
-                    receipt,
-                    consent_snapshot_id,
-                    confidence,
-                    json.dumps(payload),
-                    actor_id,
-                    stamped,
-                )
-                await connection.execute(
-                    "INSERT INTO memory_status_events ("
-                    " event_id, record_id, status, reason_code, created_at)"
-                    " VALUES ($1, $2, $3, $4, $5)",
-                    f"status:{record_id}",
-                    record_id,
-                    status,
-                    reason_code,
-                    stamped,
-                )
+        try:
+            async with (await self._api()).acquire() as connection:
+                async with connection.transaction():
+                    await _scope(
+                        connection,
+                        subject_id=fact.subject_id,
+                        actor_subject_id=actor_id,
+                    )
+                    await connection.execute(
+                        "INSERT INTO memory_records ("
+                        " record_id, scope, subject_id, resource_owner_id,"
+                        " family_space_id, co_subject_ids, source_evidence_ids,"
+                        " policy_receipt_id, promotion_receipt_id,"
+                        " promotion_fence_context_hash, approval_evidence_refs,"
+                        " consent_snapshot_id, memory_type, confidence, retention,"
+                        " retention_expires_at, payload, created_by_actor_id,"
+                        " created_at, shared_proposal_id)"
+                        " VALUES ("
+                        " $1, $2, $3, $4, NULL, '[]'::jsonb, '[]'::jsonb,"
+                        " $5, '', '', '[]'::jsonb, $6, 'child_archive', $7,"
+                        " 'indefinite', NULL, $8::jsonb, $9, $10, NULL)",
+                        record_id,
+                        MemoryScope.MEMORY_SCOPE_PERSONAL_PRIVATE.value,
+                        fact.subject_id,
+                        resource_owner_id,
+                        receipt,
+                        consent_snapshot_id,
+                        confidence,
+                        json.dumps(payload),
+                        actor_id,
+                        stamped,
+                    )
+                    await connection.execute(
+                        "INSERT INTO memory_status_events ("
+                        " event_id, record_id, status, reason_code, created_at)"
+                        " VALUES ($1, $2, $3, $4, $5)",
+                        f"status:{record_id}",
+                        record_id,
+                        status,
+                        reason_code,
+                        stamped,
+                    )
+        except asyncpg.UniqueViolationError:
+            raced = await self.find_archive_fact(
+                subject_id=fact.subject_id,
+                field=fact.field,
+                text=fact.text,
+                viewer_subject_id=resource_owner_id,
+            )
+            if raced is None:
+                raise
+            return EnsuredChildLayer(record=raced, created=False)
         listed = await self.get(
             subject_id=fact.subject_id,
             record_id=record_id,
             viewer_subject_id=resource_owner_id,
         )
         assert listed is not None
-        return listed
+        return EnsuredChildLayer(record=listed, created=True)
+
+    async def write_archive_fact(
+        self,
+        fact: ArchiveFact,
+        *,
+        resource_owner_id: str,
+        actor_id: str,
+        consent_snapshot_id: str,
+        created_at: datetime | None = None,
+        birth_decision: MemoryDecision | None = None,
+    ) -> ChildLayerRecord:
+        ensured = await self.ensure_archive_fact(
+            fact,
+            resource_owner_id=resource_owner_id,
+            actor_id=actor_id,
+            consent_snapshot_id=consent_snapshot_id,
+            created_at=created_at,
+            birth_decision=birth_decision,
+        )
+        return ensured.record
 
     async def upsert_archive_fact(
         self,
@@ -398,7 +546,7 @@ class ChildLayerStore:
             )
             assert listed is not None
             return listed
-        return await self.write_archive_fact(
+        ensured = await self.ensure_archive_fact(
             fact,
             resource_owner_id=resource_owner_id,
             actor_id=actor_id,
@@ -406,6 +554,7 @@ class ChildLayerStore:
             created_at=stamped,
             birth_decision=birth_decision,
         )
+        return ensured.record
 
     async def list(
         self,
@@ -1080,5 +1229,6 @@ def _jsonb(raw: object) -> dict[str, Any]:
 __all__ = [
     "ChildLayerRecord",
     "ChildLayerStore",
+    "EnsuredChildLayer",
     "archive_birth_stamp",
 ]
