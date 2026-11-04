@@ -1,10 +1,9 @@
-"""A device turn travels Agent -> Archive -> 回顾 under the profile Control signs.
+"""A device turn travels Agent -> Archive under the profile Control signs.
 
 The Agent reads the real ``/v1/interaction/session-policy`` response. A06: bind
-alone does not mint speaker owner, so the turn stays uncertain for private
-authority while ordinary chat and archive session listing still run. The profile
-never carries ``memory_capture`` (an action-time capability), exactly as in
-production.
+alone does not mint speaker owner, so the turn stays uncertain. Evidence may
+still be recorded, but owner 回顾 listing hides uncertain speakers (same rule as
+guest/uncertain archive tests). The profile never carries ``memory_capture``.
 """
 
 from __future__ import annotations
@@ -108,9 +107,11 @@ async def _agent_turn(
 
 
 @pytest.mark.asyncio
-async def test_device_bound_turn_reaches_the_owners_review(
+async def test_device_bound_turn_archives_uncertain_and_stays_off_owner_review(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """A06: bind+memory grant still archives, but not as owner 回顾 rows."""
+
     _configure(monkeypatch, tmp_path)
     monkeypatch.setenv("MEMORIA_INTERACTION_POLICY_TOKEN", _POLICY_TOKEN)
     app = create_app()
@@ -132,8 +133,7 @@ async def test_device_bound_turn_reaches_the_owners_review(
         ]
         assert evidence[0]["speaker_class"] == "uncertain"
         assert evidence[0]["payload"]["speaker_reason_code"] == "authority_unconfigured"
-        # #282: no turn text reaches the archive, so the review lists the
-        # session without a preview and the history has no turns to pair.
+        # #282: no turn text reaches the archive.
         for event in evidence:
             assert "text" not in event["payload"]
         for event in evidence:
@@ -148,14 +148,8 @@ async def test_device_bound_turn_reaches_the_owners_review(
         )
 
     assert sessions.status_code == 200, sessions.text
-    assert sessions.json()["items"] == [
-        {
-            "session_id": session_id,
-            "occurred_at": sessions.json()["items"][0]["occurred_at"],
-            "turn_count": 1,
-            "preview": "",
-        }
-    ]
+    # Uncertain speakers are recorded but hidden from owner 回顾 listing.
+    assert sessions.json()["items"] == []
     assert history.status_code == 200, history.text
     assert history.json() == {"session_id": session_id, "turns": []}
 
