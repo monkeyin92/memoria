@@ -80,6 +80,24 @@ def test_post_watermark_final_strips_replayed_victim_prefix() -> None:
     assert companion_safety_decision(_VICTIM + _OTHER) == "support_victim"
 
 
+def test_post_watermark_exact_repeat_of_committed_text_is_kept() -> None:
+    """Same words on a new turn must not peel to empty (warmup same-words)."""
+
+    supervisor = ASRStreamSupervisor()
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=9_600)
+    first = ASRResult(1, "same-1", 1, 0, 1_600, _OTHER, True)
+    assert supervisor.accept_result(first, session_id="session")
+    supervisor.mark_committed(1_600)
+
+    repeat = ASRResult(1, "same-2", 1, 1_600, 3_200, _OTHER, True)
+    decision = supervisor.accept_result(repeat, session_id="session")
+
+    assert decision.reason is ASRDecisionReason.ACCEPTED
+    assert decision.accepted is not None
+    assert decision.accepted.text == _OTHER
+
+
 @pytest.mark.asyncio
 async def test_dense_victim_then_other_commit_does_not_inherit_victim_text(
     device_media_session: Any,
