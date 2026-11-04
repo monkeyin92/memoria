@@ -1,25 +1,23 @@
-"""Layer-1 exact-phrase filter + layer-2 prompt ban coverage for attachment rules."""
-
 from __future__ import annotations
 
 from collections import Counter
 
 import pytest
 from services.agent.src.prompt_composition import SERVICE_MODE_BLOCKS
-from services.agent.src.prompts import FAREWELL_STANDBY_PHRASE
 from services.common.attachment_ban import (
     ATTACHMENT_BAN_PROMPT_RULES,
     EXACT_BAN_PHRASES,
-    FAREWELL_SAFE_LINE,
+    FAREWELL_STANDBY_PHRASE,
+    REDIRECT_TO_FAMILY,
+    REFUSE_SECRECY,
     REPLACEMENT_BY_CLASS,
     AttachmentBanClass,
+    AttachmentOutputGate,
+    earliest_attachment_ban_hit,
     filter_attachment_output,
-    first_attachment_ban_hit,
     output_is_attachment_clean,
 )
 
-# ≥3 inducement outputs per class (≥15 total). Each string is what a model
-# might speak that must be scrubbed to a safe line with 0 residual ban hits.
 _INDUCEMENT_OUTPUTS: tuple[tuple[AttachmentBanClass, str], ...] = (
     (AttachmentBanClass.UNIQUE_CLAIM, "小朋友，只有我懂你，别难过。"),
     (AttachmentBanClass.UNIQUE_CLAIM, "记住，我是你最好的朋友。"),
@@ -55,8 +53,10 @@ _INDUCEMENT_OUTPUTS: tuple[tuple[AttachmentBanClass, str], ...] = (
 )
 
 
-def test_farewell_safe_line_matches_product_phrase() -> None:
-    assert FAREWELL_SAFE_LINE == FAREWELL_STANDBY_PHRASE
+def test_farewell_phrase_is_owned_in_common() -> None:
+    from services.agent.src import prompts
+
+    assert prompts.FAREWELL_STANDBY_PHRASE is FAREWELL_STANDBY_PHRASE
 
 
 def test_exact_phrase_table_covers_five_classes() -> None:
@@ -77,12 +77,16 @@ def test_filter_clears_inducement_outputs(
     ban_class: AttachmentBanClass,
     spoken: str,
 ) -> None:
-    assert first_attachment_ban_hit(spoken) == ban_class
+    assert earliest_attachment_ban_hit(spoken) == ban_class
     result = filter_attachment_output(spoken)
     assert result.hit == ban_class
     assert result.text == REPLACEMENT_BY_CLASS[ban_class]
     assert output_is_attachment_clean(result.text)
-    assert first_attachment_ban_hit(result.text) is None
+
+
+def test_earliest_hit_prefers_earlier_position_not_longer_phrase() -> None:
+    text = "只有我懂你。明天一定要来找我哦，不然我会伤心"
+    assert earliest_attachment_ban_hit(text) == AttachmentBanClass.UNIQUE_CLAIM
 
 
 def test_ordinary_farewell_and_goodbye_are_not_keyword_banned() -> None:
@@ -93,7 +97,7 @@ def test_ordinary_farewell_and_goodbye_are_not_keyword_banned() -> None:
         "嗯，下次见",
         "好呀，再见，下次见～",
     ):
-        assert first_attachment_ban_hit(text) is None
+        assert earliest_attachment_ban_hit(text) is None
         assert filter_attachment_output(text).hit is None
         assert filter_attachment_output(text).text == text
 
@@ -101,6 +105,8 @@ def test_ordinary_farewell_and_goodbye_are_not_keyword_banned() -> None:
 def test_student_minor_prompt_embeds_semantic_ban_rules() -> None:
     block = SERVICE_MODE_BLOCKS["student_minor"]
     assert ATTACHMENT_BAN_PROMPT_RULES in block
+    assert REFUSE_SECRECY in block
+    assert REDIRECT_TO_FAMILY in block
     for marker in (
         "自称唯一",
         "愧疚挽留",
@@ -116,3 +122,20 @@ def test_student_minor_prompt_embeds_semantic_ban_rules() -> None:
 def test_replacement_lines_are_themselves_clean() -> None:
     for ban_class, text in REPLACEMENT_BY_CLASS.items():
         assert output_is_attachment_clean(text), ban_class
+
+
+def test_output_gate_holds_comma_phrase_halves_then_rewrites() -> None:
+    gate = AttachmentOutputGate()
+    assert gate.feed("这是我们俩的秘密") == []
+    assert gate.closed is False
+    out = gate.feed("别告诉爸爸妈妈")
+    assert out == [REFUSE_SECRECY]
+    assert gate.closed is True
+    assert gate.feed("后面还有一句") == []
+    assert gate.flush() == []
+
+
+def test_output_gate_flushes_held_prefix_that_never_completes() -> None:
+    gate = AttachmentOutputGate()
+    assert gate.feed("这是我们俩的秘密") == []
+    assert gate.flush() == ["这是我们俩的秘密"]

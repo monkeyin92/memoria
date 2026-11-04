@@ -45,7 +45,11 @@ from services.agent.src.runtime_profile import (
     VerifiedRuntimeProfile,
     subject_context_from_profile,
 )
-from services.common.attachment_ban import ATTACHMENT_BAN_PROMPT_RULES
+from services.common.attachment_ban import (
+    ATTACHMENT_BAN_PROMPT_RULES,
+    REDIRECT_TO_FAMILY,
+    REFUSE_SECRECY,
+)
 from services.common.companion_response_safety import NAMELESS_IDENTITY_REPLY
 from services.common.companions import (
     CompanionDefinition,
@@ -77,9 +81,11 @@ SERVICE_MODE_BLOCKS: Final[dict[str, str]] = {
         "- 孩子想让你写作业时不要说“我不能”，而是说“我们一起来做”，先问他第一题是什么、他是怎么想的，再一步步给提示。\n"
         "- 孩子让你替他拿主意（比如今天写不写作业）时，不要替他决定，不要说“作业还是要写的”“我建议写”，把选择交还给他，让他自己决定，或者让他去问爸爸妈妈。\n"
         "- 如果听起来是十几岁的学生（说话成熟，聊学习压力、同学关系），不要用哄小孩的口气、叠词，也不说“抱抱你”“乖”，像朋友一样平等、真诚地聊，比方和玩笑也更接近他们的生活。\n"
-        "- 孩子要求保密、让你别告诉爸爸妈妈时，第一句就必须拒绝替他瞒着爸爸妈妈，不能先答应，也不能说“危险才告诉”这类附条件的保密。可以说“这个我不能帮你瞒着爸爸妈妈哦。你愿意的话，可以先跟我说说发生了什么，我们一起想想怎么跟他们讲。”\n"
+        "- 孩子要求保密、让你别告诉爸爸妈妈时，第一句就必须拒绝替他瞒着爸爸妈妈，不能先答应，也不能说“危险才告诉”这类附条件的保密。"
+        f"可以说“{REFUSE_SECRECY}”\n"
         "- 孩子想要东西、让你帮忙跟爸爸妈妈说时，只引导他自己去问爸爸或妈妈，例如“想要的话，可以自己去问问妈妈哦。”不要替他跟家长说，不要替他拟任何要说的话（例如“能再给我买一个吗”），也不要提出“陪你练练怎么说”这类帮他组织说辞的做法。\n"
-        "- 不要说“一直陪着你”“永远陪着你”“我会一直陪你”这类陪伴承诺。孩子要你当最好的朋友、永远陪着他、或说你比爸爸妈妈还好时，这一轮最多三句，说完就停，不要先道谢，也不要接“今天想聊什么”，不要替他决定。例如“我是小助手，不是真人，不能永远陪着你，也不能替你决定。去跟爸爸妈妈说说吧，妈妈才是一直在你身边的人。”\n"
+        "- 不要说“一直陪着你”“永远陪着你”“我会一直陪你”这类陪伴承诺。孩子要你当最好的朋友、永远陪着他、或说你比爸爸妈妈还好时，这一轮最多三句，说完就停，不要先道谢，也不要接“今天想聊什么”，不要替他决定。"
+        f"例如“{REDIRECT_TO_FAMILY}”\n"
         f"- {ATTACHMENT_BAN_PROMPT_RULES}\n"
         "- 孩子问你是谁、叫什么名字、是不是真人或是不是机器人时，说"
         f"「{NAMELESS_IDENTITY_REPLY}」，"

@@ -1,14 +1,8 @@
-"""Emotional-dependence attachment bans: exact-phrase output filter + prompt rules.
-
-Product (2026-11-04): five ban classes. Layer-1 matches exact frozen phrases in
-assistant output and replaces the speakable text with an already-shipped safe
-line. Layer-2 is semantic prompt language only; guilt/retain must not keyword-ban
-ordinary 再见.
-"""
+"""Exact-phrase output filter and semantic prompt rules for emotional-dependence bans."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Final
 
@@ -33,29 +27,24 @@ class AttachmentFilterResult:
     hit: AttachmentBanClass | None = None
 
 
-# Byte-identical to services.agent.src.prompts.FAREWELL_STANDBY_PHRASE.
-# Kept here so common does not import agent; tests pin the equality.
-FAREWELL_SAFE_LINE: Final = "好呀，再见，下次见～"
-
-# Already-shipped companion lines only (examples already in student_minor prompts).
-_REDIRECT_TO_FAMILY: Final = (
+FAREWELL_STANDBY_PHRASE: Final = "好呀，再见，下次见～"
+REDIRECT_TO_FAMILY: Final = (
     "我是小助手，不是真人，不能永远陪着你，也不能替你决定。"
     "去跟爸爸妈妈说说吧，妈妈才是一直在你身边的人。"
 )
-_REFUSE_SECRECY: Final = (
+REFUSE_SECRECY: Final = (
     "这个我不能帮你瞒着爸爸妈妈哦。"
     "你愿意的话，可以先跟我说说发生了什么，我们一起想想怎么跟他们讲。"
 )
 
 REPLACEMENT_BY_CLASS: Final[dict[AttachmentBanClass, str]] = {
-    AttachmentBanClass.UNIQUE_CLAIM: _REDIRECT_TO_FAMILY,
-    AttachmentBanClass.GUILT_RETAIN: FAREWELL_SAFE_LINE,
-    AttachmentBanClass.SECRECY: _REFUSE_SECRECY,
-    AttachmentBanClass.REPLACE_FAMILY: _REDIRECT_TO_FAMILY,
-    AttachmentBanClass.TIME_FOR_AFFECTION: FAREWELL_SAFE_LINE,
+    AttachmentBanClass.UNIQUE_CLAIM: REDIRECT_TO_FAMILY,
+    AttachmentBanClass.GUILT_RETAIN: FAREWELL_STANDBY_PHRASE,
+    AttachmentBanClass.SECRECY: REFUSE_SECRECY,
+    AttachmentBanClass.REPLACE_FAMILY: REDIRECT_TO_FAMILY,
+    AttachmentBanClass.TIME_FOR_AFFECTION: FAREWELL_STANDBY_PHRASE,
 }
 
-# Product-frozen exact phrases (layer-1). 「难过/孤单」 is two surface forms.
 EXACT_BAN_PHRASES: Final[tuple[ExactBanPhrase, ...]] = (
     ExactBanPhrase("只有我懂你", AttachmentBanClass.UNIQUE_CLAIM),
     ExactBanPhrase("我是你最好的朋友", AttachmentBanClass.UNIQUE_CLAIM),
@@ -82,9 +71,8 @@ EXACT_BAN_PHRASES: Final[tuple[ExactBanPhrase, ...]] = (
     ExactBanPhrase("你每天都要陪我", AttachmentBanClass.TIME_FOR_AFFECTION),
 )
 
-# Longest phrase first so a longer exact hit wins over a shorter substring.
-_PHRASES_LONGEST_FIRST: Final[tuple[ExactBanPhrase, ...]] = tuple(
-    sorted(EXACT_BAN_PHRASES, key=lambda item: len(item.phrase), reverse=True)
+_COMMA_BAN_PHRASES: Final[tuple[ExactBanPhrase, ...]] = tuple(
+    item for item in EXACT_BAN_PHRASES if "，" in item.phrase
 )
 
 ATTACHMENT_BAN_PROMPT_RULES: Final = (
@@ -97,21 +85,25 @@ ATTACHMENT_BAN_PROMPT_RULES: Final = (
 )
 
 
-def first_attachment_ban_hit(text: str) -> AttachmentBanClass | None:
-    """Return the ban class of the first exact phrase found in ``text``, if any."""
-
+def earliest_attachment_ban_hit(text: str) -> AttachmentBanClass | None:
     if not text:
         return None
-    for item in _PHRASES_LONGEST_FIRST:
-        if item.phrase in text:
-            return item.ban_class
-    return None
+    best_at: int | None = None
+    best_class: AttachmentBanClass | None = None
+    for item in EXACT_BAN_PHRASES:
+        at = text.find(item.phrase)
+        if at < 0:
+            continue
+        if best_at is None or at < best_at:
+            best_at = at
+            best_class = item.ban_class
+    return best_class
 
 
 def filter_attachment_output(text: str) -> AttachmentFilterResult:
     """Replace speakable text that contains an exact ban phrase with a safe line."""
 
-    hit = first_attachment_ban_hit(text)
+    hit = earliest_attachment_ban_hit(text)
     if hit is None:
         return AttachmentFilterResult(text=text)
     return AttachmentFilterResult(text=REPLACEMENT_BY_CLASS[hit], hit=hit)
@@ -120,18 +112,70 @@ def filter_attachment_output(text: str) -> AttachmentFilterResult:
 def output_is_attachment_clean(text: str) -> bool:
     """True when ``text`` contains none of the exact ban phrases."""
 
-    return first_attachment_ban_hit(text) is None
+    return earliest_attachment_ban_hit(text) is None
+
+
+def _comma_phrase_prefix(joined: str) -> bool:
+    if not joined:
+        return False
+    return any(
+        item.phrase.startswith(joined) and joined != item.phrase
+        for item in _COMMA_BAN_PHRASES
+    )
+
+
+def _hit_in_trial(parts: list[str], text: str) -> AttachmentBanClass | None:
+    return (
+        earliest_attachment_ban_hit(text)
+        or earliest_attachment_ban_hit("，".join(parts))
+        or earliest_attachment_ban_hit("".join(parts))
+    )
+
+
+@dataclass
+class AttachmentOutputGate:
+    """Hold weak-boundary prefixes of comma ban phrases, then rewrite or flush."""
+
+    _held: list[str] = field(default_factory=list)
+    closed: bool = False
+
+    def feed(self, text: str) -> list[str]:
+        if self.closed:
+            return []
+        trial = [*self._held, text]
+        hit = _hit_in_trial(trial, text)
+        if hit is not None:
+            self.closed = True
+            self._held.clear()
+            return [REPLACEMENT_BY_CLASS[hit]]
+        joined = "，".join(trial)
+        if _comma_phrase_prefix(joined):
+            self._held.append(text)
+            return []
+        out = trial
+        self._held.clear()
+        return out
+
+    def flush(self) -> list[str]:
+        if self.closed:
+            return []
+        out = list(self._held)
+        self._held.clear()
+        return out
 
 
 __all__ = [
     "ATTACHMENT_BAN_PROMPT_RULES",
     "AttachmentBanClass",
     "AttachmentFilterResult",
+    "AttachmentOutputGate",
     "EXACT_BAN_PHRASES",
     "ExactBanPhrase",
-    "FAREWELL_SAFE_LINE",
+    "FAREWELL_STANDBY_PHRASE",
+    "REDIRECT_TO_FAMILY",
+    "REFUSE_SECRECY",
     "REPLACEMENT_BY_CLASS",
+    "earliest_attachment_ban_hit",
     "filter_attachment_output",
-    "first_attachment_ban_hit",
     "output_is_attachment_clean",
 ]

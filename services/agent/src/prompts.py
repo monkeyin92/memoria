@@ -3,6 +3,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from services.common.attachment_ban import FAREWELL_STANDBY_PHRASE
 from services.common.companion_response_safety import NAMELESS_IDENTITY_REPLY
 from services.tutor.prompts import TUTOR_STYLE
 
@@ -90,10 +91,6 @@ BRIDGE_PHRASES = (
 )
 LIVE_LOOKUP_FILLER = BRIDGE_PHRASES[1]
 CONNECTION_RETRY_PHRASE = BRIDGE_PHRASES[3]
-
-# Product-approved line spoken before an explicit farewell returns the device
-# to standby.  It is synthesized live by the configured TTS, never stored.
-FAREWELL_STANDBY_PHRASE = "好呀，再见，下次见～"
 
 DEVICE_WAKE_PHRASES = (
     "我在。",
