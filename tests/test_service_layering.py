@@ -69,7 +69,7 @@ ALLOWED_EDGES: dict[str, frozenset[str]] = {
     "guardian": frozenset({"archive", "common", "governance", "tutor"}),
     "identity": frozenset({"common", "consent"}),
     "legacy": frozenset({"digital_self", "self_model"}),
-    "memory_scope": frozenset({"consent", "guardian", "identity", "policy"}),
+    "memory_scope": frozenset({"common", "consent", "guardian", "identity", "policy"}),
     "persona": frozenset({"archive", "common", "identity"}),
     "policy": frozenset({"common", "consent"}),
     "self_model": frozenset({"archive"}),
