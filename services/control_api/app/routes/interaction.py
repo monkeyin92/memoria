@@ -94,7 +94,10 @@ from services.digital_self.response_planner import (
 from services.evolution.receipt import sign_resolution_receipt
 from services.evolution.resolver import EvolutionResolver, ResolvedEvolutionArtifact
 from services.evolution.store import EvolutionStore
-from services.guardian.child_archive_recall import grounded_items_from_archive_views
+from services.guardian.child_archive_recall import (
+    grounded_items_from_archive_views,
+    merge_archive_ahead_of_catalog,
+)
 from services.guardian.crisis import CrisisNotificationService
 from services.guardian.domain import GuardianStorePort
 from services.guardian.retention import (
@@ -1615,8 +1618,6 @@ async def _child_archive_consent_active(
     scope: _SubjectMemoryScope,
     subject_id: str,
 ) -> bool:
-    """Child-archive dialogue recall needs the separate child_archive grant."""
-
     if scope.subject_category != "minor":
         return False
     return (
@@ -1633,8 +1634,6 @@ async def _fetch_child_archive_grounded(
     *,
     subject_id: str,
 ) -> tuple[GroundedItem, ...]:
-    """Read parent-confirmed child_archive facts only; never dialogue_summary."""
-
     layers = _child_layer_store(request)
     if layers is None or not hasattr(layers, "list_archive_views"):
         return ()
@@ -1746,19 +1745,18 @@ async def _companion_items(
     persona_result = next(cursor) if persona_task is not None else None
     archive_result = next(cursor) if archive_task is not None else None
 
-    items: list[GroundedItem] = []
-    # Parent-confirmed child-archive facts first so dialogue recall prefers the
-    # authorized whitelist over catalog hits when the planner later truncates.
+    archive_items: tuple[GroundedItem, ...] = ()
     if archive_result is not None and not isinstance(archive_result, BaseException):
-        items.extend(cast(tuple[GroundedItem, ...], archive_result))
+        archive_items = cast(tuple[GroundedItem, ...], archive_result)
     elif isinstance(archive_result, BaseException):
         logger.warning(
             "response planner child-archive recall unavailable",
             exc_info=archive_result,
         )
+    catalog_items: list[GroundedItem] = []
     if memory_result is not None and not isinstance(memory_result, BaseException):
         for item in cast(MemorySearchResult, memory_result).items:
-            items.append(
+            catalog_items.append(
                 GroundedItem(
                     item_id=item.item_id,
                     kind="memory_claim",
@@ -1777,6 +1775,9 @@ async def _companion_items(
             "response planner memory context unavailable",
             exc_info=memory_result,
         )
+    items: list[GroundedItem] = list(
+        merge_archive_ahead_of_catalog(archive_items, catalog_items)
+    )
     persona_capsule: PersonaCapsule | None = None
     if persona_result is not None and not isinstance(persona_result, BaseException):
         persona_capsule = cast(PersonaCapsule, persona_result)
