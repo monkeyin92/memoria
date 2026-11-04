@@ -1,6 +1,5 @@
 """Per-turn timestamps and latency split from timeline.jsonl + bridge.log. Missing points stay 缺, never estimated."""
 import argparse
-import difflib
 import json
 import re
 import sys
@@ -10,6 +9,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from voice_soak_analyze import pct  # noqa: E402  same P95 as voice_soak_verdict / keepawake_verdict
 from voice_soak_evidence import UNVERIFIABLE_STOP_REASONS  # noqa: E402
+from voice_soak_session_report import (  # noqa: E402
+    ADVISORY_THRESHOLD_STATUS,
+    HALF_P50_DELTA_MAX_S,
+    REPEAT_RATIO,
+    long_session_metrics,
+)
 
 TS_RE = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+)Z")
 COMMIT_RE = re.compile(r"media turn commit timing .*result=committed.*final_to_done_ms=(\d+)")
@@ -88,39 +93,6 @@ def load_clock(path: Path | None) -> dict:
     return {"offset_s": round(sum(offs) / len(offs), 4), "error_s": round(err, 4), "samples": rows}
 
 
-REPLY_RATE_DROP_PP = 5.0   # 后半段回复率比前半段低超过 5 个百分点 = 退化
-REPEAT_RATIO = 0.8         # 相邻两条回复 difflib 字符相似度 >= 0.8 算重复
-REPEAT_RISE_PP = 5.0       # 后半段重复率比前半段高超过 5 个百分点 = 退化
-SLOPE_MIN_S = 0.01         # 首字延迟斜率 >= 0.01 秒/说 且 t >= 2 才算显著为正
-SLOPE_MIN_T = 2.0
-
-
-def slope(xs, ys):
-    n = len(xs)
-    if n < 3:
-        return None, None
-    mx, my = sum(xs) / n, sum(ys) / n
-    sxx = sum((x - mx) ** 2 for x in xs)
-    if not sxx:
-        return None, None
-    b = sum((x - mx) * (y - my) for x, y in zip(xs, ys, strict=True)) / sxx
-    resid = sum((y - my - b * (x - mx)) ** 2 for x, y in zip(xs, ys, strict=True))
-    se = (resid / (n - 2) / sxx) ** 0.5
-    return b, (b / se if se else float("inf"))
-
-
-def half_stats(ts):
-    lat = [t["latency_s"] for t in ts if t["kind"] == "reply" and t["latency_s"] is not None]
-    texts = [t["reply_text"] for t in ts if t["kind"] == "reply" and t.get("reply_text")]
-    pairs = list(zip(texts, texts[1:], strict=False))
-    rep = sum(difflib.SequenceMatcher(None, a, b).ratio() >= REPEAT_RATIO for a, b in pairs)
-    return {"turns": len(ts), "replies": sum(t["kind"] == "reply" for t in ts),
-            "reply_rate": round(sum(t["kind"] == "reply" for t in ts) / len(ts), 3) if ts else None,
-            "repeat_rate": round(rep / len(pairs), 3) if pairs else "缺",
-            "repeat_pairs": len(pairs),
-            "latency_p50_s": pct(lat, 0.5) if lat else None, "latency_p95_s": p95(lat)}
-
-
 def _numeric_segment(value: object) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
@@ -167,31 +139,53 @@ def segment_aggregates(turns: list[dict]) -> dict:
 
 
 def degradation(turns):
-    """Split by time at the midpoint of the first and last turn; 第几说 = order among all turns."""
+    """Split at the midpoint of the first and last turn. Half P50 delta is the only pass line."""
     if len(turns) < 4:
-        return {"verdict": "样本不足", "turns": len(turns)}
-    mid = (turns[0]["播放结束"] + turns[-1]["播放结束"]) / 2
-    first = half_stats([t for t in turns if t["播放结束"] < mid])
-    second = half_stats([t for t in turns if t["播放结束"] >= mid])
-    pts = [(i + 1, t["latency_s"]) for i, t in enumerate(turns) if t["kind"] == "reply" and t["latency_s"] is not None]
-    b, tval = slope([x for x, _ in pts], [y for _, y in pts])
-    reasons = []
-    drop = (first["reply_rate"] - second["reply_rate"]) * 100
-    if drop > REPLY_RATE_DROP_PP:
-        reasons.append(f"回复率下降 {drop:.1f} 个百分点")
-    if "缺" not in (first["repeat_rate"], second["repeat_rate"]):
-        rise = (second["repeat_rate"] - first["repeat_rate"]) * 100
-        if rise > REPEAT_RISE_PP:
-            reasons.append(f"重复率上升 {rise:.1f} 个百分点")
-    if b is not None and b >= SLOPE_MIN_S and tval >= SLOPE_MIN_T:
-        reasons.append(f"首字延迟斜率 {b:.3f} 秒/说 (t={tval:.1f})")
-    return {"thresholds": {"reply_rate_drop_pp": REPLY_RATE_DROP_PP, "repeat_ratio": REPEAT_RATIO,
-                           "repeat_rise_pp": REPEAT_RISE_PP, "slope_min_s_per_turn": SLOPE_MIN_S, "slope_min_t": SLOPE_MIN_T},
-            "split_at": round(mid, 3), "first_half": first, "second_half": second,
-            "latency_slope_s_per_turn": round(b, 4) if b is not None else None,
-            "latency_slope_t": round(tval, 2) if tval is not None else None,
-            "repeat_note": None if "缺" not in (first["repeat_rate"], second["repeat_rate"]) else "缺回复文本: timeline 的 reply 行没有 reply_text，bridge.log 只记 text_len",
-            "verdict": "退化" if reasons else "未见退化", "reasons": reasons}
+        return {
+            "verdict": "样本不足",
+            "turns": len(turns),
+            "threshold_status": ADVISORY_THRESHOLD_STATUS,
+        }
+    metrics = long_session_metrics(
+        [
+            {
+                "kind": t["kind"],
+                "latency_s": t.get("latency_s"),
+                "reply_text": t.get("reply_text"),
+                "anchor_ts": t["播放结束"],
+            }
+            for t in turns
+        ]
+    )
+    delta = metrics.get("half_p50_delta_s")
+    if metrics.get("verdict") == "fail" and isinstance(delta, (int, float)):
+        verdict = "退化"
+        reasons = [f"后半段 P50 增幅 {delta:.3f} s > {HALF_P50_DELTA_MAX_S} s"]
+    elif metrics.get("verdict") == "pass":
+        verdict = "未见退化"
+        reasons = []
+    else:
+        verdict = "待产品确认"
+        reasons = ["前后半段 P50 不可测"]
+    return {
+        "thresholds": {
+            "half_p50_delta_max_s": HALF_P50_DELTA_MAX_S,
+            "repeat_ratio": REPEAT_RATIO,
+            "reply_rate": ADVISORY_THRESHOLD_STATUS,
+            "repeat_rate": ADVISORY_THRESHOLD_STATUS,
+            "latency_slope_s_per_turn": ADVISORY_THRESHOLD_STATUS,
+        },
+        "threshold_status": ADVISORY_THRESHOLD_STATUS,
+        "split_at": metrics.get("split_at"),
+        "first_half": metrics.get("first_half"),
+        "second_half": metrics.get("second_half"),
+        "half_p50_delta_s": delta,
+        "latency_slope_s_per_turn": metrics.get("latency_slope_s_per_turn"),
+        "latency_slope_t": metrics.get("latency_slope_t"),
+        "repeat_note": metrics.get("repeat_note"),
+        "verdict": verdict,
+        "reasons": reasons,
+    }
 
 
 def build(out: Path, stop_tags: dict[str, str], clock_path: Path | None = None) -> dict:
