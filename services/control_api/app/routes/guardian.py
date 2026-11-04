@@ -1742,7 +1742,7 @@ async def review_child_archive_fact(
         if code in {"child_archive_already_withdrawn", "correct_noop", "correct_requires_change"}:
             raise HTTPException(status_code=409, detail={"code": code}) from exc
         raise HTTPException(status_code=422, detail={"code": code}) from exc
-    forget_subject_plans(minor_user_id)
+    await forget_subject_plans(request.app.state, minor_user_id)
     return {
         "action": receipt.action,
         "record_id": receipt.record_id,
@@ -1775,7 +1775,7 @@ async def delete_child_archive_fact(
     if existing is None or existing.kind != KIND_CHILD_ARCHIVE:
         raise HTTPException(status_code=404, detail={"code": "child_archive_not_found"})
     erased = await layers.delete_record(subject_id=minor_user_id, record_id=record_id)
-    forget_subject_plans(minor_user_id)
+    await forget_subject_plans(request.app.state, minor_user_id)
     return {
         "deleted": True,
         "record_id": record_id,
