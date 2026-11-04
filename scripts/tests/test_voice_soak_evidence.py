@@ -113,6 +113,8 @@ def test_stop_requires_a_matched_command_terminal_and_device_closure(evidence) -
     assert result["reply_delivery_id"] == DELIVERY
     assert result["stop_delay_s"] == 2.1
     assert result["stop_delay_origin"] == "interrupt_start"
+    assert result["stop_delay_from_interrupt_start_s"] == 2.1
+    assert result["stop_delay_from_speech_end_s"] == 1.1
 
 
 @pytest.mark.parametrize("reason", ["superseded", "reply_task_cancelled", "output_task_cancelled"])
