@@ -174,6 +174,10 @@ def archive_payload(
     last_mentioned_at: datetime | None = None,
     provenance: str | None = None,
     rule_version: str | None = None,
+    source_session_id: str | None = None,
+    polarity: str | None = None,
+    fact_version: int | None = None,
+    supersedes_record_id: str | None = None,
 ) -> dict[str, object]:
     stamped = created_at or datetime.now(UTC)
     mentioned = last_mentioned_at or stamped
@@ -188,6 +192,14 @@ def archive_payload(
         payload["provenance"] = provenance
     if rule_version:
         payload["rule_version"] = rule_version
+    if source_session_id and source_session_id.strip():
+        payload["source_session_id"] = source_session_id.strip()
+    if polarity and polarity.strip():
+        payload["polarity"] = polarity.strip()
+    if fact_version is not None and fact_version >= 1:
+        payload["fact_version"] = fact_version
+    if supersedes_record_id and supersedes_record_id.strip():
+        payload["supersedes_record_id"] = supersedes_record_id.strip()
     return payload
 
 

@@ -18,6 +18,14 @@ import asyncpg
 from packages.contracts.generated.python.multi_subject_contracts import MemoryScope
 
 from services.common.memory_decision_contract import MemoryDecision
+from services.guardian.child_archive_review import (
+    ChildArchiveFactView,
+    ChildArchiveReviewCommand,
+    ChildArchiveReviewError,
+    ChildArchiveReviewReceipt,
+    build_fact_view,
+    validate_correct_patch,
+)
 from services.guardian.child_memory import (
     KIND_CHILD_ARCHIVE,
     KIND_DIALOGUE_SUMMARY,
@@ -281,7 +289,13 @@ class ChildLayerStore:
                 record_id = stripped
         receipt = f"{policy_receipt_id}:{record_id}"
         if birth_decision is None:
-            payload = archive_payload(fact, created_at=stamped, last_mentioned_at=stamped)
+            payload = archive_payload(
+                fact,
+                created_at=stamped,
+                last_mentioned_at=stamped,
+                provenance="parent_entry",
+                fact_version=1,
+            )
         else:
             payload = archive_payload(
                 fact,
@@ -289,6 +303,9 @@ class ChildLayerStore:
                 last_mentioned_at=stamped,
                 provenance=birth_decision.fact.provenance,
                 rule_version=birth_decision.fact.rule_version,
+                source_session_id=birth_decision.fact.source_session_id,
+                polarity=birth_decision.fact.polarity,
+                fact_version=birth_decision.fact_version or 1,
             )
         async with (await self._api()).acquire() as connection:
             async with connection.transaction():
@@ -438,6 +455,473 @@ class ChildLayerStore:
         if row is None:
             return None
         return _row_to_record(row)
+
+    async def list_archive_views(
+        self,
+        *,
+        subject_id: str,
+        viewer_subject_id: str,
+        limit: int = 50,
+        include_withdrawn: bool = False,
+    ) -> list[ChildArchiveFactView]:
+        """Parent-facing archive cards with status, provenance, and version."""
+
+        _require_subject(subject_id)
+        _require_subject(viewer_subject_id)
+        async with (await self._api()).acquire() as connection:
+            async with connection.transaction():
+                await _scope(connection, actor_subject_id=viewer_subject_id)
+                rows = await connection.fetch(
+                    "SELECT r.record_id, r.subject_id, r.payload, r.created_at,"
+                    " r.retention_expires_at, r.confidence,"
+                    " s.status AS latest_status, s.created_at AS handled_at,"
+                    " s.reason_code AS reason_code"
+                    " FROM memory_records r"
+                    " LEFT JOIN LATERAL ("
+                    "   SELECT status, created_at, reason_code"
+                    "   FROM memory_status_events"
+                    "   WHERE record_id = r.record_id"
+                    "   ORDER BY created_at DESC"
+                    "   LIMIT 1"
+                    " ) s ON true"
+                    " WHERE r.subject_id = $1"
+                    "   AND r.payload ->> 'kind' = $2"
+                    "   AND ($3::boolean OR COALESCE(s.status, 'candidate') <> 'revoked')"
+                    " ORDER BY r.created_at DESC"
+                    " LIMIT $4",
+                    subject_id,
+                    KIND_CHILD_ARCHIVE,
+                    include_withdrawn,
+                    limit,
+                )
+        views: list[ChildArchiveFactView] = []
+        for row in rows:
+            parsed = _row_to_record(row)
+            if parsed is None or parsed.field is None:
+                continue
+            status = row["latest_status"] or "candidate"
+            views.append(
+                build_fact_view(
+                    record_id=parsed.record_id,
+                    field=parsed.field,
+                    text=parsed.text,
+                    created_at=parsed.created_at,
+                    retention_expires_at=parsed.retention_expires_at,
+                    payload=parsed.payload,
+                    status=str(status),
+                    reason_code=(
+                        str(row["reason_code"]) if row["reason_code"] is not None else None
+                    ),
+                    handled_at=row["handled_at"],
+                    confidence=(
+                        float(row["confidence"]) if row["confidence"] is not None else None
+                    ),
+                )
+            )
+        return views
+
+    async def get_archive_view(
+        self,
+        *,
+        subject_id: str,
+        record_id: str,
+        viewer_subject_id: str,
+    ) -> ChildArchiveFactView | None:
+        _require_subject(subject_id)
+        _require_subject(viewer_subject_id)
+        async with (await self._api()).acquire() as connection:
+            async with connection.transaction():
+                await _scope(connection, actor_subject_id=viewer_subject_id)
+                row = await connection.fetchrow(
+                    "SELECT r.record_id, r.subject_id, r.payload, r.created_at,"
+                    " r.retention_expires_at, r.confidence,"
+                    " s.status AS latest_status, s.created_at AS handled_at,"
+                    " s.reason_code AS reason_code"
+                    " FROM memory_records r"
+                    " LEFT JOIN LATERAL ("
+                    "   SELECT status, created_at, reason_code"
+                    "   FROM memory_status_events"
+                    "   WHERE record_id = r.record_id"
+                    "   ORDER BY created_at DESC"
+                    "   LIMIT 1"
+                    " ) s ON true"
+                    " WHERE r.subject_id = $1 AND r.record_id = $2"
+                    "   AND r.payload ->> 'kind' = $3",
+                    subject_id,
+                    record_id,
+                    KIND_CHILD_ARCHIVE,
+                )
+        if row is None:
+            return None
+        parsed = _row_to_record(row)
+        if parsed is None or parsed.field is None:
+            return None
+        status = row["latest_status"] or "candidate"
+        return build_fact_view(
+            record_id=parsed.record_id,
+            field=parsed.field,
+            text=parsed.text,
+            created_at=parsed.created_at,
+            retention_expires_at=parsed.retention_expires_at,
+            payload=parsed.payload,
+            status=str(status),
+            reason_code=str(row["reason_code"]) if row["reason_code"] is not None else None,
+            handled_at=row["handled_at"],
+            confidence=float(row["confidence"]) if row["confidence"] is not None else None,
+        )
+
+    async def review_archive_fact(
+        self,
+        *,
+        subject_id: str,
+        resource_owner_id: str,
+        consent_snapshot_id: str,
+        command: ChildArchiveReviewCommand,
+    ) -> ChildArchiveReviewReceipt:
+        """Confirm, correct (supersede), or withdraw one archive fact."""
+
+        _require_subject(subject_id)
+        _require_subject(resource_owner_id)
+        actor = command.actor_id.strip()
+        if not actor:
+            raise ChildArchiveReviewError("actor_required")
+        current = await self.get_archive_view(
+            subject_id=subject_id,
+            record_id=command.record_id,
+            viewer_subject_id=resource_owner_id,
+        )
+        if current is None:
+            raise ChildArchiveReviewError("child_archive_not_found")
+        if current.status == "revoked" or current.display_lifecycle == "withdrawn":
+            raise ChildArchiveReviewError("child_archive_already_withdrawn")
+        stamped = datetime.now(UTC)
+        if command.action == "confirm":
+            return await self._confirm_archive(
+                subject_id=subject_id,
+                resource_owner_id=resource_owner_id,
+                current=current,
+                actor_id=actor,
+                stamped=stamped,
+            )
+        if command.action == "withdraw":
+            return await self._withdraw_archive(
+                subject_id=subject_id,
+                resource_owner_id=resource_owner_id,
+                current=current,
+                actor_id=actor,
+                stamped=stamped,
+            )
+        if command.action == "correct":
+            return await self._correct_archive(
+                subject_id=subject_id,
+                resource_owner_id=resource_owner_id,
+                consent_snapshot_id=consent_snapshot_id,
+                current=current,
+                command=command,
+                actor_id=actor,
+                stamped=stamped,
+            )
+        raise ChildArchiveReviewError("unsupported_review_action")
+
+    async def _confirm_archive(
+        self,
+        *,
+        subject_id: str,
+        resource_owner_id: str,
+        current: ChildArchiveFactView,
+        actor_id: str,
+        stamped: datetime,
+    ) -> ChildArchiveReviewReceipt:
+        if current.status == "confirmed" and current.display_lifecycle == "parent_confirmed":
+            audit_id = await self._append_audit(
+                action="child_archive.parent_confirm",
+                actor_id=actor_id,
+                subject_id=subject_id,
+                record_id=current.record_id,
+                stamped=stamped,
+                payload={
+                    "result": "idempotent",
+                    "old_status": current.status,
+                    "new_status": "confirmed",
+                    "old_version": current.fact_version,
+                    "new_version": current.fact_version,
+                    "auth": "binding_owner",
+                },
+            )
+            return ChildArchiveReviewReceipt(
+                action="confirm",
+                record_id=current.record_id,
+                status="confirmed",
+                display_lifecycle="parent_confirmed",
+                display_label="家长已确认",
+                reviewed_at=stamped,
+                audit_event_id=audit_id,
+                old_version=current.fact_version,
+                new_version=current.fact_version,
+            )
+        event_id = f"status:confirm:{current.record_id}:{uuid.uuid4()}"
+        async with (await self._api()).acquire() as connection:
+            async with connection.transaction():
+                await _scope(
+                    connection,
+                    subject_id=subject_id,
+                    actor_subject_id=actor_id,
+                )
+                await connection.execute(
+                    "INSERT INTO memory_status_events ("
+                    " event_id, record_id, status, reason_code, created_at)"
+                    " VALUES ($1, $2, 'confirmed', 'parent_confirm', $3)",
+                    event_id,
+                    current.record_id,
+                    stamped,
+                )
+        audit_id = await self._append_audit(
+            action="child_archive.parent_confirm",
+            actor_id=actor_id,
+            subject_id=subject_id,
+            record_id=current.record_id,
+            stamped=stamped,
+            payload={
+                "result": "ok",
+                "old_status": current.status,
+                "new_status": "confirmed",
+                "old_version": current.fact_version,
+                "new_version": current.fact_version,
+                "auth": "binding_owner",
+                "resource_owner_id": resource_owner_id,
+            },
+        )
+        return ChildArchiveReviewReceipt(
+            action="confirm",
+            record_id=current.record_id,
+            status="confirmed",
+            display_lifecycle="parent_confirmed",
+            display_label="家长已确认",
+            reviewed_at=stamped,
+            audit_event_id=audit_id,
+            old_version=current.fact_version,
+            new_version=current.fact_version,
+        )
+
+    async def _withdraw_archive(
+        self,
+        *,
+        subject_id: str,
+        resource_owner_id: str,
+        current: ChildArchiveFactView,
+        actor_id: str,
+        stamped: datetime,
+    ) -> ChildArchiveReviewReceipt:
+        event_id = f"status:withdraw:{current.record_id}:{uuid.uuid4()}"
+        async with (await self._api()).acquire() as connection:
+            async with connection.transaction():
+                await _scope(
+                    connection,
+                    subject_id=subject_id,
+                    actor_subject_id=actor_id,
+                )
+                await connection.execute(
+                    "INSERT INTO memory_status_events ("
+                    " event_id, record_id, status, reason_code, created_at)"
+                    " VALUES ($1, $2, 'revoked', 'parent_withdraw', $3)",
+                    event_id,
+                    current.record_id,
+                    stamped,
+                )
+        audit_id = await self._append_audit(
+            action="child_archive.parent_withdraw",
+            actor_id=actor_id,
+            subject_id=subject_id,
+            record_id=current.record_id,
+            stamped=stamped,
+            payload={
+                "result": "ok",
+                "old_status": current.status,
+                "new_status": "revoked",
+                "old_version": current.fact_version,
+                "new_version": current.fact_version,
+                "auth": "binding_owner",
+                "resource_owner_id": resource_owner_id,
+                "a05_handoff": "new_session_and_cache_proof",
+            },
+        )
+        return ChildArchiveReviewReceipt(
+            action="withdraw",
+            record_id=current.record_id,
+            status="revoked",
+            display_lifecycle="withdrawn",
+            display_label="已撤回",
+            reviewed_at=stamped,
+            audit_event_id=audit_id,
+            old_version=current.fact_version,
+            new_version=current.fact_version,
+        )
+
+    async def _correct_archive(
+        self,
+        *,
+        subject_id: str,
+        resource_owner_id: str,
+        consent_snapshot_id: str,
+        current: ChildArchiveFactView,
+        command: ChildArchiveReviewCommand,
+        actor_id: str,
+        stamped: datetime,
+    ) -> ChildArchiveReviewReceipt:
+        next_text, next_field, next_polarity = validate_correct_patch(
+            text=command.text,
+            field=command.field,
+            polarity=command.polarity,
+        )
+        field = next_field or current.field  # type: ignore[assignment]
+        text = next_text or current.text
+        polarity = next_polarity or current.polarity or "unknown"
+        if field == current.field and text == current.text and polarity == (
+            current.polarity or "unknown"
+        ):
+            raise ChildArchiveReviewError("correct_noop")
+        new_version = current.fact_version + 1
+        try:
+            fact = ArchiveFact(subject_id=subject_id, field=field, text=text)
+        except ValueError as exc:
+            raise ChildArchiveReviewError("invalid_child_archive_fact", str(exc)) from exc
+        new_record_id = f"charch:{uuid.uuid4()}"
+        reason = (
+            "parent_correct_history"
+            if command.history_change
+            else "parent_correct"
+        )
+        payload = archive_payload(
+            fact,
+            created_at=stamped,
+            last_mentioned_at=stamped,
+            provenance="parent_confirm",
+            rule_version=current.rule_version,
+            source_session_id=current.source_session_id,
+            polarity=polarity,
+            fact_version=new_version,
+            supersedes_record_id=current.record_id,
+        )
+        receipt = f"child-archive-correct:{new_record_id}"
+        revoke_event = f"status:supersede:{current.record_id}:{uuid.uuid4()}"
+        confirm_event = f"status:correct:{new_record_id}"
+        async with (await self._api()).acquire() as connection:
+            async with connection.transaction():
+                await _scope(
+                    connection,
+                    subject_id=subject_id,
+                    actor_subject_id=actor_id,
+                )
+                await connection.execute(
+                    "INSERT INTO memory_status_events ("
+                    " event_id, record_id, status, reason_code, created_at)"
+                    " VALUES ($1, $2, 'revoked', $3, $4)",
+                    revoke_event,
+                    current.record_id,
+                    f"superseded_by:{new_record_id}",
+                    stamped,
+                )
+                await connection.execute(
+                    "INSERT INTO memory_records ("
+                    " record_id, scope, subject_id, resource_owner_id,"
+                    " family_space_id, co_subject_ids, source_evidence_ids,"
+                    " policy_receipt_id, promotion_receipt_id,"
+                    " promotion_fence_context_hash, approval_evidence_refs,"
+                    " consent_snapshot_id, memory_type, confidence, retention,"
+                    " retention_expires_at, payload, created_by_actor_id,"
+                    " created_at, shared_proposal_id)"
+                    " VALUES ("
+                    " $1, $2, $3, $4, NULL, '[]'::jsonb, '[]'::jsonb,"
+                    " $5, '', '', '[]'::jsonb, $6, 'child_archive', 1.0,"
+                    " 'indefinite', NULL, $7::jsonb, $8, $9, NULL)",
+                    new_record_id,
+                    MemoryScope.MEMORY_SCOPE_PERSONAL_PRIVATE.value,
+                    subject_id,
+                    resource_owner_id,
+                    receipt,
+                    consent_snapshot_id,
+                    json.dumps(payload),
+                    actor_id,
+                    stamped,
+                )
+                await connection.execute(
+                    "INSERT INTO memory_status_events ("
+                    " event_id, record_id, status, reason_code, created_at)"
+                    " VALUES ($1, $2, 'confirmed', $3, $4)",
+                    confirm_event,
+                    new_record_id,
+                    reason,
+                    stamped,
+                )
+        audit_id = await self._append_audit(
+            action="child_archive.parent_correct",
+            actor_id=actor_id,
+            subject_id=subject_id,
+            record_id=new_record_id,
+            stamped=stamped,
+            payload={
+                "result": "ok",
+                "old_status": current.status,
+                "new_status": "confirmed",
+                "old_record_id": current.record_id,
+                "new_record_id": new_record_id,
+                "old_version": current.fact_version,
+                "new_version": new_version,
+                "old_text": current.text,
+                "new_text": text,
+                "old_polarity": current.polarity,
+                "new_polarity": polarity,
+                "history_change": command.history_change,
+                "auth": "binding_owner",
+                "resource_owner_id": resource_owner_id,
+            },
+        )
+        return ChildArchiveReviewReceipt(
+            action="correct",
+            record_id=new_record_id,
+            status="confirmed",
+            display_lifecycle="parent_confirmed",
+            display_label="家长已确认",
+            reviewed_at=stamped,
+            audit_event_id=audit_id,
+            old_record_id=current.record_id,
+            new_record_id=new_record_id,
+            old_version=current.fact_version,
+            new_version=new_version,
+        )
+
+    async def _append_audit(
+        self,
+        *,
+        action: str,
+        actor_id: str,
+        subject_id: str,
+        record_id: str,
+        stamped: datetime,
+        payload: Mapping[str, Any],
+    ) -> str:
+        event_id = f"audit:{action}:{record_id}:{uuid.uuid4()}"
+        async with (await self._api()).acquire() as connection:
+            async with connection.transaction():
+                await _scope(
+                    connection,
+                    subject_id=subject_id,
+                    actor_subject_id=actor_id,
+                )
+                await connection.execute(
+                    "INSERT INTO memory_audit_events ("
+                    " event_id, action, actor_subject_id, subject_id, record_id,"
+                    " proposal_id, payload, created_at)"
+                    " VALUES ($1, $2, $3, $4, $5, NULL, $6::jsonb, $7)",
+                    event_id,
+                    action,
+                    actor_id,
+                    subject_id,
+                    record_id,
+                    json.dumps(dict(payload)),
+                    stamped,
+                )
+        return event_id
 
     async def delete_record(
         self, *, subject_id: str, record_id: str
@@ -590,4 +1074,5 @@ def _jsonb(raw: object) -> dict[str, Any]:
 __all__ = [
     "ChildLayerRecord",
     "ChildLayerStore",
+    "archive_birth_stamp",
 ]
