@@ -3840,6 +3840,33 @@ ASR 无文本这次只有 1 次 `low_rms` tail timeout、3 次 `empty_media_turn
 
 收据目录 `devicetest/run-20261101-232237-soak-tapwake/`，原始输出 `outputs/acceptance/run-20261101-232237-soak-tapwake/`。
 
+### 卡 3 · ASR final→commit 单刀贡献（相对 soak-232237）
+
+命名。tapwake 段名「ASR」= `asr_final→commit`，由 `media turn commit timing` 的 `final_to_done_ms` 反推，不是「说完→ASR 终稿」。
+
+| 量 | 值 | 标签 |
+| --- | --- | --- |
+| 整链首字 P50 / P90 / 最慢 | 2.01 / 2.52 / 3.19 s | measured（232237） |
+| 刀 ASR（final→commit）p50 / p90 / max | 0.91 / 1.18 / 1.31 s | measured（同 run 段表） |
+| 刀为最慢段的轮次 | 54 / 62 | measured |
+| 刀内 close-verdict 等待 p90 | 0.76 s | measured（#523 PR 对同采集的 commit timing；与段表同属 232237） |
+| #523 运行时收益 | 未证 | 同一采集离线复跑不能证明；需带 #523 的 overlay 再 soak |
+| 整链 P90≤2.0 / 最慢≤3.0 | 未过 | 由卡 5 验收，本卡不宣称 |
+
+代码状态。#523（`cec1b53b`）已合 main：accepted final 在 VAD end 前启动 close/live/memory warmup。卡 4 overlay `20261102-card-1-3-overlay-v1` 已含该改动；卡 5 安静窗 soak 仍缺，故本刀 Δ 未测。Hold #514 / #448。
+
+下一轮量法（本机有 `bridge.log` + `timeline.jsonl` 后）：
+
+```bash
+python scripts/voice_commit_timing.py outputs/acceptance/run-<stamp>-soak-tapwake/bridge.log
+python3 devicetest/tapwake_report.py outputs/acceptance/run-<stamp>-soak-tapwake \
+  --scenario devicetest/scenarios/child_tapwake.json \
+  --clock outputs/acceptance/run-<stamp>-soak-tapwake/clock.jsonl \
+  | python3 -c 'import json,sys; r=json.load(sys.stdin); print(json.dumps(r["knife_asr_final_to_commit"], ensure_ascii=False, indent=2))'
+```
+
+看 `committed_final_to_done_ms` / `committed_close_ms` 与报告里的 `this_run_asr_final_to_commit_s`，对照 `baseline_232237_asr_final_to_commit_s`（p50 0.91 / p90 1.18 / max 1.31）。close_ms 明显下降且 final_to_done 收紧，才算本刀运行时收益。
+
 ---
 
 ## 5a 跨轮投影修复（2026-11-03）
