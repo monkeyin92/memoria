@@ -6,6 +6,7 @@ const { readBindingManifest } = require("../../utils/device-binding");
 const {
   CHILD_ARCHIVE_CONSENT,
   CLEARED_TOAST,
+  CLEAR_CONFIRM,
   CONSENT_OFF_DIALOG,
   DELETE_CONFIRM,
   DELETE_KEEP,
@@ -255,7 +256,7 @@ Page({
       confirm: {
         kind: "clear-summaries",
         title: "清空全部摘要？",
-        body: DELETE_CONFIRM,
+        body: CLEAR_CONFIRM,
         quote: "",
         confirmLabel: "清空全部",
       },
@@ -353,7 +354,7 @@ Page({
       confirm: {
         kind: "clear-archive",
         title: "清空长期记忆？",
-        body: DELETE_CONFIRM,
+        body: CLEAR_CONFIRM,
         quote: "",
         confirmLabel: "清空全部",
       },

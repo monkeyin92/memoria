@@ -127,7 +127,7 @@
     <view wx:if="{{showDelete}}" class="modal-wrap" bindtap="closeDeleteModal">
       <view class="modal-card" catchtap="noop">
         <text class="modal-title">注销账号</text>
-        <text class="modal-desc">注销将永久删除账号及全部数据，且不可恢复。请完整输入「{{deleteConfirmText}}」确认。</text>
+        <text class="modal-desc">提交后账号将停用，在线数据按阶段清理。完成前可能显示「处理中」。备份与外部处理方中的副本不在提交瞬间一并消失，按其各自策略清除。不要理解为全部副本已不可恢复。请完整输入「{{deleteConfirmText}}」确认。</text>
         <input class="field-input" value="{{deleteConfirmation}}" placeholder="{{deleteConfirmText}}" placeholder-class="field-placeholder" bindinput="onDeleteConfirmation" />
         <text wx:if="{{deleteError}}" class="error-text">{{deleteError}}</text>
         <view class="button-row">

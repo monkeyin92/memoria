@@ -37,7 +37,9 @@ const EMPTY_ARCHIVE_OFF =
 const CONSENT_OFF_DIALOG =
   "关闭后不会再写入新内容。已有内容仍按当前授权管理。";
 const DELETE_CONFIRM =
-  "删除后，这条记忆会从服务器上删除，无法恢复，不影响其他记忆。";
+  "删除后，这条在线记忆会从服务器上移除，不影响其他记忆。备份中的副本按其轮换策略清除。";
+const CLEAR_CONFIRM =
+  "清空后，这些在线记忆会从服务器上移除。备份中的副本按其轮换策略清除。";
 const DELETE_KEEP = "再想想";
 const CLEARED_TOAST = "已清空，剩余 0 条";
 
@@ -271,6 +273,7 @@ module.exports = {
   ARCHIVE_FIELD_ORDER,
   CHILD_ARCHIVE_CONSENT,
   CLEARED_TOAST,
+  CLEAR_CONFIRM,
   CONSENT_OFF_DIALOG,
   DELETE_CONFIRM,
   DELETE_KEEP,
