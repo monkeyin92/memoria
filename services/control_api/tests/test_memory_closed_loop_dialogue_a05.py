@@ -1,5 +1,3 @@
-"""A05 dialogue half: confirm → grounded → correct → withdraw → cache drop."""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -47,8 +45,6 @@ class _ConsentGuardian:
 
 
 class _LoopLayers:
-    """Mutable archive store that serves both review mutations and dialogue list."""
-
     def __init__(self) -> None:
         self.archive: dict[str, ChildLayerRecord] = {}
         self.statuses: dict[str, tuple[str, str, datetime]] = {}
