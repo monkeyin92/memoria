@@ -109,7 +109,7 @@ node --test apps/miniprogram/tests/*.test.js
 
 不带 `MEMORIA_TEST_POSTGRES_DSN` 时依赖 PostgreSQL 的用例会跳过，覆盖率达不到 85%。带上它时，Control API、governance 与 companionship 测试的所有存储都走生产形态的 PostgreSQL（`testing/postgres_harness.py`：真实 init 脚本建模板库，每个测试一份克隆，按生产角色连接）；只有标 `sqlite_only` 的控制库 SQLite 迁移用例不走。
 
-增长护栏（2026-09-26 起）：`[tool.memoria.module-budgets]` 覆盖全部超过 1,500 行的源模块，只降不升；新模块超过 1,500 行时必须同一提交加入预算。`tests/test_service_layering.py` 冻结 `services/` 的跨包依赖图，新增跨包 import 必须显式修改基线，删除的依赖也要同步收紧。产品转向或权威路径切换时，被取代的实现、配置和测试在同一个 PR 内删除，不保留无消费者的影子路径。
+增长护栏（2026-09-26 起）：`[tool.memoria.module-budgets]` 覆盖全部超过 1,500 行的源模块，只降不升；`scripts/check_module_budget.py check` 会扫描 `services/` 下非 `tests/` 的 `.py`，未登记且超过 1,500 行即失败。新模块超过 1,500 行时必须同一提交加入预算。`tests/test_service_layering.py` 冻结 `services/` 的跨包依赖图，新增跨包 import 必须显式修改基线，删除的依赖也要同步收紧。产品转向或权威路径切换时，被取代的实现、配置和测试在同一个 PR 内删除，不保留无消费者的影子路径。
 
 只要出现旧 generation/tool epoch 误播、主人数据越权、危机回复被普通提示覆盖或危机事件未进入监护通知 outbox，发布结论必须是 REJECT。
 
