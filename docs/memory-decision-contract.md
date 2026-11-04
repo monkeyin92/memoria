@@ -71,6 +71,19 @@ Async ≠ saved. A turn may keep processing after the reply, but only a
 Child-layer archive facts and catalog claims both consume this vocabulary in
 follow-up cards (A02/A03/A04/A10). This document does not change extractors.
 
+## Known production debt (out of A01 wiring)
+
+A01 ships the types and tests. These writers still violate the contract and
+must migrate in follow-up cards, not by expanding this PR into A02:
+
+- `ChildLayerStore.write_summary` / `write_archive_fact` insert
+  `confidence = 1.0` and status event `confirmed` for session-recap
+  auto-extract (`services/memory_scope/child_layers.py`).
+- The unsaved-memory ban in `companion_plan_instructions` runs only on the
+  local fallback plan. A successful remote `/response-plan` skips it.
+- Companion recall reads `MemoryCatalogPort.context` only. Child-layer rows
+  shown to parents are not on that path.
+
 ## Contract version
 
 `CONTRACT_VERSION = memory-decision-v1`
