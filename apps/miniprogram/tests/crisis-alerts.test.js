@@ -124,6 +124,48 @@ test("parseSafetyAlert drops an item only when its id is missing", () => {
   );
 });
 
+test("parseSafetyAlert keeps delivery_receipt and maps #543 stage labels", () => {
+  const cases = [
+    ["recorded", "recorded", "已记录"],
+    ["queued", "queued", "排队中"],
+    ["queued", "pending_retry", "重试"],
+    ["queued", "pin_only", "排队中"],
+    ["channel_accepted", "channel_accepted", "渠道已接受"],
+    ["fail_or_auth_insufficient", "failed", "发送失败"],
+    ["fail_or_auth_insufficient", "no_subscription", "无订阅"],
+    ["fail_or_auth_insufficient", "guardian_not_eligible", "发送失败"],
+    ["guardian_confirmed", "guardian_confirmed", "已查看"],
+  ];
+  for (const [stage, result, label] of cases) {
+    const alert = crisisAlerts.parseSafetyAlert({
+      notification_id: `n-${stage}-${result}`,
+      delivery_receipt: {
+        current_stage: stage,
+        channel_accepted: stage === "channel_accepted" || stage === "guardian_confirmed",
+        guardian_confirmed: stage === "guardian_confirmed",
+        attempts: result === "pending_retry" ? 1 : 0,
+        last_error_code: null,
+        stages: [{ stage, event_id: "e1", at: "2026-11-04T06:00:00+00:00", result, attempt: null, reason: null }],
+      },
+    });
+    assert.equal(alert.stageLabel, label, `${stage}/${result}`);
+    assert.equal(alert.deliveryReceipt.currentStage, stage);
+    assert.equal(alert.deliveryReceipt.stageLabel, label);
+  }
+
+  const missing = crisisAlerts.parseSafetyAlert({ notification_id: "n-bare" });
+  assert.equal(Object.hasOwn(missing, "deliveryReceipt"), false);
+  assert.equal(Object.hasOwn(missing, "stageLabel"), false);
+
+  assert.equal(
+    crisisAlerts.deliveryStageLabel({
+      current_stage: "fail_or_auth_insufficient",
+      stages: [{ stage: "fail_or_auth_insufficient", result: "no_subscription" }],
+    }),
+    "无订阅",
+  );
+});
+
 test("loadUnreadSafetyAlerts gives the newest and how many more, and none on empty or error", async () => {
   const load = (getUnreadGuardianNotifications) => crisisAlerts.loadUnreadSafetyAlerts({ getUnreadGuardianNotifications });
   assert.equal(await load(async () => ({ newest: null, others_count: 0 })), null);

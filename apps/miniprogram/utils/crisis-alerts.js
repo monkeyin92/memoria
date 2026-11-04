@@ -18,6 +18,61 @@ function text(value) {
   return typeof value === "string" ? value : "";
 }
 
+const DELIVERY_STAGE_LABELS = {
+  recorded: "已记录",
+  queued: "排队中",
+  channel_accepted: "渠道已接受",
+  guardian_confirmed: "已查看",
+};
+
+const DELIVERY_FAIL_RESULT_LABELS = {
+  no_subscription: "无订阅",
+  failed: "发送失败",
+  guardian_not_eligible: "发送失败",
+};
+
+function deliveryStageResult(receipt, currentStage) {
+  const stages = Array.isArray(receipt?.stages) ? receipt.stages : [];
+  for (let i = stages.length - 1; i >= 0; i -= 1) {
+    const event = stages[i];
+    if (event && event.stage === currentStage && typeof event.result === "string") {
+      return event.result;
+    }
+  }
+  return "";
+}
+
+function deliveryStageLabel(receipt) {
+  if (!receipt || typeof receipt !== "object") return "";
+  const stage = text(receipt.current_stage);
+  if (!stage) return "";
+  if (stage === "fail_or_auth_insufficient") {
+    const result = deliveryStageResult(receipt, stage);
+    return DELIVERY_FAIL_RESULT_LABELS[result] || DELIVERY_FAIL_RESULT_LABELS.failed;
+  }
+  if (stage === "queued" && deliveryStageResult(receipt, stage) === "pending_retry") {
+    return "重试";
+  }
+  return DELIVERY_STAGE_LABELS[stage] || "";
+}
+
+function parseDeliveryReceipt(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const currentStage = text(raw.current_stage);
+  if (!currentStage) return null;
+  const receipt = {
+    currentStage,
+    channelAccepted: raw.channel_accepted === true,
+    guardianConfirmed: raw.guardian_confirmed === true,
+    attempts: Number.isInteger(raw.attempts) ? raw.attempts : 0,
+    lastErrorCode: text(raw.last_error_code) || null,
+    stages: Array.isArray(raw.stages) ? raw.stages : [],
+  };
+  const stageLabel = deliveryStageLabel(raw);
+  if (stageLabel) receipt.stageLabel = stageLabel;
+  return receipt;
+}
+
 function parseSafetyAlert(item) {
   if (!item || typeof item !== "object") return null;
   const notificationId = text(item.notification_id);
@@ -36,6 +91,11 @@ function parseSafetyAlert(item) {
   };
   if (typeof item.detail === "string" && item.detail) {
     alert.detail = item.detail;
+  }
+  const deliveryReceipt = parseDeliveryReceipt(item.delivery_receipt);
+  if (deliveryReceipt) {
+    alert.deliveryReceipt = deliveryReceipt;
+    if (deliveryReceipt.stageLabel) alert.stageLabel = deliveryReceipt.stageLabel;
   }
   return alert;
 }
@@ -129,9 +189,11 @@ module.exports = {
   BIND_SUBSCRIBE_UNAVAILABLE,
   acknowledgeSafetyAlert,
   attentionUrl,
+  deliveryStageLabel,
   loadSafetyAlert,
   loadUnreadSafetyAlerts,
   moreUnreadLabel,
+  parseDeliveryReceipt,
   parseSafetyAlert,
   requireCrisisSubscribeBeforeBind,
   requiresCrisisSubscribeBeforeBind,
