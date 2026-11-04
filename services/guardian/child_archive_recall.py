@@ -1,10 +1,3 @@
-"""Map recall-eligible child-archive facts into dialogue grounded items.
-
-Parent summaries (`dialogue_summary`) never enter this path. Only
-`ChildArchiveFactView` rows with `recall_eligible` (parent_confirmed) become
-`GroundedItem` facts for companion recall.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
@@ -26,8 +19,6 @@ DEFAULT_ARCHIVE_RECALL_LIMIT: Final = 4
 def recall_ready_archive_views(
     views: Iterable[ChildArchiveFactView],
 ) -> tuple[ChildArchiveFactView, ...]:
-    """Keep parent-confirmed archive facts only; drop pending/withdrawn/expired."""
-
     ready: list[ChildArchiveFactView] = []
     for view in views:
         if not view.recall_eligible:
@@ -46,8 +37,6 @@ def grounded_items_from_archive_views(
     *,
     limit: int = DEFAULT_ARCHIVE_RECALL_LIMIT,
 ) -> tuple[GroundedItem, ...]:
-    """Build grounded memory claims with record id and fact version provenance."""
-
     if limit <= 0:
         return ()
     items: list[GroundedItem] = []
@@ -72,10 +61,20 @@ def grounded_items_from_archive_views(
     return tuple(items)
 
 
+def merge_archive_ahead_of_catalog(
+    archive_items: Sequence[GroundedItem],
+    catalog_items: Sequence[GroundedItem],
+) -> tuple[GroundedItem, ...]:
+    """Archive whitelist precedes catalog claims for planner truncation order."""
+
+    return tuple(archive_items) + tuple(catalog_items)
+
+
 __all__ = [
     "ARCHIVE_FIELD_TITLES",
     "DEFAULT_ARCHIVE_RECALL_LIMIT",
     "FACT_VERSION_PREFIX",
     "grounded_items_from_archive_views",
+    "merge_archive_ahead_of_catalog",
     "recall_ready_archive_views",
 ]

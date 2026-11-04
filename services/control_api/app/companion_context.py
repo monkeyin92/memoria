@@ -39,8 +39,8 @@ async def gather_companion_context(
     def ready(task: asyncio.Task[Any]) -> bool:
         return task in done and not task.cancelled()
 
-    # A late persona or archive read must not throw away memory that already
-    # finished. Memory missing the deadline still drops the stage.
+    # A late persona read must not throw away memory that already finished.
+    # Memory missing the deadline still drops the stage, persona included.
     if memory_task is not None and not ready(memory_task):
         return None
     if not any(ready(task) for task in pending):

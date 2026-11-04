@@ -1,12 +1,12 @@
-"""A04: only parent_confirmed archive facts become dialogue grounded items."""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from services.digital_self.response_planner import GroundedItem, SourceRef
 from services.guardian.child_archive_recall import (
     FACT_VERSION_PREFIX,
     grounded_items_from_archive_views,
+    merge_archive_ahead_of_catalog,
     recall_ready_archive_views,
 )
 from services.guardian.child_archive_review import build_fact_view
@@ -105,3 +105,24 @@ def test_auto_extract_confirmed_without_parent_reason_stays_out() -> None:
         provenance="auto_extract",
     )
     assert grounded_items_from_archive_views((illegal,)) == ()
+
+
+def test_merge_puts_archive_ahead_of_catalog() -> None:
+    archive = (
+        GroundedItem(
+            item_id="charch:1",
+            kind="memory_claim",
+            content="喜好：喜欢画画",
+            source_refs=(SourceRef("memory_claim", "charch:1", ("fact_version:1",)),),
+        ),
+    )
+    catalog = (
+        GroundedItem(
+            item_id="claim-1",
+            kind="memory_claim",
+            content="求学经历：杭州",
+            source_refs=(SourceRef("memory_claim", "claim-1", ("event-1",)),),
+        ),
+    )
+    merged = merge_archive_ahead_of_catalog(archive, catalog)
+    assert [item.item_id for item in merged] == ["charch:1", "claim-1"]

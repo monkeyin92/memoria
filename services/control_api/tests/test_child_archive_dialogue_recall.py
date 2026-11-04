@@ -1,5 +1,3 @@
-"""A04: ChildLayer parent_confirmed facts enter dialogue grounded_items."""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
