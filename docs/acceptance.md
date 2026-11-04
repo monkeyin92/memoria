@@ -3765,8 +3765,8 @@ N-10 的验收口径是真机「停」识别率 ≥ 80%（10 次）。本轮 0 /
 
 **城市追问【单元 / 媒体会话】**
 
-- `services/agent/tests/unit/test_weather_city_followup.py`：没说城市先问「你想查哪个城市呀？」；「杭州」后「那明天呢」带上杭州；换「上海」带上上海。
-- `services/agent/tests/unit/test_media_session_weather_followup.py`：设备路径上的同口径追问（含上下文冻结后才交委托答案）。
+- `services/agent/tests/unit/test_weather_city_followup.py`：没说城市先问「你想查哪个城市呀？」；「杭州」后「那明天呢」带上杭州；换「上海」带上上海；先「那明天呢」再「杭州」搜「杭州明天天气」。
+- `services/agent/tests/unit/test_media_session_weather_followup.py`：设备路径上的同口径追问（含上下文冻结后才交委托答案；未说城市时「那明天呢」仍再问城市）。
 - 本轮 `uv run --frozen --extra dev pytest --no-cov` 上述城市用例 + DeepSeek 新鲜度用例全部通过。真机定向场景仍见 11-01 `run-20261101-214518`（追问 11/11）。
 
 **结果首字时延【分口径】**
