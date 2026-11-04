@@ -483,6 +483,7 @@
           </view>
         </scroll-view>
         <text wx:if="{{personaAssignmentError}}" class="error-text">{{personaAssignmentError}}</text>
+        <button class="text-button sheet-cancel" disabled="{{personaSaving}}" bindtap="openCustomPersona">创建或管理自定义表达</button>
         <button class="primary-button sheet-action" loading="{{personaSaving}}" disabled="{{personaSaving}}" bindtap="confirmPersonaAssignment">确认分配</button>
         <button class="text-button sheet-cancel" disabled="{{personaSaving}}" data-person-id="{{personaSheetSubjectId}}" bindtap="clearPersonaAssignment">恢复设备默认人格</button>
       </view>

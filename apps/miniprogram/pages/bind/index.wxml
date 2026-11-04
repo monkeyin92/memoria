@@ -144,38 +144,13 @@
     </view>
 
     <text class="section-title">声音与表达</text>
-    <view class="voice-list bind-voices">
-      <view
-        wx:for="{{personaOptions}}"
-        wx:key="id"
-        class="voice-option {{index === personaIndex ? 'voice-option-on' : ''}}"
-        data-index="{{index}}"
-        bindtap="onPersonaTap"
-      >
-        <view class="voice-bars" aria-hidden="true">
-          <view class="voice-bar"></view>
-          <view class="voice-bar"></view>
-          <view class="voice-bar"></view>
-          <view class="voice-bar"></view>
-          <view class="voice-bar"></view>
-        </view>
-        <view class="voice-copy">
-          <text class="voice-name">{{item.name}}</text>
-          <text class="voice-tagline">{{item.tagline}}</text>
-        </view>
-        <view wx:if="{{index === personaIndex}}" class="pill pill-online voice-chip">已选择</view>
-        <view wx:else class="pill pill-neutral voice-chip">选这个</view>
-      </view>
-    </view>
     <view class="card bind-voice">
-      <text class="bind-role-desc">{{personaOptions[personaIndex].description}}</text>
       <view class="setting-row">
         <mp-icon name="volume"></mp-icon>
         <view class="row-copy">
-          <text class="row-title">声音 · {{personaOptions[personaIndex].voiceName}}</text>
-          <text class="row-meta">{{personaOptions[personaIndex].tone}}</text>
+          <text class="row-title">默认声音</text>
+          <text class="row-meta">所有机器人共用同一个默认声音。表达方式独立设置。</text>
         </view>
-        <view class="pill pill-teal role-play" data-index="{{personaIndex}}" catchtap="togglePreview">{{previewingId === personaOptions[personaIndex].id ? '停止' : '试听'}}</view>
       </view>
     </view>
 
@@ -193,7 +168,7 @@
       <text class="l2-card-sub">核对下面的信息，勾选需要的授权后提交</text>
       <view class="summary-row"><text class="summary-key">设备用途</text><text class="summary-value">{{modeMeta.title}}</text></view>
       <view class="summary-row"><text class="summary-key">使用者</text><text class="summary-value">{{reviewSubjectLabel}}</text></view>
-      <view class="summary-row"><text class="summary-key">声音与表达</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
+      <view class="summary-row"><text class="summary-key">声音</text><text class="summary-value">默认声音</text></view>
 
       <text class="field-label">需要你确认的授权</text>
       <view wx:for="{{offers}}" wx:key="id" class="offer-row {{item.requiresParentSelfAcceptance ? 'offer-disabled' : ''}}" data-id="{{item.id}}" bindtap="{{item.requiresParentSelfAcceptance ? '' : 'toggleOffer'}}">
@@ -232,7 +207,7 @@
       <text class="done-badge">设置已提交</text>
       <text class="done-title">机器人已建立「{{manifest.declared_mode === 'parent_for_child' ? '给孩子使用' : manifest.declared_mode === 'self_use' ? '给自己使用' : manifest.declared_mode === 'child_for_parent' ? '给父母使用' : '家庭共同使用'}}」绑定</text>
       <view class="summary-row"><text class="summary-key">使用者</text><text class="summary-value">{{reviewSubjectLabel}}</text></view>
-      <view class="summary-row"><text class="summary-key">声音与表达</text><text class="summary-value">{{personaOptions[personaIndex].name}}</text></view>
+      <view class="summary-row"><text class="summary-key">声音</text><text class="summary-value">默认声音</text></view>
       <view wx:if="{{deviceTail}}" class="summary-row"><text class="summary-key">机器人</text><text class="summary-value">尾号 {{deviceTail}}</text></view>
       <text wx:if="{{subscriptionPushEnabled && crisisSubscribeAccepted}}" class="done-note">已完成安全提醒设置。家长打开小程序时首页会置顶显示。</text>
       <text class="done-note">设置已经提交，机器人收到后就能用了，一般一分钟内。等它准备好，唤醒它就能开始聊天；手机不会录音。</text>

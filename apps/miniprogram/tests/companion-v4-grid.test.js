@@ -24,7 +24,7 @@ test("voices render as a vertical list with the account pick marked current", as
     assert.equal((html.match(/class="voice-option /g) || []).length, companions.length);
     assert.equal((html.match(/voice-option-on/g) || []).length, 1);
     assert.match(text, /声音与表达 声音 选择一种音色与说话方式。/);
-    assert.match(text, /星澜 清澈、自然 温和清晰，留一点想象 已选 试听/);
+    assert.match(text, /Memoria 自然、清晰 统一默认声音 已选 试听/);
     assert.match(text, /自定义表达/);
     assert.equal((text.match(/试听(?= )/g) || []).length, companions.length);
     assert.doesNotMatch(html, /--role-|deck-/);
@@ -45,10 +45,8 @@ test("tapping the role already in use does not save again", async () => {
   try {
     await harness.page.chooseCompanion({ currentTarget: { dataset: { id: "starlight" } } });
     assert.deepEqual(writes, []);
-    await harness.page.chooseCompanion({ currentTarget: { dataset: { id: "mianmian" } } });
-    assert.deepEqual(writes, ["mianmian"]);
-    assert.equal(harness.page.data.profile.companion_id, "mianmian");
-    assert.equal(harness.page.data.currentName, "绵绵");
+    assert.equal(harness.page.data.profile.companion_id, "starlight");
+    assert.equal(harness.page.data.currentName, "Memoria");
   } finally {
     harness.restore();
   }

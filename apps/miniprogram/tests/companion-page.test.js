@@ -57,8 +57,9 @@ test("a pick with a bound device says the device will switch", async () => {
   binding.saveBindingManifest(canonicalManifest());
   try {
     const page = instantiate(pageDefinition);
-    await page.chooseCompanion({ currentTarget: { dataset: { id: "axu" } } });
-    assert.deepEqual(profileWrites, [{ userId: "person_owner", companion_id: "axu" }]);
+    page.setData({ "profile.companion_id": "legacy" });
+    await page.chooseCompanion({ currentTarget: { dataset: { id: "starlight" } } });
+    assert.deepEqual(profileWrites, [{ userId: "person_owner", companion_id: "starlight" }]);
     assert.equal(toasts.at(-1).title, "已保存，设备将同步切换");
     assert.equal(toasts.at(-1).icon, "none", "带图标的 toast 放不下这句提示");
   } finally {
@@ -69,7 +70,8 @@ test("a pick with a bound device says the device will switch", async () => {
 test("a pick without a device just says saved", async () => {
   toasts.length = 0;
   const page = instantiate(pageDefinition);
-  await page.chooseCompanion({ currentTarget: { dataset: { id: "taoxi" } } });
+  page.setData({ "profile.companion_id": "legacy" });
+  await page.chooseCompanion({ currentTarget: { dataset: { id: "starlight" } } });
   assert.deepEqual(toasts.at(-1), { title: "已保存", icon: "success" });
 });
 
@@ -100,14 +102,15 @@ test("a second selection waits for the pending voice setting to finish", async (
   });
   try {
     const page = instantiate(pageDefinition);
-    const pending = page.chooseCompanion({ currentTarget: { dataset: { id: "taoxi" } } });
+    page.setData({ "profile.companion_id": "legacy" });
+    const pending = page.chooseCompanion({ currentTarget: { dataset: { id: "starlight" } } });
     await new Promise(setImmediate);
     assert.equal(page.data.saving, true);
-    await page.chooseCompanion({ currentTarget: { dataset: { id: "axu" } } });
-    assert.equal(page.data.profile.companion_id, "taoxi");
+    await page.chooseCompanion({ currentTarget: { dataset: { id: "starlight" } } });
+    assert.equal(page.data.profile.companion_id, "starlight");
     finishSave();
     await pending;
-    assert.equal(page.data.profile.companion_id, "taoxi");
+    assert.equal(page.data.profile.companion_id, "starlight");
     assert.equal(page.data.saving, false);
   } finally {
     api.updateProfile = originalUpdate;

@@ -56,11 +56,17 @@ test("production package contains no realtime voice surface at all", () => {
   matches(files, /wss:\/\//, "媒体 Gateway WSS 地址");
   matches(files, /MiniProgramMediaSession/, "小程序媒体会话");
   matches(files, /MINIPROGRAM_MEDIA_GATEWAY_URL/, "媒体网关环境变量");
-  matches(
-    files,
-    /createWebAudioContext|createInnerAudioContext|InnerAudioContext/,
-    "实时 TTS 播放",
-  );
+  matches(files, /createWebAudioContext/, "WebAudio 实时播放");
+  const samplePreview = path.join(root, "pages", "companion", "index.js");
+  const innerAudio = [];
+  for (const file of files) {
+    if (file === samplePreview) continue;
+    if (/createInnerAudioContext|InnerAudioContext/.test(fs.readFileSync(file, "utf8"))) {
+      innerAudio.push(file);
+    }
+  }
+  assert.deepEqual(innerAudio, [], `试听以外不得创建 InnerAudioContext：${innerAudio.join(", ")}`);
+  assert.match(fs.readFileSync(samplePreview, "utf8"), /createInnerAudioContext/);
   matches(files, /require\(["'][^"']*(media-gateway|media-protocol|pcm-player|transcript-events)["']\)/, "媒体工具依赖");
   matches(files, /bindtap="(startVoice|startText|stopVoice|retryVoice|sendText)"/, "实时会话入口");
 });

@@ -443,7 +443,7 @@ Page({
 
   async onShow() {
     if (typeof this.getTabBar === "function" && this.getTabBar()) {
-      this.getTabBar().setData({ selected: 2, hidden: Boolean(this.data.sheetOpen) });
+      this.getTabBar().setData({ selected: 3, hidden: Boolean(this.data.sheetOpen) });
     }
     const app = getApp();
     const openUnbindSheet = Boolean(app?.globalData?.openUnbindSheetOnDevice);
@@ -1173,7 +1173,7 @@ Page({
   },
 
   openCompanion() {
-    wx.navigateTo({ url: "/pages/companion/index" });
+    wx.switchTab({ url: "/pages/companion/index" });
   },
 
   openCustomPersona() {
