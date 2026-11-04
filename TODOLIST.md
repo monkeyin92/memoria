@@ -41,7 +41,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - [ ] 新机资源偏紧：内存 3.7 GiB（Memoria 栈约 1.3–1.4 GiB，可用约 1.7 GiB，swap 已用约 0.6 GiB，与 pocketSparks 的 MySQL / node 共用），4 vCPU 约比旧机慢 1.3 倍。发布后 1–2 天看 `docker stats`、`free -m` 与时延（对照第十六轮 24 轮时延场景说完 → 首帧 p50 2.92 s）；不够就扩内存（你在控制台做）。
 - [ ] build 24 的时钟修复仍无证据：2026-10-05 22:56 的重绑一次过，但时钟多半是 21:32 拔插 USB 后清空的，老版本也能过；要证明得让机器人时钟比清单 `issued` 落后 5 分钟以上再绑。不紧迫，碰上再看串口（那次的记录在本机 git-ignored 的 `outputs/serial/robot-20261005-trial3-rebind.log`）。
 - [ ] 你定：是否轮换数据库角色口令。**两次本机会话记录里出现过口令**：一次 grep 把各角色连接串打进了会话记录（更早的会话），2026-10-06 我做维护窗口时用 `docker compose config` 核对线上数据层 compose，它把 postgres 服务的环境变量展开成了明文（`MEMORIA_DB_*_PASSWORD` 五个角色的键与值都在输出里，只在会话记录、没进仓库、没进文档、没出机器）。库不发布到宿主端口，风险限于本机会话记录的读权限；要轮换就是一次 `ALTER ROLE` + 两份 env 的改写 + 重建 control-api/bridge，你说了我做。
-- [ ] 邻近发现（不挡路）：8443 经 stream 透传没有 PROXY protocol，9443 上的 TLS 服务器看到的客户端地址一直是 127.0.0.1（新旧机一样），按 `$binary_remote_addr` 的限流区（`memoria_media` 30 r/m 等）对所有设备共用一个键；一台机器人没有影响，设备多了要改。
+- [x] 邻近发现（不挡路）：8443 经 stream 透传没有 PROXY protocol，9443 上的 TLS 服务器看到的客户端地址一直是 127.0.0.1（新旧机一样），按 `$binary_remote_addr` 的限流区（`memoria_media` 30 r/m 等）对所有设备共用一个键；一台机器人没有影响，设备多了要改。→ 仓库已加 PROXY + `set_real_ip_from 127.0.0.1`（A16）；隔离 harness `scripts/verify_nginx_rate_limit_isolation.sh`。现网切流另按窗口验收，本项不自动 reload 生产 nginx。
 
 ## 2026-10-01 新需求里还开着的（N 系列）
 
