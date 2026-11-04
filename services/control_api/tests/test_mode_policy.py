@@ -6,6 +6,7 @@ from services.control_api.app.mode_policy import (
     LEGACY_POLICY_VERSION,
     FrozenMode,
     ModePolicy,
+    SpeakerClass,
 )
 
 pytestmark = pytest.mark.hermetic
@@ -152,7 +153,7 @@ def test_legacy_voice_capability_requires_permission_and_exact_personal_snapshot
     ],
 )
 def test_companion_confirmed_archive_bit_follows_speaker_class(
-    speaker_class: str,
+    speaker_class: SpeakerClass,
     reason_code: str,
     confirmed_only: bool,
     private_memory: bool,
@@ -161,7 +162,7 @@ def test_companion_confirmed_archive_bit_follows_speaker_class(
 
     caps = ModePolicy.effective_capabilities(
         frozen,
-        speaker_class=speaker_class,  # type: ignore[arg-type]
+        speaker_class=speaker_class,
         reason_code=reason_code,
     )
 

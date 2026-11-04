@@ -410,8 +410,7 @@ class ModePolicy:
             and _personal_voice_contract_valid(frozen)
         )
         # `uncertain` may retain S1's explicitly curated low-sensitivity style
-        # path, but is never a private-owner authority. Confirmed child-archive
-        # facts use their own turn bit so catalog, tools, and history stay shut.
+        # path, but is never a private-owner authority.
         return EffectiveCapabilities(
             conversation=account_active
             and (
@@ -497,8 +496,6 @@ class ModePolicy:
                 history=companion,
                 learning=companion,
                 voice_profile=companion or self_preview or legacy_personal_voice,
-                # Confirmed-archive reads follow the speaker of this turn.
-                # A session ceiling must not grant them.
                 child_archive_confirmed_only=False,
             ).payload(),
         }
