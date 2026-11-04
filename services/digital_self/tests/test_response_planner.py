@@ -364,6 +364,101 @@ def test_shadow_owner_candidate_can_receive_only_explicit_low_sensitivity_style(
     assert style_only.provenance.source_refs[0].entry_type == "persona_trait"
     assert private_memory.disclosure_decision.kind == "privacy"
 
+    non_shadow = DigitalSelfResponsePlanner.plan(
+        mode="companion",
+        actor=_actor(),
+        version=None,
+        query="hello",
+        relationship_id=None,
+        speaker_decision=PlannerSpeakerDecision(
+            classification="uncertain",
+            reason_code="authority_unconfigured",
+        ),
+        companion_items=(persona,),
+    )
+    assert non_shadow.disclosure_decision.kind == "privacy"
+
+
+def _archive_claim(*source_event_ids: str, item_id: str = "charch:confirmed") -> GroundedItem:
+    return GroundedItem(
+        item_id=item_id,
+        kind="memory_claim",
+        content="喜好：喜欢画画",
+        source_refs=(SourceRef("memory_claim", item_id, source_event_ids),),
+    )
+
+
+def test_uncertain_companion_keeps_a_marked_archive_claim() -> None:
+    plan = DigitalSelfResponsePlanner.plan(
+        mode="companion",
+        actor=_actor(),
+        version=None,
+        query="我喜欢什么",
+        relationship_id=None,
+        speaker_decision=PlannerSpeakerDecision(
+            classification="uncertain",
+            reason_code="authority_unconfigured",
+        ),
+        companion_items=(_archive_claim("fact_version:2"),),
+    )
+
+    assert plan.disclosure_decision.kind == "none"
+    assert plan.direct_text is None
+    assert [item.item_id for item in plan.grounded_items] == ["charch:confirmed"]
+    assert plan.grounded_items[0].kind == "memory_claim"
+    assert plan.grounded_items[0].content == "喜好：喜欢画画"
+
+
+@pytest.mark.parametrize(
+    "source_event_ids",
+    [
+        ("catalog-event-1",),
+        (),
+        ("fact_version:2", "catalog-event-1"),
+    ],
+)
+def test_uncertain_companion_refuses_an_unmarked_memory_claim(
+    source_event_ids: tuple[str, ...],
+) -> None:
+    plan = DigitalSelfResponsePlanner.plan(
+        mode="companion",
+        actor=_actor(),
+        version=None,
+        query="我喜欢什么",
+        relationship_id=None,
+        speaker_decision=PlannerSpeakerDecision(
+            classification="uncertain",
+            reason_code="no_audio",
+        ),
+        companion_items=(
+            _archive_claim("fact_version:2", item_id="charch:kept"),
+            _archive_claim(*source_event_ids, item_id="charch:open"),
+        ),
+    )
+
+    assert plan.disclosure_decision.kind == "privacy"
+    assert plan.direct_text == "为保护隐私，我不能提供该数字分身的个人资料。"
+    assert plan.grounded_items == ()
+
+
+def test_guest_companion_refuses_a_marked_archive_claim() -> None:
+    plan = DigitalSelfResponsePlanner.plan(
+        mode="companion",
+        actor=_actor(),
+        version=None,
+        query="我喜欢什么",
+        relationship_id=None,
+        speaker_decision=PlannerSpeakerDecision(
+            classification="guest",
+            reason_code="trusted",
+        ),
+        companion_items=(_archive_claim("fact_version:2"),),
+    )
+
+    assert plan.disclosure_decision.kind == "privacy"
+    assert plan.direct_text == "为保护隐私，我不能提供该数字分身的个人资料。"
+    assert plan.grounded_items == ()
+
 
 def test_persona_is_style_only_and_never_a_grounded_personal_fact() -> None:
     persona = PersonaTraitManifestEntry(
