@@ -26,7 +26,7 @@ ESP32-S3 -> Go Media Edge -> Python Voice Core / Agent
 仓库根目录只有三份长期文档（`tests/test_documentation_budget.py` 守着）：
 
 - `README.md`：产品、架构、开发、协议和固件入口。
-- `HANDOFF.md`：当前生产快照、最近几天的发布与验收收据；更早的日期节归并到 `docs/handoff-archive.md`，这里只留快照、近日收据和永久参考的入口。
+- `HANDOFF.md`：交接入口与近日/历史发布收据；**当前运行组件清单**以 `docs/ops/current-runtime-inventory.json` 为准（说明见 `docs/ops/runtime-inventory.md`），HANDOFF 顶部快照只作指针。更早的日期节归并到 `docs/handoff-archive.md`。
 - `TODOLIST.md`：唯一的优先级执行队列，只保存未完成事项、依赖、完成条件、需要你决定的事和已评估的研究结论；做完的条目直接删除（收据归 HANDOFF 与它的归档，全文在 git 历史里），后续从最高优先级未阻塞项推进。
 
 `docs/` 下每种文档只保留一个聚合文件：`docs/acceptance.md`、`docs/compliance.md`、`docs/design.md`、`docs/eval.md`、`docs/handoff-archive.md`、`docs/product.md`、`docs/runbooks.md` 和 `docs/strategy.md`。记忆评测收据保留在 `docs/memory-evaluation-*.json`。仍禁止 session 记录、ADR、组件 README、其他平行计划和 release note；要新增文档类别，须先改上面的测试。

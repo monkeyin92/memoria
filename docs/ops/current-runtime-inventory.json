@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "evidence_class": "handoff_reconstruction",
+  "captured_at": "2026-11-04T06:50:00+00:00",
+  "memoria_root": "unknown",
+  "stack": {
+    "current_tag": "20261029-plan-head-start-v1",
+    "current_commit": "2c6ff2ccf3212e9d8b9b45f94ffad28dd8b0c82d",
+    "current_path": "unknown"
+  },
+  "components": [
+    {
+      "role": "control-api",
+      "container": "unknown",
+      "image_ref": "memoria-control-api:20261029-plan-head-start-v1",
+      "image_id": "unknown",
+      "registry_digest": "unknown",
+      "image_revision": "2c6ff2ccf3212e9d8b9b45f94ffad28dd8b0c82d",
+      "stack_commit": "2c6ff2ccf3212e9d8b9b45f94ffad28dd8b0c82d",
+      "compose_chain": "unknown",
+      "override_path": "unknown",
+      "started_at": "unknown",
+      "health": "unknown",
+      "restarts": "unknown",
+      "effective_flags": {
+        "MEMORIA_RELEASE_TAG": "20261029-plan-head-start-v1",
+        "MEMORIA_RELEASE_COMMIT": "2c6ff2ccf3212e9d8b9b45f94ffad28dd8b0c82d",
+        "TTS_PROVIDER": "stepfun_primary",
+        "STEPFUN_TTS_ENABLED": "true",
+        "STEPFUN_TTS_VOICE": "wenrounansheng",
+        "MEMORIA_SPEAKER_AUTHORITY_ENABLED": "unknown"
+      },
+      "status": {
+        "code": "merged",
+        "wired": "deployed_per_handoff",
+        "enabled": "claimed_running_per_handoff",
+        "verified": "not_live_captured",
+        "evidence_dates": {
+          "code": "2026-10-29",
+          "wired": "2026-10-29",
+          "enabled": "2026-11-02",
+          "verified": null
+        }
+      }
+    },
+    {
+      "role": "voice-core-media-bridge",
+      "container": "unknown",
+      "image_ref": "memoria-agent:20261102-card-1-3-overlay-v1",
+      "image_id": "263748d8bb79",
+      "registry_digest": "unknown",
+      "image_revision": "unknown",
+      "stack_commit": "2c6ff2ccf3212e9d8b9b45f94ffad28dd8b0c82d",
+      "compose_chain": "unknown",
+      "override_path": "unknown",
+      "started_at": "2026-11-02T07:07:46Z",
+      "health": "healthy",
+      "restarts": 0,
+      "effective_flags": {
+        "MEMORIA_RELEASE_TAG": "unknown",
+        "MEMORIA_RELEASE_COMMIT": "unknown",
+        "TTS_PROVIDER": "stepfun_primary",
+        "STEPFUN_TTS_ENABLED": "true",
+        "STEPFUN_TTS_VOICE": "wenrounansheng",
+        "MEMORIA_SPEAKER_AUTHORITY_ENABLED": "unknown"
+      },
+      "status": {
+        "code": "overlay_cutover_per_handoff",
+        "wired": "record-override_claimed",
+        "enabled": "claimed_running_per_handoff",
+        "verified": "not_live_captured",
+        "evidence_dates": {
+          "code": "2026-11-02",
+          "wired": "2026-11-02",
+          "enabled": "2026-11-02",
+          "verified": null
+        }
+      }
+    },
+    {
+      "role": "media-edge",
+      "container": "unknown",
+      "image_ref": "memoria-media-edge:20261023-edge-fix-v1",
+      "image_id": "unknown",
+      "registry_digest": "unknown",
+      "image_revision": "c44267c9221f904dd1eebddad920eb81da4bb53a",
+      "stack_commit": "unknown",
+      "compose_chain": "unknown",
+      "override_path": "unknown",
+      "started_at": "unknown",
+      "health": "unknown",
+      "restarts": "unknown",
+      "effective_flags": {
+        "MEMORIA_RELEASE_TAG": "unknown",
+        "MEMORIA_RELEASE_COMMIT": "unknown",
+        "TTS_PROVIDER": "unknown",
+        "STEPFUN_TTS_ENABLED": "unknown",
+        "STEPFUN_TTS_VOICE": "unknown",
+        "MEMORIA_SPEAKER_AUTHORITY_ENABLED": "unknown"
+      },
+      "status": {
+        "code": "component_release_per_handoff",
+        "wired": "claimed_unchanged_since_2026-10-23",
+        "enabled": "claimed_running_per_handoff",
+        "verified": "not_live_captured",
+        "evidence_dates": {
+          "code": "2026-10-23",
+          "wired": "2026-10-23",
+          "enabled": "2026-11-02",
+          "verified": null
+        }
+      }
+    }
+  ],
+  "firmware": {
+    "build": "25",
+    "app_commit": "c44267c9221f904dd1eebddad920eb81da4bb53a",
+    "assets_hash": "0be9af66",
+    "evidence": "HANDOFF.md USB flash 2026-10-23; not re-inspected this unit"
+  },
+  "miniprogram": {
+    "version": "unknown",
+    "evidence": "HANDOFF.md notes last local upload 2026-10-14; later uploads unverified"
+  },
+  "rollback": {
+    "stack_prev": {
+      "tag": "20261028-assistant-emotion-v1",
+      "commit": "3e42b95de956d0b7367a24d6cce2fb62c48a481a",
+      "services": ["control-api", "voice-core-media-bridge"],
+      "overrides": []
+    },
+    "per_component": [
+      {
+        "role": "voice-core-media-bridge",
+        "method": "memoria-agent:rollback-20261102-card-1-3-overlay-v1-pre",
+        "target": "memoria-agent:20261101-asr-failover-v2",
+        "image_id_prefix": "7095f68c",
+        "evidence": "HANDOFF.md 卡 4 bridge overlay 2026-11-02"
+      },
+      {
+        "role": "media-edge",
+        "method": "media-edge-rollback.override.yml",
+        "target": "unknown",
+        "evidence": "HANDOFF 10-23 named protected-crisis rollback for that cutover; whether that override file still matches live media-edge is unknown without host inspect"
+      },
+      {
+        "role": "control-api",
+        "method": "release_ops.sh rollback via stack_prev",
+        "target": "20261028-assistant-emotion-v1",
+        "evidence": "HANDOFF 2026-10-29 section; host prev-release not live-read this unit"
+      }
+    ]
+  },
+  "unknowns": [
+    "memoria_root unknown: no Monkey production auth this unit; no live docker inspect",
+    "stack.current_path unknown",
+    "control-api: image_id unknown (HANDOFF 10-29/11-02 named tag only)",
+    "control-api: registry_digest unknown",
+    "control-api: container name unknown",
+    "control-api: compose_chain unknown",
+    "control-api: override_path unknown",
+    "control-api: started_at/health/restarts unknown on reconstruction",
+    "control-api: flag MEMORIA_SPEAKER_AUTHORITY_ENABLED unknown",
+    "voice-core-media-bridge: image_id is HANDOFF prefix 263748d8bb79 only; full content id unknown",
+    "voice-core-media-bridge: image_revision unknown (HANDOFF cited base revision 18e39519, not overlay OCI revision; not inferred from image tag)",
+    "voice-core-media-bridge: registry_digest unknown",
+    "voice-core-media-bridge: compose_chain and override_path unknown (record-override claimed, path not copied into HANDOFF)",
+    "voice-core-media-bridge: MEMORIA_RELEASE_TAG/COMMIT flags unknown on reconstruction",
+    "media-edge: image_id unknown on 11-02 claim (10-23 table had 2e7ef2642c6e for same tag; not reused as live proof)",
+    "media-edge: registry_digest unknown",
+    "media-edge: stack_commit unknown",
+    "media-edge: compose_chain/override_path/started_at/health unknown",
+    "media-edge: binary sha256 86290eaf… was recorded at 10-23 cutover; not re-hashed this unit",
+    "firmware: assets_hash is HANDOFF prefix 0be9af66 only",
+    "miniprogram.version unknown",
+    "rollback.stack_prev taken from HANDOFF 10-29 freeze narrative; host .cutover/prev-release not read",
+    "live_capture not performed; do not treat this file as production verified"
+  ]
+}
