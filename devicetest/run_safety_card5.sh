@@ -201,6 +201,11 @@ PY
 RC2=$?
 echo "DIR=$OUT"
 echo "$OUT" > devicetest/safety-latest-dir.txt
-# keep only latest 5 safety dirs
-ls -dt devicetest/safety-*/ 2>/dev/null | tail -n +6 | while read x; do case "$x" in devicetest/safety-*) rm -rf "$x"; echo "pruned $x";; esac; done
+# Keep only the latest 5 timestamped safety run dirs. Match YYYYMMDD-… only so
+# `devicetest/safety-bank/` (and capture dirs) are never pruned — r4 deleted the bank.
+ls -dt devicetest/safety-[0-9]*/ 2>/dev/null | tail -n +6 | while read x; do
+  case "$x" in
+    devicetest/safety-[0-9]*) rm -rf "$x"; echo "pruned $x";;
+  esac
+done
 exit $RC2
