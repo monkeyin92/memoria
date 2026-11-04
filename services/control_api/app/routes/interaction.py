@@ -469,11 +469,10 @@ def _trusted_speaker_decision(
     decision: ResponsePlanSpeakerDecision,
     scope: _SubjectMemoryScope | None,
 ) -> ResponsePlanSpeakerDecision:
-    """Honour a device-bound owner claim only on its own confirming profile."""
+    """Demote device-bound owner claims: bind proves config, not the speaker (A06)."""
 
+    del scope
     if not claims_device_bound_subject(decision.classification, decision.reason_code):
-        return decision
-    if scope is not None and scope.bound_subject_trusted:
         return decision
     return decision.model_copy(
         update={"classification": "uncertain", "reason_code": DEVICE_BOUND_SUBJECT_UNVERIFIED}

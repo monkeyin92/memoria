@@ -142,6 +142,8 @@ _SENTENCE_ENDINGS = frozenset("。！？；!?")
 # plan's tool; a memory that is still outstanding when the plan is in is dropped, never waited for.
 _DEVICE_MEMORY_TIMEOUT_S = 2.0
 DEVICE_MEMORY_TASK_NAME = "device-memory-prefetch"
+# Stronger-than-bind owner reasons that may open device private-memory prefetch (A06).
+_STRONG_OWNER_MEMORY_REASONS = frozenset({"authenticated_text_input", "owner_match"})
 # A fetch started for a sentence whose turn is about to be committed (``warm_committed_turn``) is only ever
 # taken by that commit; one that nobody took within this long belonged to a turn that never committed.
 _WARMED_MEMORY_MAX_AGE_S = 10.0
@@ -510,8 +512,11 @@ class ReplyPipeline:
                 plan_is_local_safe(response_plan)
                 and not anonymous_public
                 and (speaker_class == "owner" or resume)
-                # The bound person's own turns of this session are not another speaker's.
+                # Device conversation session turns are this device's chat (A06: keep
+                # them even when bind no longer promotes owner). Bind-reason owner
+                # also keeps them for any leftover claim path.
                 and not device_bound_owner
+                and not self._runtime._device_conversation_controls_enabled
             ),
             session_turns=frozen_session_turns,
             delivery_instruction=delivery_instruction,
@@ -522,8 +527,12 @@ class ReplyPipeline:
                 snapshot
                 if not plan_is_local_safe(response_plan)
                 or (
-                    device_bound_owner
-                    and policy.allows_private_context(speaker_class)
+                    # A06: attach only when policy allows private context. Bind-only
+                    # reason_code is denied inside allows_private_context.
+                    policy.allows_private_context(
+                        speaker_class,
+                        reason_code=response_plan.provenance.speaker_reason_code,
+                    )
                     and snapshot.memory_capsule.entries
                 )
                 else None
@@ -1325,12 +1334,13 @@ class ReplyPipeline:
         return None
 
     def _device_memory_in_scope(self, speaker: Any, fence: GenerationFence) -> bool:
-        """The bound person speaks and their own signed profile grants long-term memory recall."""
+        """Private device memory needs owner authority stronger than bind alone (A06)."""
 
+        reason = getattr(speaker, "reason_code", None)
         return (
             callable(getattr(self._response_planner_client, "prefetch_context", None))
             and getattr(speaker, "classification", None) == "owner"
-            and getattr(speaker, "reason_code", None) == DEVICE_BOUND_SUBJECT_REASON
+            and reason in _STRONG_OWNER_MEMORY_REASONS
             and self._runtime.profile_permits(fence, capability="memory_recall_private")
         )
 
@@ -1422,9 +1432,16 @@ class ReplyPipeline:
                 type(exc).__name__,
             )
             return None
-        # The speaker the commit will hold, not the decision of the moment: a warmed fetch finishes before the
-        # commit has made its decision, and a device VAD start in between only resets it to a placeholder.
-        if not fetched.available or self._runtime.prospective_speaker_decision() != speaker:
+        # The speaker the commit will hold, not the decision of the moment. A device VAD start only
+        # resets to classification_pending; that placeholder is not another speaker (A06: bind no
+        # longer predicts owner through the pending window).
+        if not fetched.available:
+            return None
+        prospective = self._runtime.prospective_speaker_decision()
+        if (
+            prospective != speaker
+            and getattr(prospective, "reason_code", None) != "classification_pending"
+        ):
             return None
         capsule = _memory_capsule(fetched.grounded_items)
         logger.info(
