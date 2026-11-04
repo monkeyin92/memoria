@@ -15,7 +15,6 @@ import difflib
 import hashlib
 import json
 import statistics
-import sys
 from pathlib import Path
 from typing import Any, Literal
 
