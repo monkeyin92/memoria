@@ -13,6 +13,8 @@ from services.control_api.app.routes import child_session_recap as route
 from services.guardian.child_memory import KIND_DIALOGUE_SUMMARY, ArchiveFact, DialogueSummary
 from services.memory_scope.child_layers import ChildLayerRecord
 
+pytestmark = pytest.mark.hermetic
+
 
 @dataclass
 class _Consent:
@@ -36,6 +38,7 @@ class _FakeLayers:
     def __init__(self) -> None:
         self.summaries: list[DialogueSummary] = []
         self.facts: list[ArchiveFact] = []
+        self.births: list[Any] = []
         self.listed: list[ChildLayerRecord] = []
 
     async def list(self, **_: Any) -> list[ChildLayerRecord]:
@@ -57,8 +60,9 @@ class _FakeLayers:
             payload={},
         )
 
-    async def upsert_archive_fact(self, fact: ArchiveFact, **_: Any) -> ChildLayerRecord:
+    async def upsert_archive_fact(self, fact: ArchiveFact, **kwargs: Any) -> ChildLayerRecord:
         self.facts.append(fact)
+        self.births.append(kwargs.get("birth_decision"))
         from datetime import UTC, datetime
 
         return ChildLayerRecord(
@@ -85,7 +89,9 @@ class _FakeActivity:
         return datetime.now(UTC)
 
 
-def _app(*, memory: bool = True, archive: bool = True) -> tuple[FastAPI, _FakeLayers, _FakeActivity]:
+def _app(
+    *, memory: bool = True, archive: bool = True
+) -> tuple[FastAPI, _FakeLayers, _FakeActivity]:
     app = FastAPI()
     app.include_router(route.router)
     layers = _FakeLayers()
@@ -124,6 +130,12 @@ async def test_ingest_writes_summary_and_facts_when_both_consents_present() -> N
     assert layers.summaries[0].text == "聊了恐龙和小狗"
     assert layers.facts[0].text == "喜欢恐龙"
     assert activity.touched == ["child-1:dialogue"]
+    birth = layers.births[0]
+    assert birth.fact.provenance == "auto_extract"
+    assert birth.lifecycle == "pending_confirm"
+    assert birth.fact.confidence is not None
+    assert birth.fact.confidence < 1.0
+    assert birth.record_id
 
 
 @pytest.mark.asyncio
