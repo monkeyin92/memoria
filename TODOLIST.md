@@ -75,7 +75,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - `voice_soak` 默认保留 210 秒尾窗。若 `scenario_done` 时设备仍在 `speaking`，先最多等 30 秒让设备离开 `speaking`，再开始尾窗；只在尾窗内观察到真实串口 `StateMachine -> idle` 才通过。推定 idle 返回 4（证据不足），非 idle 返回 3（超时）。21:38 真机样本覆盖该判据，旧 10-10 timeline 缺少新收尾记录仍保持未验证。
 - **2026-11-02 owner-silence 恢复（PR #522，已合 main，未部署）**：噪声 VAD 暂停定时器后，空回合 retire 与 capture hold 会用剩余预算恢复 `owner_silence_task`，不再永久暂停。232237 日志比新期限早 8.6 秒结束，真机 idle 仍待下一轮真机窗。
 - **2026-11-02 vol20% 试跑（overlay `20261102-card-1-3-overlay-v1`）**：前两次 pre-gate 中止，第一次串口连续 3 次 30 秒无数据，第二次板子已 idle 但无新的 `StateMachine -> idle`。第三次用串口 `wake` 回 idle，跑到 `t018-backchannel` 后因环境嘈杂手动停止，没有 verdict；t002/t006/t017 no_reply、t016 打断未确认，不作验收。DTLN 降噪在跑，Stage 1 RNNoise 关闭，Stage 2 DTLN 默认启用，日志 `processed=14800 available=True`。等安静环境重跑。
-- **2026-11-04 卡 4 禁词接入（PR #534，`2200c919`）**：精确原句过滤 + 五类语义提示词；pytest `services/common/tests/test_attachment_ban.py` 绿。建议候选 overlay `memoria-agent:20261103-card5-projection-range-fix-v2`；不切 live 直至 Monkey 授权。
+- **2026-11-04 卡 4 禁词接入（PR #534，`da9df877`）**：精确原句过滤 + 五类语义提示词；`AttachmentOutputGate` 跨逗号切句；pytest `services/common/tests/test_attachment_ban.py` 绿。建议候选 overlay `memoria-agent:20261103-card5-projection-range-fix-v2`；不切 live 直至 Monkey 授权。
 - [ ] 要你点头的一轮：天气 / 知识 / 故事 / 闲聊、播放中打断（「停」「别说了」）、续问、长静默、重连、负面情绪（孤独、难过、被欺负、焦虑、厌学；不含危机类话术，会给家长队列写入假的危机提醒）、USB 唤醒。孩子的 profile 带 `QUIET_HOURS 04:00–07:00`（时段内唤醒只播晚安）与 `MAX_SESSION_SECONDS 1800`（单次最长 30 分钟），这两项是家长设定、我不绕过，所以不能在 07:00 前测，≥ 30 分钟要分多次会话。工具 `scripts/voice_soak.py`（场景在 `scripts/voice_soak_scenarios/`），产出写进 `docs/acceptance.md`。
 
 ### [ ] N-6 产品体验官评审：说话内容、语气（孩子；2026-10-04 起老人一侧不再评）
