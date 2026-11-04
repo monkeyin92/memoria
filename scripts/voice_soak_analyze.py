@@ -119,9 +119,33 @@ def main() -> int:
         ok = [r for r in interrupted if r.get("stopped") is True]
         failed = sum(r.get("stopped") is False for r in interrupted)
         unknown = sum(r.get("stopped") is None for r in interrupted)
-        delays = [r["stop_delay_s"] for r in ok if r.get("stop_delay_s") is not None]
-        print(f"- 打断 {len(interrupted)} 次，确认停止 {len(ok)} 次，未停止 {failed} 次，证据不足 {unknown} 次"
-              + (f"，素材起点到设备退出说话 p50 {statistics.median(delays):.1f}s（非声学测量）" if delays else ""))
+        delays_start = [
+            r.get("stop_delay_from_interrupt_start_s", r.get("stop_delay_s"))
+            for r in ok
+            if r.get("stop_delay_from_interrupt_start_s", r.get("stop_delay_s")) is not None
+        ]
+        delays_end = [
+            r["stop_delay_from_speech_end_s"]
+            for r in ok
+            if r.get("stop_delay_from_speech_end_s") is not None
+        ]
+        delay_note = ""
+        if delays_start:
+            delay_note += (
+                f"，打断素材起点→退出说话 p50 {statistics.median(delays_start):.1f}s"
+                f"（stop_delay_origin=interrupt_start）"
+            )
+        if delays_end:
+            delay_note += (
+                f"，说完后→退出说话 p50 {statistics.median(delays_end):.1f}s"
+                f"（stop_delay_origin=speech_end）"
+            )
+        if delay_note:
+            delay_note += "（非声学测量）"
+        print(
+            f"- 打断 {len(interrupted)} 次，确认停止 {len(ok)} 次，未停止 {failed} 次，证据不足 {unknown} 次"
+            + delay_note
+        )
 
     print("\n## 逐句\n")
     print("| # | 场景 | 我说的 | 服务器听到的 | 字符相似度 | 说完到开口 | 回复时长 | 备注 |")

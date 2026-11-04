@@ -88,11 +88,8 @@ def load_clock(path: Path | None) -> dict:
     return {"offset_s": round(sum(offs) / len(offs), 4), "error_s": round(err, 4), "samples": rows}
 
 
-REPLY_RATE_DROP_PP = 5.0   # 后半段回复率比前半段低超过 5 个百分点 = 退化
 REPEAT_RATIO = 0.8         # 相邻两条回复 difflib 字符相似度 >= 0.8 算重复
-REPEAT_RISE_PP = 5.0       # 后半段重复率比前半段高超过 5 个百分点 = 退化
-SLOPE_MIN_S = 0.01         # 首字延迟斜率 >= 0.01 秒/说 且 t >= 2 才算显著为正
-SLOPE_MIN_T = 2.0
+HALF_P50_DELTA_MAX_S = 0.3  # 唯一已定退化线：后半段相对前半段 P50 增幅
 
 
 def slope(xs, ys):
@@ -118,7 +115,8 @@ def half_stats(ts):
             "reply_rate": round(sum(t["kind"] == "reply" for t in ts) / len(ts), 3) if ts else None,
             "repeat_rate": round(rep / len(pairs), 3) if pairs else "缺",
             "repeat_pairs": len(pairs),
-            "latency_p50_s": pct(lat, 0.5) if lat else None, "latency_p95_s": p95(lat)}
+            "latency_p50_s": pct(lat, 0.5) if lat else None, "latency_p95_s": p95(lat),
+            "threshold_status": {"reply_rate": "待产品确认", "repeat_rate": "待产品确认"}}
 
 
 def _numeric_segment(value: object) -> float | None:
@@ -167,7 +165,11 @@ def segment_aggregates(turns: list[dict]) -> dict:
 
 
 def degradation(turns):
-    """Split by time at the midpoint of the first and last turn; 第几说 = order among all turns."""
+    """Split by time at the midpoint of the first and last turn; 第几说 = order among all turns.
+
+    Only half P50 delta ≤ 0.3 s is a pass/fail line. Reply rate, repeat rate, and slope
+    are reported with 待产品确认 and do not drive the verdict.
+    """
     if len(turns) < 4:
         return {"verdict": "样本不足", "turns": len(turns)}
     mid = (turns[0]["播放结束"] + turns[-1]["播放结束"]) / 2
@@ -175,23 +177,28 @@ def degradation(turns):
     second = half_stats([t for t in turns if t["播放结束"] >= mid])
     pts = [(i + 1, t["latency_s"]) for i, t in enumerate(turns) if t["kind"] == "reply" and t["latency_s"] is not None]
     b, tval = slope([x for x, _ in pts], [y for _, y in pts])
+    first_p50, second_p50 = first["latency_p50_s"], second["latency_p50_s"]
+    delta = None
+    if first_p50 is not None and second_p50 is not None:
+        delta = round(second_p50 - first_p50, 3)
     reasons = []
-    drop = (first["reply_rate"] - second["reply_rate"]) * 100
-    if drop > REPLY_RATE_DROP_PP:
-        reasons.append(f"回复率下降 {drop:.1f} 个百分点")
-    if "缺" not in (first["repeat_rate"], second["repeat_rate"]):
-        rise = (second["repeat_rate"] - first["repeat_rate"]) * 100
-        if rise > REPEAT_RISE_PP:
-            reasons.append(f"重复率上升 {rise:.1f} 个百分点")
-    if b is not None and b >= SLOPE_MIN_S and tval >= SLOPE_MIN_T:
-        reasons.append(f"首字延迟斜率 {b:.3f} 秒/说 (t={tval:.1f})")
-    return {"thresholds": {"reply_rate_drop_pp": REPLY_RATE_DROP_PP, "repeat_ratio": REPEAT_RATIO,
-                           "repeat_rise_pp": REPEAT_RISE_PP, "slope_min_s_per_turn": SLOPE_MIN_S, "slope_min_t": SLOPE_MIN_T},
+    if delta is None:
+        verdict = "样本不足"
+        reasons.append("前后半段 P50 不可测")
+    elif delta > HALF_P50_DELTA_MAX_S:
+        verdict = "退化"
+        reasons.append(f"后半段 P50 增幅 {delta:.3f} s > {HALF_P50_DELTA_MAX_S} s")
+    else:
+        verdict = "未见退化"
+    return {"thresholds": {"half_p50_delta_max_s": HALF_P50_DELTA_MAX_S, "repeat_ratio": REPEAT_RATIO,
+                           "reply_rate": "待产品确认", "repeat_rate": "待产品确认",
+                           "latency_slope_s_per_turn": "待产品确认"},
             "split_at": round(mid, 3), "first_half": first, "second_half": second,
+            "half_p50_delta_s": delta,
             "latency_slope_s_per_turn": round(b, 4) if b is not None else None,
             "latency_slope_t": round(tval, 2) if tval is not None else None,
             "repeat_note": None if "缺" not in (first["repeat_rate"], second["repeat_rate"]) else "缺回复文本: timeline 的 reply 行没有 reply_text，bridge.log 只记 text_len",
-            "verdict": "退化" if reasons else "未见退化", "reasons": reasons}
+            "verdict": verdict, "reasons": reasons}
 
 
 def build(out: Path, stop_tags: dict[str, str], clock_path: Path | None = None) -> dict:

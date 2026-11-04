@@ -955,6 +955,12 @@ uv run --no-project --with pyserial python scripts/voice_soak_serial_logger.py o
 python scripts/voice_soak_verdict.py outputs/acceptance/run-<stamp>-soak
 ```
 
+长会话退化与打断双起点计时（R01，不改卡5门禁）用同一 run 目录离线出报告。须同一 run 跨度 ≥15 分钟。输出前后半段回复率、相邻回复重复率、按轮序首字延迟斜率、后半段相对前半段 P50 差，以及打断的 `interrupt_start` 与说完后（`interrupt_end`）两种停止耗时。已定退化线只有一条：后半段 P50 增幅 ≤0.3 s；回复率 / 重复率 / 斜率标 `待产品确认`，不自行编造通过线。缺 timeline、缺打断所需 bridge/serial、时长不足或半段 P50 不可测时 `status` 为 `incomplete`（与 A11 残缺口径一致），不能当通过。报告含 run id、路径、源文件 sha256、可选 meta/manifest 参数。
+
+```bash
+python scripts/voice_soak_session_report.py outputs/acceptance/run-<stamp>-soak
+```
+
 同一目录里打包 `timeline.jsonl`，以及已经跟上的 `serial.log`、`bridge.log`、`edge.log`、`control.log`。缺的日志不进包。没有 `timeline.jsonl` 则命令失败。包写在 run 目录的上一级，旁边有 sha256。不连设备，不连生产。
 
 ```bash
@@ -972,7 +978,7 @@ python scripts/voice_soak_pack.py outputs/acceptance/run-<stamp>-soak
 uv run python scripts/voice_soak_evidence.py outputs/acceptance/run-20261010-verify-standard
 ```
 
-停止延迟从打断素材起点到设备退出说话，`stop_delay_origin=interrupt_start`；不是DAC/麦克风测得的停止时刻。旧记录未记刺激绝对时间，只能用完整回复终态排除自然完成/异常，不可补成成功；10-09/10-10的纠正与目标路径边界见`docs/acceptance.md`。`--duration-min`只是上限，N-5长稳按时间线实际跨度计。
+停止延迟同时保留两种起点：素材起点→设备退出说话（`stop_delay_origin=interrupt_start` / `stop_delay_from_interrupt_start_s`），以及打断语说完→设备退出说话（`stop_delay_from_speech_end_s`）。不是DAC/麦克风测得的停止时刻。`voice_soak_analyze.py` 与 `voice_soak_session_report.py` 都会输出两种口径。旧记录未记刺激绝对时间，只能用完整回复终态排除自然完成/异常，不可补成成功；10-09/10-10的纠正与目标路径边界见`docs/acceptance.md`。`--duration-min`只是上限，N-5长稳按时间线实际跨度计。
 
 10-11 09:16设备窗口取得一条正向停止样本和一条自然完成反例（[专项收据](acceptance.md)）；两个停止素材音色不同，尚不构成稳定性或音量对照。开测前先保存完整音量/静音设置，退出后核对恢复；现有驱动只保存/恢复音量数值，静音需在外层恢复。选择语音库时逐一核对提问及停止素材，避免缺文件时的Tingting回退改变实验条件。
 
