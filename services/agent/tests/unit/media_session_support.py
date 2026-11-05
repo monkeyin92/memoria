@@ -1177,3 +1177,12 @@ async def _start_speaking_reply(
     session.reset_downlink_generation(fence)  # type: ignore[attr-defined]
     session.generation_active = True  # type: ignore[attr-defined]
     return context, fence
+
+
+def _commit_timing_fields(caplog: pytest.LogCaptureFixture) -> list[dict[str, str]]:
+    prefix = "media turn commit timing "
+    return [
+        dict(part.split("=", 1) for part in record.getMessage()[len(prefix):].split())
+        for record in caplog.records
+        if record.getMessage().startswith(prefix)
+    ]
