@@ -349,6 +349,18 @@ class SynthesizeStream(ABC):
         self._input_ch.close()
         self._input_ended = True
 
+    @property
+    def done(self) -> bool:
+        """Whether the provider attempt is over: finished, failed or cancelled."""
+
+        return self._task.done()
+
+    def cancel(self) -> None:
+        """``aclose`` for a stream nobody will read: stop now, and never raise its failure."""
+
+        self._task.cancel()
+        self._task.add_done_callback(lambda task: task.cancelled() or task.exception())
+
     async def aclose(self) -> None:
         # Wait for the cancelled attempt without re-raising its failure: a
         # consumer closing after an error already received it while iterating.

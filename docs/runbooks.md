@@ -56,6 +56,16 @@ ASR 终稿到达、提交开始时，bridge 就按预测把这一轮要发的 De
 
 开关：bridge 环境变量 `MEMORIA_SPECULATIVE_REPLY_ENABLED=false` 关掉，行为回到旧路径，不发预发请求，也不打这行日志。改 env 是生产变更，要用户授权，并且要重建 bridge 容器才生效。代价：没被采用的预发请求是一次中途取消的 DeepSeek 调用。
 
+### 预合成首句（speculative speech）
+
+预发请求回来的字在提交做完之前就凑够第一句时，bridge 按预测的语气计划（语速、音调、音量、豆包风格上下文和回复声明的情绪）开一个豆包会话，把这一句先送去合成，音频存在会话里。提交后，只有预发回复被采用，而且这一轮自己要开的会话与它逐项相同（同一个 fence、同一句首句文本、同一份会话配置：音色、资源、语速、音调、音量、风格上下文），这一轮才接着用这个会话，后面的句子照常送进去；任何一处不同就取消它，按原路径另开会话。取消的会话发 `CancelSession` 并关掉连接，它的音频到不了这一轮，也到不了以后任何一轮。个人克隆音色、可能是安全话术开头的句子、录好的固定句不预合成。会话打开超过 `DOUBAO_TTS_TOTAL_TIMEOUT_S` 的一半才被要走，也按 `stale` 取消，免得它的空闲超时在下一句音频回来之前把会话关掉。
+
+每个预合成以一行日志结束，不含原文：`speculative speech session_id=… turn_id=… outcome=… started_ms=… pcm_lead_ms=…`。`outcome` 是 `used`（这一轮用了它）、`not_adopted`（预发回复没被采用）、`other_fence` / `other_text` / `other_config`（这一轮要开的会话不同）、`failed`（会话自己先结束了）、`stale`（开得太久）、`replaced`（新的预合成顶替了它）、`closed`（会话结束），以及预发回复的 outcome（如 `other_request`、`close`、`lookup`、`not_committed`：随预发回复一起取消）。`started_ms` 是结束时会话已经开了多久，`pcm_lead_ms` 是第一段音频已经等了多久（`-` 是还没回来）；`used` 时这一轮省下的时间约是 `min(started_ms, 原路径的合成时间)`。被用上的会话，它的 `doubao_session_started`、`doubao_first_pcm` 在这一轮要走它时才上报，所以 tapwake 报告里的「TTS」段是这一轮实际等音频的时间。
+
+看数：`python scripts/voice_commit_timing.py bridge.log` 的最后一段 `== speculative speech` 给出各 outcome 的次数和 `used` 的 `started_ms` / `pcm_lead_ms`。2026-11-01 三轮 tapwake soak 的估算：69 个被采用的轮次里，只有 21 个在提交做完时已经有了首句，其余 48 个首句晚于提交 0.07–0.8 s，预合成帮不上；估计约 17 个轮次能省 0.1–0.44 s。
+
+开关：bridge 环境变量 `MEMORIA_SPECULATIVE_SPEECH_ENABLED=false` 单独关掉预合成，预发回复照旧。关掉预发回复也就没有预合成。改 env 是生产变更，要用户授权，并且要重建 bridge 容器才生效。代价：没被用上的预合成是一次中途取消的豆包会话，计费的是已经送去合成的首句。
+
 ---
 
 ## 来源：`docs/runbooks/operations-space-governance.md`
