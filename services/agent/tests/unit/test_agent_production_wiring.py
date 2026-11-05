@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from services.agent.src import llm_types as llm
 from services.agent.src import reply_pipeline as pipeline_mod
+from services.agent.src import reply_warmup
 from services.agent.src.agent import plan_is_local_safe
 from services.agent.src.agent_voice_profile import bind_generation_tts_voice
 from services.agent.src.contracts.ids import CancellationContext, GenerationFence
@@ -482,7 +483,7 @@ async def test_response_plan_capsules_are_frozen_for_the_current_generation() ->
     assert snapshot.tool_permission is True
     assert runtime.orchestrator.task_manager.tasks == {}
     # The plan was asked for once, ahead of the commit, and the commit took that answer.
-    assert Planner.task_names == [pipeline_mod.EARLY_RESPONSE_PLAN_TASK_NAME]
+    assert Planner.task_names == [reply_warmup.EARLY_RESPONSE_PLAN_TASK_NAME]
     await runtime.close()
 
 
