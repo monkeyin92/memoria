@@ -1980,7 +1980,7 @@ async def test_both_policy_seams_reject_a_diverged_runtime_projection(
 
     The session-policy seam's mismatch cases are unit-tested against a fake
     authority, and the response-plan seam had no mismatch case at all.  The
-    guard itself (`_current_persistent_runtime_profile`) compares nine fields of
+    guard itself (`current_persistent_runtime_profile`) compares nine fields of
     the signed profile against the authority's own session projection, so the
     only way to reach it is a projection that really diverges — which is exactly
     the condition it exists for (a rebind/manager change or a partial write that

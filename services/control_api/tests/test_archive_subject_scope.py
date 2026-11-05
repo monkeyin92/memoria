@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 from services.archive.domain import EvidenceEvent
+from services.control_api.app import persistent_runtime_profile
 from services.control_api.app.main import create_app
 from services.control_api.tests.test_archive_api import (
     PersonaObservationStub,
@@ -218,8 +219,6 @@ async def test_revoked_consent_blocks_every_private_read_exit(
 async def test_session_archive_checks_all_existing_runtime_identity_fences(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from services.control_api.app.routes import interaction
-
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -233,7 +232,9 @@ async def test_session_archive_checks_all_existing_runtime_identity_fences(
         }
         app.state.session_runtime_service = object()
         monkeypatch.setattr(
-            interaction, "_current_persistent_runtime_profile", AsyncMock(return_value=fences)
+            persistent_runtime_profile,
+            "current_persistent_runtime_profile",
+            AsyncMock(return_value=fences),
         )
         positive = await client.post(
             "/v1/archive/session-events", headers=INTERNAL,
@@ -528,8 +529,6 @@ async def test_same_account_self_claims_stay_on_their_own_subject(
     """
 
     from services.archive.domain import EvidenceEvent
-    from services.control_api.app.routes import interaction
-
     _configure(monkeypatch, tmp_path)
     monkeypatch.setenv(
         "MEMORIA_RESPONSE_PLAN_TOKEN", "response-plan-token-that-is-long-enough"
@@ -624,7 +623,6 @@ async def test_same_account_self_claims_stay_on_their_own_subject(
     assert "散步" in owner_plan.text
     assert seen_subjects
     assert set(seen_subjects) == {"person-other-adult", owner["user_id"]}
-    del interaction
 
 
 @pytest.mark.asyncio
@@ -859,8 +857,6 @@ async def test_stale_session_event_fence_creates_no_claim(
 ) -> None:
     """A stale subject fence is rejected before any claim is written."""
 
-    from services.control_api.app.routes import interaction
-
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -869,8 +865,8 @@ async def test_stale_session_event_fence_creates_no_claim(
         session = (await client.post("/v1/sessions", headers=headers, json={})).json()
         app.state.session_runtime_service = object()
         monkeypatch.setattr(
-            interaction,
-            "_current_persistent_runtime_profile",
+            persistent_runtime_profile,
+            "current_persistent_runtime_profile",
             AsyncMock(
                 return_value={
                     "active_subject_id": owner["user_id"],

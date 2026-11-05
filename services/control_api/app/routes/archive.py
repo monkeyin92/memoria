@@ -845,11 +845,11 @@ async def append_session_event(
     ) is not None:
         # Claims identify a subject only after the existing runtime authority
         # accepts the same profile/epoch. Never let a stale turn name the adult.
-        from services.control_api.app.routes.interaction import (
-            _current_persistent_runtime_profile,
+        from services.control_api.app.persistent_runtime_profile import (
+            current_persistent_runtime_profile,
         )
 
-        profile = await _current_persistent_runtime_profile(
+        profile = await current_persistent_runtime_profile(
             request, session, session_id=body.session_id
         )
         current_profile = profile
