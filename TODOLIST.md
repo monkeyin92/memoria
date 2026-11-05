@@ -437,6 +437,7 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 - 在途分支 `wip/tts-stream-hardening`（#148 时摘出的 TTS 清理钩子与 `APIConnectOptions` 有限值校验，钩子版 `aclose()` 会吞调用方取消，需返工）：本批按你的「清理其他分支」删除，提交 `417627ce`、`edc6e40a` 在 git 回收前仍可取（`git branch <名字> edc6e40a`）；要不要重做，你定。
 - 需要你定：播放期本地停止词（09-30 决定先关，由云端按语义停播）何时以更省算力的方式加回，等云端停播延迟数据（第十八轮已有：音量 50 下 p50 0.74 s / p90 1.58 s，见 N-10）；`self_model` 关系画像版本保护：PG trigger 只保护 approved 版本，是否收紧到所有状态（改生产 schema）；控制词不重置静默计时（UX）；生产常开 PCM tap（`MEDIA_PCM_TAP_DIR`，容器 tmpfs 每会话 4 MB，重启即清）是否长期保留（隐私）。
 - 产品轨（大多需要你）：P0-03 时延拆段（你暂缓埋点；09-30 另查到播放约 10–13 s 时设备任务看门狗触发，MultiNet 与 Opus 同核，已用 build 15 缓解，待验）；外部试用（10 个家庭、4 周）；路演材料自洽、DEMO-09/10 竞品与定价（「定位二选一」已被 10-04 聚焦儿童青少年解决）。
+- 2026-11-05 模块预算债第一批（本地分支 `refactor-god-module-splits`，四片独立验证后合并；未推送、未发布）：`services/control_api/app/routes/interaction.py` 2409→2007（wire 契约拆 `app/response_plan_contract.py` 81 行、渲染/序列化拆 `app/response_plan_payload.py` 369 行）；`services/session_runtime/service.py` 3048→2287（`commands.py` 164 / `wire.py` 357 / `postgres_authorities.py` 335 / `errors.py` 29）；`services/agent/src/duplex_runtime.py` 2721→2279（事件发布拆成第 8 个 mixin `runtime_publication.py` 534 行，删 2 个单调用包装）；`services/agent/tests/unit/test_media_session_turns.py` 7593 行拆成 7 个按行为的测试文件（125 collected 不变，node-id 后缀集合一致）。验证：mypy strict、ruff、module budget PASS；全量 pytest 与 HEAD 逐用例对比，0 失败、83 条环境缺 PG 的 setup error 与基线一致、1296 skip 不变。
 - 完成条件：每步有行数与依赖图基线收紧的证据，生产切换有收据。
 
 ## 暂缓，不自动扩张范围
