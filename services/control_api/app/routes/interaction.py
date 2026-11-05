@@ -126,12 +126,12 @@ from services.self_model.domain import (
     SelfModelNotFoundError,
     SelfModelRegistryPort,
 )
+from services.session_runtime.commands import CommitToolEffectCommand
 from services.session_runtime.postgres_store import SessionRuntimeConflict
 from services.session_runtime.profile_service import (
     PROFILE_ISSUE_DEFERRED_CAPABILITIES,
 )
 from services.session_runtime.service import (
-    CommitToolEffectCommand,
     PersistentSessionDenied,
     PersistentSessionNotFound,
     PersistentSessionUnavailable,

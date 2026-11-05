@@ -26,6 +26,10 @@ from services.identity.domain import (
 )
 from services.identity.service import IdentityService
 from services.policy.engine import Capability, PolicyDecision, PolicyEngine
+from services.session_runtime.commands import (
+    StartPersistentSessionCommand,
+    SwitchPersistentSubjectCommand,
+)
 from services.session_runtime.postgres_store import SessionRuntimeConflict
 from services.session_runtime.profile_service import (
     InMemoryRuntimeAuthority,
@@ -42,8 +46,6 @@ from services.session_runtime.service import (
     PersistentSessionExpired,
     PersistentSessionNotFound,
     PostgresSessionRuntimeService,
-    StartPersistentSessionCommand,
-    SwitchPersistentSubjectCommand,
 )
 from services.session_runtime.subject_resolver import BindingSnapshot
 

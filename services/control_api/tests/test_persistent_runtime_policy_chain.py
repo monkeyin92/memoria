@@ -60,6 +60,7 @@ from services.guardian.tests.test_guardian_postgres_store import (
     _ensure_roles,
     _role_dsn,
 )
+from services.session_runtime.commands import SwitchPersistentSubjectCommand
 from services.session_runtime.postgres_store import (
     PostgresSessionRuntimeStore,
     SessionRuntimeConflict,
@@ -70,7 +71,6 @@ from services.session_runtime.service import (
     PersistentSessionNotFound,
     PersistentSessionUnavailable,
     PostgresSessionRuntimeService,
-    SwitchPersistentSubjectCommand,
     build_postgres_session_runtime_service,
 )
 from services.session_runtime.tests.test_postgres_store import (

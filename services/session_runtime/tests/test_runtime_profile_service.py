@@ -922,7 +922,7 @@ def test_persona_resolution_is_subject_then_binding_then_global() -> None:
 
 
 def test_locked_binding_persona_for_prefers_the_subject_override() -> None:
-    from services.session_runtime.service import _parse_persona_assignments
+    from services.session_runtime.wire import _parse_persona_assignments
 
     # A legacy lock payload has no key at all: no overrides, default applies.
     assert _parse_persona_assignments({"persona_assignment_id": "starlight:v1"}) == {}

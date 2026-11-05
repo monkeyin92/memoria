@@ -9,25 +9,18 @@ outbox row have committed atomically.
 
 from __future__ import annotations
 
-import hashlib
 import hmac
-import json
-import re
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
-from types import MappingProxyType
+from collections.abc import Awaitable, Callable
+from dataclasses import replace
+from datetime import datetime, timedelta
 from typing import Final, cast
 
 import asyncpg
 from packages.contracts.generated.python.multi_subject_contracts import (
     AgeBandValue,
     CapabilityValue,
-    DeviceDeclaredModeValue,
-    PolicyActionResourceFence,
     PolicyDecision,
-    PolicyObligationSpec,
     PolicyReceiptV2,
     PurposeValue,
     RuntimeProfileSignedV2,
@@ -36,32 +29,20 @@ from packages.contracts.generated.python.multi_subject_contracts import (
     SubjectCategoryValue,
 )
 
-from services.consent.evidence import (
-    RelationshipEvidence,
-    RelationshipStatusValue,
-    RelationTypeValue,
-)
 from services.policy.action_authorizer import (
     ActionAuthorizationError,
     ActionExecutionRequest,
 )
 from services.policy.context import (
     PolicyContext,
-    SubjectPresence,
     effective_action_resource_fence,
     is_resource_scoped_action,
 )
 from services.policy.engine import PolicyEngine
 from services.policy.evidence import (
-    BindingEvidencePort,
-    BindingStatusValue,
     ConsentEvidencePort,
     ConsentSnapshotEvidencePort,
-    RelationshipEvidencePort,
     active_relationship_for,
-)
-from services.policy.postgres_receipt_repository import (
-    ConnectionBoundPolicyReceiptRepository,
 )
 from services.policy.production_wiring import (
     ConsentDiscovery,
@@ -74,7 +55,30 @@ from services.policy.receipts import (
     PolicyReceiptConflictError,
     exact_evidence_fence_valid,
 )
-from services.session_runtime.device_trust import DeviceTrustSnapshot, snapshot_from_authority
+from services.session_runtime.commands import (
+    CommitToolEffectCommand,
+    SessionCloseResult,
+    StartPersistentSessionCommand,
+    SwitchPersistentSubjectCommand,
+)
+from services.session_runtime.device_trust import DeviceTrustSnapshot
+from services.session_runtime.errors import (
+    PersistentSessionDenied,
+    PersistentSessionExpired,
+    PersistentSessionNotFound,
+    PersistentSessionUnavailable,
+)
+from services.session_runtime.postgres_authorities import (
+    _ActionExecutorReceiptRepository,
+    _IssuedProfile,
+    _obligation_union,
+    _persona_snapshot,
+    _PostgresDeviceAuthority,
+    _PostgresIdentityAuthority,
+    _PostgresIdentityRelationshipAuthority,
+    _PostgresPrincipalAuthority,
+    _PostgresSessionActionAuthority,
+)
 from services.session_runtime.postgres_store import (
     PostgresSessionRuntimeStore,
     SessionRuntimeAuthorityUnavailable,
@@ -92,787 +96,23 @@ from services.session_runtime.subject_resolver import (
     DEVICE_BINDING_PRIMARY_REASON,
     BindingSnapshot,
     ResolveSubjectCommand,
-    SubjectCandidate,
     SubjectResolution,
     SubjectResolver,
 )
+from services.session_runtime.wire import (
+    _digest,
+    _LockedBinding,
+    _subject_presence_from_profile,
+    _tool_effect_fence_fingerprint,
+)
 
 _DEFAULT_PROFILE_TTL = timedelta(minutes=5)
-_MAX_PROFILE_TTL = timedelta(seconds=86_400)
+
 #: Who may confirm and read consent for a sole subject other than themself.
 #: Mirrors the relations ``consent_discover_action_fence`` accepts for an
 #: actor that is not the subject; any other actor would make the discovery
 #: raise, so the control path leaves the subject unconfirmed instead.
 _SOLE_SUBJECT_PROXY_RELATIONS: Final[frozenset[str]] = frozenset({"guardian_of", "delegate_for"})
-_NO_EXPIRY_SENTINEL = datetime(9999, 12, 31, tzinfo=UTC)
-
-
-class PersistentSessionUnavailable(RuntimeError):
-    """A required production authority is absent or unavailable."""
-
-
-class PersistentSessionDenied(PermissionError):
-    """The authenticated actor/binding cannot create this Session."""
-
-
-class PersistentSessionExpired(PersistentSessionDenied):
-    """The stored profile is past its use window; only renewal may reissue it.
-
-    It stays a ``PersistentSessionDenied`` so every existing caller keeps
-    failing closed; callers that own renewal catch this narrower type.
-    """
-
-
-@dataclass(frozen=True, slots=True)
-class StartPersistentSessionCommand:
-    session_id: str
-    actor_id: str
-    device_id: str
-    expected_binding_version: int
-    idempotency_key: str
-    now: datetime
-    requested_capabilities: tuple[CapabilityValue, ...] = ("chat",)
-    candidates: tuple[SubjectCandidate, ...] = ()
-    # The app/control path confirms the binding's sole subject (one-to-one
-    # bindings only; see ``sole_bound_subject_id``).  Never set by the
-    # device media path, which names its subject explicitly.
-    confirm_sole_bound_subject: bool = False
-    # Only the device's own authenticated media session sets this: it names
-    # the binding primary subject the device serves (see SubjectResolver).
-    device_bound_subject_id: str | None = None
-    multiple_speakers: bool = False
-    offline: bool = False
-    # Per-session profile lifetime override. Only the direct hardware media
-    # path sets this (device_runtime_profile_ttl_s); every other caller keeps
-    # the service default so H5 and mini-program profiles are never widened.
-    profile_ttl: timedelta | None = None
-
-    def __post_init__(self) -> None:
-        for value, field in (
-            (self.session_id, "session_id"),
-            (self.actor_id, "actor_id"),
-            (self.device_id, "device_id"),
-            (self.idempotency_key, "idempotency_key"),
-        ):
-            if not value.strip():
-                raise ValueError(f"{field} must not be empty")
-        if self.expected_binding_version < 1:
-            raise ValueError("expected_binding_version must be positive")
-        if self.now.tzinfo is None or self.now.utcoffset() is None:
-            raise ValueError("now must be timezone-aware")
-        if not self.requested_capabilities:
-            raise ValueError("requested_capabilities must not be empty")
-        if len(set(self.requested_capabilities)) != len(self.requested_capabilities):
-            raise ValueError("requested_capabilities must be unique")
-        if self.profile_ttl is not None:
-            if not isinstance(self.profile_ttl, timedelta):
-                raise ValueError("profile_ttl must be a timedelta")
-            if self.profile_ttl <= timedelta(0):
-                raise ValueError("profile_ttl must be positive")
-            if self.profile_ttl > _MAX_PROFILE_TTL:
-                raise ValueError("profile_ttl exceeds the one-day bound")
-
-
-@dataclass(frozen=True, slots=True)
-class CommitToolEffectCommand:
-    """One Agent-prepared effect submitted to the Session authority."""
-
-    actor_id: str
-    session_id: str
-    runtime_profile: RuntimeProfileSignedV2
-    policy_receipt: PolicyReceiptV2
-    session_epoch: int
-    generation_id: int
-    turn_id: int
-    tool_epoch: int
-    capability: str
-    purpose: str
-    resource_id: str
-    evidence_refs: tuple[str, ...]
-    idempotency_key: str
-    intent: str
-    payload: dict[str, object]
-    payload_sha256: str
-    fence_fingerprint: str
-    now: datetime
-
-    def __post_init__(self) -> None:
-        for value, name, maximum in (
-            (self.actor_id, "actor_id", 128),
-            (self.session_id, "session_id", 128),
-            (self.capability, "capability", 128),
-            (self.purpose, "purpose", 128),
-            (self.resource_id, "resource_id", 128),
-            (self.idempotency_key, "idempotency_key", 512),
-            (self.intent, "intent", 512),
-        ):
-            if not isinstance(value, str) or not value.strip() or len(value) > maximum:
-                raise ValueError(f"{name} must be a bounded non-blank string")
-        if self.now.tzinfo is None or self.now.utcoffset() is None:
-            raise ValueError("now must be timezone-aware")
-        for numeric_value, name, minimum in (
-            (self.session_epoch, "session_epoch", 1),
-            (self.generation_id, "generation_id", 0),
-            (self.turn_id, "turn_id", 0),
-            (self.tool_epoch, "tool_epoch", 0),
-        ):
-            if type(numeric_value) is not int or numeric_value < minimum:
-                raise ValueError(f"{name} must be an integer >= {minimum}")
-        if not self.evidence_refs or any(
-            not isinstance(item, str) or not item.strip() or len(item) > 192
-            for item in self.evidence_refs
-        ):
-            raise ValueError("evidence_refs must contain bounded ids")
-        if not re.fullmatch(r"^[a-f0-9]{64}$", self.payload_sha256):
-            raise ValueError("payload_sha256 must be a sha256 digest")
-        if not re.fullmatch(r"^[a-f0-9]{64}$", self.fence_fingerprint):
-            raise ValueError("fence_fingerprint must be a sha256 digest")
-        encoded = _canonical_json(self.payload, allow_nan=False).encode("utf-8")
-        if hashlib.sha256(encoded).hexdigest() != self.payload_sha256:
-            raise ValueError("payload_sha256 does not match the canonical payload")
-
-
-@dataclass(frozen=True, slots=True)
-class SwitchPersistentSubjectCommand:
-    session_id: str
-    actor_id: str
-    subject_id: str | None
-    now: datetime
-    requested_capabilities: tuple[CapabilityValue, ...]
-    claimed_subject_id: str | None = None
-
-    def __post_init__(self) -> None:
-        if not self.session_id.strip() or not self.actor_id.strip():
-            raise ValueError("session_id and actor_id must not be empty")
-        if self.subject_id is not None and not self.subject_id.strip():
-            raise ValueError("subject_id must not be empty")
-        if self.claimed_subject_id is not None and not self.claimed_subject_id.strip():
-            raise ValueError("claimed_subject_id must not be empty")
-        if self.now.tzinfo is None or self.now.utcoffset() is None:
-            raise ValueError("now must be timezone-aware")
-        if not self.requested_capabilities:
-            raise ValueError("requested_capabilities must not be empty")
-
-
-class PersistentSessionNotFound(LookupError):
-    """No RLS-visible active Session/profile exists."""
-
-
-@dataclass(frozen=True, slots=True)
-class SessionCloseResult:
-    """Outcome of a terminal session_closed authority transition."""
-
-    applied: bool
-    already_closed: bool
-
-
-@dataclass(frozen=True, slots=True)
-class _BindingRole:
-    person_id: str
-    role: str
-    permissions: tuple[str, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class _BindingSubject:
-    person_id: str
-    subject_category: str
-    age_band: str
-    revision: int
-
-
-@dataclass(frozen=True, slots=True)
-class _LockedBindingEvidence:
-    binding_id: str
-    version: int
-    device_id: str
-    status: BindingStatusValue
-    declared_mode: DeviceDeclaredModeValue
-    valid_from: datetime
-    valid_until: datetime
-    canonical_hash: str
-
-    def is_active_at(self, now: datetime) -> bool:
-        return self.status == "active" and self.valid_from <= now < self.valid_until
-
-
-#: Bindings without subject overrides share one immutable empty mapping, so a
-#: frozen ``_LockedBinding`` never needs a mutable default.
-_NO_PERSONA_ASSIGNMENTS: Mapping[str, str] = MappingProxyType({})
-
-
-@dataclass(frozen=True, slots=True)
-class _LockedBinding:
-    evidence: _LockedBindingEvidence
-    roles: tuple[_BindingRole, ...]
-    subjects: tuple[_BindingSubject, ...]
-    relationships: tuple[RelationshipEvidencePort, ...]
-    account_owner_person_id: str
-    policy_bundle_version: str
-    persona_assignment_id: str
-    persona_assignments: Mapping[str, str] = _NO_PERSONA_ASSIGNMENTS
-
-    def persona_for(self, subject_id: str | None) -> str:
-        """Subject override first, binding default second (never fail-open).
-
-        The order is fixed here and nowhere else: every reader of a locked
-        binding resolves a persona through this one method.
-        """
-        if subject_id is not None:
-            override = self.persona_assignments.get(subject_id)
-            if override is not None:
-                return override
-        return self.persona_assignment_id
-
-    @property
-    def snapshot(self) -> BindingSnapshot:
-        members = tuple(item.person_id for item in self.subjects)
-        primary = tuple(
-            sorted({item.person_id for item in self.roles if item.role == "primary_subject"})
-        )
-        return BindingSnapshot(
-            binding_id=self.evidence.binding_id,
-            device_id=self.evidence.device_id,
-            binding_version=self.evidence.version,
-            declared_mode=self.evidence.declared_mode,
-            primary_subject_ids=primary,
-            member_subject_ids=members,
-        )
-
-
-def _canonical_json(value: object, *, allow_nan: bool = True) -> str:
-    return json.dumps(
-        value,
-        allow_nan=allow_nan,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-
-
-def _subject_presence_from_profile(
-    profile: RuntimeProfileSignedV2,
-    *,
-    actor_id: str,
-) -> SubjectPresence:
-    """Recover device-bound presence from a signed profile at action time.
-
-    Policy grants ``memory_recall_private`` to a subject other than the actor
-    only for the device's own bound subject, so a confirmed profile carrying it
-    for another person can only have been issued device-bound.
-    """
-
-    subject_id = profile.active_subject_id
-    if (
-        subject_id is not None
-        and subject_id != actor_id
-        and profile.speaker_state.value == "confirmed"
-        and any(item.value == "memory_recall_private" for item in profile.capabilities)
-    ):
-        return "device_bound"
-    return "resolved"
-
-
-def _digest(value: object) -> str:
-    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
-
-
-def _tool_effect_fence_fingerprint(command: CommitToolEffectCommand) -> str:
-    return _digest(
-        {
-            "session_id": command.session_id,
-            "turn_id": command.turn_id,
-            "generation_id": command.generation_id,
-            "tool_epoch": command.tool_epoch,
-            "session_epoch": command.session_epoch,
-        }
-    )
-
-
-def _decode_json_object(value: object, *, name: str) -> dict[str, object]:
-    decoded = json.loads(value) if isinstance(value, str) else value
-    if not isinstance(decoded, dict):
-        raise PersistentSessionUnavailable(f"{name} is not a JSON object")
-    return {str(key): item for key, item in decoded.items()}
-
-
-def _required_string(value: object, *, name: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise PersistentSessionUnavailable(f"{name} is unavailable")
-    return value
-
-
-def _required_int(value: object, *, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise PersistentSessionUnavailable(f"{name} is unavailable")
-    return value
-
-
-def _aware_datetime(value: object, *, name: str) -> datetime:
-    if isinstance(value, datetime):
-        parsed = value
-    elif isinstance(value, str):
-        try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise PersistentSessionUnavailable(f"{name} is invalid") from exc
-    else:
-        raise PersistentSessionUnavailable(f"{name} is unavailable")
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise PersistentSessionUnavailable(f"{name} must be timezone-aware")
-    return parsed.astimezone(UTC)
-
-
-def _parse_permissions(value: object) -> tuple[str, ...]:
-    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
-        raise PersistentSessionUnavailable("binding role permissions are invalid")
-    return tuple(value)
-
-
-def _parse_locked_binding(value: object) -> _LockedBinding:
-    raw = _decode_json_object(value, name="Identity binding authority")
-    binding_id = _required_string(raw.get("binding_id"), name="binding_id")
-    device_id = _required_string(raw.get("device_id"), name="device_id")
-    version = _required_int(raw.get("binding_version"), name="binding_version")
-    declared_mode_raw = _required_string(raw.get("declared_mode"), name="declared_mode")
-    if declared_mode_raw not in {
-        "parent_for_child",
-        "self_use",
-        "child_for_parent",
-        "family_shared",
-    }:
-        raise PersistentSessionUnavailable("declared_mode is invalid")
-    declared_mode = cast(DeviceDeclaredModeValue, declared_mode_raw)
-    valid_from = _aware_datetime(raw.get("valid_from"), name="valid_from")
-    valid_until_raw = raw.get("valid_until")
-    valid_until = (
-        _NO_EXPIRY_SENTINEL
-        if valid_until_raw is None
-        else _aware_datetime(valid_until_raw, name="valid_until")
-    )
-    evidence_payload = {
-        "binding_id": binding_id,
-        "version": version,
-        "device_id": device_id,
-        "status": "active",
-        "declared_mode": declared_mode,
-        "valid_from": valid_from.isoformat(),
-        "valid_until": valid_until.isoformat(),
-    }
-    roles_raw = raw.get("roles")
-    if not isinstance(roles_raw, list):
-        raise PersistentSessionUnavailable("binding roles are unavailable")
-    roles: list[_BindingRole] = []
-    for item in roles_raw:
-        if not isinstance(item, dict):
-            raise PersistentSessionUnavailable("binding role is invalid")
-        roles.append(
-            _BindingRole(
-                person_id=_required_string(item.get("person_id"), name="role person"),
-                role=_required_string(item.get("role"), name="binding role"),
-                permissions=_parse_permissions(item.get("permissions")),
-            )
-        )
-    subjects_raw = raw.get("subjects")
-    if not isinstance(subjects_raw, list):
-        raise PersistentSessionUnavailable("binding subjects are unavailable")
-    subjects: list[_BindingSubject] = []
-    for item in subjects_raw:
-        if not isinstance(item, dict):
-            raise PersistentSessionUnavailable("binding subject is invalid")
-        category = _required_string(item.get("subject_category"), name="subject category")
-        age_band = _required_string(item.get("age_band"), name="subject age band")
-        if category not in {"unknown", "minor", "adult"} or age_band not in {
-            "unknown",
-            "under_14",
-            "14_17",
-            "adult",
-        }:
-            raise PersistentSessionUnavailable("subject classification is invalid")
-        subjects.append(
-            _BindingSubject(
-                person_id=_required_string(item.get("person_id"), name="subject person"),
-                subject_category=category,
-                age_band=age_band,
-                revision=_required_int(item.get("revision"), name="subject revision"),
-            )
-        )
-    relationships_raw = raw.get("relationships")
-    if not isinstance(relationships_raw, list):
-        raise PersistentSessionUnavailable("binding relationships are unavailable")
-    relationships: list[RelationshipEvidencePort] = []
-    for item in relationships_raw:
-        if not isinstance(item, dict):
-            raise PersistentSessionUnavailable("binding relationship is invalid")
-        updated_at = _aware_datetime(item.get("updated_at"), name="relationship update")
-        valid_from = _aware_datetime(item.get("valid_from"), name="relationship start")
-        valid_until_raw = item.get("valid_until")
-        valid_until = (
-            _NO_EXPIRY_SENTINEL
-            if valid_until_raw is None
-            else _aware_datetime(valid_until_raw, name="relationship end")
-        )
-        relationship_id = _required_string(item.get("relationship_id"), name="relationship id")
-        revision = max(1, int(updated_at.timestamp() * 1_000_000))
-        relationships.append(
-            RelationshipEvidence(
-                relationship_id=relationship_id,
-                snapshot_id=f"{relationship_id}:v{revision}",
-                revision=revision,
-                relation_type=cast(
-                    RelationTypeValue,
-                    _required_string(item.get("relation_type"), name="relationship type"),
-                ),
-                status=cast(
-                    RelationshipStatusValue,
-                    _required_string(item.get("status"), name="relationship status"),
-                ),
-                source_person_id=_required_string(
-                    item.get("source_person_id"), name="relationship source"
-                ),
-                target_person_id=_required_string(
-                    item.get("target_person_id"), name="relationship target"
-                ),
-                binding_id=binding_id,
-                valid_from=valid_from,
-                valid_until=valid_until,
-            )
-        )
-    return _LockedBinding(
-        evidence=_LockedBindingEvidence(
-            binding_id=binding_id,
-            version=version,
-            device_id=device_id,
-            status="active",
-            declared_mode=declared_mode,
-            valid_from=valid_from,
-            valid_until=valid_until,
-            canonical_hash=_digest(evidence_payload),
-        ),
-        roles=tuple(roles),
-        subjects=tuple(subjects),
-        relationships=tuple(relationships),
-        account_owner_person_id=_required_string(
-            raw.get("account_owner_person_id"), name="account owner"
-        ),
-        policy_bundle_version=_required_string(
-            raw.get("policy_bundle_version"), name="policy bundle version"
-        ),
-        persona_assignment_id=_required_string(
-            raw.get("persona_assignment_id"), name="persona assignment"
-        ),
-        persona_assignments=_parse_persona_assignments(raw),
-    )
-
-
-def _parse_persona_assignments(raw: Mapping[str, object]) -> dict[str, str]:
-    """Subject overrides from the lock port; absent/legacy payloads are empty.
-
-    A binding built before the subject-level table existed has no
-    ``persona_assignments`` key at all, which is exactly "no overrides": the
-    binding default still applies, so rolling the schema forward cannot
-    change an existing device's persona.
-    """
-    value = raw.get("persona_assignments")
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        raise PersistentSessionUnavailable("persona assignments are unavailable")
-    parsed: dict[str, str] = {}
-    for subject_id, assignment_id in value.items():
-        parsed[str(subject_id)] = _required_string(
-            assignment_id, name="persona assignment"
-        )
-    return parsed
-
-
-class _PostgresIdentityAuthority:
-    async def lock_binding(
-        self,
-        connection: asyncpg.Connection,
-        *,
-        actor_id: str,
-        device_id: str,
-        expected_binding_version: int,
-        now: datetime,
-    ) -> _LockedBinding:
-        try:
-            raw = await connection.fetchval(
-                "SELECT action_identity_lock_binding($1, $2, $3, $4)",
-                actor_id,
-                device_id,
-                expected_binding_version,
-                now,
-            )
-        except asyncpg.PostgresError as exc:
-            raise PersistentSessionDenied(str(exc)) from exc
-        if raw is None:
-            raise PersistentSessionDenied("active actor/device binding is unavailable")
-        binding = _parse_locked_binding(raw)
-        if (
-            binding.evidence.device_id != device_id
-            or binding.evidence.version != expected_binding_version
-            or not any(item.person_id == actor_id for item in binding.roles)
-        ):
-            raise PersistentSessionDenied("binding authority fence mismatch")
-        return binding
-
-    async def can_switch_subject(
-        self,
-        connection: asyncpg.Connection,
-        *,
-        actor_id: str,
-        device_id: str,
-        binding_version: int,
-        subject_id: str,
-    ) -> bool:
-        try:
-            allowed = await connection.fetchval(
-                "SELECT action_identity_can_switch_subject($1, $2, $3, $4)",
-                actor_id,
-                device_id,
-                binding_version,
-                subject_id,
-            )
-        except asyncpg.PostgresError as exc:
-            raise PersistentSessionUnavailable(str(exc)) from exc
-        return allowed is True
-
-    async def lock_current(
-        self,
-        connection: asyncpg.Connection,
-        receipt: PolicyReceiptV2,
-        request: ActionExecutionRequest,
-    ) -> BindingEvidencePort:
-        binding = await self.lock_binding(
-            connection,
-            actor_id=request.context.actor_id,
-            device_id=request.context.device_id,
-            expected_binding_version=request.context.binding_version,
-            now=request.now,
-        )
-        if (
-            binding.evidence.binding_id != receipt.binding_id
-            or binding.evidence.canonical_hash != receipt.binding_canonical_hash
-        ):
-            raise ActionAuthorizationError("current binding evidence mismatch")
-        return binding.evidence
-
-
-class _PostgresIdentityRelationshipAuthority:
-    def __init__(self, identity: _PostgresIdentityAuthority) -> None:
-        self._identity = identity
-
-    async def lock_current(
-        self,
-        connection: asyncpg.Connection,
-        receipt: PolicyReceiptV2,
-        request: ActionExecutionRequest,
-    ) -> tuple[RelationshipEvidencePort, ...]:
-        binding = await self._identity.lock_binding(
-            connection,
-            actor_id=request.context.actor_id,
-            device_id=request.context.device_id,
-            expected_binding_version=request.context.binding_version,
-            now=request.now,
-        )
-        expected = set(
-            zip(
-                receipt.relationship_snapshot_ids,
-                receipt.relationship_snapshot_revisions,
-                strict=True,
-            )
-        )
-        receipted = {
-            (item.snapshot_id, item.revision)
-            for item in binding.relationships
-            if (item.snapshot_id, item.revision) in expected
-        }
-        if receipted != expected:
-            raise ActionAuthorizationError("current relationship evidence mismatch")
-        # The decision context carried every current binding relationship
-        # (all of them are hashed), so rebuild exactly that set: a
-        # relationship added or withdrawn since issue changes the hash and
-        # fails closed, while the receipt still names only what it relied on.
-        return tuple(binding.relationships)
-
-
-class _PostgresDeviceAuthority:
-    def __init__(self, *, accept_bound_device: bool = False) -> None:
-        self._accept_bound_device = accept_bound_device
-
-    async def lock_current(
-        self,
-        connection: asyncpg.Connection,
-        *,
-        actor_id: str,
-        device_id: str,
-        binding_id: str,
-        binding_version: int,
-        now: datetime,
-    ) -> DeviceTrustSnapshot:
-        try:
-            raw = await connection.fetchval(
-                "SELECT action_device_lock_trust($1, $2, $3, $4, $5)",
-                actor_id,
-                device_id,
-                binding_id,
-                binding_version,
-                now,
-            )
-        except asyncpg.UndefinedFunctionError:
-            return DeviceTrustSnapshot(
-                available=False,
-                trust="untrusted",
-                reason_code="device_authority_unavailable",
-            )
-        except asyncpg.PostgresError as exc:
-            raise PersistentSessionUnavailable(str(exc)) from exc
-        payload = _decode_json_object(raw, name="Device trust authority")
-        try:
-            return snapshot_from_authority(
-                payload, accept_bound_device=self._accept_bound_device
-            )
-        except ValueError as exc:
-            raise PersistentSessionUnavailable(str(exc)) from exc
-
-
-class _PostgresPrincipalAuthority:
-    async def lock_current(
-        self,
-        connection: asyncpg.Connection,
-        receipt: PolicyReceiptV2,
-        request: ActionExecutionRequest,
-    ) -> str:
-        del receipt
-        actor = await connection.fetchval(
-            "SELECT NULLIF(current_setting('app.authenticated_actor', true), '')"
-        )
-        if not isinstance(actor, str) or actor != request.context.actor_id:
-            raise ActionAuthorizationError("authenticated principal is unavailable")
-        return actor
-
-
-class _PostgresSessionActionAuthority:
-    def __init__(self, device: _PostgresDeviceAuthority) -> None:
-        self._device = device
-
-    async def lock_current(
-        self,
-        connection: asyncpg.Connection,
-        receipt: PolicyReceiptV2,
-        request: ActionExecutionRequest,
-    ) -> PolicyActionResourceFence:
-        expected = effective_action_resource_fence(request.context)
-        if expected != receipt.action_resource_fence:
-            raise ActionAuthorizationError("Session action fence mismatch")
-        trust = await self._device.lock_current(
-            connection,
-            actor_id=request.context.actor_id,
-            device_id=request.context.device_id,
-            binding_id=request.context.binding_id,
-            binding_version=request.context.binding_version,
-            now=request.now,
-        )
-        if trust.trust != request.context.device_trust:
-            raise ActionAuthorizationError("current Device trust fence mismatch")
-        valid = await connection.fetchval(
-            """
-            SELECT session_runtime_assert_action_context(
-                $1, $2, $3, $4, $5, $6, $7
-            )
-            """,
-            receipt.session_id,
-            receipt.runtime_profile_id,
-            receipt.actor_id,
-            receipt.device_id,
-            receipt.binding_id,
-            receipt.binding_version,
-            receipt.session_epoch,
-        )
-        if valid is not True:
-            raise ActionAuthorizationError("Session action authority is unavailable")
-        return receipt.action_resource_fence
-
-
-class _ActionExecutorReceiptRepository(ConnectionBoundPolicyReceiptRepository):
-    """Append receipts through the Policy SECURITY DEFINER bridge only."""
-
-    async def insert_many(
-        self,
-        connection: asyncpg.Connection,
-        receipts: tuple[PolicyReceiptV2, ...],
-    ) -> None:
-        if not connection.is_in_transaction():
-            raise RuntimeError("receipt batch requires caller-owned transaction")
-        if len({item.receipt_id for item in receipts}) != len(receipts):
-            raise PolicyReceiptConflictError("receipt batch contains duplicate ids")
-        for receipt in sorted(receipts, key=lambda item: item.receipt_id):
-            raw = await connection.fetchval(
-                "SELECT action_policy_insert_receipt($1::jsonb)",
-                _canonical_json(receipt.model_dump(mode="json")),
-            )
-            persisted = PolicyReceiptV2.model_validate(
-                _decode_json_object(raw, name="persisted Policy receipt")
-            )
-            if persisted != receipt:
-                raise PolicyReceiptConflictError(
-                    "policy receipt id is immutable and content differs"
-                )
-
-
-def _persona_snapshot(assignment_id: str) -> tuple[str, int]:
-    persona_id, separator, raw_version = assignment_id.rpartition(":v")
-    if not separator or not persona_id or not raw_version.isdigit():
-        raise PersistentSessionUnavailable(
-            "persona assignment lacks a canonical persona/version snapshot"
-        )
-    version = int(raw_version)
-    if version < 1:
-        raise PersistentSessionUnavailable("persona version is invalid")
-    return persona_id, version
-
-
-def _obligation_union(
-    receipts: tuple[PolicyReceiptV2, ...],
-) -> tuple[PolicyObligationSpec, ...]:
-    by_code: dict[str, PolicyObligationSpec] = {}
-    for receipt in receipts:
-        for obligation in receipt.obligations:
-            encoded = _canonical_json(obligation.model_dump(mode="json"))
-            previous = by_code.get(obligation.code.value)
-            if (
-                previous is not None
-                and _canonical_json(previous.model_dump(mode="json")) != encoded
-            ):
-                raise PersistentSessionUnavailable(
-                    "Policy returned conflicting obligation parameters"
-                )
-            by_code[obligation.code.value] = obligation
-    return tuple(by_code[key] for key in sorted(by_code))
-
-
-@dataclass(frozen=True, slots=True)
-class _IssuedProfile:
-    profile: RuntimeProfileSignedV2
-    event: SessionEvent
-    allowed: tuple[tuple[PolicyContext, PolicyReceiptV2, object | None], ...]
-    denied: tuple[PolicyReceiptV2, ...]
-
-    @property
-    def allowed_receipts(self) -> tuple[PolicyReceiptV2, ...]:
-        return tuple(item[1] for item in self.allowed)
-
-    def requests(self, *, now: datetime) -> tuple[ActionExecutionRequest, ...]:
-        return tuple(
-            ActionExecutionRequest(
-                receipt_id=receipt.receipt_id,
-                context=context,
-                now=now,
-                consent_authority_proof=consent_authority_proof,
-            )
-            for context, receipt, consent_authority_proof in self.allowed
-        )
 
 
 class PostgresSessionRuntimeService:
@@ -3040,9 +2280,8 @@ def build_postgres_session_runtime_service(
 __all__ = [
     "PersistentSessionDenied",
     "PersistentSessionExpired",
+    "PersistentSessionNotFound",
     "PersistentSessionUnavailable",
-    "SessionCloseResult",
     "PostgresSessionRuntimeService",
-    "StartPersistentSessionCommand",
     "build_postgres_session_runtime_service",
 ]
