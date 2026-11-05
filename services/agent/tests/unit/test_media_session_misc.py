@@ -341,6 +341,51 @@ async def test_empty_tail_discard_with_speech_gets_audible_fallback(
 
 
 @pytest.mark.asyncio
+async def test_stale_empty_tail_does_not_nudge_after_input_fence_advanced() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = _device_identity("device-stale-empty-tail")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry.open_session(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        provider.texts.clear()
+        provider.last_empty_segment_evidence = ASREmptySegmentEvidence(
+            had_speech=True,
+            provider_failed=False,
+            retried=True,
+        )
+        context.pending.turn_start_sample = 0
+        context.pending.turn_endpoint_sample = 16_000
+        context.pending.turn_retire_sample = 16_640
+        context.pending.turn_endpoint_tail_deadline = None
+        context.pending.turn_input_fence = GenerationFence(
+            identity.session_id, 99, 1, 0
+        )
+
+        await registry._expire_endpoint_tail(
+            identity.session_id,
+            context.stream_epoch,
+            16_000,
+        )
+
+        assert context.missed_hearing_nudge_count == 0
+        await asyncio.sleep(0.05)
+        assert provider.texts == []
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
 async def test_missed_hearing_nudge_is_suppressed_after_crisis_reply() -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()
