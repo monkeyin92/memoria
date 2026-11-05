@@ -146,12 +146,11 @@ def _resolve_media_turn_text(
         start_sample=start_sample,
         end_sample=end_sample,
     )
-    preferred_clock = _preferred_clock_fact_text(
-        context,
-        stream_epoch=stream_epoch,
-        start_sample=start_sample,
-        end_sample=end_sample,
-    )
+    latest_final = context.pending.last_accepted_final
+    # Keep long clauses, but discard a stale segment that crosses this turn's start.
+    if text and latest_final is not None and latest_final.stream_epoch == stream_epoch and latest_final.capture_start_sample >= start_sample and latest_final.capture_end_sample <= end_sample:  # noqa: E501
+        text = context.runtime.speech_timeline.projected_text(stream_epoch=stream_epoch, start_sample=start_sample, end_sample=end_sample, exclude_cross_boundary=True)  # noqa: E501
+    preferred_clock = _preferred_clock_fact_text(context, stream_epoch=stream_epoch, start_sample=start_sample, end_sample=end_sample)
     preferred_live = _preferred_live_query_text(context)
     if preferred_live:
         # An authoritative forced text means the in-range timeline text comes
@@ -434,6 +433,7 @@ class MediaSessionCommitMixin:
             )
         if accepted.is_final:
             context.last_final_accepted_at = time.monotonic()
+            context.pending.last_accepted_final = accepted
             # Establish the range fence before projection/transcript yields.
             self._split_pending_turn_at_unvoiced_gap(context, accepted)
         # The provider result is never forwarded after supervisor policy has

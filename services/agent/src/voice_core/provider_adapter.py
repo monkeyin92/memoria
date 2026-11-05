@@ -234,15 +234,15 @@ class ExistingVoiceProviderAdapter:
         asr = self._asr
         if asr is None:
             return None
-        task_epoch = self._global_asr_task_epoch(asr)
-        task_sample_origin = int(asr.task_sample_origin)
-        audio_start = getattr(asr, "task_audio_start_sample", None)
-        audio_end = getattr(asr, "task_audio_end_sample", None)
+        task_epoch, task_sample_origin = self._global_asr_task_epoch(asr), int(asr.task_sample_origin)
+        audio_start, audio_end = getattr(asr, "task_audio_start_sample", None), getattr(asr, "task_audio_end_sample", None)
         send_count = int(getattr(asr, "task_audio_send_count", 0))
+        # A rotated provider snapshot cannot describe the current task.
+        if audio_start is not None and audio_end is not None and (audio_start < task_sample_origin or audio_end <= audio_start):  # noqa: E501
+            logger.warning("discarding stale provider ASR audio snapshot task_epoch=%s origin=%s start=%s end=%s", task_epoch, task_sample_origin, audio_start, audio_end)  # noqa: E501
+            return None
         if audio_start is None or audio_end is None or send_count < 1:
-            audio_start = None
-            audio_end = None
-            send_count = 0
+            audio_start, audio_end, send_count = None, None, 0
         return ProviderAudioTaskSnapshot(
             task_epoch=task_epoch,
             task_sample_origin=task_sample_origin,
