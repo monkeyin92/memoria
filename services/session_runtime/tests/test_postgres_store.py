@@ -892,10 +892,12 @@ async def postgres_runtime_with_consent(
 async def test_authorize_action_reuses_same_transaction_consent_discovery(
     postgres_runtime_with_consent: tuple[PostgresSessionRuntimeStore, str],
 ) -> None:
-    from services.session_runtime.service import (
-        PersistentSessionDenied,
+    from services.session_runtime.commands import (
         StartPersistentSessionCommand,
         SwitchPersistentSubjectCommand,
+    )
+    from services.session_runtime.service import (
+        PersistentSessionDenied,
         build_postgres_session_runtime_service,
     )
 
@@ -1027,11 +1029,11 @@ async def test_authorize_action_reuses_same_transaction_consent_discovery(
 async def test_profile_issue_and_decide_discover_current_consent(
     postgres_runtime_with_consent: tuple[PostgresSessionRuntimeStore, str],
 ) -> None:
-    from services.session_runtime.service import (
+    from services.session_runtime.commands import (
         StartPersistentSessionCommand,
         SwitchPersistentSubjectCommand,
-        build_postgres_session_runtime_service,
     )
+    from services.session_runtime.service import build_postgres_session_runtime_service
 
     store, bootstrap_dsn = postgres_runtime_with_consent
     now = datetime.now(UTC)
@@ -1099,11 +1101,11 @@ async def test_profile_issue_and_decide_discover_current_consent(
 async def test_action_receipt_subject_must_match_current_active_subject(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
 ) -> None:
-    from services.session_runtime.service import (
+    from services.session_runtime.commands import (
         StartPersistentSessionCommand,
         SwitchPersistentSubjectCommand,
-        build_postgres_session_runtime_service,
     )
+    from services.session_runtime.service import build_postgres_session_runtime_service
 
     store, _bootstrap_dsn = postgres_runtime
     now = datetime.now(UTC)
@@ -1169,10 +1171,12 @@ async def test_action_receipt_subject_must_match_current_active_subject(
 async def test_concurrent_authorize_actions_have_one_fence_winner(
     postgres_runtime_with_consent: tuple[PostgresSessionRuntimeStore, str],
 ) -> None:
-    from services.session_runtime.service import (
-        SessionRuntimeConflict,
+    from services.session_runtime.commands import (
         StartPersistentSessionCommand,
         SwitchPersistentSubjectCommand,
+    )
+    from services.session_runtime.service import (
+        SessionRuntimeConflict,
         build_postgres_session_runtime_service,
     )
 
@@ -1261,10 +1265,12 @@ async def test_concurrent_authorize_actions_have_one_fence_winner(
 async def test_authorize_action_replays_terminal_deny_after_consent_is_added(
     postgres_runtime_with_consent: tuple[PostgresSessionRuntimeStore, str],
 ) -> None:
-    from services.session_runtime.service import (
-        PersistentSessionDenied,
+    from services.session_runtime.commands import (
         StartPersistentSessionCommand,
         SwitchPersistentSubjectCommand,
+    )
+    from services.session_runtime.service import (
+        PersistentSessionDenied,
         build_postgres_session_runtime_service,
     )
 
@@ -1349,11 +1355,11 @@ async def test_authorize_action_replays_terminal_deny_after_consent_is_added(
 async def test_authorize_action_accepts_one_step_turn_interrupt_and_tool_fences(
     postgres_runtime_with_consent: tuple[PostgresSessionRuntimeStore, str],
 ) -> None:
-    from services.session_runtime.service import (
+    from services.session_runtime.commands import (
         StartPersistentSessionCommand,
         SwitchPersistentSubjectCommand,
-        build_postgres_session_runtime_service,
     )
+    from services.session_runtime.service import build_postgres_session_runtime_service
 
     store, bootstrap_dsn = postgres_runtime_with_consent
     now = datetime.now(UTC)
@@ -1459,10 +1465,12 @@ async def test_authorize_action_denies_non_effective_current_consent(
     postgres_runtime_with_consent: tuple[PostgresSessionRuntimeStore, str],
     evidence_status: str,
 ) -> None:
-    from services.session_runtime.service import (
-        PersistentSessionDenied,
+    from services.session_runtime.commands import (
         StartPersistentSessionCommand,
         SwitchPersistentSubjectCommand,
+    )
+    from services.session_runtime.service import (
+        PersistentSessionDenied,
         build_postgres_session_runtime_service,
     )
 
@@ -1581,10 +1589,12 @@ async def test_authorize_action_rejects_resource_scoped_capability_without_resou
 async def test_authorize_action_rolls_back_fence_when_terminal_authority_fails(
     postgres_runtime_with_consent: tuple[PostgresSessionRuntimeStore, str],
 ) -> None:
-    from services.session_runtime.service import (
-        PersistentSessionUnavailable,
+    from services.session_runtime.commands import (
         StartPersistentSessionCommand,
         SwitchPersistentSubjectCommand,
+    )
+    from services.session_runtime.service import (
+        PersistentSessionUnavailable,
         build_postgres_session_runtime_service,
     )
 
@@ -1689,14 +1699,16 @@ async def test_sensitive_write_discovers_consent_on_action_executor_transaction(
         ProductionAuthorityAdapters,
         build_sensitive_write_service,
     )
-    from services.session_runtime.service import (
+    from services.session_runtime.commands import (
         StartPersistentSessionCommand,
         SwitchPersistentSubjectCommand,
+    )
+    from services.session_runtime.postgres_authorities import (
         _ActionExecutorReceiptRepository,
         _PostgresIdentityAuthority,
         _PostgresPrincipalAuthority,
-        build_postgres_session_runtime_service,
     )
+    from services.session_runtime.service import build_postgres_session_runtime_service
 
     class _ExactActionAuthority:
         async def lock_current(
@@ -2216,10 +2228,8 @@ async def test_postgres_start_atomically_degrades_incomplete_subject_facts(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from services.session_runtime.service import (
-        StartPersistentSessionCommand,
-        build_postgres_session_runtime_service,
-    )
+    from services.session_runtime.commands import StartPersistentSessionCommand
+    from services.session_runtime.service import build_postgres_session_runtime_service
     from services.session_runtime.subject_resolver import SubjectCandidate
 
     store, bootstrap_dsn = postgres_runtime
@@ -2307,11 +2317,11 @@ async def test_postgres_switch_atomically_degrades_incomplete_subject_facts(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from services.session_runtime.service import (
+    from services.session_runtime.commands import (
         StartPersistentSessionCommand,
         SwitchPersistentSubjectCommand,
-        build_postgres_session_runtime_service,
     )
+    from services.session_runtime.service import build_postgres_session_runtime_service
 
     store, bootstrap_dsn = postgres_runtime
     actor_id = "actor-switch-facts-unverified"
@@ -2446,10 +2456,12 @@ async def test_parent_for_child_primary_snapshot_never_defaults_to_account_owner
 async def test_postgres_device_admin_switch_keeps_actor_separate_from_parent_subject(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
 ) -> None:
-    from services.session_runtime.service import (
-        PersistentSessionDenied,
+    from services.session_runtime.commands import (
         StartPersistentSessionCommand,
         SwitchPersistentSubjectCommand,
+    )
+    from services.session_runtime.service import (
+        PersistentSessionDenied,
         build_postgres_session_runtime_service,
     )
 
@@ -2513,11 +2525,11 @@ async def test_postgres_device_admin_switch_keeps_actor_separate_from_parent_sub
 async def test_postgres_minor_without_consent_gets_only_audited_denies(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
 ) -> None:
-    from services.session_runtime.service import (
+    from services.session_runtime.commands import (
         StartPersistentSessionCommand,
         SwitchPersistentSubjectCommand,
-        build_postgres_session_runtime_service,
     )
+    from services.session_runtime.service import build_postgres_session_runtime_service
 
     store, bootstrap_dsn = postgres_runtime
     admin = await asyncpg.connect(bootstrap_dsn)
@@ -3569,11 +3581,13 @@ def test_session_schema_never_grants_executor_consent_mutation_lock_ports() -> N
 async def test_tool_effect_commit_replay_conflict_and_reconcile_are_durable(
     postgres_runtime_with_consent: tuple[PostgresSessionRuntimeStore, str],
 ) -> None:
-    from services.session_runtime.service import (
+    from services.session_runtime.commands import (
         CommitToolEffectCommand,
-        PersistentSessionDenied,
         StartPersistentSessionCommand,
         SwitchPersistentSubjectCommand,
+    )
+    from services.session_runtime.service import (
+        PersistentSessionDenied,
         build_postgres_session_runtime_service,
     )
 
@@ -4092,9 +4106,9 @@ async def test_postgres_close_session_conflicts_after_failure_and_missing(
 async def test_service_close_session_replays_idempotently_and_rejects_unknown(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
 ) -> None:
+    from services.session_runtime.commands import SessionCloseResult
     from services.session_runtime.service import (
         PersistentSessionNotFound,
-        SessionCloseResult,
         build_postgres_session_runtime_service,
     )
 
@@ -4155,10 +4169,8 @@ async def test_service_close_session_replays_idempotently_and_rejects_unknown(
 async def test_service_start_profile_ttl_is_per_session_and_bounded(
     postgres_runtime: tuple[PostgresSessionRuntimeStore, str],
 ) -> None:
-    from services.session_runtime.service import (
-        StartPersistentSessionCommand,
-        build_postgres_session_runtime_service,
-    )
+    from services.session_runtime.commands import StartPersistentSessionCommand
+    from services.session_runtime.service import build_postgres_session_runtime_service
 
     store, _bootstrap_dsn = postgres_runtime
     service = build_postgres_session_runtime_service(
@@ -4588,7 +4600,7 @@ async def _device_trust(
 
 
 def _start_command(*, session_id: str, binding_version: int) -> object:
-    from services.session_runtime.service import StartPersistentSessionCommand
+    from services.session_runtime.commands import StartPersistentSessionCommand
 
     return StartPersistentSessionCommand(
         session_id=session_id,
