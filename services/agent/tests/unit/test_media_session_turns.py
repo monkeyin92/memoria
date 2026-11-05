@@ -91,7 +91,6 @@ from services.agent.tests.unit.media_session_support import (
 )
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.agent.tests.unit.runtime_state_helpers import set_floor
-from services.common.llm_thinking_filler import LLM_THINKING_TEXT
 from services.speaker.domain import SpeakerDecision, permissions_for_speaker
 
 
@@ -3686,10 +3685,7 @@ async def test_duplicate_media_turn_is_skipped_while_its_reply_is_in_flight() ->
         assert fence is not None, reason
         await asyncio.wait_for(provider.ack_started.wait(), timeout=2)
         assert registry._reply_in_flight(context)
-        # The board re-transcribes the same question over the contiguous range.
-        # Behind an accepted final the real pipeline rejects this preview as
-        # straddles_committed_without_timing and still commits the extension, so
-        # pin the timeline directly instead of going through accept_asr_result.
+        duplicate_start = context.runtime.speech_timeline.committed_sample
         duplicate_segment = SpeechSegment(
             session_id=identity.session_id,
             stream_epoch=identity.stream_epoch,
@@ -3697,21 +3693,21 @@ async def test_duplicate_media_turn_is_skipped_while_its_reply_is_in_flight() ->
             segment_id="duplicate-final",
             revision=1,
             kind=SegmentKind.ASR_FINAL,
-            capture_start_sample=600,
+            capture_start_sample=duplicate_start,
             capture_end_sample=1200,
             text=question,
             final=True,
         )
         assert context.runtime.ingest_media_speech_segment(duplicate_segment)
         await registry._apply_projection_segment(context, duplicate_segment)
-        context.pending.turn_start_sample = 600
+        context.pending.turn_start_sample = duplicate_start
         context.pending.turn_end_sample = 1200
         context.pending.turn_endpoint_sample = 1200
         context.pending.turn_retire_sample = 1240
         repeat_fence, repeat_reason = await registry.commit_user_turn(
             identity.session_id,
             stream_epoch=identity.stream_epoch,
-            start_sample=600,
+            start_sample=duplicate_start,
             end_sample=1200,
             retire_sample=1240,
         )
@@ -3841,7 +3837,6 @@ async def test_answer_still_delivered_after_same_turn_generation_bump() -> None:
             media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT,
         ]
         assert LIVE_LOOKUP_FILLER in provider.output_texts
-        assert LLM_THINKING_TEXT not in provider.output_texts
         claim = context.output.delegation_output_claims.get(fence)
         assert claim is not None
         assert claim.state is DelegationOutputState.COMPLETED
@@ -4576,6 +4571,250 @@ async def test_absolute_endpoint_tail_commits_stable_partial_with_missing_final_
     ]
     assert committed and committed[-1]["provider_final_missing"] is True
     assert context.pending.pending_partial is None
+
+
+async def _turn_with_partial_then_vad_end(
+    registry: MediaVoiceCoreRegistry, session: Any, identity: SessionIdentity
+) -> None:
+    """The partial ends 4 s before the device VAD end (t023: the device ended 4.2 s after the child), so
+    the partial does not cover the endpoint and the commit waits for a covering final."""
+
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="late-final-start",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=0,
+            capture_end_sample=1,
+        ),
+    )
+    assert await registry.accept_asr_result(
+        identity.session_id,
+        ASRResult(
+            task_epoch=1,
+            sentence_id="late-final-sentence",
+            revision=1,
+            capture_start_sample=0,
+            capture_end_sample=600,
+            text="有同学总是欺负我",
+            is_final=False,
+            confidence=0.9,
+            stream_epoch=1,
+        ),
+    )
+    await registry.on_speech_segment(
+        session,
+        SpeechSegment(
+            session_id=identity.session_id,
+            stream_epoch=1,
+            provider_task_epoch=0,
+            segment_id="late-final-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=64_600,
+            capture_end_sample=64_601,
+            final=True,
+            voiced_end_sample=64_600,
+        ),
+    )
+
+
+def _late_final_registry(fallback_s: float) -> MediaVoiceCoreRegistry:
+    return MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: FakeMediaProvider(),
+        turn_endpoint_grace_s=0.001,
+        turn_endpoint_min_grace_s=0,
+        turn_endpoint_max_grace_s=0.01,
+        turn_endpoint_absolute_timeout_s=60,
+        turn_final_missing_fallback_s=fallback_s,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_partial_short_of_a_late_vad_end_commits_at_the_soft_tail() -> None:
+    """Device soak 2026-11-01 t023: the device VAD ended 4.2 s after the child, ASR never covered it, the turn
+    waited for the 6 s hard tail, its commit started there, and the session closed with the sentence
+    unanswered."""
+
+    registry = _late_final_registry(0.02)
+    identity = SessionIdentity("late-provider-final")
+    session = registry.bridge.bridge.open(identity)
+    await _turn_with_partial_then_vad_end(registry, session, identity)
+
+    await asyncio.sleep(0.06)
+
+    context = registry.session_state(identity.session_id)
+    assert [
+        turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ] == ["有同学总是欺负我"]
+    assert context.pending.pending_partial is None
+
+
+@pytest.mark.asyncio
+async def test_a_final_short_of_a_late_vad_end_commits_at_the_soft_tail_with_its_own_text() -> None:
+    registry = _late_final_registry(0.05)
+    identity = SessionIdentity("final-in-time")
+    session = registry.bridge.bridge.open(identity)
+    await _turn_with_partial_then_vad_end(registry, session, identity)
+    final = ASRResult(
+        task_epoch=1,
+        sentence_id="late-final-sentence",
+        revision=2,
+        capture_start_sample=0,
+        capture_end_sample=600,
+        text="有同学总是欺负我，我不想去学校了",
+        is_final=True,
+        confidence=0.9,
+        stream_epoch=1,
+    )
+    context = registry.session_state(identity.session_id)
+    assert await registry.accept_asr_result(identity.session_id, final)
+    registry._observe_final_asr_result(context, final)
+
+    await asyncio.sleep(0.1)
+
+    assert [
+        turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ] == ["有同学总是欺负我，我不想去学校了"]
+
+
+@pytest.mark.asyncio
+async def test_words_after_a_noise_endpoint_commit_without_waiting_for_its_tail() -> None:
+    """Device soak 2026-11-01 t007: 0.2 s of noise right after a reply pinned the endpoint; the child's
+    question came after it with no new device VAD.  The endpoint commit found no words, and the turn sat
+    until the noise's 6 s tail, where the session closed under the question's commit."""
+
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: FakeMediaProvider(),
+        turn_endpoint_grace_s=0.001,
+        turn_endpoint_min_grace_s=0,
+        turn_endpoint_max_grace_s=0.01,
+        turn_endpoint_absolute_timeout_s=60,
+        turn_final_missing_fallback_s=0,
+    )
+    identity = SessionIdentity("words-after-noise-endpoint")
+    session = registry.bridge.bridge.open(identity)
+    for segment_id, start, final in (("noise-start", 0, False), ("noise-end", 3_200, True)):
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=1,
+                provider_task_epoch=0,
+                segment_id=segment_id,
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=start,
+                capture_end_sample=start + 1,
+                final=final,
+                voiced_end_sample=start if final else None,
+            ),
+        )
+    question = ASRResult(
+        task_epoch=1,
+        sentence_id="question-after-noise",
+        revision=1,
+        capture_start_sample=36_000,
+        capture_end_sample=69_600,
+        text="恐龙都吃什么东西",
+        is_final=True,
+        confidence=0.9,
+        stream_epoch=1,
+    )
+    context = registry.session_state(identity.session_id)
+    assert await registry.accept_asr_result(identity.session_id, question)
+    registry._observe_final_asr_result(context, question)
+
+    await asyncio.sleep(0.1)
+
+    assert [
+        turn.content for turn in context.runtime.orchestrator.context.turns if turn.role == "user"
+    ] == ["恐龙都吃什么东西"]
+
+
+async def _noise_endpoint_then_words(
+    words_end: int,
+) -> tuple[MediaVoiceCoreRegistry, Any, float]:
+    """Noise pins the endpoint at sample 3200; 60 ms later ASR reports words ending at ``words_end``."""
+
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: FakeMediaProvider(),
+        turn_endpoint_grace_s=60,
+        turn_endpoint_min_grace_s=60,
+        turn_endpoint_max_grace_s=60,
+        turn_endpoint_absolute_timeout_s=61,
+        turn_final_missing_fallback_s=30,
+    )
+    identity = SessionIdentity(f"words-past-noise-endpoint-{words_end}")
+    session = registry.bridge.bridge.open(identity)
+    for segment_id, start, final in (("noise-start", 0, False), ("noise-end", 3_200, True)):
+        await registry.on_speech_segment(
+            session,
+            SpeechSegment(
+                session_id=identity.session_id,
+                stream_epoch=1,
+                provider_task_epoch=0,
+                segment_id=segment_id,
+                revision=1,
+                kind=SegmentKind.VAD,
+                capture_start_sample=start,
+                capture_end_sample=start + 1,
+                final=final,
+                voiced_end_sample=start if final else None,
+            ),
+        )
+    context = registry.session_state(identity.session_id)
+    first_deadline = context.pending.turn_endpoint_tail_deadline
+    assert first_deadline is not None
+    await asyncio.sleep(0.06)
+    assert await registry.accept_asr_result(
+        identity.session_id,
+        ASRResult(
+            task_epoch=1,
+            sentence_id="still-talking",
+            revision=1,
+            capture_start_sample=8_000,
+            capture_end_sample=words_end,
+            text="有同学总是欺负我",
+            is_final=False,
+            confidence=0.9,
+            stream_epoch=1,
+        ),
+    )
+    return registry, context, first_deadline
+
+
+@pytest.mark.asyncio
+async def test_words_past_a_noise_endpoint_restart_its_absolute_tail() -> None:
+    """Device soak 2026-11-01 t023: echo pinned the endpoint, the child talked on with no new device VAD,
+    and the 6 s tail of the echo's endpoint put the device on standby under the child's own commit."""
+
+    registry, context, first_deadline = await _noise_endpoint_then_words(3_200 + 32_000)
+
+    restarted = context.pending.turn_endpoint_tail_deadline or 0
+    assert restarted >= first_deadline + 0.05, "the tail now counts from the child's words"
+    soft = context.pending.final_missing_fallback_handle
+    assert soft is not None and soft.when() >= asyncio.get_running_loop().time() + 29.9, (
+        "the soft tail counts from the child's words too"
+    )
+    assert context.pending.turn_endpoint_sample == 3_200
+    assert not context.standby_requested
+    await registry.finalize_session(context.identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_words_inside_the_coverage_tolerance_keep_the_tail() -> None:
+    registry, context, first_deadline = await _noise_endpoint_then_words(3_200 + 8_000)
+
+    assert context.pending.turn_endpoint_tail_deadline == first_deadline
+    await registry.finalize_session(context.identity.session_id)
 
 
 @pytest.mark.asyncio
@@ -5497,6 +5736,42 @@ async def test_media_post_playback_echo_does_not_swallow_the_next_question(
     await _device_vad(window, "question-vad-end", voiced_end, final=True)
     await _wait_until(lambda: window.provider.prepared == [_QUESTION], timeout=3.0)
     assert _QUESTION in _user_turn_texts(context)
+
+
+@pytest.mark.asyncio
+async def test_media_child_repeating_the_reply_after_its_echo_tail_is_a_turn(
+    device_media_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Device soak 2026-11-01 t037: the robot offered an idiom and the child said it back 1 s after the
+    reply ended.  The words are in the reply, so the post-playback echo guard dropped the turn as
+    ``assistant_echo`` and the child got no answer.  Audio recorded only after the echo tail cannot hold
+    the reply's own voice."""
+
+    monkeypatch.setenv("MEDIA_PLAYBACK_FOLLOWUP_GRACE_S", "0.3")
+    window = await device_media_session("repeat-after-echo-tail", during_playback=False)
+    context = window.context
+    set_floor(
+        context.runtime,
+        played_assistant_text=_ECHOED_REPLY,
+        last_playback_completed_ns=time.monotonic_ns(),
+    )
+    context.last_playback_end_sample = 300_000
+    repeated = "水滴越来越重"
+
+    await _device_vad(window, "repeat-vad", 348_160, final=False)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="repeat",
+        start_sample=346_560,
+        end_sample=364_480,
+        text=repeated,
+    )
+    await _device_vad(window, "repeat-vad-end", 361_920, final=True)
+
+    await _wait_until(lambda: window.provider.prepared == [repeated], timeout=3.0)
+    assert repeated in _user_turn_texts(context)
 
 
 @pytest.mark.asyncio
@@ -7245,3 +7520,74 @@ async def test_question_final_after_a_pinned_noise_turn_commits_the_question() -
     assert context.pending.turn_start_sample == 523_520
     assert context.pending.turn_end_sample == 529_280
     assert context.pending.turn_endpoint_sample == 529_280
+
+
+async def _one_char_final_after_playback(
+    window: Any, *, voiced_end: int
+) -> None:
+    """2026-10-31 16:09 soak t023: 0.2 s after the reply ended the device VAD fired on the room,
+    ended 1.0 s later with no voiced sample (``voiced_end_sample == vad start``), and ASR made one
+    acknowledgement-shaped character of it.  The commit runs about 3 s after the playback ended,
+    past the 0.8 s backchannel guard."""
+
+    set_floor(
+        window.context.runtime,
+        played_assistant_text="小兔子最后找到了回家的路，你喜欢这个故事吗？",
+        last_playback_completed_ns=time.monotonic_ns() - 3_000_000_000,
+    )
+    await _device_vad(window, "room-vad", 320_000, final=False)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="room",
+        start_sample=318_400,
+        end_sample=324_000,
+        text="嗯",
+    )
+    await window.registry.on_speech_segment(
+        window.session,
+        SpeechSegment(
+            session_id=window.identity.session_id,
+            stream_epoch=window.identity.stream_epoch,
+            provider_task_epoch=0,
+            segment_id="room-vad-end",
+            revision=1,
+            kind=SegmentKind.VAD,
+            capture_start_sample=336_000,
+            capture_end_sample=336_001,
+            final=True,
+            voiced_end_sample=voiced_end,
+            near_end_rms=0.0035,
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_media_unvoiced_one_char_final_after_playback_is_not_a_turn(
+    device_media_session: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A one-character final over a device segment with no voiced sample is echo or noise: it must
+    not commit as a turn and take the floor from the child's real question."""
+
+    caplog.set_level(logging.INFO)
+    window = await device_media_session("unvoiced-one-char", during_playback=False)
+    await _one_char_final_after_playback(window, voiced_end=320_000)
+    await _wait_until(lambda: bool(_commit_timing_fields(caplog)), timeout=3.0)
+
+    [fields] = _commit_timing_fields(caplog)
+    assert fields["result"] != "committed"
+    assert window.provider.prepared == []
+    assert "嗯" not in _user_turn_texts(window.context)
+
+
+@pytest.mark.asyncio
+async def test_media_voiced_one_char_final_after_playback_still_commits(
+    device_media_session: Any,
+) -> None:
+    """The same 「嗯」 with voiced device samples is the child answering the robot's question."""
+
+    window = await device_media_session("voiced-one-char", during_playback=False)
+    await _one_char_final_after_playback(window, voiced_end=324_000)
+    await _wait_until(lambda: window.provider.prepared == ["嗯"], timeout=3.0)
+    assert "嗯" in _user_turn_texts(window.context)

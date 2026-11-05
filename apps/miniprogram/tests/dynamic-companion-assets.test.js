@@ -71,18 +71,20 @@ test("the full expression frame set stays out of the package and out of pages", 
   }
 });
 
-test("v4 home keeps the mascot off the dashboard; settings keep none", () => {
+test("home uses packed brand art while device and private archive stay hardware focused", () => {
   const home = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const homeJson = require("../pages/home/index.json");
   const device = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
   const memory = fs.readFileSync(path.join(root, "pages/child-memory/index.wxml"), "utf8");
-  assert.doesNotMatch(home, /<face-badge/);
-  assert.deepEqual(homeJson.usingComponents, { "mp-icon": "/components/mp-icon/index" });
+  assert.match(home, /<face-badge role="starlight" size="review"/);
+  assert.ok(homeJson.usingComponents["face-badge"]);
+  assert.ok(homeJson.usingComponents["device-screen"]);
+  assert.equal(homeJson.usingComponents["mp-icon"], undefined);
   assert.doesNotMatch(device, /<face-badge/);
-  assert.doesNotMatch(home, /<device-screen/);
-  assert.doesNotMatch(device, /<device-screen/);
-  assert.match(home, /class="trial-card trial-card-xl home-usage-card" bindtap="openDevice"/);
+  assert.match(home, /<device-screen online="\{\{online\}\}"/);
+  assert.doesNotMatch(device, /<face-badge/);
+  assert.match(home, /class="trial-card home-device-card" bindtap="openDevice"/);
   assert.match(device, /trialSettingsVisible|trial-inset/);
-  assert.match(memory, /<face-badge/);
-  assert.match(memory, /mood="thinking"|mood="happy"/);
+  assert.match(memory, /<device-screen/);
+  assert.doesNotMatch(memory, /mascot-curious|face-badge/);
 });

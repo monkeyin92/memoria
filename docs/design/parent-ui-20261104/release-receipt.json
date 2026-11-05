@@ -1,0 +1,34 @@
+{
+  "recordedAt": "2026-11-04T03:02:26.144Z",
+  "appid": "wx20a3a044b52fcbb7",
+  "version": "0.2.20261104.1",
+  "sourceCommit": "01cdfe44b31646bd6b215ba47ec0019b46380d50",
+  "sourceBranch": "origin/main",
+  "cleanSourceCheckout": true,
+  "projectConfigSha256": "bee3cb2005bd5d6652fb2a4a82f5441362c8afd56e7c156bc80c5a42af5a8819",
+  "validation": {
+    "testsPassed": 640,
+    "testsFailed": 0,
+    "testsSkipped": 0,
+    "compiledFiles": 292
+  },
+  "upload": {
+    "method": "wechat-devtools-cli",
+    "status": "success",
+    "packageBytes": 1753679,
+    "log": "release-upload.txt",
+    "logSha256": "56d84b28d90cb3f94deff2e2242c3bb6cceadad765e98be792fcbbab66554a70"
+  },
+  "ciUploadAttempt": {
+    "status": "rejected",
+    "errCode": -10008,
+    "reason": "IP not in CI upload whitelist; switched to authenticated developer tools without changing permissions"
+  },
+  "scope": {
+    "developerVersionUploaded": true,
+    "experienceVersionConfirmed": false,
+    "reviewSubmitted": false,
+    "productionReleased": false,
+    "wechatPhoneAcceptanceCompleted": false
+  }
+}

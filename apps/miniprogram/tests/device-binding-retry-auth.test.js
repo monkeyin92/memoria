@@ -300,7 +300,7 @@ test("device retry while logged out asks for login and does not sync", async () 
   restore();
 });
 
-test("device companion follows the account profile companion_id", async () => {
+test("device presentation keeps the default voice with a legacy runtime persona", async () => {
   const state = makeAuth();
   const restore = stubApi({
     ...authStubs(state),
@@ -321,7 +321,8 @@ test("device companion follows the account profile companion_id", async () => {
   await withPage("../pages/device/index", async (page) => {
     await page.loadDevice();
     assert.equal(page.data.heroRoleId, "starlight");
-    assert.equal(page.data.personaName, "星澜");
+    assert.equal(page.data.personaName, "Memoria");
+    assert.equal(page.data.personaVoice, "默认声音");
   });
   restore();
 });

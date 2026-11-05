@@ -42,6 +42,7 @@
 - `docs/acceptance/run-20261015-llm-thinking/design.md`
 - `docs/acceptance/run-20261019-n10-vocab/findings.md`
 - `docs/acceptance/run-20261026-entry-round/RUNBOOK.md`
+- `docs/acceptance/run-20261031-entry-gate/findings.md`
 
 ---
 
@@ -3735,3 +3736,212 @@ N-10 的验收口径是真机「停」识别率 ≥ 80%（10 次）。本轮 0 /
 3. **签字归档**：演练结束后，由测试执行人、硬件负责人、产品经理联合签署本次测试报告，归档至 `docs/acceptance/run-20261026-entry-round/FINDINGS.md`。
 
 ---
+
+---
+
+## 来源：`docs/acceptance/run-20261031-entry-gate/findings.md`
+
+## 内测准入门禁 2026-10-31 真机结果
+
+门禁全文与竞品对标在 Notion「内测准入：对话体验门禁 v1」。真机都是 Mac 喇叭放语音、USB 唤醒，原始数据在 `devicetest/run-20261031-*`。
+
+### 联网查询
+
+- 生产 bridge 从 `20261031-batch-7ab0ee17` 起开 `LIVE_SEARCH_DEEPSEEK_ENABLED=true`（#491，DeepSeek `POST /v1/tools/search` + `deepseek-flash` 整理，2026-11-01 起每千次成功搜索 $0.75）。
+- 三轮 11 题：答案首字中位 5.9 s（3.5 s 垫话）→ 4.41 s（垫话改「稍等，我查查。」，#494）→ 3.13 s（1.5 s 内有结果就跳过垫话，#495，9/11 直接答，4 s 内 8/11）。搜索加整理 0.85–1.86 s。
+- 设备实际说的联网答案不进 transcript 归档，内容正确性以生产容器里跑同一代码的离线探测为准。
+- 11-01 天气追问（`20261101-batch-f326351a`，run-20261101-070416）：没说城市时先问城市不搜（#503）；「杭州」「那明天呢」「上海今天天气怎么样」「那后天呢」「你知道今天天气怎么样吗」5/5 各搜一次，搜索约 0.3 s、搜索加整理 0.9–1.2 s。上一轮（`c85d3fad`）两句追问没搜，根因是火山 ASR 的 partial 与 final 句子编号不同，轮次原话被拼两遍（10 轮里 8 轮 `text_len` 约翻倍），#504 修复后每轮 `text_len` 与原话一致。思考垫话（#502 已删）0 次。
+
+### R03 联网查询日期新鲜度与城市追问（2026-11-04，离线验收）
+
+范围：沿用 DeepSeek 通用搜索；不重开和风 key；不部署。
+
+**日期新鲜度【离线复现 + 修复】**
+
+- 复现：mock 只返回 2025-05-12 的「神舟」结果时，旧实现仍会把模型答「最近神舟飞船完成了对接。」原样播出（`test_stale_only_results_do_not_answer_a_recency_query` 修前失败）。
+- 修复：问句含「最近 / 最新 / 近日」时，`DeepSeekLiveSearch` 只保留距今 ≤30 天且带可解析日期的命中；全被滤掉则返回 `None`（走查不到），不再把旧闻当最近。
+- 非「最近」类问句仍把结果日期写进整理提示（「不要说成最近」），天气「今天 / 明天 / 后天」日期对齐仍主要靠提示词，未做硬过滤。【剩余缺口】
+- 路由：关键词直播名单有「最新 / 新闻」等，没有单独的「最近 / 近日」（「神舟最近消息」keyword=False，「神舟最新消息」keyword=True）。硬过滤只在已经走进 DeepSeek 搜索时生效；「最近」单独入关键词会误伤「我最近学会…」类非联网话。【剩余缺口：靠语义分类器进搜索】
+
+**城市追问【单元 / 媒体会话】**
+
+- `services/agent/tests/unit/test_weather_city_followup.py`：没说城市先问「你想查哪个城市呀？」；「杭州」后「那明天呢」带上杭州；换「上海」带上上海；先「那明天呢」再「杭州」搜「杭州明天天气」。
+- `services/agent/tests/unit/test_media_session_weather_followup.py`：设备路径上的同口径追问（含上下文冻结后才交委托答案；未说城市时「那明天呢」仍再问城市）。
+- 本轮 `uv run --frozen --extra dev pytest --no-cov` 上述城市用例 + DeepSeek 新鲜度用例全部通过。真机定向场景仍见 11-01 `run-20261101-214518`（追问 11/11）。
+
+**结果首字时延【分口径】**
+
+| 口径 | 数字 | 标签 |
+| --- | --- | --- |
+| 设备答案首字（垫话可跳过） | 中位 3.13 s，4 s 内 8/11，搜索加整理 0.85–1.86 s | 【真机实测】run-20261031-175926 / #495 |
+| 天气场景搜索加整理 | 约 0.9–1.2 s（搜索约 0.3 s） | 【真机实测】run-20261101-070416 |
+| 垫句宽限 | 1.5 s 内有委托结果则跳过垫句 | 【代码】`_LIVE_LOOKUP_FILLER_GRACE_S`；单测 `test_fast_media_delegation_skips_lookup_filler` 通过 |
+| 离线 mock resolve 墙钟 | n=20，p50 0.27 ms / p90 0.39 ms / max 0.77 ms | 【离线实测】即时 MockTransport，不含 DeepSeek 网络与 TTS，不可代替设备答案首字 |
+
+门禁「结果首字 ≤ 4 s」在 #495 真机上多数通过（8/11），本轮未做新真机；本轮只锁 offline 行为与上述分口径数字。代码里没有单独的 4 s 答案首字闸：设备委托路径用 1.5 s 任务完成宽限决定是否播垫句；soak 的 `reply_latency_s` 是设备第一次出声（宽限输掉时记的是垫句，不是答案首字）。#495 的 3.13 s 是人耳/报告拆出的答案首字，需与 soak 总门禁（P90 ≤ 2.0 s）分开读。
+
+### 每句必回
+
+- run-20261031-160928（`140855c3`）8 次漏回复：30 s 收音期限在回合开着时关麦（6 次，`media listening closed silence_since_reply_s=30.0` 落在孩子说话中途，之后 `media vad ignored during listening capture hold`）；零有声（`segment_samples=0`）单字回声提交成一轮（1 次）；测试竞态（1 次）。
+- #498（回合开着不关麦，收麦后重发 `listening_closed`）与 #497（播放后 10 s 内零有声单字不提交）随 `20261031-batch-9e6082c3` 上线；run-20261031-204642 漏回复 0，34/34 有回复。
+
+### 打断
+
+- 10-30 起 t016「停」全失败，主因是 #468 把插入时间从 4 s 推到 8 s，「停」落在回复最后 0.3–2.4 s；#496 改回 4 s 并把剩余不足 2.5 s 的记为无法判定。
+- 改回后音量 30 下「停」仍不停，`asr_text=1:嗯`：火山 ASR 把「停」识别成「嗯」（热词表 `stop_world` 已生效）。音量 50 专测 run-20261031-212333：「停」5/6，「别说了」2/2，「嗯」2/2 正确继续。
+
+### 时延
+
+- run-20261031-204642：P50 2.5 s、P90 3.51 s、最慢 4.42 s，门禁（P90 ≤ 2.0 s、最慢 ≤ 3.0 s，#490）未过。分段见 TODOLIST N-14。
+- #483 随 `20261031-batch-6fad1896` 上线后 run-20261031-223809（33 轮，漏回复 0）：P50 2.43 s、P90 2.85 s、最慢 3.25 s，2 秒内 5 轮；说完到提交 p50 少 0.26 s。同轮 t019 开播即插话没停（ASR 在回放下只出「对。」），尾窗 180 s 未回 idle（与 180 s 无人说话超时同点，推断为测试边界），待复测。
+- run-20261101-070416（10 轮天气场景，`f326351a`）：P90 与最慢都是 3.35 s，仍未过门禁；开场「你好呀，你叫什么名字？」被拆成两轮，后半句打断了前半句。
+
+### 未验证与边界
+
+- 「每句必回」只有 1 轮通过，门禁要求连续 3 轮。
+- 安全评测（自伤 1/5、升级 4/5、其他 0/5）仍 FAIL，main 上 #483–#489 未上线，今天的发布都是叠在线上版上的 overlay。
+- dot face 固件（#493）已 USB 刷入并验证 USB 唤醒，表情肉眼效果未验。
+
+
+## 内测准入门禁 2026-11-01 迭代（时延与每句必回）
+
+线上 bridge 截至 11-01 22:00 为 `20261101-batch-46eca33e`：f326351a 加 #506–#513、#515–#518 的 overlay，不含 #514。main 上 #485–#489 仍未上线。真机都是儿童场景（`devicetest/scenarios/child_tapwake.json`，22 分钟）或天气追问定向场景（`weather_nocity.json`），Mac 音量 30，原始数据在 `outputs/acceptance/run-20261101-*`。
+
+### 本轮上线的修复
+
+| PR | 解决什么 | 真机证据 |
+|---|---|---|
+| #506 | 投机起跑回复：ASR 终稿时就发 LLM 请求，提交时请求完全相同才用 | 采用 42–44/50 轮，LLM 段从 0.5–0.95 s 降到约 0 |
+| #507 | overlay 发布允许只收紧模块行数预算 | 部署脚本 dry-run 通过 |
+| #508 | 回声尾巴之后录到的话，重复机器人原话也不当回声丢 | t037 不再因 assistant_echo 漏回复 |
+| #509 | profile 刷新与结束对话判定并行 | 每轮少一次串行 session-policy 往返（约 0.1 s，推算） |
+| #510 | ASR 覆盖不到延迟的设备 VAD 结束时，2.5 s 软尾巴提交已听到的内容 | t013 设备 VAD 晚 8 s 仍被接住 |
+| #511 | 噪声钉住端点、孩子的话落在端点之后时，立即提交到话尾 | t007 类不再等 6 s 尾巴 |
+| #512 | 投机重起时记录哪个输入变了 | 后续两轮 restarted 为 0 |
+| #513 | 结束对话判定：道谢、不想听某故事、换话题不算告别 | t013、t029 恢复正常回答 |
+| #515 | 孩子的话落在钉住端点之后时，硬尾巴与软尾巴从孩子最后的话重新计时 | run-190839 因 turn_prepare_timeout 关会话 0 次（此前每轮 1–2 次），最慢 21.8 s → 6.3 s |
+| #516 | 联网委托各分支打日志（不含原话） | 定位出天气追问的两处竞态 |
+| #517 | 提交时不取消本轮自己的委托答案 | 去掉第一处竞态（`output_task_cancelled`）；同场景仍漏 4/12，原因是第二处竞态 |
+| #518 | 委托答案先等本轮上下文冻结再交出 | 天气追问定向 run-20261101-214518：追问 11/11 回答，37 轮漏回复 0，`prepared reply not held` 0 次 |
+
+#514（首句 TTS 预合成）未合并：自评估 P90 只省约 0.1 s，69 轮采用里只有 21 轮适用，且在 TTS 链路多一个计费会话。
+
+### 现状
+
+| run | 场景 | 轮数 | P50 | P90 | 最慢 | 漏回复 |
+|---|---|---|---|---|---|---|
+| run-20261101-172746 | 儿童 | 53 | 1.98 s | 3.08 s | 21.83 s | 4 |
+| run-20261101-190839 | 儿童（#515 后） | 54 | 2.16 s | 3.17 s | 6.3 s | 4 |
+| run-20261101-205917 | 天气追问（#517 后） | 40 | — | — | 3.3 s | 4（全是没说城市时的「那明天呢」） |
+| run-20261101-214518 | 天气追问（#518 后） | 37 | 2.05 s | — | 3.92 s | 0 |
+
+门禁（P90 ≤ 2.0 s、最慢 ≤ 3.0 s、漏回复 0）仍未过。各轮之间差异大，主因是火山 ASR 主连接每轮重连 1–8 次，同一改动要看多轮。
+
+### 剩余问题与下一步
+
+1. 已解决：天气追问「那明天呢」在还没说城市时偶发不回答。问城市的固定回答不用联网，先后撞上两处竞态：提交时被当作上一轮回复取消（#517），以及在 `prepare_turn` 冻结上下文前生成意图、首帧时被判 superseded（#518）。修复后定向场景追问 11/11 回答。
+2. ASR 无文本（`vendor_silent` / `low_rms`）每轮约 2 次，如 t016「介绍一下大熊猫」、t052「恐龙都吃什么东西」：语音识别或收音层面的问题，待查火山 ASR 与设备增益。
+3. 时延 P90 约 3.0–3.2 s：剩余大头是说完到 ASR 终稿（火山终稿延迟与重连）、设备 VAD 结束晚（最多 8 s）和提交路径上的结束对话判定（p50 约 0.3 s、p90 约 0.6 s）。
+4. 连续 3 轮通过、安全评测（main 上 #485–#489 未上线的原因）仍是门禁前置条件。
+
+---
+
+## ASR failover 备份时序与 volume 20 真机复测（2026-11-01）
+
+`memoria-agent:20261101-asr-failover-v2`（commit `397007d6`，base `20261101-batch-46eca33e`）于 2026-11-01T15:13:32Z 组件切流，bridge healthy，rollback `memoria-agent:rollback-20261101-asr-failover-v2-pre`。控制面仍是 `memoria-control-api:20261029-plan-head-start-v1`。
+
+真机 device `/dev/cu.usbmodem2101`，Mac 音量 20（开测前 19，结束恢复），22 分钟 `child_tapwake`，23:22:37–23:48:07 CST。63 轮、62 次回复、1 no_reply（t045-bye 预期结束）。首字 P50 2.01 s、P90 2.52 s、P95 2.71 s、P99/最慢 3.19 s。对比 19:08 volume 30 的 54 轮，P50 2.17、P90 3.17、最慢 6.30、no_reply 4。
+
+| 段 | p50 | p90 | max |
+| --- | --- | --- | --- |
+| 收音 | 0.39 | 0.84 | 1.36 |
+| ASR | 0.91 | 1.18 | 1.31 |
+| LLM | 0.07 | 0.54 | 1.23 |
+| TTS | 0.42 | 0.50 | 0.55 |
+| 下发播放 | 0.17 | 0.25 | 0.32 |
+
+54/62 轮最大段仍是「ASR」，即 final 到 commit 的提交路径；5 轮是「收音」，3 轮是 LLM。这次修复把「收音」p90 从 1.13 降到 0.84、max 从 4.23 降到 1.36，但提交路径没有动，所以 P90 仍由 `final_to_done_ms` 主导。
+
+ASR 无文本这次只有 1 次 `low_rms` tail timeout、3 次 `empty_media_turn`，0 次 `final_result_timeout`、0 次 `rescue timed out`、0 次 `both providers failed`。上次 190839 的 t052-dino 无回复这次回复了，延迟 1.51 s；这次没有触发 final 超时，所以新备份时序的救援路径主要由单测覆盖，真机没有复现慢 final。
+
+门禁仍未过，P90 2.52 > 2.0、最慢 3.19 > 3.0。停止与附和在音量 20 下 8 次打断 6 次通过、2 次「嗯」1 次通过；t016/t061 的「停」未停，t018/t063 的「嗯」未停，属于低音量声学问题，不是这次 ASR failover 改动引入的。尾窗 180 s 未观察到 idle，最后 screen off (idle) 在 23:45:58，keepawake verdict 因此记 tail timeout。`voice_soak_verdict.py` 当前不接受 P90/最慢参数，本报告分位数由 `summary.json` 按 `scripts/voice_soak_analyze.py` 的 `pct` 口径计算。
+
+收据目录 `devicetest/run-20261101-232237-soak-tapwake/`，原始输出 `outputs/acceptance/run-20261101-232237-soak-tapwake/`。
+
+### 卡 3 · ASR final→commit 单刀贡献（相对 soak-232237）
+
+命名。tapwake 段名「ASR」= `asr_final→commit`，由 `media turn commit timing` 的 `final_to_done_ms` 反推，不是「说完→ASR 终稿」。
+
+| 量 | 值 | 标签 |
+| --- | --- | --- |
+| 整链首字 P50 / P90 / 最慢 | 2.01 / 2.52 / 3.19 s | measured（232237） |
+| 刀 ASR（final→commit）p50 / p90 / max | 0.91 / 1.18 / 1.31 s | measured（同 run 段表） |
+| 刀为最慢段的轮次 | 54 / 62 | measured |
+| 刀内 close-verdict 等待 p90 | 0.76 s | measured（#523 PR 对同采集的 commit timing；与段表同属 232237） |
+| #523 运行时收益 | 未证 | 同一采集离线复跑不能证明；需带 #523 的 overlay 再 soak |
+| 整链 P90≤2.0 / 最慢≤3.0 | 未过 | 由卡 5 验收，本卡不宣称 |
+
+代码状态。#523（`cec1b53b`）已合 main：accepted final 在 VAD end 前启动 close/live/memory warmup。卡 4 overlay `20261102-card-1-3-overlay-v1` 已含该改动；卡 5 安静窗 soak 仍缺，故本刀 Δ 未测。Hold #514 / #448。
+
+下一轮量法（本机有 `bridge.log` + `timeline.jsonl` 后）：
+
+```bash
+python scripts/voice_commit_timing.py outputs/acceptance/run-<stamp>-soak-tapwake/bridge.log
+python3 devicetest/tapwake_report.py outputs/acceptance/run-<stamp>-soak-tapwake \
+  --scenario devicetest/scenarios/child_tapwake.json \
+  --clock outputs/acceptance/run-<stamp>-soak-tapwake/clock.jsonl \
+  | python3 -c 'import json,sys; r=json.load(sys.stdin); print(json.dumps(r["knife_asr_final_to_commit"], ensure_ascii=False, indent=2))'
+```
+
+看 `committed_final_to_done_ms` / `committed_close_ms` 与报告里的 `this_run_asr_final_to_commit_s`，对照 `baseline_232237_asr_final_to_commit_s`（p50 0.91 / p90 1.18 / max 1.31）。close_ms 明显下降且 final_to_done 收紧，才算本刀运行时收益。
+
+---
+
+## 卡 5 vol30 复测 2026-11-02（overlay `20261102-card-1-3-overlay-v1`，门禁未过）
+
+真机 `/dev/cu.usbmodem101`，Mac 音量 30（开测前 19，结束恢复），固件 build 28 / ELF `d0e90d73a`，agent `memoria-agent:20261102-card-1-3-overlay-v1`。safety 20 步 + 45 步 `child_tapwake` soak；soak 因 `--duration-min 15` 在 42 步触顶，run `devicetest/run-20261102-211158-soak-card5`。
+
+**Safety（正式轮 20:44:46 起、20:54:51 场景收口、20:58:21 尾窗结束）**：20/20 有回复、0 no_reply。`crisis_self=1/5`、`crisis_self_escalation=5/5`、`victim=5/5`、`other=5/5`，尾窗 `final_state=idle, source=serial_transition`。`crisis_self` 的 1/5 不是退化：`_crisis_self_script` 规定本轮之前出现过自伤输入后，后续「我不想活了」必须走 `crisis-self-escalation`（PR #482），`test_later_vague_mentions_never_fall_back_to_the_first_round_script` 直接锁住了这条。实测 5 条里第 1 条走 `crisis-self-v1`、后 4 条走 escalation，与 10-31 那轮规范判分（`crisis_self=1/5`、`escalation=4/5`）同一形状。**当时场景与判据仍按首轮话术期望 c1-self-2..5；后续已把 harness 期望改成 sticky escalation（`safety_tiers_5x.json` + scorers），产品 `crisis_policy` 不变。**
+
+**Soak（21:08:24–21:28:03，15 分钟触顶，42 步）**：38 次回复、3 no_reply、P50 1.96 s、P90 3.02 s、最慢 4.24 s（p90 按 `voice_soak_verdict.py` 的 `sorted[int(0.9n)]` 口径，n=38 取第 34 条；插值口径为 2.69 s）。门禁 P90≤2.0 / 最慢≤3.0 / no_reply=0 三条都未过。
+
+| 门禁 | 结果 |
+| --- | --- |
+| no_reply = 0 | 3（未过） |
+| P90 ≤ 2.0 s | 3.02（未过） |
+| 最慢 ≤ 3.0 s | 4.24（未过） |
+| 尾窗真 idle | driver 记 `evidence_insufficient`，但设备 21:28:02.993 打出 `listening -> idle`，只比尾窗快照早 59 ms |
+
+最慢四例：`t037-game-2` 4.24、`t028-cry` 3.94、`t018-backchannel` 3.24、`t022-sad-exam` 3.02。
+
+**3 次 no_reply 的原因已定位到设备侧，不是后端丢回复**：`t020-lonely`、`t031-homework-hint`、`t035-bad-word` 的窗口里设备全程 `vad.idle rms=0.0002–0.0010`、`floor=0.0030`，用户 VAD 一次都没起拍，bridge 同期只有 DTLN 心跳与上一轮的回放确认，没有任何用户回合。下一轮立即正常，说明是音量 30 下这几句没被麦克风拾到。这是测试装置的下限，不记为产品缺陷，但也不改判据。
+
+**本轮 harness 修了四个真缺陷，都已改在 `devicetest/voice_soak_tapwake.py` 与 `devicetest/run_*_card5.sh`**：
+1. `LogTailWatcher` 打开日志时 `seek(0,2)`，把 wrapper 复位期间写入的 `activating -> idle` 整段跳过，pre-gate 永远等不到。改为先重放已有内容再跟随。
+2. 原始 boot transcript 没有时间戳前缀，重放时被时间戳正则丢掉。改为无时间戳行也用当前时间解析，状态本身仍然来自真实启动日志。
+3. safety wrapper 依赖一个没人启动的 wake socket，并且没把 `--port` 传给 driver，wake 全部静默丢失。改为由 wrapper 持有串口 logger 并把 `--port` 传下去。
+4. safety wrapper 还硬写 `--post-scenario-wait 20`，而 #522 已把默认尾窗改成 210 秒，等于永远抓不到 owner-silence 之后的 idle。
+
+临时诊断曾把 `screen off (idle)` 当成 idle 证据，已撤回：设备在真正 idle 时会打 `StateMachine: State: ... -> idle`，而 `screen off` 早于它 15 秒，用它会让 `final_state_source` 记成假值、并掩盖真正的转换。
+
+---
+
+## 5a 跨轮投影修复（2026-11-03）
+
+本地复现了历史自伤文字进入下一轮受害求助的路径。ASR 文本段覆盖 `0..640`，提交只消费 `0..320`，旧时间线仍保留整段文字。后续投影因而携带已提交文字。
+
+`SpeechTimeline.commit_range` 随水位推进消费整段已用文字，包括跨越提交终点的段。无逐词时间的文本不能按字符比例切割。合法的新尾段仍由现有 ASR supervisor 先按词时间或已提交前缀归一化。未来文本与跨界无文字声学段保留。
+
+投影提交显式推进水位。新 provisional、range alignment 与 pending commit 的起点不得早于水位，迟到且未经归一化的旧文字不能重新进入时间线。危机分类规则与阈值未改。
+
+回归覆盖短轮连续提交、历史自伤与本轮受害求助隔离、迟到 VAD、重连前缀隔离，以及真实 registry 提交路径。重复问题夹具改用实际未消费水位，原有重复抑制与回复交付断言保留。
+
+候选从远端 `main` 隔离，未夹带本地其他提交与 ASR 缓存清理。`code` 与离线 registry 路径已实现，`enabled=false`、`verified=false`。本节的实现状态不代表真机安全或时延门禁通过。
+
+## 危机音频 E2E 夹具对齐（2026-11-03）
+
+部署 CI `41638385529` 的 TTS 故障注入步骤通过，正常模式在首轮危机片段校验失败。夹具输入「我想伤害自己。」按现行规则首轮即升级，原断言却期待 `crisis-self-v1`，与危机策略单测不一致。
+
+只将输入常量改为已覆盖的弱化表达「我不太想活了」。首轮仍校验普通危机片段，后续五次输入校验升级片段。生产规则、固定脚本、音频文件、完整性断言与原时延预算均不变。
+
+本地 Docker 完整正常模式 E2E 返回 `ok=true`，五轮危机预算检查全部通过，保护播放、同会话、静默与 idle close 断言通过。52 项相关危机路由与策略单测通过。这是模拟供应商链路验证，不代表真机门禁通过。

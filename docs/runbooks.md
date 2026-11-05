@@ -46,6 +46,18 @@
 
 ---
 
+## 预发回复请求（speculative reply）
+
+ASR 终稿到达、提交开始时，bridge 就按预测把这一轮要发的 DeepSeek 回复请求发出去，回来的字先存着。提交做完后，只有这一轮真正要发的请求与预发的逐字相同，才播放存着的字；句子、说话人、fence、模式策略、上下文、记忆、语气计划有任何一处不同，就取消预发请求，按原路径重发。危机、结束对话、实时查询、本地直答（如报时）这几条路不问回复模型，从不播放预发的字。预发请求只调用 DeepSeek，不写上下文、转写或记忆。
+
+每个预发请求以一行日志结束，不含原文：`speculative reply session_id=… turn_id=… outcome=… lead_ms=…`。`outcome` 是 `used`（被采用）、`other_text` / `other_speaker` / `other_fence` / `other_policy`（提交的不是预测的那一轮）、`other_request`（同一轮，但请求内容变了）、`late`（提交时请求还没发出，通常是记忆还没取回）、`close` / `crisis` / `lookup` / `plan`（这一轮不问回复模型）、`memory`（记忆在范围内但这句话没有预取）、`context`（快照预测不了）、`unused`（匹配了但这一轮最后没问回复模型）、`not_committed`（提交拒绝了这句话）、`restarted`（同一句话换了一次预测）。`lead_ms` 是被采用时请求已经发出多久，即这一轮首字等待最多省下的时间。
+
+看数：`python scripts/voice_commit_timing.py bridge.log` 的最后一段 `== speculative replies` 给出各 outcome 的次数和 `used` 的 `lead_ms` p50 / p90；采用率按 `used` 除以 `result=committed` 的提交数算。
+
+开关：bridge 环境变量 `MEMORIA_SPECULATIVE_REPLY_ENABLED=false` 关掉，行为回到旧路径，不发预发请求，也不打这行日志。改 env 是生产变更，要用户授权，并且要重建 bridge 容器才生效。代价：没被采用的预发请求是一次中途取消的 DeepSeek 调用。
+
+---
+
 ## 来源：`docs/runbooks/operations-space-governance.md`
 
 ## 空间治理运维基线
@@ -321,6 +333,8 @@ Secret 仅在 root-only `/etc/memoria-*.env`（root:root 0600）；候选从真�
 - **共用主机的边界**：hr-tracker 占着 `127.0.0.1:8791`，共用 nginx 拥有 80/443/8443，pocketSparks 的站点、卷不动；`sites-enabled/aginice`（aginice.cn / www，Memoria 现在的对外域名，与 pocketSparks 共用）只加了两行 include（`snippets/memoria-prod-https.conf`、`snippets/memoria-prod-bind.conf`，并把 `/` 的静态根指到 `/var/www/memoria-prod`），原件在 `/etc/nginx/backup-20261005-domain-switch/aginice.orig`。Memoria 的 nginx 文件一律用新名字：`sites-enabled/memoria-prod`（旧域名 aigcnice.com，过渡期保留）、`snippets/memoria-prod-{device-edge,https,site-common,bind}.conf`、`conf.d/memoria-prod-limits.conf`，静态页 `/var/www/memoria-prod`（只有绑定页，没有 WMS）；证书：aginice.cn 用 `/etc/nginx/ssl/aginice.cn/aginice.cn_bundle.crt` + `aginice.cn.key`（腾讯云免费 DV，约 90 天一期、不自动到服务器；该站点的 `ssl_ciphers` 只有 RSA 套件，新证书必须是 RSA、不能是 ECDSA）；aigcnice.com 的旧证书 `/etc/nginx/ssl/aigcnice.com/…`（到 2026-12-17）只服务过渡期。Let's Encrypt 的 HTTP-01 对 aginice.cn 走不通（境外验证节点访问 80 端口被腾讯云的备案提示页拦截，同机房境内访问正常），证书只能从腾讯云控制台下载，或用 DNSPod API 做 DNS-01。8443 的 stream 仍是 7 月留下的 `stream-conf.d/memoria-rtc.conf`（`ssl_preread`：TLS 到 `127.0.0.1:9443`，非 TLS 的一支指向已退役的 LiveKit 8444，没有监听者），没改。
 - **换 aginice.cn 证书**（现用的一份 2026-10-05 09:08 装入，2027-01-02 到期）：证书只能由用户在腾讯云「SSL 证书」控制台下载（Nginx 格式、RSA，含 `aginice.cn` 与 `www.aginice.cn`）。步骤：本机只读预检（SAN、未过期且 ≥ 30 天、RSA 密钥与证书匹配、链在系统信任库里验证通过，不打印私钥）→ scp 到服务器 root 0700 的临时目录 → 以**文件**运行安装脚本（先备份旧对到 `/root/domain-switch-20261005/`，同样的校验，沿用原属主与权限，`nginx -t` 失败则还原并不 reload，reload 后用 SNI `aginice.cn` 核对 443 与 8443 的序列号与 `Verify return code: 0 (ok)`，再核对 `aigcnice.com` 站点与 hr-tracker 不受影响）→ `shred -u` 暂存的私钥。脚本在服务器 `/root/domain-switch-20261005/scripts/`（`cert_install.sh`、`verify_domain.sh`；本机副本 `outputs/ops-domain-switch-20261005/`，被 git 忽略，没有入仓库）；一次实跑的收据见 `HANDOFF.md`「2026-10-05 域名切换到 aginice.cn」。
 - **Control API 端口是 `127.0.0.1:18791`，由 `MEMORIA_CONTROL_API_PORT` 带着走**（2026-10-05 的端口参数化改动）：compose 写 `127.0.0.1:${MEMORIA_CONTROL_API_PORT:-8791}:8000`；`scripts/release_ops.sh` 的 `control_api_port()` 依次取该环境变量、在跑的 `memoria-control-api-1` 的 `docker port … 8000/tcp`（只认 `127.0.0.1` 的绑定）、默认 8791，`verify-load` 把它写进新发布树的 `.env`（Compose 从项目目录读 `.env`），`cutover` 先断言候选 compose 发布的正是线上这个端口，不一致就拒绝、线上不动（新发布树若落回 8791 会与 hr-tracker 冲突，control-api 起不来、切流中途中断），`finish` 与 `scripts/refresh_readiness.sh` 也探这个端口。`verify-load` 的空闲端口预检默认 `28791` / `28891`（`MEMORIA_PREFLIGHT_API_PORT` / `MEMORIA_PREFLIGHT_NGINX_PORT` 可改），避开线上的 18791（旧的固定值 18791 / 18891 会让预检在新机上直接拒绝）。2026-10-05 16:31 部署的 `20261005-subject-candidates-v1` 树采用仓库原样加 `.env`（`MEMORIA_RELEASE_COMMIT`、`MEMORIA_RELEASE_TAG`、`MEMORIA_CONTROL_API_PORT=18791`）；当时的回滚树 `20261004-first-warm-v1` 里 compose、`refresh_readiness.sh`、`release_ops.sh` 三处仍手工改成 18791（原件留作 `.orig`），属于参数化前的历史做法。
+整栈和组件覆盖的当前运行清单在 `docs/ops/current-runtime-inventory.json`。捕获、比对和 `evidence_class` 见 `docs/ops/runtime-inventory.md`。上面 2026-10-21 的路径核对是当时的只读笔记。
+
 - **release-ops.sh 与 PREV（脚本不再写 PREV，发布之间不用改它）**：`freeze` 从线上取证推出上一栈——`current` 软链指向的发布树、各容器的 compose 链标签、镜像的 OCI version / revision——写入 `$S/prev-release`（`tag=`、`commit=`、`services=` 三行，有覆盖时再加第 4 行 `overrides=`）。链只接受两种形态：基础 compose 本身，或基础 compose 加恰好一份白名单内的只换镜像覆盖。2026-10-21 起线上就是后者：control-api 是 `releases/20261020-minor-bypass-a94c438/docker-compose.production.yml` + `component-releases/20261021-a94c438-pr345-pr346-pr348-pr352/override-control-pr352.yml`（sha256 `95a5e033…`，`services.control-api.image`），bridge 是同一基础 compose + `component-releases/20261021-a94c438-pr345-pr346-pr348-pr352-pr353-pr355/override-pr355.yml`（sha256 `895b17fe…`，`services.voice-core-media-bridge.image`），两份的 `/tmp` 原件分别是 `/tmp/override-control-pr352.yml`、`/tmp/override-pr355.yml`。覆盖必须只有 `services.<该服务>.image` 一个键、不能带 environment/volumes/ports 等任何其他键或别的服务，image 必须等于该容器实际运行的镜像；`/tmp` 路径只有在持久拷贝存在且两者 sha256 都等于白名单登记值时才接受，记录一律写持久路径。白名单不再放在脚本里，而是主机状态文件 `/opt/memoria/state/component-overrides.tsv`（每行 4 个空格分隔的列：服务、持久路径、sha256、`/tmp` 原件；0600、root 属主，权限或属主不对即整体拒绝读）。切换 release-ops.sh 版本后跑一次 `release-ops.sh migrate-component-overrides` 把历史行播种进状态文件（状态文件已存在且内容不同时拒绝执行，防的是顺手覆盖手工登记）；新的组件切换后用 `release-ops.sh record-override <服务> /opt/memoria/component-releases/<tag>/override-…yml /tmp/override-…yml` 登记：它要求持久文件与 `/tmp` 原件逐字节一致、覆盖只含 `services.<该服务>.image` 且 image 等于该容器实际运行的镜像，校验通过才以 flock 加临时文件原子追加（固定写 0600）；同一行 sha 不变的重复执行无事，sha 变了直接拒绝。状态文件缺行或有坏行时 `freeze` 以 `unexpected live chain`、`not whitelisted` 或 `malformed state file line` 拒绝，线上不动。有覆盖时 `prev-release` 追加第 4 行 `overrides=`，每个服务一组四个以空格分隔的字段 `服务名 持久覆盖路径 sha256 镜像ID`，不同服务的组依次相接；没有覆盖时仍只有三行，旧记录（无 `overrides=`）照常可用。覆盖服务的 OCI version/revision 是组件自己的标签，不参与 `tag=` 比对；当两个 ship 服务都被覆盖时，`commit=` 取 `current` 发布树 `.env` 的 `MEMORIA_RELEASE_COMMIT`，没有该文件时要求所有覆盖镜像的 revision 标签一致，否则拒绝。重跑 `freeze` 必须推出同一份记录，否则拒绝改写（切流之后再跑会因 control-api 已在新链上而被拒）；`cutover`、`finish`、`rollback` 只读这份记录，没有它就拒绝执行。唯一的旧例外是给绕过发布脚本上线的 `20261016-readiness-b54189c` 留的窄口子：镜像 version 为空、revision 是 40 位十六进制、tag 以 `-<revision 前 7 位>` 结尾且容器环境 `MEMORIA_RELEASE_TAG` 等于 tag 时，`freeze` 向 stderr 记一行 `accepting empty version label…` 后按通过处理，其余 version 不一致仍拒绝。**运维在 `env` 之前把这一行与 HANDOFF 记录的现网栈对一遍，不一致就停。** `rollback` 在动 env、`current` 或容器之前重算每个持久覆盖的 sha256，文件缺失或不符即拒绝，线上不动；随后为每个有覆盖的服务单独执行一条 compose（`-f 基础compose -f 该服务的持久覆盖`），避免把两份 `-f` 一起盖到每个容器上。重建并健康检查后，逐服务核对容器镜像 ID 等于记录值，不符即失败。主机 `/root/memoria-release/release-ops.sh` 目前是 2026-10-20 10:23 安装的版本（SHA-256 `3d39394d15069a30c868397bc0abbb63c9ecc8a93ac324cd28ed5de9919ade25`，与本次改动前的仓库版一致），它不认识 2026-10-21 的覆盖链。**下一次整栈发布前安装合并后的仓库版并记下它的 SHA-256**；那次 `freeze` 的 PREV 是 `20261020-minor-bypass-a94c438@a94c43813a8893a07bbe3bf4815cae52745cd88a`，`services=control-api voice-core-media-bridge`，并带 `overrides=` 行。
 - **在新机上发整栈（2026-10-05 `20261005-subject-candidates-v1` 实跑的做法）**：登录用户是 `ubuntu`（免密 sudo），`/root/memoria-release` 在 root 下，所以每一步都包一层 `ssh memoria-prod "sudo sh -c 'env TAG=… COMMIT=… [VERIFIER_SHA=… MANIFEST_SHA=…] /root/memoria-release/release-ops.sh <step> > /root/memoria-release/<step>-<tag>.log 2>&1; echo exit=$? >> /root/memoria-release/<step>-<tag>.log'"`，再读日志里的 PASS；上传用 `scripts/upload_release_artifacts.sh`（它用 `sudo -n` 与 `rsync --rsync-path='sudo -n rsync'`，所以 `ubuntu` 能用；本机 `PATH=/opt/homebrew/bin:$PATH` 以用到新版 rsync），先 dry-run 再真传；增量（seeded）模式要求新机上有上一个 tag 的 `incoming/<tag>/images.tar`，没有就是整包模式（第一次是整包，线上发送 502 MB / 总 1.53 GB）；本机构建用 `DOCKER_DEFAULT_PLATFORM=linux/amd64 COMPOSE_PARALLEL_LIMIT=1`，这次还设了 `UV_DEFAULT_INDEX=https://mirrors.cloud.tencent.com/pypi/simple`；`verify-load`、`freeze` 不动线上，可以在合并 PR 之前跑（它们会把 `MEMORIA_CONTROL_API_PORT` 写进新发布树的 `.env`、在 28791 / 28891 起预检栈、做发布前 DB 备份），任何需要的修正还能进同一个 PR；`cutover` 前先确认没有设备会话；边缘日志里近期没有 `device=dev_` 不能证明没有空闲的设备 WSS（稳态连接不打日志），2026-10-09 的切流就断开了一条（边缘记 `device WSS socket error … use of closed network connection`），机器人下一次唤醒会重连。**恢复一次半截的发布时**，先只读核对主机：`docker images | grep <tag>`（`verify-load` 遇到已存在的同名 tag 镜像会拒绝）、`incoming/<tag>/` 里是否只有六个制品、`current` 与容器没动；残留的无标签镜像按 tag 删掉；镜像一律用显式 `docker build --platform linux/amd64` 重建并核对 revision / version / role 标签（见 `HANDOFF.md`「2026-10-09 整栈发布」）；`upload_release_artifacts.sh` 遇到已有的 `images.tar` 会走 `resume` 模式，结束时仍会逐个制品核对 sha256。
 - **数据层**：两台机上 `memoria-data` 项目都是从 `releases/20260827-architecture-split-v1/infra` 起的。`current/infra` 里的同名 compose 多一个 `011-control-schema.sql` 的 initdb 挂载（只在空库首次初始化时用）；在已有数据的库上用 `current/infra` 去 `up -d` 会让 compose 判定配置变了而重建 postgres 容器（推断，没试），不要顺手做。
@@ -420,6 +434,38 @@ sudo journalctl -u memoria-backup-freshness.service -n 100
 ```
 
 现在 failed 只在主机上可见，不推手机也不进群；招 30 户之前必须接一个有人会收到的提醒渠道，否则夜间的备份失败可能一周都没人发现。
+
+#### A15 隔离恢复 + 删除台账重放演练（实验室，可重复）
+
+目标：在干净实验室证明「恢复数据 → 先合并/重放删除台账 → 再开放读取」后，已删除主体不会回到儿童召回、家长界面或缓存；未删除主体仍可见。复用既有 `SubjectDeletionLedger` 导出/合并/重放，不另建备份系统，不碰生产。
+
+```bash
+## 无 A12 清单时（PR #539 未合入）允许缺省并记 unmet
+uv run python -m scripts.run_isolation_restore_deletion_drill \
+  --report outputs/acceptance/run-$(date -u +%Y%m%dT%H%M%SZ)-a15-isolation-restore-deletion/report.json \
+  --allow-missing-inventory
+
+## 有 docs/ops/current-runtime-inventory.json 时引用角色/标签作重建清单
+uv run python -m scripts.run_isolation_restore_deletion_drill \
+  --report /tmp/a15-report.json \
+  --inventory docs/ops/current-runtime-inventory.json
+
+uv run pytest scripts/tests/test_isolation_restore_deletion_drill.py -q --import-mode=importlib
+```
+
+报告（`0600`）含 `git_head`、`rto_seconds`、账本 export/merge/replay 计数、表面断言、`failure_points`、回滚说明（丢弃 lab 目录）、以及 A14 产品文案等 `未验`/`unmet` 项。stdout 只有 `{passed, report, rto_seconds}`。
+
+诚实边界（本卡不声称已验）：A14 删除阶段文案仍进行中，不写「全部不可恢复」；生产/异地 RTO、按 live digest 整栈 docker 重建、线上账本不可导出窗口，均标 unmet。Hold `#514`/`#448`；无儿童可听内容。生产恢复仍走下一节，且须另有授权。
+
+本地同步（MacBook）：
+
+```bash
+cd ~/projects/memoria
+git fetch origin
+git checkout cursor/a15-isolation-restore-deletion-drill-5873
+git pull --ff-only origin cursor/a15-isolation-restore-deletion-drill-5873
+uv run pytest scripts/tests/test_isolation_restore_deletion_drill.py -q --import-mode=importlib
+```
 
 #### 从备份恢复
 
@@ -905,10 +951,16 @@ uv run --no-project --with pyserial python scripts/voice_soak_serial_logger.py o
 
 拨测句表是 `scripts/voice_soak_scenarios/child.json`。不要另建一份。`voice_soak.py --scenario` 读这一份。
 
-窗口结束后用 run 目录算通过或失败。命令只读本地文件。尾窗必须是 `verified_idle`。静音步必须看到 idle。打断由 `voice_soak_evidence.py` 用 bridge 和 serial 日志重算。timeline 里旧的 `stopped` 字段不算数。没复核成停止就不通过。`scripts/voice_soak_verdict.py` 的 `MAX_NO_REPLY` 是 0。`MAX_REPLY_LATENCY_P90_S` 是 2.0，`MAX_REPLY_LATENCY_MAX_S` 是 3.0（2026-10-31 Monkey 定的内测首字门禁）。漏答 `no_reply` 必须为 0。首字时延 `reply_latency_p90_s` 不超过 2.0 秒，最慢一轮 `reply_latency_max_s` 不超过 3.0 秒。时延缺失时脚本判失败。判失败时脚本以退出码 1 结束。
+窗口结束后用 run 目录算通过、失败或残缺。命令只读本地文件。每个 run 须有 `manifest.json`（场景哈希、预期步骤标签、所需日志、最少有效打断样本、开始/完成要求）；判分先核完整性，再评指标。缺 manifest、缺步骤、缺所需日志、有效打断样本不足、未开始/未结束或时长不足时，`status` 为 `incomplete`、`passed` 为 false，不能当通过。历史无 manifest 的目录不能追溯伪造。尾窗必须是 `verified_idle`。静音步必须看到 idle。打断由 `voice_soak_evidence.py` 用 bridge 和 serial 日志重算。timeline 里旧的 `stopped` 字段不算数。没复核成停止就不通过。`scripts/voice_soak_verdict.py` 的 `MAX_NO_REPLY` 是 0。`MAX_REPLY_LATENCY_P90_S` 是 2.0，`MAX_REPLY_LATENCY_MAX_S` 是 3.0（2026-10-31 Monkey 定的内测首字门禁）。漏答 `no_reply` 必须为 0。首字时延 `reply_latency_p90_s` 不超过 2.0 秒，最慢一轮 `reply_latency_max_s` 不超过 3.0 秒。时延缺失时脚本判失败。判失败或残缺时脚本以退出码 1 结束。本门禁不宣称真机 soak PASS。打断按 `interrupt_kind` 分开判（2026-10-31，#496 #499）：附和（`backchannel`，如「嗯」）只有确认把回复停了才失败，继续播放算通过；「停」这类 `stop` 打断开始时回复只剩不到 2.5 s，记 `interrupt_too_late_to_stop`，算无法判定，不记产品失败。专测「停」用 `devicetest/scenarios/stop_focus.json`（6 次「停」、2 次「别说了」、2 次「嗯」）；Mac 音量 30 时「停」会被机器人自己的声音盖住，专测需用户同意后用 50，测完恢复 30。共享 checkout 停在旧分支时，用 `origin/main` 的 worktree 跑测试脚本（参考 `devicetest/run_soak_9e6082c3.sh` 的路径改写），否则拿到的是旧的插入时机和判定参数。
 
 ```bash
 python scripts/voice_soak_verdict.py outputs/acceptance/run-<stamp>-soak
+```
+
+长会话报告读同一份 run 目录，只读本地文件，不改 `voice_soak_verdict.py` 的门禁。同一次运行的时间线跨度要满 15 分钟。脚本按第一轮和最后一轮的时间中点切开，写出前后半段的回复率、相邻回复重复率、按有时延回复顺序排的首字时延斜率，以及后半段 P50 减去前半段 P50。通过或失败只看这一条差。两边都有 P50，且后半段比前半段大过 0.3 秒，状态是 fail。差值不超过 0.3 秒，这一条算过。回复率、重复率和斜率只报数字，`threshold_status` 是待产品确认。没有 timeline、有打断但缺 `bridge.log` 或 `serial.log`、时长不足 15 分钟、可切开的轮次少于 4，或者半段没有 P50 时，`status` 是 `incomplete`，不能通过。确认停下的打断同时给出素材起点 `interrupt_start` 和说完后 `interrupt_end` 两种停止耗时。`voice_soak_analyze.py` 打印停止延迟时也带这两个起点。报告含 run id、路径、源文件 sha256，以及 `meta.txt` 或 `manifest.json` 里的版本和参数。
+
+```bash
+python scripts/voice_soak_session_report.py outputs/acceptance/run-<stamp>-soak
 ```
 
 同一目录里打包 `timeline.jsonl`，以及已经跟上的 `serial.log`、`bridge.log`、`edge.log`、`control.log`。缺的日志不进包。没有 `timeline.jsonl` 则命令失败。包写在 run 目录的上一级，旁边有 sha256。不连设备，不连生产。
@@ -928,7 +980,7 @@ python scripts/voice_soak_pack.py outputs/acceptance/run-<stamp>-soak
 uv run python scripts/voice_soak_evidence.py outputs/acceptance/run-20261010-verify-standard
 ```
 
-停止延迟从打断素材起点到设备退出说话，`stop_delay_origin=interrupt_start`；不是DAC/麦克风测得的停止时刻。旧记录未记刺激绝对时间，只能用完整回复终态排除自然完成/异常，不可补成成功；10-09/10-10的纠正与目标路径边界见`docs/acceptance.md`。`--duration-min`只是上限，N-5长稳按时间线实际跨度计。
+停止延迟同时保留两种起点。素材起点到设备退出说话是 `stop_delay_origin=interrupt_start`，字段 `stop_delay_from_interrupt_start_s`。打断语说完到设备退出说话是 `stop_delay_from_speech_end_s`。这不是 DAC 或麦克风测得的停止时刻。`voice_soak_analyze.py` 和 `voice_soak_session_report.py` 都会输出两种口径。旧记录未记刺激绝对时间，只能用完整回复终态排除自然完成或异常，不可补成成功。10-09 和 10-10 的纠正与目标路径边界见 `docs/acceptance.md`。`--duration-min` 只是上限，N-5 长稳按时间线实际跨度计。
 
 10-11 09:16设备窗口取得一条正向停止样本和一条自然完成反例（[专项收据](acceptance.md)）；两个停止素材音色不同，尚不构成稳定性或音量对照。开测前先保存完整音量/静音设置，退出后核对恢复；现有驱动只保存/恢复音量数值，静音需在外层恢复。选择语音库时逐一核对提问及停止素材，避免缺文件时的Tingting回退改变实验条件。
 
@@ -1021,7 +1073,7 @@ uv run python scripts/evaluate_sensevoice_rescue.py --url http://127.0.0.1:18001
 - `result=duplicate` 且 `audio_admitted_watermark <= previous_finalized_watermark` 表示从上次 finalize 以来没有新增的已送音频。结合 `listening_capture_hold` 和连续冻结的水位，可以区分收麦后的设备 VAD 边沿与真正的 ASR 空结果。
 - 水位有推进时，再检查 `provider_pcm_observed_samples`、`provider_pcm_rms`、`provider_pcm_peak_abs` 和 `provider_pcm_clipping_detected`。短噪声与削波不能靠延长尾超时修复。
 - 收麦期间的 VAD end 不创建新的回合或尾超时，也不能删除收麦前已经接收的真实输入。收麦后设备 VAD start 一律忽略（不恢复收音，也不产生回合）；只有点屏后的 `listening.resume` 恢复收音（phase cause 为 `screen_tap`），只送恢复点之后的音频，恢复后的 VAD 仍须能正常定端点。产品固件熄屏后进 wifi hold 关麦，所以 VAD 恢复只发生在熄屏前和 keep-awake 测试机上。
-- 收音窗口只在 `listening` 时到期，孩子说话时（`user_speaking`）不会收麦；说话期间由 max-user-speech watchdog 兜底。设备 VAD 在播放结束之后才打开时，`playback-followup` 不钉端点，由这次 VAD 的 end 定端点。soak 20261029-200043 的 t042 同时踩到这两条：逗号处的 final 被钉成端点，窗口又在说话中到期，句子被截断提交，收麦状态还延续到下一轮。
+- 收音窗口只在 `listening` 时到期，孩子说话时（`user_speaking`）不会收麦；说话期间由 max-user-speech watchdog 兜底。phase 显示 `listening` 但回合仍开着（有 pending turn、本 epoch 的 VAD 未结束、已准入输入或 turn commit 正在跑）时同样不收麦，判据与静音丢帧门共用 `_input_turn_open`。soak 20261031-160928 的 08:21:11 就是 VAD start 并进旧 pending turn、phase 停在 `listening`，窗口在 commit 途中到期。收麦状态下回复播完，playback ack 会先发 `listening`，standby 切回 `connecting` 时必须再发一次 `listening_closed`，否则设备以为麦开着而服务端丢掉每一帧（同一 soak 08:21:25 之后 11 次 `media vad ignored during listening capture hold`）。设备 VAD 在播放结束之后才打开时，`playback-followup` 不钉端点，由这次 VAD 的 end 定端点。soak 20261029-200043 的 t042 同时踩到这两条：逗号处的 final 被钉成端点，窗口又在说话中到期，句子被截断提交，收麦状态还延续到下一轮。
 - 收音窗口（`MEDIA_LISTENING_CAPTURE_WINDOW_S`，默认 30 s）从回复播完（或本轮被接受）时起算。之后 `listening` 期间收到的第一帧上行音频若已过期，就收麦并发 `assistant_state=listening_closed`。被当作空轮回收的噪声 VAD 不重新起算窗口，所以回复播完后没人说话时，`listening_closed` 在约 30 s 后发出；窗口到期时正好有噪声段在进行，就等这段噪声被回收时立即发出。每次发送都打一行 `media listening closed session=… silence_since_reply_s=…`；本轮已被接受、还没有新回复播完时，该值为 `None`。
 - 尾超时之前，同一 `task_epoch` 出现过 `reason=straddles_committed_without_timing is_final=True` 且 `text_len>0` 时，`empty+vendor_silent` 是误标。厂商把已提交的上一句和新的一句合成了一条没有词时间戳的 final。该句最后被接收的文本若是新 final 的前缀，supervisor 只收后面的新话；对不上时仍整条丢弃。
 
@@ -1166,5 +1218,11 @@ uv run --frozen --extra dev pytest --no-cov services/agent/tests/unit/test_liste
 
 1. 用合成音在真实端点跑第一次 smoke，读 `asr_finalize_ms` 的 p50/p90。A/B 数据来自 model 1.0，生产跑的是 2.0，不能直接沿用。
 2. p90 超过预算一半时上调 `ASR_FAILOVER_FINAL_RESULT_TIMEOUT_MS`。之后再观察 `asr_failover_total{reason="final_result_timeout"}` 的占比。
+
+### 备份启动与 rescue 预算
+
+媒体层的 turn tail 是 6 s（`turn_endpoint_absolute_timeout_s`）。旧实现要等 primary 的 final 预算耗尽才启动 SenseVoice，备份再跑自己的 5 s 超时，最坏情况已经越过 tail，真实语音会在备份返回前被丢弃。现在备份在 `ASR_FAILOVER_BACKUP_START_DELAY_MS`（默认 250 ms）后与 primary 的 final 等待并行启动，primary 先返回 final 时取消备份；降级后的整条备份链受 `ASR_FAILOVER_RESCUE_BUDGET_MS`（默认 4500 ms）约束，超时只记日志并让媒体层按时丢弃，不再无限等待。
+
+空段分类也改为使用 `ASRSegmentEvidence` 保存的段级 RMS、峰值和失败原因。`rotate_task` 结束时会清空 provider task 的 PCM 证据，旧分类读到的 RMS 已经是 0，真实语音会被误标成 `low_rms`。现在分类读段级快照，`final_result_timeout` 归到 `empty+vendor_silent`，`provider_error` 归到 `empty+vendor_error`。
 
 ---

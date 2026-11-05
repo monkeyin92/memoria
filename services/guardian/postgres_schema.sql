@@ -1425,10 +1425,61 @@ BEGIN
     PERFORM set_config('memoria.guardian_push_delivery_scope', '1', true);
     UPDATE guardian_notification_outbox AS stale
     SET status = 'failed', last_error_code = 'attempts_exhausted',
+        settled_at = p_now,
         claimed_by = NULL, lease_until = NULL, next_attempt_at = NULL
     WHERE stale.status = 'pending'
       AND stale.attempts >= p_max_attempts
       AND (stale.lease_until IS NULL OR stale.lease_until < p_now);
+    -- Recipient must still be eligible at delivery time. Revoked links and
+    -- withdrawn declarations settle as auth-insufficient, never as delivered.
+    UPDATE guardian_push_subscriptions AS subscription
+    SET remaining = LEAST(subscription.remaining + 1, 20),
+        updated_at = p_now
+    FROM guardian_notification_outbox AS ineligible
+    JOIN guardian_crisis_events crisis_gate
+      ON crisis_gate.crisis_event_id = ineligible.crisis_event_id
+    WHERE ineligible.status = 'pending'
+      AND ineligible.reserved_template_id IS NOT NULL
+      AND (ineligible.lease_until IS NULL OR ineligible.lease_until < p_now)
+      AND subscription.guardian_user_id = ineligible.guardian_user_id
+      AND subscription.template_id = ineligible.reserved_template_id
+      AND NOT (
+          EXISTS (
+              SELECT 1
+              FROM guardian_links link
+              WHERE link.guardian_user_id = ineligible.guardian_user_id
+                AND link.minor_user_id = crisis_gate.minor_user_id
+                AND link.status = 'active'
+          )
+          OR guardian_relationship_declared(
+              ineligible.guardian_user_id,
+              crisis_gate.minor_user_id,
+              p_now
+          )
+      );
+    UPDATE guardian_notification_outbox AS ineligible
+    SET status = 'failed', last_error_code = 'guardian_not_eligible',
+        settled_at = p_now,
+        claimed_by = NULL, lease_until = NULL, next_attempt_at = NULL,
+        reserved_template_id = NULL
+    FROM guardian_crisis_events crisis_gate
+    WHERE ineligible.crisis_event_id = crisis_gate.crisis_event_id
+      AND ineligible.status = 'pending'
+      AND (ineligible.lease_until IS NULL OR ineligible.lease_until < p_now)
+      AND NOT (
+          EXISTS (
+              SELECT 1
+              FROM guardian_links link
+              WHERE link.guardian_user_id = ineligible.guardian_user_id
+                AND link.minor_user_id = crisis_gate.minor_user_id
+                AND link.status = 'active'
+          )
+          OR guardian_relationship_declared(
+              ineligible.guardian_user_id,
+              crisis_gate.minor_user_id,
+              p_now
+          )
+      );
     RETURN QUERY
     WITH claimed AS (
         UPDATE guardian_notification_outbox AS o
@@ -1447,6 +1498,20 @@ BEGIN
               AND candidate.created_at >= p_now - make_interval(secs => p_max_age_seconds)
               AND (candidate.next_attempt_at IS NULL OR candidate.next_attempt_at <= p_now)
               AND (candidate.lease_until IS NULL OR candidate.lease_until < p_now)
+              AND (
+                  EXISTS (
+                      SELECT 1
+                      FROM guardian_links link
+                      WHERE link.guardian_user_id = candidate.guardian_user_id
+                        AND link.minor_user_id = crisis_gate.minor_user_id
+                        AND link.status = 'active'
+                  )
+                  OR guardian_relationship_declared(
+                      candidate.guardian_user_id,
+                      crisis_gate.minor_user_id,
+                      p_now
+                  )
+              )
             ORDER BY candidate.created_at, candidate.notification_id
             FOR UPDATE SKIP LOCKED
             LIMIT p_limit
@@ -1554,10 +1619,39 @@ BEGIN
     IF v_guardian_user_id IS NULL THEN
         RETURN FALSE;
     END IF;
+    -- A channel-accept settle still requires a live recipient. Otherwise demote
+    -- to fail/auth and refund the reserved acceptance when one was held.
+    IF p_outcome = 'delivered' THEN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM guardian_notification_outbox outbox
+            JOIN guardian_crisis_events crisis
+              ON crisis.crisis_event_id = outbox.crisis_event_id
+            WHERE outbox.notification_id = p_notification_id
+              AND (
+                  EXISTS (
+                      SELECT 1
+                      FROM guardian_links link
+                      WHERE link.guardian_user_id = outbox.guardian_user_id
+                        AND link.minor_user_id = crisis.minor_user_id
+                        AND link.status = 'active'
+                  )
+                  OR guardian_relationship_declared(
+                      outbox.guardian_user_id,
+                      crisis.minor_user_id,
+                      p_now
+                  )
+              )
+        ) THEN
+            p_outcome := 'failed';
+            p_error_code := 'guardian_not_eligible';
+            p_exhaust_subscription := FALSE;
+        END IF;
+    END IF;
     IF v_reserved_template_id IS NOT NULL
        AND (p_outcome IN ('failed', 'retry') OR COALESCE(p_exhaust_subscription, FALSE)) THEN
         UPDATE guardian_push_subscriptions subscription
-        SET remaining = CASE
+            SET remaining = CASE
                 WHEN COALESCE(p_exhaust_subscription, FALSE) THEN 0
                 ELSE LEAST(subscription.remaining + 1, 20)
             END,

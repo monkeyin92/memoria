@@ -471,3 +471,17 @@ def test_the_session_language_model_forwards_the_plan_head_start_to_its_pipeline
     model.start_committed_turn_plan("后天呢")
 
     assert planned == ["后天呢"]
+
+
+def test_the_session_language_model_forwards_the_reply_discard_to_its_pipeline() -> None:
+    from services.agent.src.media_agent_factory import _SessionLanguageModel
+
+    discarded: list[str] = []
+    model = _SessionLanguageModel(
+        pipeline=SimpleNamespace(discard_speculative_reply=discarded.append),  # type: ignore[arg-type]
+        closeables=(),
+    )
+
+    model.discard_speculative_reply("assistant_echo")
+
+    assert discarded == ["assistant_echo"]

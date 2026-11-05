@@ -23,6 +23,7 @@ from services.agent.src.prompts import (
     is_allowlisted_device_phrase,
 )
 from services.agent.src.reply_pipeline import ReplyPipeline
+from services.agent.src.voice_core import media_session_projection
 from services.agent.src.voice_core.aigc_notice import AigcNoticeConfig
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
@@ -65,8 +66,13 @@ from services.agent.tests.unit.media_session_support import (
     _seed_pending_media_turn,
     _wait_until,
 )
-from services.common.llm_thinking_filler import LLM_THINKING_TEXT
 from services.common.realtime_information import WEATHER_LOOKUP_UNAVAILABLE_REPLY
+
+
+@pytest.fixture(autouse=True)
+def short_lookup_filler_grace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These fakes model a slow lookup; keep the filler decision near-immediate."""
+    monkeypatch.setattr(media_session_projection, "_LIVE_LOOKUP_FILLER_GRACE_S", 0.02)
 
 
 def _aigc_notice_off(registry: MediaVoiceCoreRegistry) -> MediaVoiceCoreRegistry:
@@ -437,7 +443,7 @@ async def test_media_provider_installs_prewarm_and_delegation_callbacks() -> Non
     assert provider.prewarm_calls == 1
     assert provider.delegations == [("今天南京天气怎么样", fence)]
     assert len(provider.output_intents) == 1
-    assert str(provider.output_intents[0].tts_source).startswith(LIVE_LOOKUP_FILLER)
+    assert str(provider.output_intents[0].tts_source) == "委派完成。"
     assert context.runtime.orchestrator.task_manager.accepted_broadcast_count == 1
     assert context.runtime.orchestrator.task_manager.tasks == {}
     await context.runtime.close()
@@ -1667,7 +1673,9 @@ async def test_media_delegation_error_result_falls_back_to_one_local_reply() -> 
 
 
 @pytest.mark.asyncio
-async def test_fast_media_delegation_prefixes_lookup_filler() -> None:
+async def test_fast_media_delegation_skips_lookup_filler(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(media_session_projection, "_LIVE_LOOKUP_FILLER_GRACE_S", 1.5)
+
     class FastProvider(_DelegationProbeProvider):
         def __init__(self) -> None:
             super().__init__()
@@ -1717,7 +1725,7 @@ async def test_fast_media_delegation_prefixes_lookup_filler() -> None:
     claim = context.output.delegation_output_claims[fence]
     assert claim.state is DelegationOutputState.COMPLETED
     assert media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT not in provider.output_kinds
-    assert provider.output_texts == [f"{LIVE_LOOKUP_FILLER}南京今天多云。"]
+    assert provider.output_texts == ["南京今天多云。"]
     assert provider.reply_calls == 0
     assert await registry.generate_reply(identity.session_id, query, fence)
     assert provider.reply_calls == 0
@@ -2292,7 +2300,7 @@ async def test_duplicate_turn_commit_is_skipped_after_ack_playback_completed() -
             claim.state is DelegationOutputState.OWNED
             for claim in context.output.delegation_output_claims.values()
         )
-        # The board re-transcribes the same question over the contiguous range.
+        duplicate_start = context.runtime.speech_timeline.committed_sample
         duplicate_segment = SpeechSegment(
             session_id=identity.session_id,
             stream_epoch=identity.stream_epoch,
@@ -2300,21 +2308,21 @@ async def test_duplicate_turn_commit_is_skipped_after_ack_playback_completed() -
             segment_id="duplicate-final",
             revision=1,
             kind=SegmentKind.ASR_FINAL,
-            capture_start_sample=600,
+            capture_start_sample=duplicate_start,
             capture_end_sample=1200,
             text=question,
             final=True,
         )
         assert context.runtime.ingest_media_speech_segment(duplicate_segment)
         await registry._apply_projection_segment(context, duplicate_segment)
-        context.pending.turn_start_sample = 600
+        context.pending.turn_start_sample = duplicate_start
         context.pending.turn_end_sample = 1200
         context.pending.turn_endpoint_sample = 1200
         context.pending.turn_retire_sample = 1240
         repeat_fence, repeat_reason = await registry.commit_user_turn(
             identity.session_id,
             stream_epoch=identity.stream_epoch,
-            start_sample=600,
+            start_sample=duplicate_start,
             end_sample=1200,
             retire_sample=1240,
         )
@@ -3105,7 +3113,6 @@ async def test_slow_lookup_uses_a_single_cue() -> None:
         # Slow lookup remains pending; the old second cue fired after ~2.5s.
         await asyncio.sleep(0.6)
         assert provider.output_texts == [LIVE_LOOKUP_FILLER]
-        assert LLM_THINKING_TEXT not in provider.output_texts
         assert provider.output_kinds == [
             media_pb2.OUTPUT_INTENT_KIND_FAST_ACKNOWLEDGEMENT,
         ]

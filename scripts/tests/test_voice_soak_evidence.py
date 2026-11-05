@@ -113,6 +113,8 @@ def test_stop_requires_a_matched_command_terminal_and_device_closure(evidence) -
     assert result["reply_delivery_id"] == DELIVERY
     assert result["stop_delay_s"] == 2.1
     assert result["stop_delay_origin"] == "interrupt_start"
+    assert result["stop_delay_from_interrupt_start_s"] == 2.1
+    assert result["stop_delay_from_speech_end_s"] == 1.1
 
 
 @pytest.mark.parametrize("reason", ["superseded", "reply_task_cancelled", "output_task_cancelled"])
@@ -123,6 +125,8 @@ def test_generic_cancellation_is_not_a_spoken_stop(evidence, reason: str) -> Non
     assert result["stopped"] is None
     assert result["stop_reason"] == "missing_matching_spoken_stop"
     assert result["stop_delay_s"] is None
+    assert result["stop_delay_from_interrupt_start_s"] is None
+    assert result["stop_delay_from_speech_end_s"] is None
 
 
 @pytest.mark.parametrize(
@@ -136,6 +140,7 @@ def test_generic_cancellation_is_not_a_spoken_stop(evidence, reason: str) -> Non
 )
 def test_completion_or_failure_never_counts_as_a_stop(evidence, terminal: str, reason: str) -> None:
     bridge, serial, attempt = evidence
+    attempt["interrupt_start_ts"] = BASE + 2
     bridge = bridge.replace(
         delivery_line(5, "preempted", "preempted", "superseded"),
         delivery_line(5, terminal, terminal, reason),
@@ -159,6 +164,28 @@ def test_interrupt_at_or_after_playback_end_is_an_unverified_harness_race(
     assert result["stopped"] is None
     assert result["stop_verdict"] == "unverified"
     assert result["stop_reason"] == "interrupt_started_after_playback"
+    assert result["remaining_playback_at_clip_start_s"] == round(-after_s, 3)
+
+
+@pytest.mark.parametrize("left_s,verdict,reason", [
+    (0.3, "unverified", "interrupt_too_late_to_stop"),
+    (2.4, "unverified", "interrupt_too_late_to_stop"),
+    (2.5, "not_stopped", "playback_completed"),
+    (4.0, "not_stopped", "playback_completed"),
+])
+def test_a_clip_with_too_little_playback_left_is_unverified_not_a_product_failure(
+    evidence, left_s: float, verdict: str, reason: str
+) -> None:
+    bridge, serial, attempt = evidence
+    bridge = bridge.replace(
+        delivery_line(5, "preempted", "preempted", "superseded"),
+        delivery_line(5, "playback_ended", "playback_ended", "playback_completed"),
+    )
+    attempt["interrupt_start_ts"] = BASE + 5 - left_s
+    result = assess_interruption(bridge, serial, attempt)
+    assert result["stop_verdict"] == verdict
+    assert result["stop_reason"] == reason
+    assert result["remaining_playback_at_clip_start_s"] == left_s
 
 
 @pytest.mark.parametrize("session,generation", [("other-session", 3), ("session-a", 4)])
@@ -280,7 +307,21 @@ def test_negative_stop_delay_from_old_metrics_is_not_reused(evidence) -> None:
     bridge, serial, attempt = evidence
     attempt["interrupt_end_ts"] = BASE + 6  # The robot stops before the whole clip ends.
     attempt["stop_delay_s"] = -0.9
-    assert assess_interruption(bridge, serial, attempt)["stop_delay_s"] == 2.1
+    result = assess_interruption(bridge, serial, attempt)
+    assert result["stop_delay_s"] == 2.1
+    assert result["stop_delay_from_interrupt_start_s"] == 2.1
+    assert result["stop_delay_from_speech_end_s"] == -0.9
+
+
+def test_speech_end_delay_is_null_when_interrupt_end_was_not_recorded(evidence) -> None:
+    bridge, serial, attempt = evidence
+    del attempt["interrupt_end_ts"]
+    result = assess_interruption(bridge, serial, attempt)
+    assert result["stopped"] is True
+    assert result["stop_delay_s"] == 2.1
+    assert result["stop_delay_origin"] == "interrupt_start"
+    assert result["stop_delay_from_interrupt_start_s"] == 2.1
+    assert result["stop_delay_from_speech_end_s"] is None
 
 
 def test_reply_start_and_device_closure_can_cross_midnight(evidence) -> None:

@@ -1,7 +1,7 @@
 const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
-const { companions } = require("../../utils/companions");
+const { defaultCompanionId } = require("../../utils/companions");
 const { currentRoute, requireLogin } = require("../../utils/auth-gate");
 const { ensureChildInfoConsent } = require("../../utils/child-consent");
 const {
@@ -61,18 +61,6 @@ const modeCards = Object.entries(MODE_META).map(([id, meta]) => ({
   title: meta.title,
   tagline: meta.tagline,
   description: meta.description,
-}));
-
-// Everything a persona card shows; the preview is the device's own voice
-// (Doubao, rendered once from the catalogue preview line) bundled with the app.
-const personaOptions = companions.map((companion) => ({
-  id: companion.id,
-  name: companion.name,
-  tagline: companion.tagline,
-  description: companion.description,
-  tone: companion.tone,
-  voiceName: companion.voiceName,
-  previewSrc: `/assets/voices/${companion.voiceId}.mp3`,
 }));
 
 let familyDraftCounter = 0;
@@ -143,9 +131,6 @@ Page({
     ageBandIndex: 0,
     form: null,
     offers: [],
-    personaOptions,
-    personaIndex: 0,
-    previewingId: "",
     needsRescan: false,
     existingSubjectOptions: [],
     subjectSourceOptions: [
@@ -190,14 +175,6 @@ Page({
       onboardingSessionId: this._onboardingSessionId,
       deviceTail: /^[A-Za-z0-9]{1,16}$/.test(tail) ? tail : "",
     });
-  },
-
-  onHide() {
-    this._stopPreview();
-  },
-
-  onUnload() {
-    this._stopPreview();
   },
 
   async onShow() {
@@ -396,50 +373,6 @@ Page({
     const key = event.currentTarget.dataset.key;
     const index = Number(event.detail.value);
     this.setData({ [`form.${key}`]: index, error: "" });
-  },
-
-  onPersonaTap(event) {
-    const index = Number(event.currentTarget.dataset.index);
-    if (Number.isInteger(index) && index !== this.data.personaIndex) {
-      this._stopPreview();
-      this.setData({ personaIndex: index });
-    }
-  },
-
-  togglePreview(event) {
-    const index = Number(event.currentTarget.dataset.index);
-    const persona = this.data.personaOptions[index];
-    if (!persona) return;
-    if (this.data.previewingId === persona.id) {
-      this._stopPreview();
-      return;
-    }
-    this._stopPreview();
-    const audio = wx.createInnerAudioContext({ useWebAudioImplement: false });
-    audio.obeyMuteSwitch = false;
-    audio.src = persona.previewSrc;
-    const done = () => {
-      if (this._previewAudio === audio) this._stopPreview();
-    };
-    audio.onEnded(done);
-    audio.onError(done);
-    this._previewAudio = audio;
-    this.setData({ previewingId: persona.id });
-    audio.play();
-  },
-
-  _stopPreview() {
-    const audio = this._previewAudio;
-    this._previewAudio = null;
-    if (audio) {
-      try {
-        audio.stop();
-        audio.destroy();
-      } catch {
-        // Already released by the runtime.
-      }
-    }
-    if (this.data.previewingId) this.setData({ previewingId: "" });
   },
 
   addFamilyMember() {
@@ -641,7 +574,7 @@ Page({
       declared_mode: mode,
       account_owner_person_id: identity.user_id,
       primary_subject: primarySubject,
-      persona_selection: this.data.personaOptions[this.data.personaIndex]?.id || "",
+      persona_selection: defaultCompanionId,
       service_preferences: preferences,
       consent_offer_ids: this.data.acceptedOfferIds,
     };
@@ -691,7 +624,6 @@ Page({
         deviceId: manifest.device_id,
         label: this._subjectLabel(),
       });
-      await this._adoptPickedCompanion(request.persona_selection);
       this.setData({
         manifest,
         step: "done",
@@ -712,16 +644,6 @@ Page({
     }
   },
 
-  async _adoptPickedCompanion(companionId) {
-    const identity = api.currentIdentity();
-    if (!identity || !companions.some((item) => item.id === companionId)) return;
-    try {
-      await api.updateProfile(identity.user_id, { companion_id: companionId });
-    } catch {
-      return;
-    }
-  },
-
   rescanDevice() {
     wx.redirectTo({ url: "/pages/device-onboarding/index?fresh=1" });
   },
@@ -735,7 +657,7 @@ Page({
     const previous = pages[pages.length - 2];
     if (typeof previous?.onBindingCreated === "function") {
       previous.onBindingCreated(this.data.manifest, {
-        companionId: this.data.personaOptions[this.data.personaIndex]?.id || "",
+        companionId: defaultCompanionId,
       });
       wx.navigateBack({ delta: 1 });
       return;

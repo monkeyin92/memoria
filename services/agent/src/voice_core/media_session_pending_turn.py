@@ -58,6 +58,8 @@ class PendingTurn:
     turn_input_fence: GenerationFence | None = None
     turn_end_sample: int | None = None
     turn_endpoint_sample: int | None = None
+    # Voiced samples the device VAD reported across this turn's segments; ``None`` until a device VAD end.
+    device_voiced_samples: int | None = None
     # Only set while ``turn_endpoint_sample`` came from a source that a later
     # final of the turn's own speech may take back (see media_session_commit).
     empty_turn_endpoint_pin: EndpointPinSource | None = None
@@ -67,6 +69,10 @@ class PendingTurn:
     turn_endpoint_grace_deadline: float | None = None
     turn_endpoint_tail_deadline: float | None = None
     turn_endpoint_timeout_handle: asyncio.TimerHandle | None = None
+    # Commits the stable partial when the provider final is late (media_session_final_fallback).
+    final_missing_fallback_handle: asyncio.TimerHandle | None = None
+    # The endpoint whose absolute tail was already restarted for words past it (logged once).
+    tail_restarted_endpoint: int | None = None
     # Armed by the first final with no device VAD end: the commit waits at most this long for that signal.
     final_vad_end_wait_handle: asyncio.TimerHandle | None = None
     # The endpoint the final wait committed at; a later device VAD end must not move it.
@@ -143,6 +149,12 @@ class PendingTurn:
             self.turn_endpoint_timeout_handle.cancel()
         self.turn_endpoint_timeout_handle = None
         self.turn_endpoint_tail_deadline = None
+        self.cancel_final_missing_fallback()
+
+    def cancel_final_missing_fallback(self) -> None:
+        if self.final_missing_fallback_handle is not None:
+            self.final_missing_fallback_handle.cancel()
+            self.final_missing_fallback_handle = None
 
     def clear_commit_retry(self) -> None:
         """Drop the retry state; never cancel the retry task that is running."""
@@ -185,6 +197,8 @@ class PendingTurn:
         if self.turn_endpoint_timeout_handle is not None:
             self.turn_endpoint_timeout_handle.cancel()
             self.turn_endpoint_timeout_handle = None
+        self.cancel_final_missing_fallback()
+        self.tail_restarted_endpoint = None
         if self.final_vad_end_wait_handle is not None:
             self.final_vad_end_wait_handle.cancel()
             self.final_vad_end_wait_handle = None
@@ -195,6 +209,7 @@ class PendingTurn:
         self.turn_input_fence = None
         self.turn_end_sample = None
         self.turn_endpoint_sample = None
+        self.device_voiced_samples = None
         self.empty_turn_endpoint_pin = None
         self.child_speech_ended_mono = None
         self.speech_end_denoise_latch = None

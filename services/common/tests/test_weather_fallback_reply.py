@@ -54,6 +54,9 @@ def test_weather_lookup_is_configured_only_with_a_real_source() -> None:
         weather_lookup_configured(SimpleNamespace(live_search_qwen_enabled=True)) is True
     )
     assert (
+        weather_lookup_configured(SimpleNamespace(live_search_deepseek_enabled=True)) is True
+    )
+    assert (
         weather_lookup_configured(
             SimpleNamespace(
                 live_search_qwen_enabled=False,

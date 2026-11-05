@@ -13,7 +13,6 @@ from services.agent.src.clock_fact_queries import is_clock_fact_query
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.observability.metrics import MetricsRegistry
 from services.agent.src.orchestration.conversation_projection import ProjectionPatch
-from services.agent.src.providers.funasr_empty_accounting import classify_funasr_empty_outcome
 from services.agent.src.voice_core.asr_stream_supervisor import ASRAcceptDecision
 from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
 from services.agent.src.voice_core.media_session_types import (
@@ -21,6 +20,7 @@ from services.agent.src.voice_core.media_session_types import (
     OutputDispatchResult,
     OutputDispatchStatus,
     OutputWork,
+    classify_empty_segment,
     owned_delegation_holds_turn,
 )
 from services.agent.src.voice_core.semantic_completeness import (
@@ -39,16 +39,6 @@ logger = logging.getLogger(__name__)
 _PREPARE_RETRY_DELAYS_S = (0.05, 0.15)
 _PREPARE_RETRY_EXHAUSTED_REASON = "provider_prepare_retries_exhausted"
 _PREPARE_RETRY_SUPERSEDED_REASON = "provider_prepare_retry_superseded_by_new_vad"
-# Device VAD and provider word timestamps are independent clocks around the
-# same 16 kHz capture. After the provider task-finished boundary proves no
-# later sentence can arrive, permit at most 1.5 seconds of tail skew after
-# firmware removes its known 900 ms AFE hangover. Real-device evidence still
-# showed 1.14 seconds between FunASR's last word and the device voiced end;
-# larger gaps keep the endpoint commit waiting for a covering final. The tail
-# timeout then commits this turn's accepted final instead of dropping it, and
-# the turn's own sample range is what stops an earlier sentence reaching a
-# later turn.
-_ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES = 24_000
 _CLOCK_FACT_PARTIAL_STABLE_S = 0.6
 _CONVERSATION_CLOSE_PARTIAL_STABLE_S = 0.6
 _LIVE_LOOKUP_PARTIAL_STABLE_S = 0.6
@@ -69,25 +59,16 @@ class MediaTurnEndpointMixin:
     """Coordinate VAD endpoints with ASR finals for one media session."""
 
     def _classify_provider_final_missing(self, context: _MediaVoiceSession) -> str:
-        rms = 0
-        min_rms = 100
         provider = getattr(context, "provider", None)
         asr_session = getattr(provider, "_asr", None)
-        rms_raw = getattr(asr_session, "task_pcm_rms", None)
-        if rms_raw is not None:
-            rms = int(rms_raw)
         rescue = getattr(getattr(asr_session, "config", None), "rescue_config", None)
-        if rescue is not None:
-            min_rms = int(rescue.min_rms)
-        empty_audio = False
         has_empty = getattr(asr_session, "_has_replaceable_empty_audio_failure", None)
-        if callable(has_empty):
-            empty_audio = bool(has_empty())
-        outcome = classify_funasr_empty_outcome(
-            rms=rms,
-            min_rms=min_rms,
-            empty_audio_error=empty_audio,
-            pcm_gated=context.pending.turn_start_sample is None and rms == 0,
+        outcome = classify_empty_segment(
+            evidence=getattr(provider, "last_empty_segment_evidence", None),
+            task_pcm_rms=getattr(asr_session, "task_pcm_rms", None),
+            rescue_min_rms=rescue.min_rms if rescue is not None else None,
+            empty_audio_error=bool(has_empty()) if callable(has_empty) else False,
+            turn_start_sample=context.pending.turn_start_sample,
         )
         self.metrics.inc_funasr_empty_transcript(outcome)
         return outcome
@@ -102,6 +83,31 @@ class MediaTurnEndpointMixin:
         turn_endpoint_grace_incomplete_s: float
         turn_endpoint_absolute_timeout_s: float
         _sessions: dict[str, _MediaVoiceSession]
+
+        def _arm_final_missing_fallback(
+            self, context: _MediaVoiceSession, endpoint_sample: int
+        ) -> None: ...
+
+        async def _commit_stable_partial_fallback(
+            self, context: _MediaVoiceSession, endpoint_sample: int
+        ) -> bool: ...
+
+        def _turn_commit_retry_matches(
+            self, context: _MediaVoiceSession, stream_epoch: int, endpoint_sample: int
+        ) -> bool: ...
+
+        @staticmethod
+        def _asr_covers_endpoint(
+            context: _MediaVoiceSession, result_end_sample: int | None, endpoint_sample: int
+        ) -> bool: ...
+
+        def _restart_tail_for_words_past_endpoint(
+            self, context: _MediaVoiceSession, result: ASRResult
+        ) -> None: ...
+
+        def _words_wait_past_endpoint(
+            self, context: _MediaVoiceSession, endpoint_sample: int, *, provider_final_missing: bool
+        ) -> bool: ...
 
         def _schedule_output_retry(self, context: _MediaVoiceSession) -> None: ...
         def _resume_capped_output(self, context: _MediaVoiceSession) -> None: ...
@@ -240,6 +246,7 @@ class MediaTurnEndpointMixin:
         floor = context.pending.pending_turn_onset_floor
         if floor is not None and result.capture_start_sample < floor:
             return
+        self._restart_tail_for_words_past_endpoint(context, result)
         key = (
             result.stream_epoch,
             result.sentence_id,
@@ -771,21 +778,9 @@ class MediaTurnEndpointMixin:
         previous = context.pending.pending_partial
         if previous is None or result.logical_version >= previous.logical_version:
             context.pending.pending_partial = result
+        self._restart_tail_for_words_past_endpoint(context, result)
         if maybe_rearm_grace_on_evidence(self, context, result.text):
             self._schedule_turn_commit(context)
-
-    @staticmethod
-    def _asr_covers_endpoint(
-        context: _MediaVoiceSession,
-        result_end_sample: int | None,
-        endpoint_sample: int,
-    ) -> bool:
-        if result_end_sample is None:
-            return False
-        return result_end_sample >= endpoint_sample or (
-            context.ingress.last_finalized_audio_watermark >= endpoint_sample
-            and endpoint_sample - result_end_sample <= _ENDPOINT_ASR_COVERAGE_TOLERANCE_SAMPLES
-        )
 
     def _adaptive_endpoint_grace(
         self, context: _MediaVoiceSession, *, text: str | None = None
@@ -809,6 +804,7 @@ class MediaTurnEndpointMixin:
         handle = context.pending.turn_endpoint_timeout_handle
         if handle is not None and not handle.cancelled():
             return
+        self._arm_final_missing_fallback(context, endpoint_sample)
         delay = max(0.0, context.pending.turn_endpoint_tail_deadline - now)
         context.pending.turn_endpoint_timeout_handle = asyncio.get_running_loop().call_later(
             delay,
@@ -843,20 +839,6 @@ class MediaTurnEndpointMixin:
         asyncio.create_task(
             self._expire_endpoint_tail(session_id, stream_epoch, endpoint_sample),
             name=f"media-turn-tail-{session_id}-{endpoint_sample}",
-        )
-
-    @staticmethod
-    def _turn_commit_retry_matches(
-        context: _MediaVoiceSession,
-        stream_epoch: int,
-        endpoint_sample: int,
-    ) -> bool:
-        task = context.pending.turn_commit_retry_task
-        return bool(
-            task is not None
-            and not task.done()
-            and context.pending.turn_commit_retry_stream_epoch == stream_epoch
-            and context.pending.turn_commit_retry_endpoint_sample == endpoint_sample
         )
 
     @staticmethod
@@ -939,33 +921,8 @@ class MediaTurnEndpointMixin:
                 or context.pending.turn_endpoint_sample != endpoint_sample
             ):
                 return
-        partial = context.pending.pending_partial
-        if (
-            partial is not None and partial.text.strip()
-            and partial.capture_end_sample > (context.pending.turn_start_sample or 0)
-        ):
-            # A stable partial inside this turn is safer than dropping a complete utterance when
-            # the final marker is lost; a device VAD end can trail the last word (t014: 3.5 s).
-            fallback_confidence = (
-                0.35
-                if partial.confidence is None
-                else max(0.2, min(0.75, partial.confidence * 0.75))
-            )
-            fallback = replace(
-                partial,
-                is_final=True,
-                revision=partial.revision + 1,
-                confidence=fallback_confidence,
-            )
-            decision = await self._accept_asr_result_decision(session_id, fallback)
-            if decision.accepted is not None:
-                context.pending.turn_end_sample = max(
-                    decision.accepted.capture_end_sample,
-                    context.pending.turn_end_sample or 0,
-                )
-                await self._commit_pending_turn(context, provider_final_missing=True)
-                if context.pending.turn_endpoint_sample != endpoint_sample:
-                    return
+        if await self._commit_stable_partial_fallback(context, endpoint_sample):
+            return
 
         if await self._commit_final_before_tail(context):
             return
@@ -1394,6 +1351,10 @@ class MediaTurnEndpointMixin:
                 endpoint_sample=endpoint_sample,
                 provider_final_missing=provider_final_missing,
             )
+        if reason == "empty_media_turn" and self._words_wait_past_endpoint(
+            context, endpoint_sample, provider_final_missing=provider_final_missing
+        ):
+            return await self._commit_pending_turn(context, provider_final_missing=True)
         if reason != "empty_media_turn" and not prepare_retryable:
             self._clear_pending_turn_state(context)
         if fence is None:
@@ -1407,7 +1368,7 @@ class MediaTurnEndpointMixin:
                 )
             return reason
         owner = context.output.output_owner
-        cancel_previous = True
+        cancel_previous = owner is None or not owner.fence.matches(fence)  # not this turn's own answer
         if owner is not None and owner.fence.turn_id == fence.turn_id:
             delivery = context.output.reply_delivery.get(owner.fence)
             if delivery is not None and delivery.first_frame_sent:

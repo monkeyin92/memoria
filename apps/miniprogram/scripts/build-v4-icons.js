@@ -33,7 +33,6 @@ const ICONS = {
   back: '<path d="m15 6-6 6 6 6"/>',
   check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
   bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
-  paw: '<circle cx="7" cy="9" r="1.8"/><circle cx="11" cy="6" r="1.8"/><circle cx="15.5" cy="7" r="1.8"/><circle cx="18" cy="11" r="1.6"/><path d="M8.5 16.5c0-2.5 2-4.5 4-4.5s4 2 4 4.5c0 1.6-1.3 2.5-2.6 2.2-1-.2-1.8-.2-2.8 0-1.3.3-2.6-.6-2.6-2.2z"/>',
   bluetooth: '<path d="m7 7.5 10 9-5 4V3.5l5 4-10 9"/>',
   chart: '<path d="M4.5 19.5h15"/><path d="M7.5 16v-4M12 16V7.5M16.5 16v-6"/>',
   export: '<path d="M12 15V4M8 7.5 12 4l4 3.5"/><path d="M5 12.5V18a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 18v-5.5"/>',
@@ -47,19 +46,19 @@ const ICONS = {
 };
 
 const VARIANTS = {
-  "tab-off": { stroke: "#8E91A3", fill: "none" },
-  "tab-on": { stroke: "#4A52C9", fill: "#EEEFFC" },
-  accent: { stroke: "#4A52C9", fill: "none" },
-  strong: { stroke: "#16182B", fill: "none" },
-  ink: { stroke: "#5B5F73", fill: "none" },
-  faint: { stroke: "#B4B6C4", fill: "none" },
+  "tab-off": { stroke: "#536A6C", fill: "none" },
+  "tab-on": { stroke: "#176B5B", fill: "#E3F0ED" },
+  accent: { stroke: "#176B5B", fill: "none" },
+  strong: { stroke: "#172E32", fill: "none" },
+  ink: { stroke: "#536A6C", fill: "none" },
+  faint: { stroke: "#9DAFAD", fill: "none" },
   rust: { stroke: "#9A4732", fill: "none" },
   white: { stroke: "#FFFFFF", fill: "none" },
   "white-bold": { stroke: "#FFFFFF", fill: "none", width: 2.6 },
 };
 
 const WANTED = [
-  ...["home", "book", "face", "dev", "user"].flatMap((name) => [
+  ...["home", "book", "face", "wave", "dev", "user"].flatMap((name) => [
     [name, "tab-off"],
     [name, "tab-on"],
   ]),

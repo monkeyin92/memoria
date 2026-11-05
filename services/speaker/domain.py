@@ -153,10 +153,9 @@ class SpeakerPermissions:
     sensitive_actions: bool
 
 
-# A device serves the one person it is bound to, so with no voiceprint running
-# the bound subject's own signed Runtime Profile, not a voice match, carries
-# owner authority. This is data authority only: the voice loop never counts it
-# as a verified voice, so barge-in and echo guards stay exactly as unverified.
+# Historical reason code for a bind-as-owner claim. A06: bind proves config
+# only; Agent no longer emits this as owner, and Control demotes any leftover
+# claim. Kept so voice gates and policy still recognize the reason if seen.
 DEVICE_BOUND_SUBJECT_REASON = "device_bound_subject"
 DEVICE_BOUND_SUBJECT_MODEL = "device-binding-v1"
 
@@ -164,8 +163,8 @@ DEVICE_BOUND_SUBJECT_MODEL = "device-binding-v1"
 def is_voice_authority(decision: SpeakerDecision) -> bool:
     """A formal voice decision the voice loop may rely on (barge-in, nudges).
 
-    Shadow candidates are not formal, and a device-bound owner is data
-    authority only: the robot's own echo must never pass an owner-voice gate.
+    Shadow candidates are not formal. A device-bound claim is never voice
+    authority: the robot's own echo must never pass an owner-voice gate.
     """
 
     return (

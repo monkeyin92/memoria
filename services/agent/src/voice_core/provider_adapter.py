@@ -274,6 +274,20 @@ class ExistingVoiceProviderAdapter:
         asr = self._asr
         if asr is None:
             return None
+        evidence = getattr(asr, "last_segment_evidence", None)
+        if evidence is not None:
+            return ASREmptySegmentEvidence(
+                had_speech=evidence.had_speech,
+                provider_failed=evidence.provider_failed,
+                retried=evidence.retried,
+                rms=evidence.rms,
+                peak_abs=evidence.peak_abs,
+                samples=evidence.samples,
+                min_rms=evidence.min_rms,
+                primary_final_seen=evidence.primary_final_seen,
+                vendor_error=evidence.vendor_error,
+                degrade_reason=evidence.degrade_reason,
+            )
         had_speech = getattr(asr, "last_segment_had_speech", None)
         if had_speech is None:
             return None
@@ -334,6 +348,17 @@ class ExistingVoiceProviderAdapter:
         start = getattr(self.language_model, "start_committed_turn_plan", None)
         if callable(start):
             start(text)
+
+    def discard_speculative_reply(self, identity: SessionIdentity, reason: str) -> None:
+        """Tell the shared Agent that the commit it was told about rejected its sentence for ``reason``.
+
+        The Agent cancels the reply request it sent ahead for that sentence.  A language model without the
+        seam sent none.
+        """
+
+        discard = getattr(self.language_model, "discard_speculative_reply", None)
+        if callable(discard):
+            discard(reason)
 
     async def prepare_committed_turn(
         self,

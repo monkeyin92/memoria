@@ -313,12 +313,6 @@
   text-align: center;
 }
 
-.done-device {
-  display: flex;
-  justify-content: center;
-  margin-top: 4px;
-}
-
 .done-title {
   display: block;
   margin-top: 12px;

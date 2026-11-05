@@ -19,11 +19,13 @@ from services.agent.src.orchestration.context_snapshot_manager import (
     MemoryCapsuleEntry,
     PendingSnapshot,
     PersonaCapsule,
+    scope_context_snapshot_draft,
 )
 from services.agent.src.orchestration.interaction_plane import (
     InteractionEvent,
     InteractionSnapshot,
 )
+from services.common.child_archive_claim_marker import format_fact_version_source_id
 
 
 def _policy(*, tools: bool) -> ModePolicy:
@@ -141,6 +143,55 @@ async def test_non_owner_snapshot_cannot_inherit_owner_private_context() -> None
     assert guest.persona_capsule == PersonaCapsule()
     assert guest.summary == ""
     assert guest.tool_permission is False
+
+
+def test_uncertain_snapshot_keeps_only_confirmed_archive_claims() -> None:
+    confirmed = MemoryCapsuleEntry(
+        "archive-fact",
+        "memory_claim",
+        "喜好：喜欢画画",
+        (format_fact_version_source_id(2),),
+    )
+    draft = ContextSnapshotDraft(
+        recent_committed_turns=(
+            ContextTurn("user", "主人私密话题", "owner"),
+            ContextTurn("assistant", "房间公开话题", "public"),
+        ),
+        memory_capsule=MemoryCapsule(
+            (
+                confirmed,
+                MemoryCapsuleEntry("catalog-fact", "memory_claim", "主人住址", ("event-1",)),
+                MemoryCapsuleEntry("blank-refs", "memory_claim", "无来源"),
+            )
+        ),
+        persona_capsule=PersonaCapsule("private-persona", 1, "主人专属陪伴方式"),
+        relationship_policy=_policy(tools=True),
+        tool_permission=True,
+        speaker_class="uncertain",
+        summary="主人私密摘要",
+    )
+
+    scoped = scope_context_snapshot_draft(draft)
+
+    assert scoped.memory_capsule.entries == (confirmed,)
+    assert scoped.recent_committed_turns == (ContextTurn("assistant", "房间公开话题"),)
+    assert scoped.persona_capsule == PersonaCapsule()
+    assert scoped.tool_permission is False
+    assert scoped.summary == ""
+
+    guest = scope_context_snapshot_draft(
+        ContextSnapshotDraft(
+            memory_capsule=MemoryCapsule((confirmed,)),
+            persona_capsule=draft.persona_capsule,
+            tool_permission=True,
+            speaker_class="guest",
+            summary=draft.summary,
+        )
+    )
+    assert guest.memory_capsule.entries == ()
+    assert guest.persona_capsule == PersonaCapsule()
+    assert guest.tool_permission is False
+    assert guest.summary == ""
 
 
 @pytest.mark.asyncio

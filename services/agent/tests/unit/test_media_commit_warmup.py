@@ -136,6 +136,140 @@ async def test_a_vad_flow_commit_asks_the_close_verdict_before_the_grace_runs_ou
 
 
 @pytest.mark.asyncio
+async def test_an_asr_final_starts_warmups_before_the_device_vad_end(
+    device_media_session: Any,
+) -> None:
+    window = await _open(device_media_session, "vad-warm-before-end")
+    await _device_vad(window, "vad-start", 40_000, final=False)
+    window.context.asr.last_sent_sample = _VOICED_END
+
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="early-final",
+        start_sample=40_000,
+        end_sample=_VOICED_END,
+        text=_QUESTION,
+    )
+    await _let_tasks_run()
+
+    assert window.close_verdict.calls == [_QUESTION]
+    assert window.live_verdict.calls == [_QUESTION]
+    assert window.provider.warmed == [_QUESTION]
+    assert window.provider.prepared == []
+
+    async def no_finals(_identity: SessionIdentity) -> Sequence[ASRResult]:
+        return ()
+
+    window.provider.finalize_speech_segment = no_finals
+    await _device_vad(window, "vad-end", _VOICED_END, final=True)
+    _release(window)
+    await _wait_until(lambda: window.provider.prepared == [_QUESTION], timeout=3.0)
+    assert window.close_verdict.calls.count(_QUESTION) == 1
+
+
+@pytest.mark.asyncio
+async def test_an_incomplete_final_does_not_start_warmups_before_the_device_vad_end(
+    device_media_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = await _open(device_media_session, "vad-no-warm-incomplete")
+    monkeypatch.setattr(window.registry, "_maybe_early_commit_live_lookup", lambda *_args: None)
+    monkeypatch.setattr(window.registry, "_maybe_early_commit_conversation_close", lambda *_args: None)
+    await _device_vad(window, "vad-start", 40_000, final=False)
+    window.context.asr.last_sent_sample = _VOICED_END
+
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="incomplete-final",
+        start_sample=40_000,
+        end_sample=_VOICED_END,
+        text="我想",
+    )
+    await _let_tasks_run()
+
+    assert window.close_verdict.calls == []
+    assert window.live_verdict.calls == []
+    assert window.provider.warmed == []
+    assert window.provider.prepared == []
+
+
+@pytest.mark.asyncio
+async def test_a_final_with_a_pending_partial_does_not_start_warmups_before_the_device_vad_end(
+    device_media_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    window = await _open(device_media_session, "vad-no-warm-pending-partial")
+    monkeypatch.setattr(window.registry, "_maybe_early_commit_live_lookup", lambda *_args: None)
+    monkeypatch.setattr(window.registry, "_maybe_early_commit_conversation_close", lambda *_args: None)
+    await _device_vad(window, "vad-start", 40_000, final=False)
+    window.context.asr.last_sent_sample = _VOICED_END
+
+    await _accept_media_asr_decision(
+        window.registry,
+        window.identity,
+        sentence_id="partial-final",
+        start_sample=40_000,
+        end_sample=50_000,
+        text="我想",
+        is_final=False,
+    )
+    assert window.context.pending.pending_partial is not None
+
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="late-final",
+        start_sample=40_000,
+        end_sample=_VOICED_END,
+        text=_QUESTION,
+        task_epoch=4,
+    )
+    await _let_tasks_run()
+
+    assert window.context.pending.pending_partial is not None
+    assert window.close_verdict.calls == []
+    assert window.live_verdict.calls == []
+    assert window.provider.warmed == []
+    assert window.provider.prepared == []
+
+
+@pytest.mark.asyncio
+async def test_an_unpinned_playback_overlap_turn_does_not_warm_before_vad_end(
+    device_media_session: Any,
+) -> None:
+    window = await _open(device_media_session, "vad-no-warm-playback-overlap")
+    pending = window.context.pending
+    pending.turn_start_sample = 40_000
+    pending.turn_end_sample = _VOICED_END
+    pending.turn_endpoint_sample = None
+    pending.active_vad_start_sample = 40_000
+    window.context.last_playback_end_sample = 50_000
+
+    pending.pending_turn_playback_overlap = True
+    window.registry._warm_endpoint_commit(
+        window.context,
+        asr_final_start_sample=_VOICED_END,
+        asr_final_end_sample=_VOICED_END,
+    )
+    assert window.provider.warmed == []
+    assert window.close_verdict.calls == []
+    assert window.live_verdict.calls == []
+
+    # The projected text starts before the playback boundary even without the flag.
+    pending.pending_turn_playback_overlap = False
+    window.registry._warm_endpoint_commit(
+        window.context,
+        asr_final_start_sample=_VOICED_END,
+        asr_final_end_sample=_VOICED_END,
+    )
+    assert window.provider.warmed == []
+    assert window.close_verdict.calls == []
+    assert window.live_verdict.calls == []
+
+
+@pytest.mark.asyncio
 async def test_the_commit_starts_both_verdicts_before_it_waits_for_either(
     device_media_session: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -143,7 +277,9 @@ async def test_the_commit_starts_both_verdicts_before_it_waits_for_either(
 
     window = await _open(device_media_session, "vad-warm-verdicts-together")
     # Isolate the commit gate: the final's early verdicts and the endpoint warm-up must not start them.
-    monkeypatch.setattr(window.registry, "_warm_endpoint_commit", lambda _context: None)
+    monkeypatch.setattr(
+        window.registry, "_warm_endpoint_commit", lambda _context, **_kwargs: None
+    )
     monkeypatch.setattr(window.registry, "_maybe_early_commit_live_lookup", lambda *_args: None)
     monkeypatch.setattr(
         window.registry, "_maybe_early_commit_conversation_close", lambda *_args: None
@@ -312,6 +448,35 @@ async def test_the_commit_sends_the_plan_request_before_it_waits_for_the_close_v
     _release(window)
     await _wait_until(lambda: window.provider.prepared == [_QUESTION], timeout=3.0)
     assert window.provider.planned == [_QUESTION]
+
+
+@pytest.mark.asyncio
+async def test_a_commit_that_rejects_its_sentence_tells_the_provider_to_drop_the_reply_sent_ahead(
+    device_media_session: Any,
+) -> None:
+    window = await _open(device_media_session, "commit-discards-speculative-reply", grace_s=0.05)
+    window.close_verdict.answer = True
+
+    await _end_the_utterance(window, _final("q-1", 40_000, 58_000, _QUESTION), vad_start=40_000)
+    await _wait_until(lambda: window.provider.planned == [_QUESTION], timeout=3.0)
+    _release(window)
+    await _wait_until(lambda: window.provider.discarded != [], timeout=3.0)
+
+    assert window.provider.prepared == []
+    assert len(window.provider.discarded) == 1
+    assert window.provider.discarded[0].startswith("conversation_end")
+
+
+@pytest.mark.asyncio
+async def test_a_committed_turn_keeps_the_reply_sent_ahead(device_media_session: Any) -> None:
+    window = await _open(device_media_session, "commit-keeps-speculative-reply", grace_s=0.05)
+
+    await _end_the_utterance(window, _final("q-1", 40_000, 58_000, _QUESTION), vad_start=40_000)
+    _release(window)
+    await _wait_until(lambda: window.provider.prepared == [_QUESTION], timeout=3.0)
+    await _let_tasks_run()
+
+    assert window.provider.discarded == []
 
 
 @pytest.mark.asyncio

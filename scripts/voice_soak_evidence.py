@@ -23,6 +23,12 @@ DELIVERY = re.compile(
     r"/generation-(?P<generation>\d+)/tool-\d+"
 )
 START_TOLERANCE_S = 2.0
+# Fastest observed spoken stop: ~1.4 s clip, final ~0.33 s later, then the stop.
+# A clip that starts with less playback left cannot win the race against the end.
+MIN_PLAYBACK_LEFT_FOR_STOP_S = 2.5
+UNVERIFIABLE_STOP_REASONS = frozenset(
+    {"interrupt_started_after_playback", "interrupt_too_late_to_stop"}
+)
 
 
 def _bridge_rows(text: str) -> list[tuple[float, str, dict[str, str]]]:
@@ -78,6 +84,8 @@ def assess_interruption(bridge: str, serial: str, attempt: Mapping[str, Any]) ->
         "stop_reason": "missing_reply_start",
         "stop_delay_s": None,
         "stop_delay_origin": "interrupt_start",
+        "stop_delay_from_interrupt_start_s": None,
+        "stop_delay_from_speech_end_s": None,
     }
 
     def finish(reason: str, stopped: bool | None = None) -> dict[str, Any]:
@@ -136,8 +144,13 @@ def assess_interruption(bridge: str, serial: str, attempt: Mapping[str, Any]) ->
     result["reply_terminal_reason"] = terminal.get("terminal_reason", "")
     if terminal.get("terminal_reason") == "playback_completed":
         interrupt_start = attempt.get("interrupt_start_ts")
-        if isinstance(interrupt_start, (int, float)) and interrupt_start >= terminal_at:
-            return finish("interrupt_started_after_playback")
+        if isinstance(interrupt_start, (int, float)):
+            remaining = terminal_at - interrupt_start
+            result["remaining_playback_at_clip_start_s"] = round(remaining, 3)
+            if remaining <= 0:
+                return finish("interrupt_started_after_playback")
+            if remaining < MIN_PLAYBACK_LEFT_FOR_STOP_S:
+                return finish("interrupt_too_late_to_stop")
         return finish("playback_completed", False)
     if terminal["terminal"] != "preempted":
         return finish("non_interrupt_terminal", False)
@@ -194,7 +207,15 @@ def assess_interruption(bridge: str, serial: str, attempt: Mapping[str, Any]) ->
     ]
     if not played:
         return finish("missing_device_playout_receipt")
-    result["stop_delay_s"] = round(returned - window_start, 3)
+    from_start = round(returned - window_start, 3)
+    result["stop_delay_s"] = from_start
+    result["stop_delay_origin"] = "interrupt_start"
+    result["stop_delay_from_interrupt_start_s"] = from_start
+    speech_end = attempt.get("interrupt_end_ts")
+    if isinstance(speech_end, (int, float)) and not isinstance(speech_end, bool):
+        result["stop_delay_from_speech_end_s"] = round(returned - speech_end, 3)
+    else:
+        result["stop_delay_from_speech_end_s"] = None
     return finish("spoken_stop_and_device_playout", True)
 
 

@@ -11,6 +11,7 @@ from typing import Final, Literal
 
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.observability.metrics import MetricsRegistry
+from services.common.child_archive_claim_marker import is_child_archive_confirmed_claim
 
 ContextRole = Literal["user", "assistant"]
 SpeakerScope = Literal["owner", "public"]
@@ -95,12 +96,21 @@ def scope_context_snapshot_draft(draft: ContextSnapshotDraft) -> ContextSnapshot
 
     if draft.speaker_class == "owner":
         return draft
+    memory = MemoryCapsule()
+    if draft.speaker_class == "uncertain":
+        memory = MemoryCapsule(
+            entries=tuple(
+                entry
+                for entry in draft.memory_capsule.entries
+                if is_child_archive_confirmed_claim(entry.source_refs)
+            )
+        )
     return replace(
         draft,
         recent_committed_turns=tuple(
             turn for turn in draft.recent_committed_turns if turn.speaker_scope == "public"
         ),
-        memory_capsule=MemoryCapsule(),
+        memory_capsule=memory,
         persona_capsule=PersonaCapsule(),
         tool_permission=False,
         summary="",
@@ -229,12 +239,7 @@ class ContextSnapshotManager:
         if not first_turn:
             return False
         snap = self.current(session_id)
-        if snap.version != 0 and (
-            snap.recent_committed_turns
-            or snap.memory_capsule.entries
-            or snap.persona_capsule.prompt_fragment
-            or snap.summary
-        ):
+        if not self._seedable(snap):
             return False
         draft = draft_factory()
         fresh = (
@@ -244,6 +249,23 @@ class ContextSnapshotManager:
         )
         delegation.activate_context_version(session_id, fresh.version)  # type: ignore[attr-defined]
         return True
+
+    def seeded_version(self, session_id: str, *, first_turn: bool) -> int:
+        """The version ``seed_or_rebind_if_empty`` leaves the current snapshot at; nothing changes."""
+
+        snap = self.current(session_id)
+        if not first_turn or snap.version == 0 or not self._seedable(snap):
+            return snap.version
+        return snap.version + 1
+
+    @staticmethod
+    def _seedable(snap: ContextSnapshot) -> bool:
+        return snap.version == 0 or not (
+            snap.recent_committed_turns
+            or snap.memory_capsule.entries
+            or snap.persona_capsule.prompt_fragment
+            or snap.summary
+        )
 
     async def prepare_next(
         self,
@@ -302,6 +324,41 @@ class ContextSnapshotManager:
         self.metrics.set_context_snapshot_size(pending.candidate.size_chars)
         return pending.candidate
 
+    def preview(
+        self,
+        session_id: str,
+        version: int,
+        draft: ContextSnapshotDraft,
+    ) -> ContextSnapshot | None:
+        """The snapshot ``draft`` would become at ``version``, or None where building it fails; nothing is recorded."""
+
+        if version < 0:
+            return None
+        snapshot, _ = self._build(session_id, version, draft)
+        return snapshot if snapshot.size_chars <= self.max_snapshot_chars else None
+
+    def _build(
+        self,
+        session_id: str,
+        version: int,
+        draft: ContextSnapshotDraft,
+    ) -> tuple[ContextSnapshot, int]:
+        draft = scope_context_snapshot_draft(draft)
+        memory_capsule, memory_trimmed = _bounded_memory_capsule(draft.memory_capsule)
+        snapshot = ContextSnapshot(
+            recent_committed_turns=draft.recent_committed_turns[-self.max_recent_turns :],
+            memory_capsule=memory_capsule,
+            persona_capsule=draft.persona_capsule,
+            relationship_policy=draft.relationship_policy,
+            tool_permission=draft.tool_permission,
+            speaker_class=draft.speaker_class,
+            summary=draft.summary,
+            session_id=session_id,
+            version=version,
+            created_at_ms=int(time.time() * 1_000),
+        )
+        return snapshot, memory_trimmed
+
     def _snapshot(
         self,
         session_id: str,
@@ -310,9 +367,8 @@ class ContextSnapshotManager:
     ) -> ContextSnapshot:
         if version < 0:
             raise ValueError("context snapshot version must be non-negative")
-        draft = scope_context_snapshot_draft(draft)
-        recent = draft.recent_committed_turns[-self.max_recent_turns :]
-        memory_capsule, memory_trimmed = _bounded_memory_capsule(draft.memory_capsule)
+        snapshot, memory_trimmed = self._build(session_id, version, draft)
+        memory_capsule = snapshot.memory_capsule
         self.metrics.set_context_memory_chars(
             sum(len(entry.content) for entry in memory_capsule.entries)
         )
@@ -324,18 +380,6 @@ class ContextSnapshotManager:
                 len(memory_capsule.entries),
                 MEMORY_CAPSULE_MAX_CHARS,
             )
-        snapshot = ContextSnapshot(
-            recent_committed_turns=recent,
-            memory_capsule=memory_capsule,
-            persona_capsule=draft.persona_capsule,
-            relationship_policy=draft.relationship_policy,
-            tool_permission=draft.tool_permission,
-            speaker_class=draft.speaker_class,
-            summary=draft.summary,
-            session_id=session_id,
-            version=version,
-            created_at_ms=int(time.time() * 1_000),
-        )
         if snapshot.size_chars > self.max_snapshot_chars:
             self.metrics.inc_context_snapshot_build_failed("too_large")
             raise ValueError("context snapshot exceeds configured size")

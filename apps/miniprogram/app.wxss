@@ -1,76 +1,87 @@
 /* ============================================================
-   Memoria parent UI v4 tokens (docs/design/app-v4).
-   One indigo accent, light grey bg, white cards, 8pt grid, layered shadows.
-   Lengths are the design's px, not rpx, so the 390 pt frame renders 1:1 like an iOS
-   layout instead of scaling with screen width. Page styles use these tokens only.
+   Memoria parent UI — warm journal palette.
+   Lengths are design px (390pt frame), not rpx.
    ============================================================ */
 page {
-  --mp-bg: #f4f4f7;
-  --mp-surface: #ffffff;
-  --mp-accent: #4a52c9;
-  --mp-accent-soft: #eeeffc;
+  --mp-bg: #f8f5ef;
+  --mp-surface: #fffefa;
+  --mp-paper: #efe8da;
+  --mp-peach: #f5e3d0;
+  --mp-lilac: #eae6f3;
+  --mp-forest: #234b40;
+  --mp-on-forest: #e0eadd;
+  --mp-on-forest-line: rgba(255, 254, 250, 0.16);
+  --mp-glass: rgba(255, 254, 250, 0.85);
+  --mp-soft-line: rgba(23, 46, 50, 0.09);
+  --mp-dash: #c5cfc6;
+  --mp-voice-starlight: #e9eee4;
+  --mp-voice-taoxi: #f7e7db;
+  --mp-voice-mianmian: #eee8f3;
+  --mp-voice-axu: #e4edf1;
+  --mp-voice-xuanmo: #eae8e2;
+  --mp-accent: #176b5b;
+  --mp-accent-soft: #e3f0ed;
   --mp-on-accent: #ffffff;
-  --mp-rust: #9a4732;
-  --mp-rust-bg: #fbeee9;
+  --mp-rust: #b44a3a;
+  --mp-rust-bg: #fdf0ed;
   --mp-rust-ink: #8a5848;
   --mp-rust-deep: #7a3d2c;
   --mp-rust-tile: #f5dcd3;
-  --mp-sage: #23805f;
-  --mp-sage-bg: #e7f4ee;
+  --mp-sage: #176b5b;
+  --mp-sage-bg: #e3f0ed;
   --mp-sun: #7f5a00;
   --mp-sun-bg: #fbf1d6;
-  --mp-ink: #16182b;
-  --mp-ink-body: #34374d;
-  --mp-ink-2: #5b5f73;
-  --mp-ink-3: #7a7e92;
-  --mp-ink-4: #b4b6c4;
-  --mp-line: #ececf1;
-  --mp-fill: #f4f4f8;
-  --mp-fill-art: #f1f2f6;
-  --mp-track: #ececf2;
-  --mp-scrim: rgba(22, 24, 43, 0.42);
-  --mp-tabbar-bg: rgba(250, 250, 252, 0.86);
-  --mp-tab-ink: #8e91a3;
-  --mp-hairline: rgba(22, 24, 43, 0.06);
-  --mp-radius-card: 24px;
-  --mp-radius-card-xl: 32px;
+  --mp-ink: #172e32;
+  --mp-ink-body: #172e32;
+  --mp-ink-2: #536a6c;
+  --mp-ink-3: #536a6c;
+  --mp-ink-4: #a9b8b5;
+  --mp-line: #e8e3d9;
+  --mp-fill: #f1eee7;
+  --mp-fill-art: #ede8dd;
+  --mp-track: #dfe8e4;
+  --mp-scrim: rgba(23, 46, 50, 0.42);
+  --mp-tabbar-bg: rgba(255, 254, 250, 0.97);
+  --mp-tab-ink: #536a6c;
+  --mp-hairline: rgba(23, 46, 50, 0.06);
+  --mp-radius-card: 22px;
+  --mp-radius-card-xl: 24px;
   --mp-radius-inset: 16px;
   --mp-radius-icon: 12px;
-  --mp-radius-sheet: 32px;
+  --mp-radius-sheet: 24px;
   --mp-radius-pill: 499.5px;
-  --mp-pad-page: 24px;
+  --mp-pad-page: 20px;
   --mp-tab-top: 17px;
-  --mp-gap-card: 16px;
+  --mp-gap-card: 12px;
   --mp-pad-card: 16px;
-  --mp-pad-card-lg: 24px;
-  --mp-tap: 56px;
+  --mp-pad-card-lg: 20px;
+  --mp-tap: 48px;
   --mp-icon: 40px;
   --mp-tab-clearance: calc(88px + 24px + env(safe-area-inset-bottom));
   --mp-page-foot: calc(32px + env(safe-area-inset-bottom));
-  --mp-shadow-card: 0 1px 2px rgba(22, 24, 43, 0.04),
-    0 8px 24px -8px rgba(22, 24, 43, 0.08),
-    0 24px 48px -24px rgba(22, 24, 43, 0.1);
-  --mp-shadow-float: 0 2px 8px rgba(22, 24, 43, 0.08);
-  --mp-shadow-thumb: 0 2px 8px rgba(22, 24, 43, 0.18), 0 0 0 0.5px rgba(22, 24, 43, 0.08);
-  --mp-shadow-button: 0 1px 2px rgba(22, 24, 43, 0.06), 0 8px 24px -12px rgba(22, 24, 43, 0.12);
-  --mp-shadow-hero: 0 24px 48px -24px rgba(22, 24, 43, 0.35);
-  --mp-hero-scrim: rgba(16, 18, 48, 0.32);
-  --mp-shadow-selected: 0 0 0 2px var(--mp-accent), 0 8px 24px -8px rgba(74, 82, 201, 0.25);
-  --mp-type-num-xl: 40px;
-  --mp-type-display: 32px;
+  --mp-shadow-card: 0 2px 12px rgba(63, 50, 26, 0.035);
+  --mp-shadow-float: 0 2px 8px rgba(23, 46, 50, 0.06);
+  --mp-shadow-thumb: 0 2px 8px rgba(23, 46, 50, 0.12);
+  --mp-shadow-button: 0 1px 2px rgba(23, 46, 50, 0.04);
+  --mp-shadow-hero: 0 8px 24px rgba(23, 46, 50, 0.08);
+  --mp-shadow-forest: 0 8px 24px rgba(35, 75, 64, 0.12);
+  --mp-hero-scrim: rgba(23, 46, 50, 0.32);
+  --mp-shadow-selected: 0 0 0 2px var(--mp-accent);
+  --mp-type-num-xl: 28px;
+  --mp-type-display: 26px;
   --mp-type-headline: 24px;
-  --mp-type-heading: 22px;
-  --mp-type-title: 20px;
-  --mp-type-button: 17px;
-  --mp-type-lead: 18px;
-  --mp-type-card: 16px;
-  --mp-type-body: 15px;
+  --mp-type-heading: 20px;
+  --mp-type-title: 18px;
+  --mp-type-button: 16px;
+  --mp-type-lead: 16px;
+  --mp-type-card: 15px;
+  --mp-type-body: 14px;
   --mp-type-small: 14px;
   --mp-type-caption: 13px;
   --mp-type-meta: 12px;
   --mp-type-micro: 11px;
   --mp-type-tab: 10px;
-  --mp-lh-display: 40px;
+  --mp-lh-display: 32px;
   --mp-lh-card: 24px;
   --mp-lh-body: 24px;
   --mp-lh-caption: 20px;
@@ -78,7 +89,7 @@ page {
   min-height: 100%;
   color: var(--mp-ink);
   background: var(--mp-bg);
-  font-family: "PingFang SC", "HarmonyOS Sans SC", "Inter", "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-family: -apple-system, "SF Pro Text", "PingFang SC", "HarmonyOS Sans SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
   font-size: var(--mp-type-body);
   line-height: normal;
   font-feature-settings: "tnum";
@@ -87,7 +98,6 @@ page {
 button::after { border: none; }
 button { font-family: inherit; }
 
-/* ---------- 页面骨架 ---------- */
 .page-shell {
   position: relative;
   box-sizing: border-box;
@@ -95,6 +105,20 @@ button { font-family: inherit; }
   padding: 12px var(--mp-pad-page) var(--mp-page-foot);
   background: var(--mp-bg);
   color: var(--mp-ink);
+}
+.page-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.page-heading-copy { min-width: 0; }
+.page-heading-mark {
+  flex-shrink: 0;
+  width: 50px;
+  height: 62px;
+  margin-top: 36px;
 }
 .page-shell.tab-page {
   padding-top: calc(var(--mp-status-bar, 20px) + var(--mp-tab-top));
@@ -112,8 +136,8 @@ button { font-family: inherit; }
   margin: 4px 0 0;
   color: var(--mp-ink);
   font-size: var(--mp-type-display);
-  font-weight: 800;
-  letter-spacing: -0.6px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
   line-height: var(--mp-lh-display);
 }
 .page-lede,
@@ -195,55 +219,72 @@ button { font-family: inherit; }
 }
 .card-lead .l2-card-title { flex: 1; min-width: 0; }
 
-.role-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--mp-gap-card);
-  margin-top: 24px;
-}
-.role-card {
+.voice-list {
   display: flex;
   flex-direction: column;
+  gap: 8px;
+  margin-top: var(--mp-gap-card);
+}
+.voice-option {
+  display: flex;
   align-items: center;
+  gap: 12px;
   box-sizing: border-box;
-  min-width: 0;
-  padding: 8px 8px 16px;
-  border-radius: var(--mp-radius-card);
+  min-height: 72px;
+  padding: 12px 16px;
+  border-radius: var(--mp-radius-inset);
   background: var(--mp-surface);
   box-shadow: var(--mp-shadow-card);
-  text-align: center;
   transition: box-shadow var(--mp-dur);
 }
-.role-card-on { box-shadow: var(--mp-shadow-selected); }
-.role-art {
+.voice-option-on { box-shadow: var(--mp-shadow-selected); }
+.voice-bars {
   display: flex;
+  align-items: flex-end;
   justify-content: center;
-  width: 100%;
-  height: 96px;
-  overflow: hidden;
-  border-radius: var(--mp-radius-inset);
-  background: var(--mp-fill-art);
+  gap: 3px;
+  flex-shrink: 0;
+  width: 40px;
+  height: 32px;
 }
-.role-card-on .role-art { background: var(--mp-accent-soft); }
-.role-fig { margin-top: 8px; }
-.role-name {
+.voice-bar {
+  width: 4px;
+  border-radius: 2px;
+  background: var(--mp-accent);
+  opacity: 0.35;
+}
+.voice-option-on .voice-bar { opacity: 1; }
+.voice-bar:nth-child(1) { height: 10px; }
+.voice-bar:nth-child(2) { height: 18px; }
+.voice-bar:nth-child(3) { height: 14px; }
+.voice-bar:nth-child(4) { height: 24px; }
+.voice-bar:nth-child(5) { height: 12px; }
+.voice-copy { flex: 1; min-width: 0; }
+.voice-name {
   display: block;
-  margin-top: 8px;
   color: var(--mp-ink);
   font-size: var(--mp-type-card);
   font-weight: 600;
 }
-.role-tagline {
-  display: block;
-  margin-top: 4px;
-  padding: 0 4px;
+.voice-catalog-name {
   color: var(--mp-ink-2);
+  font-size: var(--mp-type-caption);
+  font-weight: 400;
+}
+.voice-current {
+  flex-shrink: 0;
+  color: var(--mp-accent);
   font-size: var(--mp-type-meta);
 }
-.role-chip { margin-top: 8px; }
-.role-play { flex-shrink: 0; min-height: 32px; }
+.voice-tagline {
+  display: block;
+  margin-top: 2px;
+  color: var(--mp-ink-2);
+  font-size: var(--mp-type-caption);
+  line-height: var(--mp-lh-caption);
+}
+.voice-chip { flex-shrink: 0; min-height: 44px; min-width: 44px; }
 
-/* ---------- 按钮 ---------- */
 .primary-button,
 .secondary-button,
 .danger-button {
@@ -264,7 +305,7 @@ button { font-family: inherit; }
 }
 .primary-button {
   color: var(--mp-on-accent);
-  background: var(--mp-ink);
+  background: var(--mp-accent);
 }
 .primary-button:active,
 .secondary-button:active { transform: scale(0.98); opacity: 0.9; }
@@ -367,7 +408,6 @@ button[disabled] {
   font-weight: 600;
 }
 
-/* ---------- 胶囊标签 ---------- */
 .pill {
   display: inline-flex;
   align-items: center;
@@ -394,7 +434,6 @@ button[disabled] {
 .pill-draft { background: var(--mp-sun-bg); color: var(--mp-sun); }
 .pill-teal { background: var(--mp-accent-soft); color: var(--mp-accent); }
 
-/* ---------- 提示条 / 空状态 ---------- */
 .notice {
   display: flex;
   flex-direction: column;
@@ -436,7 +475,6 @@ button[disabled] {
   line-height: var(--mp-lh-caption);
 }
 
-/* ---------- 表单 ---------- */
 .field-label {
   display: block;
   margin: 16px 0 8px;
@@ -564,7 +602,6 @@ button[disabled] {
 }
 .seg-item-on { color: var(--mp-on-accent); font-weight: 600; background: var(--mp-accent); }
 
-/* ---------- 时间线 ---------- */
 .timeline-card {
   display: flex;
   gap: 12px;
@@ -574,11 +611,9 @@ button[disabled] {
 .timeline-dot { flex-shrink: 0; width: 6px; height: 6px; margin-top: 9px; border-radius: 50%; background: var(--mp-accent); }
 .timeline-time { display: block; color: var(--mp-ink-3); font-size: var(--mp-type-meta); }
 
-/* ---------- 进度条 ---------- */
 .progress-track { height: 8px; border-radius: var(--mp-radius-pill); background: var(--mp-track); overflow: hidden; }
 .progress-fill { height: 100%; border-radius: var(--mp-radius-pill); background: var(--mp-accent); }
 
-/* ---------- 底部抽屉 / 弹窗 ---------- */
 .sheet-mask,
 .mp-sheet-mask {
   position: fixed;
@@ -640,9 +675,7 @@ button[disabled] {
 .dot-done { background: var(--mp-accent-soft); }
 .dot-now { width: 20px; border-radius: var(--mp-radius-pill); background: var(--mp-accent); }
 
-/* ---------- 图标 ---------- */
 .inline-icon { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; }
-/* WXML 不渲染内联 <svg>：勾和折叠箭头用边框绘制，颜色跟随 currentColor */
 .icon-check { display: block; box-sizing: border-box; width: 7px; height: 12px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; border-radius: 0.5px; transform: translateY(-1.5px) rotate(45deg); }
 .icon-chevron { display: block; box-sizing: border-box; width: 8px; height: 8px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; border-radius: 0.5px; transform: translateY(-2px) rotate(45deg); }
 .danger-link { padding: 6px 0; color: var(--mp-rust); font-size: var(--mp-type-caption); background: transparent; }

@@ -1,0 +1,83 @@
+{
+  "date": "2026-11-04",
+  "environment": "Chrome headless, self-contained fixture preview; not WeChat",
+  "checks": [
+    {
+      "check": "sidebar navigation: home",
+      "status": "pass"
+    },
+    {
+      "check": "sidebar navigation: memory",
+      "status": "pass"
+    },
+    {
+      "check": "sidebar navigation: companion",
+      "status": "pass"
+    },
+    {
+      "check": "sidebar navigation: device",
+      "status": "pass"
+    },
+    {
+      "check": "sidebar navigation: profile",
+      "status": "pass"
+    },
+    {
+      "check": "bottom navigation: home",
+      "status": "pass"
+    },
+    {
+      "check": "bottom navigation: memory",
+      "status": "pass"
+    },
+    {
+      "check": "bottom navigation: companion",
+      "status": "pass"
+    },
+    {
+      "check": "bottom navigation: device",
+      "status": "pass"
+    },
+    {
+      "check": "bottom navigation: profile",
+      "status": "pass"
+    },
+    {
+      "check": "expand: toggleUsage",
+      "status": "pass"
+    },
+    {
+      "check": "expand: toggleManagement",
+      "status": "pass"
+    },
+    {
+      "check": "expand: toggleStories",
+      "status": "pass"
+    },
+    {
+      "check": "expand: toggleMemberSettings",
+      "status": "pass"
+    },
+    {
+      "check": "expand: toggleDiag",
+      "status": "pass"
+    },
+    {
+      "check": "collapse hides advanced settings",
+      "status": "pass"
+    },
+    {
+      "check": "quiet hours opens sheet; save explains fixture preview",
+      "status": "pass"
+    },
+    {
+      "check": "quiet hours closes and restores tab bar",
+      "status": "pass"
+    },
+    {
+      "check": "no runtime errors or broken images",
+      "status": "pass"
+    }
+  ],
+  "errors": []
+}

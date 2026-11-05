@@ -1,0 +1,21 @@
+ts	phase	decision	why	evidence	result
+2026-11-04T08:00:00Z	frame	将产品重新定义为多外形机器人、眼嘴表情屏和统一默认声音	用户明确否定吉祥物与多音色方向	docs/product/robot-direction-20261104.md	open
+2026-11-04T08:01:00Z	scope	保留绑定、监护、记忆权限与儿童可听内容	本轮只改变产品形态定义、声音选择契约与客户端体验	AGENTS.md	open
+2026-11-04T04:09:00Z	start	接续前两条产品与范围记录并核对已有实现	前两条时间戳误写为08:00Z和08:01Z，实际记录发生于本地11点后，本行开始使用现场UTC；旧产品文件已经归并	docs/product.md	前两行的时间戳和首行证据指针作废，由本行及当前产品定义替代
+2026-11-04T04:09:01Z	product	采用多款实体外形、眼嘴屏和唯一默认声音	用户已明确产品方向，不再复用角色选择表示机身或声音	docs/product.md	当前定义已记录，README同步
+2026-11-04T04:09:02Z	voice	移除前端角色和试听，保留后端冻结profile兼容键	所有设计profile已有同一speaker，但profile身份仍参与生成与归档校验	docs/design/robot-ui-20261104/voice-tests.txt	64 passed，29项需要PostgreSQL而跳过，不代表后端完整联调
+2026-11-04T04:09:03Z	design	采用彩色控制台结构并结合机器人产品图	产品陈列方案占高过多，控制台可让状态和回顾更靠前	docs/design/robot-ui-20261104/exploration.html	四tab，完整吉祥物和多音色退出页面
+2026-11-04T04:09:04Z	review	补回自定义表达的创建管理入口	独立审查实际复现了删声音页后入口不可达	apps/miniprogram/tests/robot-product.test.js	已移到设备表达方式抽屉，保存中禁止跳转
+2026-11-04T04:09:05Z	docs	把两份过时设计README归并到现有设计聚合	项目文档预算禁止组件README，截图与发布收据保留	docs/design.md	文档预算测试通过，未扩allowlist
+2026-11-04T04:09:06Z	native	用上传包真实文件集运行微信自带编译器	不把Chrome模拟布局当成微信模板编译证明	docs/design/robot-ui-20261104/native-compile.json	23个WXML和25个WXSS通过，未覆盖微信运行与真机
+2026-11-04T04:09:07Z	preview	驱动实际源码生成的自包含预览	静态截图不能证明导航、折叠和子页返回	docs/design/robot-ui-20261104/preview-checks.json	18项交互通过，保存与权限弹窗仍需微信验证
+2026-11-04T04:13:00Z	verify	按最终源码重跑客户端测试与截图矩阵	自定义表达入口和原生开关颜色修订后需要刷新证据	docs/design/robot-ui-20261104/tests.txt; docs/design/robot-ui-20261104/screenshots.json	630项测试和100项布局检查通过，零失败零跳过
+2026-11-04T04:13:01Z	package	历史图片音频退出上传包，新增一张机器人概念图	旧试听与服务端默认speaker不匹配，完整吉祥物不再属于产品展示	apps/miniprogram/project.config.example.json; apps/miniprogram/tests/robot-product.test.js	主包1207.6KiB，本地与模板packOptions一致，未合成儿童音频
+2026-11-04T04:13:02Z	boundary	只交付本地改版和可查看证据	前一版上传已完成，本轮尚无发布请求	docs/design.md	未提交推送上传部署或刷机，微信运行与多款硬件脸型仍未验收
+2026-11-04T04:13:03Z	delivery	内嵌截图切换稿并保留源码交互预览	用户需要看到实际新版，磁盘截图列表不能代替展示	docs/design/robot-ui-20261104/review.html; docs/design/robot-ui-20261104/preview.html	截图稿HTML预检通过，源码预览18项交互通过
+2026-11-04T04:19:53Z	visual	修正珊瑚卡小字与子页底色，保留当前机器人构图	小字对比度复算4.13不足，当前固定设备名与透明图片无可见碰撞	docs/design/robot-ui-20261104/review-results.json	小字现10.08，最终630项测试100项布局18项预览和23/25编译再次通过，主包1207.7KiB
+2026-11-04T04:19:54Z	audit	接受跨模型审查结论并独立复核报告数字	审查报告的行号、字段名与注释计数有误，不能原样转述	docs/design/robot-ui-20261104/review-results.json	无新增阻断，保留数据库跳过、微信与多款硬件未验收边界，原暂存区SHA256未变
+2026-11-04T04:45:38Z	product-revision	小程序只做控制查看，所有页面移除机器人外观与表情屏	用户指出具体机身样式尚未确定，控制端无需展示机器人样式或造型图标	docs/product.md; README.md	取代此前界面以机器人产品图和表情屏为主视觉的决定，实体眼嘴屏要求与默认声音不变
+2026-11-04T04:45:38Z	implementation	删除外观组件并收紧状态卡，设备图标改为通用调节滑杆	删除展示应同时消除占位空间，并覆盖引导完成页与记忆空态	apps/miniprogram/pages; apps/miniprogram/tests/robot-product.test.js; apps/miniprogram/project.config.example.json	所有注册页禁止外观资源与device-screen，旧资源退出上传包，绑定与控制API不变
+2026-11-04T04:48:14Z	verify	以移除外观后的源码重跑验证并刷新预览	用户需要看到真实控制端，不能复用此前含机器人图的结果	docs/design/robot-ui-20261104/tests.txt; docs/design/robot-ui-20261104/screenshots.json; docs/design/robot-ui-20261104/preview-checks.json; docs/design/robot-ui-20261104/native-compile.json	631项测试无失败无跳过，100项布局和18项预览通过，22/24个模板样式编译通过，主包1170.1KiB
+2026-11-04T04:48:14Z	delivery	直接查看首页设备和窄屏截图，HTML预检后内嵌展示	主观视觉核对不能由DOM统计代替	docs/design/robot-ui-20261104/review.html; docs/design.md	主线程已直接查看PNG，HTML预检无控制台错误；暂存区SHA256未变，未提交推送上传部署或刷机，手机微信仍待验收

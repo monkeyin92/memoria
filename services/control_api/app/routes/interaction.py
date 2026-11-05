@@ -46,6 +46,10 @@ from services.control_api.app.bound_subject import (
     claims_device_bound_subject,
     runtime_profile_trusts_bound_subject,
 )
+from services.control_api.app.child_archive_companion_recall import (
+    merge_companion_memory_claims,
+    start_child_archive_recall_task,
+)
 from services.control_api.app.companion_context import gather_companion_context
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.crisis_routing import route_crisis_with_bounded_evidence
@@ -469,11 +473,10 @@ def _trusted_speaker_decision(
     decision: ResponsePlanSpeakerDecision,
     scope: _SubjectMemoryScope | None,
 ) -> ResponsePlanSpeakerDecision:
-    """Honour a device-bound owner claim only on its own confirming profile."""
+    """Demote device-bound owner claims: bind proves config, not the speaker (A06)."""
 
+    del scope
     if not claims_device_bound_subject(decision.classification, decision.reason_code):
-        return decision
-    if scope is not None and scope.bound_subject_trusted:
         return decision
     return decision.model_copy(
         update={"classification": "uncertain", "reason_code": DEVICE_BOUND_SUBJECT_UNVERIFIED}
@@ -1622,6 +1625,11 @@ async def _companion_items(
     # defaults to None, and None means "the whole account", so a missing subject
     # must never be passed through as that default.
     confirmed_subject_id = _confirmed_subject_id(scope.subject_id)
+    subject_ready = scope.catalog_readable and confirmed_subject_id is not None
+    private_readable = capabilities["private_memory"] and subject_ready
+    archive_readable = subject_ready and (
+        capabilities["private_memory"] or capabilities["child_archive_confirmed_only"]
+    )
 
     async def fetch_memory() -> MemorySearchResult:
         # The query carries the subject the turn was resolved for.  The legacy
@@ -1650,11 +1658,7 @@ async def _companion_items(
             )
         )
 
-    memory_task = (
-        asyncio.create_task(fetch_memory())
-        if capabilities["private_memory"] and scope.catalog_readable and confirmed_subject_id is not None
-        else None
-    )
+    memory_task = asyncio.create_task(fetch_memory()) if private_readable else None
     # P1-03: another subject's persona reads only under its long-term-memory grant.
     persona_readable = scope.bound_subject_trusted or confirmed_subject_id == account_id
     persona_subject = confirmed_subject_id if persona_readable else None
@@ -1673,38 +1677,29 @@ async def _companion_items(
         and persona_subject is not None
         else None
     )
-    completed = await gather_companion_context(memory_task, persona_task)
+    archive_task = start_child_archive_recall_task(
+        request,
+        archive_readable=archive_readable,
+        subject_id=confirmed_subject_id,
+        subject_category=scope.subject_category,
+    )
+    completed = await gather_companion_context(memory_task, persona_task, archive_task)
     if completed is None:
         logger.warning("response planner companion context exceeded budget")
         completed = []
         memory_task = None
         persona_task = None
+        archive_task = None
     cursor = iter(completed)
     memory_result = next(cursor) if memory_task is not None else None
     persona_result = next(cursor) if persona_task is not None else None
+    archive_result = next(cursor) if archive_task is not None else None
 
-    items: list[GroundedItem] = []
-    if memory_result is not None and not isinstance(memory_result, BaseException):
-        for item in cast(MemorySearchResult, memory_result).items:
-            items.append(
-                GroundedItem(
-                    item_id=item.item_id,
-                    kind="memory_claim",
-                    content=f"{item.title}：{item.snippet}",
-                    source_refs=(
-                        SourceRef(
-                            "memory_claim",
-                            item.item_id,
-                            item.source_event_ids,
-                        ),
-                    ),
-                )
-            )
-    elif isinstance(memory_result, BaseException):
-        logger.warning(
-            "response planner memory context unavailable",
-            exc_info=memory_result,
-        )
+    items: list[GroundedItem] = merge_companion_memory_claims(
+        archive_result=archive_result,
+        memory_result=memory_result,
+        logger=logger,
+    )
     persona_capsule: PersonaCapsule | None = None
     if persona_result is not None and not isinstance(persona_result, BaseException):
         persona_capsule = cast(PersonaCapsule, persona_result)

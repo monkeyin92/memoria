@@ -13,7 +13,6 @@ from services.common.llm_thinking import ThinkingMode, thinking_disabled, thinki
 from services.guardian.session_recap import (
     SESSION_SUMMARY_SYSTEM_PROMPT,
     SessionTurn,
-    accept_parent_summary,
     session_summary_prompt,
 )
 
@@ -117,7 +116,8 @@ async def generate_parent_session_summary(
         content = response.json()["choices"][0]["message"]["content"]
         if not isinstance(content, str):
             return None
-        return accept_parent_summary(content, turns)
+        cleaned = " ".join(content.split())
+        return cleaned or None
     except Exception as exc:
         logger.warning("session summary model failed error=%s", type(exc).__name__)
         return None

@@ -14,9 +14,11 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
+import asyncpg
 import pytest
 from services.archive.postgres_archive import PostgresLifeArchive
 from services.guardian.crisis import CrisisNotificationService, GuardianNotification
+from services.guardian.crisis_delivery_receipt import project_crisis_delivery_receipt
 from services.guardian.domain import GuardianAccessDeniedError
 from services.guardian.postgres_store import PostgresGuardianStore
 from services.guardian.push import (
@@ -295,6 +297,96 @@ async def test_worker_delivers_fixed_content_and_consumes_one_acceptance(
     # Delivered rows are never claimed again.
     assert await _worker(store, sender, clock).run_once() == 0
     assert len(sender.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_revoked_guardian_settles_as_not_eligible_not_delivered(
+    postgres_database: TestDatabase,
+    guardian_postgres_store: PostgresGuardianStore,
+    archive: PostgresLifeArchive,
+) -> None:
+    occurred = _now()
+    digest = hashlib.sha256(b"binding-code").hexdigest()
+    link = await guardian_postgres_store.create_link(
+        guardian_user_id="guardian-a",
+        minor_user_id="minor-a",
+        relation="parent",
+        verified_via="wechat_identity",
+        binding_code_hash=digest,
+        binding_expires_at=occurred + timedelta(minutes=15),
+        now=occurred,
+    )
+    await guardian_postgres_store.confirm_link(
+        link_id=link.link_id,
+        minor_user_id="minor-a",
+        binding_code_hash=digest,
+        now=occurred,
+    )
+    receipt = await CrisisNotificationService(
+        guardian_postgres_store, archive
+    ).record_minor_crisis(
+        minor_user_id="minor-a",
+        session_id="voice-session-revoke",
+        turn_id=4,
+        generation_id=1,
+        tool_epoch=1,
+        script_version="crisis-self-v1",
+        reply_template_id="crisis-self-v1",
+        occurred_at=occurred,
+    )
+    assert receipt.notification_count == 1
+    await _accept(guardian_postgres_store, occurred, times=2)
+
+    admin = await asyncpg.connect(postgres_database.owner_dsn())
+    try:
+        await admin.execute(
+            "UPDATE guardian_links SET status = 'revoked', revoked_at = $2"
+            " WHERE link_id = $1",
+            link.link_id,
+            occurred + timedelta(seconds=2),
+        )
+    finally:
+        await admin.close()
+
+    sender = FakeSender(PushSendResult("delivered"))
+    assert await _worker(guardian_postgres_store, sender, Clock(occurred)).run_once() == 0
+    assert sender.calls == []
+
+    admin = await asyncpg.connect(postgres_database.owner_dsn())
+    try:
+        row = await admin.fetchrow(
+            "SELECT status, last_error_code, delivered_at, settled_at, attempts"
+            " FROM guardian_notification_outbox"
+            " WHERE crisis_event_id = $1::uuid",
+            receipt.crisis_event_id,
+        )
+    finally:
+        await admin.close()
+    assert row is not None
+    assert row["status"] == "failed"
+    assert row["last_error_code"] == "guardian_not_eligible"
+    assert row["delivered_at"] is None
+    assert row["settled_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_channel_accept_receipt_stays_unread_until_ack(
+    guardian_postgres_store: PostgresGuardianStore,
+    archive: PostgresLifeArchive,
+) -> None:
+    occurred = _now()
+    store, _ = await _store_with_crisis(
+        guardian_postgres_store, archive, occurred_at=occurred
+    )
+    await _accept(store, occurred)
+    clock = Clock(occurred + timedelta(seconds=5))
+    assert await _worker(store, FakeSender(), clock).run_once() == 1
+    delivered = await _only_notification(store)
+    projected = project_crisis_delivery_receipt(delivered)
+    assert projected.current_stage == "channel_accepted"
+    assert projected.channel_accepted is True
+    assert projected.guardian_confirmed is False
+    assert delivered.read_at is None
 
 
 @pytest.mark.asyncio

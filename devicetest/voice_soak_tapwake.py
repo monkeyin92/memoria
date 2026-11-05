@@ -160,7 +160,7 @@ class SerialWatcher:
                 self.cond.wait(min(remaining, 0.25))
 
     def wait_state(self, states: set[str], timeout: float, since: float | None = None,
-                   require_source: str | None = None) -> float | None:
+                   require_source: str | tuple[str, ...] | None = None) -> float | None:
         """Return the time we were in one of `states` (after `since`), or None on timeout.
 
         `require_source` pins how the state was learned, e.g. "serial_transition" for a real State line.
@@ -168,8 +168,10 @@ class SerialWatcher:
         deadline = now() + timeout
         with self.cond:
             while True:
+                sources = ((require_source,) if isinstance(require_source, str)
+                           else (require_source or ()))
                 if (self.state in states and (since is None or self.state_since >= since)
-                        and (require_source is None or self.state_source == require_source)):
+                        and (not sources or self.state_source in sources)):
                     return self.state_since
                 remaining = deadline - now()
                 if remaining <= 0:
@@ -208,10 +210,17 @@ class SerialWatcher:
 
     def observe_post_scenario(self, timeout: float) -> dict[str, object]:
         """Keep collecting serial events for a bounded tail and snapshot the final state."""
-        started_at = now()
-        started_monotonic = time.monotonic()
-        deadline = started_monotonic + timeout
+        settle_started_monotonic = time.monotonic()
         with self.cond:
+            settle_deadline = settle_started_monotonic + MAX_POST_SCENARIO_SETTLE_S
+            while self.state == "speaking" and (
+                remaining := settle_deadline - time.monotonic()
+            ) > 0:
+                self.cond.wait(min(remaining, 0.25))
+            settled_s = round(time.monotonic() - settle_started_monotonic, 2)
+            started_at = now()
+            started_monotonic = time.monotonic()
+            deadline = started_monotonic + timeout
             while (remaining := deadline - time.monotonic()) > 0:
                 self.cond.wait(min(remaining, 0.25))
 
@@ -235,6 +244,7 @@ class SerialWatcher:
             "final_state": final_state,
             "final_state_source": state_source,
             "final_state_since": stamp(final_state_since),
+            "settled_s": settled_s,
             "waited_s": round(time.monotonic() - started_monotonic, 2),
             "timeout_s": timeout,
             "verdict": verdict,
@@ -243,8 +253,9 @@ class SerialWatcher:
 
 
 MIN_CLIP_SECONDS = 0.5
-DEFAULT_POST_SCENARIO_WAIT_S = 180.0
-MAX_POST_SCENARIO_WAIT_S = 180.0
+DEFAULT_POST_SCENARIO_WAIT_S = 210.0
+MAX_POST_SCENARIO_WAIT_S = 240.0
+MAX_POST_SCENARIO_SETTLE_S = 30.0
 FORCE_SETTLE_S = 5.0  # a repeated wake refusal: just wait for listening|idle, never force a full idle
 
 
@@ -260,7 +271,24 @@ class LogTailWatcher(SerialWatcher):
     def _run(self) -> None:
         line_re = re.compile(r"^(\d\d):(\d\d):(\d\d)\.(\d\d\d) (.*)$")
         with self.source.open("rb") as src, self.path.open("ab") as out:
-            src.seek(0, 2)  # only what happens from now on
+            # Replay what the logger already captured before tailing. The wrapper resets the board and
+            # starts the logger first, so the one `activating -> idle` line the idle-only gate needs is
+            # always written before this watcher opens the file. Seeking to the end lost it and the gate
+            # could never pass (2026-11-02 19:56, 20:05, 20:17 attempts).
+            for raw in src.read().split(b"\n"):
+                text = raw.decode("utf-8", "replace")
+                if not text:
+                    continue
+                match = line_re.match(text)
+                if match:
+                    hh, mm, ss, ms = int(match[1]), int(match[2]), int(match[3]), int(match[4])
+                    local = time.localtime()
+                    replay_t = time.mktime(local[:3] + (hh, mm, ss) + local[6:]) + ms / 1000
+                    self._parse(replay_t, match[5])
+                else:
+                    # A raw boot transcript carries no clock prefix, so it lands here. Only timing is
+                    # unknown, not the state: the board is idle from this boot onward.
+                    self._parse(now(), text)
             buf = b""
             while not self.stop.is_set():
                 chunk = src.read(65536)
@@ -345,7 +373,7 @@ def main() -> int:
         "--post-scenario-wait",
         type=float,
         default=DEFAULT_POST_SCENARIO_WAIT_S,
-        help="seconds to keep collecting logs after the scenario (0-180; default 180)",
+        help="seconds to keep collecting logs after the scenario (0-240; default 210)",
     )
     ap.add_argument("--port", default=DEFAULT_PORT, help="the robot's USB serial port")
     ap.add_argument("--serial-log", default=None, help="follow this log (voice_soak_serial_logger.py) instead of opening the port")
@@ -356,7 +384,7 @@ def main() -> int:
     ap.add_argument("--remote", default=DEFAULT_REMOTE, help="ssh host that runs the production containers")
     args = ap.parse_args()
     if not 0 <= args.post_scenario_wait <= MAX_POST_SCENARIO_WAIT_S:
-        ap.error("--post-scenario-wait must be between 0 and 180 seconds")
+        ap.error("--post-scenario-wait must be between 0 and 240 seconds")
 
     out = Path(args.out)
     bank = Path(args.bank) if args.bank else None
@@ -595,6 +623,7 @@ def main() -> int:
                         settle = float(interrupt.get("settle", 8))
                         returned = watcher.wait_state({"listening", "idle"}, settle, since=i0)
                         outcome.update(interrupted=True, interrupt_text=interrupt["say"],
+                                       interrupt_kind=interrupt.get("kind", "stop"),
                                        interrupt_start_ts=i0, interrupt_end_ts=i1,
                                        interrupt_deadline_ts=i1 + settle, device_returned_ts=returned)
                     else:

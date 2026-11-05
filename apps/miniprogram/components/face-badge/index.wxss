@@ -35,6 +35,13 @@
 .fb-xl { width: 120px; height: 120px; }
 .fb-empty { width: 148px; height: 148px; }
 .fb-hero { width: 130px; height: 130px; }
+.fb-portrait { width: 48px; height: 66px; }
+.fb-review { width: 100px; height: 140px; }
+.fb-brand { width: 110px; height: 146px; }
+.fb-mark { width: 50px; height: 62px; }
+@media (max-width: 350px) {
+  .fb-review { width: 72px; height: 110px; }
+}
 
 .face-on-light {
   background: #ffffff;

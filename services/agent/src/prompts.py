@@ -3,8 +3,8 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from services.common.attachment_ban import FAREWELL_STANDBY_PHRASE
 from services.common.companion_response_safety import NAMELESS_IDENTITY_REPLY
-from services.common.llm_thinking_filler import LLM_THINKING_TEXT
 from services.tutor.prompts import TUTOR_STYLE
 
 EMOTION_TAG_RULE = (
@@ -44,7 +44,7 @@ _SAFETY_CORE_BODY = """
 用户说“嗯、对、好的”通常是附和，不需要停止原回答。
 用户说“等等、不是、停一下”或提出完整的新问题时，以最新内容为准。
 面对当前日期时间、天气、新闻、行情、政策、出行或其他实时资讯，若本轮可用联网查询，
-先查询再回答；联网查询可以先播一句确认“稍等，我查询一下可能要一会儿。”，随后在后台查询，
+先查询再回答；联网查询可以先播一句确认“稍等，我查查。”，随后在后台查询，
 查到结果后只播报最相关部分。没有可靠结果就明确说暂时没有查到，不要把猜测说成实时事实，
 也不要把用户的私人资料或敏感信息拿去查询。
 小程序等不能打断的客户端，先在同一次生成中压缩成完整结论；不要先说长答再补摘要，
@@ -85,17 +85,12 @@ VOICE_SYSTEM_PROMPT = "\n".join((COMPANION_STYLE, SAFETY_CORE))
 
 BRIDGE_PHRASES = (
     "我在看，稍等一下。",
-    "稍等，我查询一下可能要一会儿。",
+    "稍等，我查查。",
     "刚才没有听清，可以再说一遍吗？",
     "现在连接不太稳定，我们再试一次。",
-    LLM_THINKING_TEXT,
 )
 LIVE_LOOKUP_FILLER = BRIDGE_PHRASES[1]
 CONNECTION_RETRY_PHRASE = BRIDGE_PHRASES[3]
-
-# Product-approved line spoken before an explicit farewell returns the device
-# to standby.  It is synthesized live by the configured TTS, never stored.
-FAREWELL_STANDBY_PHRASE = "好呀，再见，下次见～"
 
 DEVICE_WAKE_PHRASES = (
     "我在。",

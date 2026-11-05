@@ -2,6 +2,10 @@
 
 本文件由 `scripts/consolidate_docs.py` 按类型归并生成。每个来源章节保留原文和来源路径。
 
+## 当前小程序界面
+
+2026-11-04 改版采用暖纸色背景、深绿回顾卡、杏色与淡紫色分区，复用已有角色插画，正文与辅助说明分级排版。设备页默认只展示状态、音量、时长、安静时段及更多设置入口；网络、故事目录、使用者资料与诊断按需展开，重复的隐私、导出和声音入口已移除。实现落在 `apps/miniprogram`；本轮可点 [交互预览](design/parent-ui-20261104/preview.html)，上传与校验收据见 [release-receipt.json](design/parent-ui-20261104/release-receipt.json) / [screenshots.json](design/parent-ui-20261104/screenshots.json)。2026-11-03 截图与测试输出仍在 `design/parent-ui-20261103/`（非 markdown）。开发测试版本 `0.2.20261104.1` 已上传，未提交审核或发布正式版；微信运行时交互和手机验收尚未完成。
+
 ## 来源文件
 
 - `docs/design/20261013-tap-wake-power.md`
@@ -916,6 +920,8 @@ Hidden tags only. Voice: `zh_female_tianmeitaozi_uranus_bigtts`.
 | `llm_unavailable` | 我现在有点卡住了，等一会儿再来找我聊吧。 |
 
 定稿 v2，产品部 2026-10-15 确认
+
+2026-10-31：产品决定去掉 LLM 思考垫话。服务端不再播放 `llm_thinking`，也不再把它载入在线标注台词目录；`services/common/assets/labelled_lines/` 和固件 `offline_lines/` 里的音频与索引条目保留为数据，没有任何播放路径。
 
 ### Pack gate
 

@@ -1,7 +1,7 @@
 <view class="page-shell sub-page" style="{{statusBarStyle}}">
   <view class="nav-back" bindtap="goBack" aria-label="返回"><image class="nav-back-icon" src="/assets/ui/v4/back-strong.svg" /></view>
-  <text class="eyebrow">角色</text>
-  <text class="page-title">自定义人格</text>
+  <text class="eyebrow">声音与表达</text>
+  <text class="page-title">自定义表达</text>
   <text class="page-lede">写下名字和说话方式。创建后这套设置固定为 v1，想改内容就新建一个。</text>
 
   <view wx:if="{{loading}}" class="card">
@@ -10,7 +10,7 @@
 
   <block wx:else>
     <view class="card">
-      <text class="field-label pc-first">人格名字</text>
+      <text class="field-label pc-first">这套表达的名字</text>
       <input class="field-input" value="{{name}}" maxlength="16" placeholder="例如：小北" placeholder-class="field-placeholder" bindinput="onNameInput" />
 
       <text class="field-label">你希望它怎么说话</text>
@@ -37,7 +37,7 @@
       </view>
 
       <text class="field-label">语速（0.90 - 1.10）</text>
-      <slider min="90" max="110" step="1" value="{{rateValue}}" show-value="{{true}}" activeColor="#4A52C9" backgroundColor="#ECECF2" block-size="24" bindchange="onRateChange" />
+      <slider min="90" max="110" step="1" value="{{rateValue}}" show-value="{{true}}" activeColor="#176B5B" backgroundColor="#DFE8E4" block-size="24" bindchange="onRateChange" />
 
       <text class="field-label">没有克隆声音时用谁的音色</text>
       <picker mode="selector" range="{{voiceOptions}}" range-key="name" value="{{voiceIndex}}" bindchange="onVoiceChange">

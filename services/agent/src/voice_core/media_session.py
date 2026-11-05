@@ -40,6 +40,9 @@ from services.agent.src.voice_core.media_session_commit import (
 from services.agent.src.voice_core.media_session_connection import (
     MediaSessionConnectionMixin,
 )
+from services.agent.src.voice_core.media_session_final_fallback import (
+    MediaFinalMissingFallbackMixin,
+)
 from services.agent.src.voice_core.media_session_input import MediaSessionInputMixin
 from services.agent.src.voice_core.media_session_lifecycle import (
     MediaSessionLifecycleMixin,
@@ -91,6 +94,7 @@ class MediaVoiceCoreRegistry(
     MediaSessionCommitMixin,
     MediaPlaybackStopMixin,
     MediaTurnEndpointMixin,
+    MediaFinalMissingFallbackMixin,
     MediaOutputMixin,
     MediaSessionAigcNoticeMixin,
 ):
@@ -126,6 +130,9 @@ class MediaVoiceCoreRegistry(
     # 1-1.5 s. 2.5 s left 0.5 s for that and closed the conversation (turn_prepare_timeout) under the
     # question being answered: 4 of 7 first questions in a quiet room on 2026-10-01.
     turn_endpoint_absolute_timeout_s: float = 6.0
+    # The soft endpoint tail (media_session_final_fallback): a provider final is normally 0.3 s after the
+    # device VAD end; on 2026-11-01 (t023) a late device VAD end held the turn to the hard tail and lost it.
+    turn_final_missing_fallback_s: float = 2.5
     output_generation_timeout_s: float = 45.0
     delegation_initial_decision_timeout_s: float = 0.5
     # Disabled for direct library construction; the production bridge wires

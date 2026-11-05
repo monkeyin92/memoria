@@ -1,47 +1,39 @@
-<view class="page-shell tab-page" style="{{statusBarStyle}}">
-  <text class="eyebrow">说话风格</text>
-  <text class="page-title">角色</text>
-  <text class="page-lede">换个说话风格。它始终是陪孩子聊天、讲故事的 AI 助手。</text>
+<view class="page-shell tab-page companion-page" style="{{statusBarStyle}}">
+  <view class="page-heading"><view class="page-heading-copy">
+  <text class="eyebrow">声音与表达</text>
+  <text class="page-title">声音</text>
+  <text class="page-lede">选择一种音色与说话方式。点选即可保存，下次对话生效。</text>
+  </view></view>
+  <text wx:if="{{saving}}" class="caption role-hint">正在保存…</text>
 
-  <view class="role-grid">
+  <view class="voice-list">
     <view
       wx:for="{{cards}}"
       wx:key="id"
-      class="role-card {{profile.companion_id === item.id ? 'role-card-on' : ''}}"
+      class="voice-option voice-{{item.id}} {{profile.companion_id === item.id ? 'voice-option-on' : ''}}"
+      aria-disabled="{{saving}}"
       data-id="{{item.id}}"
       bindtap="chooseCompanion"
     >
-      <view class="role-art">
-        <view class="role-fig"><face-badge role="{{item.id}}" size="lg" plain="{{true}}"></face-badge></view>
+      <view class="voice-portrait"><face-badge role="{{item.id}}" size="portrait" plain="{{true}}"></face-badge></view>
+      <view class="voice-copy">
+        <text class="voice-name">{{item.name}}</text>
+        <text class="voice-catalog-name">{{item.tone}}</text>
+        <text class="voice-tagline">{{item.tagline}}</text>
       </view>
-      <text class="role-name">{{item.name}}</text>
-      <text class="role-tagline">{{item.tagline}}</text>
-      <view wx:if="{{profile.companion_id === item.id}}" class="pill pill-online role-chip">正在使用</view>
-      <view wx:else class="pill pill-neutral role-chip">切换</view>
+      <text wx:if="{{profile.companion_id === item.id}}" class="voice-current">已选</text>
+      <view
+        class="pill pill-neutral voice-chip"
+        data-id="{{item.id}}"
+        catchtap="togglePreview"
+      >{{previewingId === item.id ? '停止' : '试听'}}</view>
     </view>
   </view>
 
   <view class="role-new" bindtap="openCustomPersona">
     <image class="role-new-icon" src="/assets/ui/v4/plus-accent.svg" aria-hidden="true"></image>
-    <text>新建角色</text>
+    <text>自定义表达</text>
   </view>
-  <text class="caption role-hint">换角色后，机器人下一次对话起换成 TA 的声音。</text>
-
-  <text class="section-title">声音</text>
-  <view class="card companion-voice">
-    <view class="setting-row">
-      <mp-icon name="volume"></mp-icon>
-      <view class="row-copy">
-        <text class="row-title">角色默认声音</text>
-        <text class="row-meta">{{currentName}} · {{currentTone}}</text>
-      </view>
-      <view
-        class="pill pill-teal role-play"
-        data-id="{{profile.companion_id}}"
-        catchtap="togglePreview"
-      >{{previewingId === profile.companion_id ? '停止' : '试听'}}</view>
-    </view>
-  </view>
-
-  <text class="privacy-note">角色只影响表达风格，不改变你的资料权限。角色音色来自产品设计音色。</text>
+  <text class="caption role-hint">试听只播放示例，不会切换设置。</text>
+  <text class="privacy-note">声音由 AI 生成。表达风格不改变权限与记忆规则。</text>
 </view>

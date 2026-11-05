@@ -25,7 +25,14 @@ class _Sent:
 
 @pytest.fixture(autouse=True)
 def clean_weather_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in ("WEATHER_LOOKUP_PROVIDER", "QWEATHER_API_KEY", "QWEATHER_API_HOST"):
+    for name in (
+        "WEATHER_LOOKUP_PROVIDER",
+        "QWEATHER_API_KEY",
+        "QWEATHER_API_HOST",
+        "DEEPSEEK_API_KEY",
+        "DEEPSEEK_BASE_URL",
+        "DEEPSEEK_API_URL",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -90,7 +97,7 @@ async def test_default_settings_do_not_call_qwen_realtime_search(sent: _Sent) ->
     await resolver.aclose()
 
     assert resolver.weather is None
-    assert resolver.qwen is None
+    assert resolver.web is None
     assert resolver.model == ""
     assert reply is None
     assert sent.hosts == []
@@ -114,6 +121,48 @@ async def test_live_search_flag_sends_weather_questions_only_to_dashscope(sent: 
     assert reply == "南京明天多云。"
     assert sent.hosts == ["dashscope.aliyuncs.com"]
     assert sent.qwen_queries == ["南京明天天气怎么样"]
+
+
+async def test_deepseek_flag_sends_live_questions_to_deepseek_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths: list[str] = []
+
+    async def send(
+        self: httpx.AsyncClient, request: httpx.Request, **_kwargs: Any
+    ) -> httpx.Response:
+        paths.append(f"{request.url.host}{request.url.path}")
+        if request.url.path == "/v1/tools/search":
+            body: dict[str, object] = {"results": [{"title": "新闻", "summary": "今天的新闻。"}]}
+        else:
+            body = {"choices": [{"message": {"content": "今天有一条新闻。"}}]}
+        return httpx.Response(200, json=body, request=request)
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", send)
+    resolver = build_realtime_search_resolver(
+        settings=AgentSettings(
+            _env_file=None,
+            DASHSCOPE_API_KEY="k",
+            DEEPSEEK_API_KEY="ds",
+            LIVE_SEARCH_QWEN_ENABLED=True,
+            LIVE_SEARCH_DEEPSEEK_ENABLED=True,
+        )
+    )
+
+    reply = await resolver.resolve(query="今天有什么新闻")
+    await resolver.aclose()
+
+    assert resolver.model == "deepseek-flash"
+    assert reply == "今天有一条新闻。"
+    assert paths == ["api.deepseek.com/v1/tools/search", "api.deepseek.com/chat/completions"]
+
+
+async def test_deepseek_flag_without_a_key_builds_no_web_source(sent: _Sent) -> None:
+    resolver = build_realtime_search_resolver(
+        settings=AgentSettings(_env_file=None, LIVE_SEARCH_DEEPSEEK_ENABLED=True)
+    )
+    assert resolver.web is None
+    await resolver.aclose()
 
 
 async def test_clarify_does_not_call_qwen(sent: _Sent) -> None:

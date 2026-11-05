@@ -1,0 +1,294 @@
+{
+  "schema_version": 1,
+  "observation_window": {
+    "start": "2026-10-01",
+    "end": "2026-10-31"
+  },
+  "handling_rules": {
+    "unallocated_fees": "Keep unallocated and fixed/base_ops fees in a separate pool. Do not force-split them into household variable totals. Report the pool beside household lines.",
+    "free_tiers": "Record free-tier quantity with flag free_tier. Amount is 0 when the bill marks the line free. Quantity still counts toward intensity.",
+    "cancel_after_bill": "Include cancel_still_billed and generated_unplayed quantity in vendor reconciliation. Playback non-ack does not erase a billed call.",
+    "human_rescue": "Attribute support minutes with flag human_rescue to the household when the ticket names one. Otherwise leave the line unallocated and list it under gaps if verification is 未验."
+  },
+  "households": [
+    { "household_id": "hh_low0001", "intensity_hint": "low" },
+    { "household_id": "hh_mid0001", "intensity_hint": "mid" },
+    { "household_id": "hh_high001", "intensity_hint": "high" }
+  ],
+  "usage_events": [
+    {
+      "event_id": "u-low-asr",
+      "household_id": "hh_low0001",
+      "category": "asr",
+      "vendor": "volcengine",
+      "unit": "seconds",
+      "quantity": 100,
+      "flags": []
+    },
+    {
+      "event_id": "u-low-tts",
+      "household_id": "hh_low0001",
+      "category": "tts",
+      "vendor": "volcengine",
+      "unit": "characters",
+      "quantity": 1000,
+      "flags": []
+    },
+    {
+      "event_id": "u-mid-asr",
+      "household_id": "hh_mid0001",
+      "category": "asr",
+      "vendor": "volcengine",
+      "unit": "seconds",
+      "quantity": 300,
+      "flags": ["retry"]
+    },
+    {
+      "event_id": "u-mid-tts",
+      "household_id": "hh_mid0001",
+      "category": "tts",
+      "vendor": "volcengine",
+      "unit": "characters",
+      "quantity": 3000,
+      "flags": ["cancel_still_billed"]
+    },
+    {
+      "event_id": "u-mid-chat",
+      "household_id": "hh_mid0001",
+      "category": "chat",
+      "vendor": "deepseek",
+      "unit": "tokens",
+      "quantity": 5000,
+      "flags": []
+    },
+    {
+      "event_id": "u-high-asr",
+      "household_id": "hh_high001",
+      "category": "asr",
+      "vendor": "volcengine",
+      "unit": "seconds",
+      "quantity": 900,
+      "flags": []
+    },
+    {
+      "event_id": "u-high-tts",
+      "household_id": "hh_high001",
+      "category": "tts",
+      "vendor": "volcengine",
+      "unit": "characters",
+      "quantity": 9000,
+      "flags": ["generated_unplayed"]
+    },
+    {
+      "event_id": "u-high-chat",
+      "household_id": "hh_high001",
+      "category": "chat",
+      "vendor": "deepseek",
+      "unit": "tokens",
+      "quantity": 20000,
+      "flags": ["speculation"]
+    },
+    {
+      "event_id": "u-high-memory",
+      "household_id": "hh_high001",
+      "category": "memory",
+      "vendor": "dashscope",
+      "unit": "tokens",
+      "quantity": 6500,
+      "flags": []
+    },
+    {
+      "event_id": "u-mid-free",
+      "household_id": "hh_mid0001",
+      "category": "storage",
+      "vendor": "oss",
+      "unit": "bytes",
+      "quantity": 1048576,
+      "flags": ["free_tier"]
+    }
+  ],
+  "vendor_bills": [
+    {
+      "bill_id": "bill-volc-asr",
+      "vendor": "volcengine",
+      "category": "asr",
+      "unit": "seconds",
+      "quantity": 1300,
+      "amount_minor": 1300,
+      "currency": "CNY",
+      "verification": "bill_matched"
+    },
+    {
+      "bill_id": "bill-volc-tts",
+      "vendor": "volcengine",
+      "category": "tts",
+      "unit": "characters",
+      "quantity": 13000,
+      "amount_minor": 2600,
+      "currency": "CNY",
+      "verification": "bill_matched"
+    },
+    {
+      "bill_id": "bill-deepseek-chat",
+      "vendor": "deepseek",
+      "category": "chat",
+      "unit": "tokens",
+      "quantity": 25000,
+      "amount_minor": 5000,
+      "currency": "CNY",
+      "verification": "bill_matched"
+    },
+    {
+      "bill_id": "bill-dashscope-memory",
+      "vendor": "dashscope",
+      "category": "memory",
+      "unit": "tokens",
+      "quantity": 6500,
+      "amount_minor": 1300,
+      "currency": "CNY",
+      "verification": "bill_matched"
+    },
+    {
+      "bill_id": "bill-oss-storage-free",
+      "vendor": "oss",
+      "category": "storage",
+      "unit": "bytes",
+      "quantity": 1048576,
+      "amount_minor": 0,
+      "currency": "CNY",
+      "verification": "bill_matched"
+    }
+  ],
+  "ops_lines": [
+    {
+      "line_id": "ops-mfg-low",
+      "category": "manufacturing",
+      "cost_class": "variable",
+      "household_id": "hh_low0001",
+      "unit": "units",
+      "quantity": 1,
+      "amount_minor": 30000,
+      "currency": "CNY",
+      "flags": [],
+      "verification": "bill_matched"
+    },
+    {
+      "line_id": "ops-ship-low",
+      "category": "packaging_ship",
+      "cost_class": "variable",
+      "household_id": "hh_low0001",
+      "unit": "shipments",
+      "quantity": 1,
+      "amount_minor": 2000,
+      "currency": "CNY",
+      "flags": [],
+      "verification": "bill_matched"
+    },
+    {
+      "line_id": "ops-mfg-mid",
+      "category": "manufacturing",
+      "cost_class": "variable",
+      "household_id": "hh_mid0001",
+      "unit": "units",
+      "quantity": 1,
+      "amount_minor": 30000,
+      "currency": "CNY",
+      "flags": [],
+      "verification": "bill_matched"
+    },
+    {
+      "line_id": "ops-ship-mid",
+      "category": "packaging_ship",
+      "cost_class": "variable",
+      "household_id": "hh_mid0001",
+      "unit": "shipments",
+      "quantity": 1,
+      "amount_minor": 2000,
+      "currency": "CNY",
+      "flags": [],
+      "verification": "bill_matched"
+    },
+    {
+      "line_id": "ops-support-mid",
+      "category": "support",
+      "cost_class": "variable",
+      "household_id": "hh_mid0001",
+      "unit": "minutes",
+      "quantity": 15,
+      "amount_minor": 1500,
+      "currency": "CNY",
+      "flags": ["human_rescue"],
+      "verification": "measured"
+    },
+    {
+      "line_id": "ops-mfg-high",
+      "category": "manufacturing",
+      "cost_class": "variable",
+      "household_id": "hh_high001",
+      "unit": "units",
+      "quantity": 1,
+      "amount_minor": 30000,
+      "currency": "CNY",
+      "flags": [],
+      "verification": "bill_matched"
+    },
+    {
+      "line_id": "ops-ship-high",
+      "category": "packaging_ship",
+      "cost_class": "variable",
+      "household_id": "hh_high001",
+      "unit": "shipments",
+      "quantity": 1,
+      "amount_minor": 2000,
+      "currency": "CNY",
+      "flags": [],
+      "verification": "bill_matched"
+    },
+    {
+      "line_id": "ops-acq-high",
+      "category": "acquisition",
+      "cost_class": "variable",
+      "household_id": "hh_high001",
+      "unit": "cents",
+      "quantity": 1,
+      "amount_minor": 8000,
+      "currency": "CNY",
+      "flags": [],
+      "verification": "measured"
+    },
+    {
+      "line_id": "ops-rd",
+      "category": "rd_fixed",
+      "cost_class": "fixed",
+      "household_id": null,
+      "unit": "cents",
+      "quantity": 1,
+      "amount_minor": 500000,
+      "currency": "CNY",
+      "flags": [],
+      "verification": "measured"
+    }
+  ],
+  "receipts": {
+    "net_receipts": [
+      {
+        "household_id": "hh_low0001",
+        "amount_minor": 99800,
+        "currency": "CNY",
+        "verification": "measured"
+      },
+      {
+        "household_id": "hh_mid0001",
+        "amount_minor": 99800,
+        "currency": "CNY",
+        "verification": "measured"
+      },
+      {
+        "household_id": "hh_high001",
+        "amount_minor": 99800,
+        "currency": "CNY",
+        "verification": "measured"
+      }
+    ]
+  }
+}

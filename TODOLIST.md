@@ -41,7 +41,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - [ ] 新机资源偏紧：内存 3.7 GiB（Memoria 栈约 1.3–1.4 GiB，可用约 1.7 GiB，swap 已用约 0.6 GiB，与 pocketSparks 的 MySQL / node 共用），4 vCPU 约比旧机慢 1.3 倍。发布后 1–2 天看 `docker stats`、`free -m` 与时延（对照第十六轮 24 轮时延场景说完 → 首帧 p50 2.92 s）；不够就扩内存（你在控制台做）。
 - [ ] build 24 的时钟修复仍无证据：2026-10-05 22:56 的重绑一次过，但时钟多半是 21:32 拔插 USB 后清空的，老版本也能过；要证明得让机器人时钟比清单 `issued` 落后 5 分钟以上再绑。不紧迫，碰上再看串口（那次的记录在本机 git-ignored 的 `outputs/serial/robot-20261005-trial3-rebind.log`）。
 - [ ] 你定：是否轮换数据库角色口令。**两次本机会话记录里出现过口令**：一次 grep 把各角色连接串打进了会话记录（更早的会话），2026-10-06 我做维护窗口时用 `docker compose config` 核对线上数据层 compose，它把 postgres 服务的环境变量展开成了明文（`MEMORIA_DB_*_PASSWORD` 五个角色的键与值都在输出里，只在会话记录、没进仓库、没进文档、没出机器）。库不发布到宿主端口，风险限于本机会话记录的读权限；要轮换就是一次 `ALTER ROLE` + 两份 env 的改写 + 重建 control-api/bridge，你说了我做。
-- [ ] 邻近发现（不挡路）：8443 经 stream 透传没有 PROXY protocol，9443 上的 TLS 服务器看到的客户端地址一直是 127.0.0.1（新旧机一样），按 `$binary_remote_addr` 的限流区（`memoria_media` 30 r/m 等）对所有设备共用一个键；一台机器人没有影响，设备多了要改。
+- [x] 邻近发现（不挡路）：8443 经 stream 透传没有 PROXY protocol，9443 上的 TLS 服务器看到的客户端地址一直是 127.0.0.1（新旧机一样），按 `$binary_remote_addr` 的限流区（`memoria_media` 30 r/m 等）对所有设备共用一个键；一台机器人没有影响，设备多了要改。→ 仓库已加 PROXY + `set_real_ip_from 127.0.0.1`（A16）；隔离 harness `scripts/verify_nginx_rate_limit_isolation.sh`。现网切流另按窗口验收，本项不自动 reload 生产 nginx。
 
 ## 2026-10-01 新需求里还开着的（N 系列）
 
@@ -63,14 +63,20 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 
 ### [ ] N-5 电脑对话长稳测试（≥ 30 分钟，修复上线后复测）
 
+- **2026-10-31**：16:09 那轮 15 分钟 8 次漏回复，根因在服务端：30 s 收音期限在回合开着时关麦（6 次，#498）、零有声单字回声被提交（1 次，#497）、测试竞态（1 次）。两修复随 `20261031-batch-9e6082c3` 上线后复测（run-20261031-204642）漏回复 0、34/34 有回复；门禁要求连续 3 轮，目前 1 轮。
+
 2026-10-01 第二、三轮（36 分钟那次在修复之前）暴露的问题都已修复上线；之后的真机轮次以针对性场景为主。10-11 有两圈 `child.json` 历史收据，**待复核、不采信关闭**（见 [待复核收据](docs/acceptance.md)）：有效圈内约 31 分 09 秒、分圈本身不是不通过理由，但逐句与 stop 的 v2 围栏未完整审计，第二圈情绪无答与旧叙述矛盾。N-5 保持开放。
 
+- **2026-11-02 卡 5 safety（vol30，20 步）**：20/20 有声、0 no_reply，`crisis_self=1/5`、`escalation=5/5`、`victim=5/5`、`other=5/5`，尾窗真 idle。1/5 是 PR #482 的策略（本轮前有自伤输入后必须升级），不是退化。**已定：harness 跟 sticky 策略对齐**——`safety_tiers_5x.json` 与 scorers 对 c1-self-1 仍期望 `crisis-self-v1`，c1-self-2..5 期望 `crisis-self-escalation`；不改 `crisis_policy`。
 - 2026-10-10 已有标准轮实际 13.31 分钟（`--duration-min 30` 是上限，不是实际跑满），探针 3.44 分钟；停止统计已纠正但没有有效新停止窗口，N-5 不关闭。
 - 2026-10-10 19:48–19:50 经授权复测四句（约 90 秒），验证了问候延迟 4.553 秒时首句仍会播放；这不是 ≥30 分钟混合对话，也未覆盖停止、续问、重连或长静默，N-5 仍开放。末句识别错误、额外 VAD 回合与丢帧见 [复测收据](docs/acceptance.md)。
 - 2026-10-10 21:38 音量 45 四句短测完整跑完，90 秒尾窗有串口 `listening -> idle`；验证新收尾判据，但逐句 ASR /设备错误日志仍有异常，不算长稳或整机通过。
 - 21:44 故事播报“别说了”和“停”各测一次，均未进入可证实的 stop 路由，回复自然播完。其后 10-11 [stop-target](docs/acceptance.md) 与 [停止词对照](docs/acceptance.md) 仍不稳定；N-5 ≥30 分钟混合长稳暂缓，先定位停止词路径，不能以长时间发声替代停止验收。
 - 2026-10-12 经授权一圈 `child.json`（音量 30，产品 build 24）：44 步、41 有回复、2 no_reply，约 13 分钟场景 + 90 s 尾窗（退出 4，idle 证据不足）。不是 ≥30 分钟混合长稳，不关闭 N-5。见 [多轮对话收据](docs/acceptance.md)。
-- `voice_soak` 场景后默认保留 90 秒（最大 180 秒）日志观察；只在尾窗内观察到真实串口 `StateMachine -> idle` 才通过。推定 idle 返回 4（证据不足），非 idle 返回 3（超时）。21:38 真机样本覆盖该判据，旧 10-10 timeline 缺少新收尾记录仍保持未验证。
+- `voice_soak` 默认保留 210 秒尾窗。若 `scenario_done` 时设备仍在 `speaking`，先最多等 30 秒让设备离开 `speaking`，再开始尾窗；只在尾窗内观察到真实串口 `StateMachine -> idle` 才通过。推定 idle 返回 4（证据不足），非 idle 返回 3（超时）。21:38 真机样本覆盖该判据，旧 10-10 timeline 缺少新收尾记录仍保持未验证。
+- **2026-11-02 owner-silence 恢复（PR #522，已合 main，未部署）**：噪声 VAD 暂停定时器后，空回合 retire 与 capture hold 会用剩余预算恢复 `owner_silence_task`，不再永久暂停。232237 日志比新期限早 8.6 秒结束，真机 idle 仍待下一轮真机窗。
+- **2026-11-02 vol20% 试跑（overlay `20261102-card-1-3-overlay-v1`）**：前两次 pre-gate 中止，第一次串口连续 3 次 30 秒无数据，第二次板子已 idle 但无新的 `StateMachine -> idle`。第三次用串口 `wake` 回 idle，跑到 `t018-backchannel` 后因环境嘈杂手动停止，没有 verdict；t002/t006/t017 no_reply、t016 打断未确认，不作验收。DTLN 降噪在跑，Stage 1 RNNoise 关闭，Stage 2 DTLN 默认启用，日志 `processed=14800 available=True`。等安静环境重跑。
+- **2026-11-04 卡 4 禁词接入（PR #534，`da9df877`）**：精确原句过滤 + 五类语义提示词；`AttachmentOutputGate` 跨逗号切句；pytest `services/common/tests/test_attachment_ban.py` 绿。建议候选 overlay `memoria-agent:20261103-card5-projection-range-fix-v2`；不切 live 直至 Monkey 授权。
 - [ ] 要你点头的一轮：天气 / 知识 / 故事 / 闲聊、播放中打断（「停」「别说了」）、续问、长静默、重连、负面情绪（孤独、难过、被欺负、焦虑、厌学；不含危机类话术，会给家长队列写入假的危机提醒）、USB 唤醒。孩子的 profile 带 `QUIET_HOURS 04:00–07:00`（时段内唤醒只播晚安）与 `MAX_SESSION_SECONDS 1800`（单次最长 30 分钟），这两项是家长设定、我不绕过，所以不能在 07:00 前测，≥ 30 分钟要分多次会话。工具 `scripts/voice_soak.py`（场景在 `scripts/voice_soak_scenarios/`），产出写进 `docs/acceptance.md`。
 
 ### [ ] N-6 产品体验官评审：说话内容、语气（孩子；2026-10-04 起老人一侧不再评）
@@ -115,6 +121,8 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 
 ### [ ] N-10 机器人说话时喊「别说了」不一定停
 
+- **2026-10-31 进展**：生产 ASR 已是火山（`ASR_PROVIDER=volc`），热词表 `stop_world`（停/停停/停停停）经 `VOLC_ASR_BOOSTING_TABLE_ID` 生效。音量 30 下「停」被识别成「嗯」（`asr_text=1:嗯`）；音量 50 专测（`devicetest/scenarios/stop_focus.json`，run-20261031-212333）「停」5/6 停下，从开口到停 1.9–2.3 s，1 次识别成「行」；「别说了」2/2；「嗯」2/2 正确继续。此前 t016 失败多半是 #468 把插入推到 8 s（#496 改回 4 s）。可选下一步：热词表加「停一下」「停下来」「别说了」。
+
 空 VAD 占住终点时停止词接管（PR #169，第九轮真机通过）与停止后迟到收据不再关连接（PR #174）已上线。未关：
 
 - [x] **2026-10-12 bench 诊断 PCM 采集（代码 + 本地编译 + 刷机烟雾，无声学窗）**：在既有 `CONFIG_MEMORIA_BENCH_SERIAL` 内增加 `pcmarm` / `pcmdump`，三路 lane journal（`play_pre_i2s`、交织 `pre_afe_mic`+`pre_afe_ref`、`post_afe`），共享 16 kHz mic 时钟，3.0 s 窗，SNAP 式 CRC 导出；主机 `scripts/diag_pcm_extract.py` fail-closed。产品镜像仍只收 `wake`。不假装同时导出 post-AEC / post-NS；当时 `pre_afe_ref` 仍是空的 ES7210 R（后续 0037 改为软件注入）；`play_pre_i2s` 不是 exact DAC。产品/bench 构建与定向测试通过；设备曾刷 bench 镜像做烟雾，**未发 `pcmarm`、未做声学窗**。2026-10-12 晚为多轮对话已刷回产品 build 24。N-10 / N-5 仍开放。见 #200。
@@ -143,11 +151,19 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 - [ ] 判据「开麦后 1 s 内不再出现 rms > 1e-4 的 `Device VAD start`，且问候首帧在 listening 后 ≤ 2.2 s 的不少于 9/10」第十六轮按字面不满足（≤ 2.2 s 的只有 2/10，问候比前几轮晚 0.2–0.4 s，原因没查，服务端侧与第十五轮同量级），判据要防的失败一次也没出现；2.2 s 的阈值是否放宽，你定。
 - [ ] 回声窗口（0.8 s 余量、1 s 跨边界）没动；盖在问候上的那句整句落在窗口内、超出边界约 0.6 s 不足 1 s 的情形没覆盖，放宽有把机器人自己的漏音当成用户话的风险。
 
-### [ ] N-14 说完到开口的时延（目标 ≤ 2.5 s；现状 p50 约 2.83–2.92 s，第十四、十六轮）
+### [ ] N-14 说完到开口的时延（目标 P90 ≤ 2.0 s、最慢 ≤ 3.0 s，2026-10-31 改；现状 11-01 P50 约 2.0–2.2 s、P90 约 3.1 s）
+
+- **2026-11-01 迭代**（详见 `docs/acceptance.md`「内测准入门禁 2026-11-01 迭代」）：③ 投机起跑回复已做（#506，LLM 段降到约 0），profile 刷新并行（#509）；首句 TTS 预合成做了但暂缓（#514，预估只省约 0.1 s）。剩余大头：说完到 ASR 终稿（火山终稿延迟与重连，各轮差异大）、设备 VAD 结束晚、提交路径上的结束对话判定。
+- **2026-11-02 ASR final→commit warmup（PR #523，已合 main；卡 4 overlay `20261102-card-1-3-overlay-v1` 已含，安静窗 soak 未完成）**：accepted final 有稳定起点、完整文本、ASR endpoint 覆盖且不在播放回声或重叠边界时，提前启动既有 close/live/memory warmup。232237 离线复算 ASR p90 1.18 秒、reply p95 2.71 秒、最慢 3.19 秒，本刀未证明收益；P90≤2.0/最慢≤3.0 待卡 5 soak。
+- **2026-11-04 卡 3 单刀量化**：232237 上刀 `asr_final→commit`（tapwake「ASR」）measured p50 0.91 / p90 1.18 / max 1.31 s（54/62 最慢段）；刀内 close p90 0.76 s（#523 对同采集）。度量杠杆：`devicetest/tapwake_report.py` → `knife_asr_final_to_commit`，`scripts/voice_commit_timing.py` 刀段对照基线。无新运行时改动；Hold #514/#448。详见 `docs/acceptance.md`「卡 3 · ASR final→commit」。
+
+- **2026-11-02 卡 5 vol30 复测（overlay `20261102-card-1-3-overlay-v1`，门禁未过）**：42 步触顶 15 分钟，38 回复、3 no_reply、P50 1.96 s、P90 3.02 s、最慢 4.24 s，三条门禁全未过。3 次 no_reply 在设备侧全程 `vad.idle`（rms 0.0002–0.0010 vs floor 0.0030），用户 VAD 未起拍，是音量 30 的拾音下限，不是后端丢回复；不改判据。下一步按看板口径加一轮同配置 vol20 对照，把音量与优化拆开。收据在 `docs/acceptance.md`「卡 5 vol30 复测 2026-11-02」，harness 修复见 `HANDOFF.md`。
+
+- **2026-10-31 基线拆分**（run-20261031-204642，34 轮，`tapwake_report.py` 分段 + `media turn commit timing`）：说完→ASR 终稿 p50 0.31 s；终稿→提交 p50 1.13 s（宽限等待 `final_to_start_ms` p50 505、结束对话判定尾巴 `close_ms` p50 173 / p90 508、`prepare_ms` p50 289）；提交→LLM 首字 p50 0.71 s（28 轮有打点）；LLM→TTS 首包 p50 0.49 s（只有 17 轮有 `doubao_first_pcm` 打点，待补）；下发→设备开口 p50 0.11 s。下一步按便宜到贵：① 上线 #483（宽限从说完时起算，已在 main；**2026-10-31 22:38 随 `20261031-batch-6fad1896` 上线**，复测 run-20261031-223809 对比 204642：P50 2.50→2.43 s、P90 3.51→2.85 s、最慢 4.42→3.25 s、2 秒内 1→5 轮，终稿→提交开始 p50 505→343 ms，各一轮，门禁仍未过）；② 结束对话判定尾巴与 `prepare_committed_turn` 并行；③ 宽限期内投机起跑回复（要先设计，唯一可能把 P90 压到 2 s 的一档）。
 
 已上线并在第十至十六轮真机验证：①分类器去重并在终稿时起跑、②回复不再等回复计划、④提交各段打点（`python scripts/voice_commit_timing.py <bridge.log>`）、⑦结束对话判定在端点钉住时起跑、⑧设备记忆提前取回、⑨VAD 流程的提交也给提前量、⑩唤醒后第一句与 VAD 起头句子的设备记忆提前取回；旋钮 `MEDIA_PLAYBACK_FOLLOWUP_GRACE_S`（bridge 环境变量，0.3–1.2 s，只能缩短，默认 1.2 s）。剩下的大头是 1.2 s 的播放后续问宽限（终稿 → 提交开始 p50 约 1.3 s，约占一半）。
 
-- [ ] ⑪回复计划请求提前发（分支 `perf/commit-path-off-critical`，代码与主机测试完成，未部署、bench 未测）：2026-10-28 bench 第 2 轮，回复计划请求（0.77 s）排在结束对话判定（0.26 s）、实时查询判定（0.19 s）和两次 profile 刷新（0.14 s）之后才出发，全在孩子的等待里（10 轮 `prepare_ms` p50 983、`commit_ms` p50 1330；计划 7 次 ok、3 次超时走兜底）。现在提交一开始（回复不在播放时）就按提交将产生的 fence 发出，与这些等待并行；提交时只有请求完全相同（句子、说话人、fence、回忆上下文、意图）才用，否则作废、照旧重发。日志 `response plan head start … outcome=used|other_fence|other_sentence|other_speaker|other_context|cancelled`（不含原话）。预期这类提交省约 0.6 s。验收：部署后跑一组 bench，`python scripts/voice_commit_timing.py <bridge.log>` 对比 `prepare_ms` / `commit_ms` / `final_to_done_ms`，并数 `outcome=used` 的占比。边界：危机句不提前发；被作废的提前请求在控制面仍按它的 fence 留下副作用（缓存、`remember_user_query`；语义危机句理论上会多一次通知，只在请求作废时）。
+- [x] ⑪回复计划请求提前发（PR #445，2026-10-29 14:31 随整栈 `20261029-plan-head-start-v1` 上线，验收见下）：2026-10-28 bench 第 2 轮，回复计划请求（0.77 s）排在结束对话判定（0.26 s）、实时查询判定（0.19 s）和两次 profile 刷新（0.14 s）之后才出发，全在孩子的等待里（10 轮 `prepare_ms` p50 983、`commit_ms` p50 1330；计划 7 次 ok、3 次超时走兜底）。现在提交一开始（回复不在播放时）就按提交将产生的 fence 发出，与这些等待并行；提交时只有请求完全相同（句子、说话人、fence、回忆上下文、意图）才用，否则作废、照旧重发。日志 `response plan head start … outcome=used|other_fence|other_sentence|other_speaker|other_context|cancelled`（不含原话）。预期这类提交省约 0.6 s。验收：部署后跑一组 bench，`python scripts/voice_commit_timing.py <bridge.log>` 对比 `prepare_ms` / `commit_ms` / `final_to_done_ms`，并数 `outcome=used` 的占比。边界：危机句不提前发；被作废的提前请求在控制面仍按它的 fence 留下副作用（缓存、`remember_user_query`；语义危机句理论上会多一次通知，只在请求作废时）。**验收（2026-10-31，线上真实对话日志，未跑真机）**：上线前（10-28 19:13 起 49 次提交）`prepare_ms` p50 945、`commit_ms` p50 1061、`final_to_done_ms` p50 1839；上线后（10-29 14:30 至 10-31，469 次提交）分别为 613、808、1370；430 次实际提交中 377 次 `outcome=used`。后一窗口含 10-30、10-31 两次 bridge 组件更新，数字不全归 #445。同期 `since_endpoint_ms` p50 从 1008 升到 1558（提交之前的阶段，不归本项，原因未查）。
 - 同次 bench 顺带看到、未处理：控制面 `response planner companion context exceeded budget` 每轮都触发（0.25 s 预算），记忆与人设被丢；每轮两次 session-policy 调用（即下方「其余候选」里的第二次 `refresh_runtime_profile`，这次量到两次合计约 0.14 s）。
 
 - [ ] ③宽限改短：第十七轮实验（步骤 `docs/runbooks.md`，数字见 findings 第十七轮，50 步 × 2 种宽限）——0.6 s 省约 0.6 s（终稿 → 提交开始 p50 1201 → 602 ms），runbook 判据满足（停顿 0.3 + 0.6 s 切成两次提交 0/20 对 0/20），但停顿 ≥ 0.9 s 的句子切成两次提交 1/19 → 8/20（p = 0.020），「前半句先提交、后半句被丢」7/50 → 14/50（基线 1.2 s 下就有），整句没被一次答对 8/50 → 22/50。**默认值维持 1.2 s（你已定）。** 还没定：要不要试 0.8–0.9 s 的中间值（约 15 分钟，要你当场授权再改一次线上环境变量，机器人 USB 接着）、真实孩子的停顿分布怎么量、「前半句先提交、后半句被丢」要不要单独立项。

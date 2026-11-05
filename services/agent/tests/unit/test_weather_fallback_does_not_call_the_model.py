@@ -23,7 +23,7 @@ class _RaisingChatModel:
 class _RaisingResolver:
     def __init__(self) -> None:
         self.weather = None
-        self.qwen = None
+        self.web = None
         self.calls = 0
 
     async def resolve(self, *, query: str) -> str:

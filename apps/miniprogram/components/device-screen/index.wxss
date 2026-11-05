@@ -84,3 +84,7 @@
   0%, 44%, 50%, 100% { transform: scaleY(1); }
   47% { transform: scaleY(0.12); }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .ds-eye { animation: none; }
+}

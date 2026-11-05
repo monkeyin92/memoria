@@ -120,11 +120,10 @@ function emptyDashboard() {
 
 function bindingChoiceItems(bindings) {
   return (bindings || []).map((binding) => {
-    const companion = companionById(defaultCompanionId);
     return {
       binding,
       bindingId: binding.binding_id,
-      label: devicePlaceName(binding, companion.name),
+      label: devicePlaceName(binding),
       modeLabel: MODE_META[binding.declared_mode]?.title || "已绑定设备",
     };
   });
@@ -508,7 +507,7 @@ Page({
     const custom = await this._resolveCustomPersona(runtime);
     if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
     const personaName = custom ? custom.display_name : companion.name;
-    const personaVoice = custom ? "你提供的声音样本" : companion.voiceName;
+    const personaVoice = companion.voiceName;
     const personaSummary = custom
       ? custom.style_description || companion.description || companion.tagline
       : companion.description || companion.tagline;
@@ -567,7 +566,7 @@ Page({
     const unreadSafetyMeta = pinnedAlertMeta({
       occurredAt: alertTimeLabel(unread?.newest.occurredAt),
     });
-    const placeName = devicePlaceName(binding, personaName);
+    const placeName = devicePlaceName(binding);
     const childName = boundChild?.displayName || "";
     const todayCount = today.todayCount || 0;
 

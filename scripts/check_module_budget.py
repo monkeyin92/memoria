@@ -2,8 +2,10 @@
 """Enforce downward-only line budgets for high-risk modules.
 
 ``check`` is read-only and requires every measured line count to match the
-budget in ``pyproject.toml``. ``update`` only records lower counts; it never
-turns an over-budget module into the new baseline.
+budget in ``pyproject.toml``. It also walks ``services/`` for ``.py`` sources
+over the discovery threshold that are missing from that table.
+``update`` only records lower counts; it never turns an over-budget module
+into the new baseline and never invents new budget rows.
 """
 
 from __future__ import annotations
@@ -21,6 +23,17 @@ _ENTRY_RE = re.compile(
     r"(?P<budget>[0-9]+)(?P<suffix>\s*(?:#.*)?)$"
 )
 
+_DISCOVERY_THRESHOLD = 1500
+_DISCOVERY_ROOTS = ("services",)
+_EXCLUDED_PATH_PARTS = frozenset(
+    {
+        "tests",
+        "__pycache__",
+        ".venv",
+        "node_modules",
+    }
+)
+
 
 class ModuleBudgetError(ValueError):
     """Raised when the budget configuration or a measured module is invalid."""
@@ -30,6 +43,12 @@ class ModuleBudgetError(ValueError):
 class ModuleBudget:
     module: str
     budget: int
+    actual: int
+
+
+@dataclass(frozen=True)
+class UnregisteredOversize:
+    module: str
     actual: int
 
 
@@ -131,8 +150,37 @@ def _measure(root: Path, document: _BudgetDocument) -> tuple[ModuleBudget, ...]:
     )
 
 
+def _is_excluded_source(relative: PurePosixPath) -> bool:
+    return any(part in _EXCLUDED_PATH_PARTS for part in relative.parts)
+
+
+def _discover_unregistered_oversize(
+    *, root: Path, registered: set[str]
+) -> tuple[UnregisteredOversize, ...]:
+    """Return services sources over the threshold that lack a budget row."""
+    found: list[UnregisteredOversize] = []
+    for root_name in _DISCOVERY_ROOTS:
+        base = root / root_name
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*.py")):
+            if not path.is_file():
+                continue
+            relative = PurePosixPath(path.relative_to(root).as_posix())
+            if _is_excluded_source(relative):
+                continue
+            module = relative.as_posix()
+            if module in registered:
+                continue
+            actual = _line_count(path)
+            if actual <= _DISCOVERY_THRESHOLD:
+                continue
+            found.append(UnregisteredOversize(module=module, actual=actual))
+    return tuple(found)
+
+
 def check_module_budgets(*, root: Path, config_path: Path) -> tuple[ModuleBudget, ...]:
-    """Return exact measurements or reject growth and unrecorded reductions."""
+    """Return exact measurements or reject growth, drift, and missing budgets."""
     root = root.expanduser().resolve()
     document = _load_budget_document(config_path.expanduser().resolve())
     measurements = _measure(root, document)
@@ -145,6 +193,14 @@ def check_module_budgets(*, root: Path, config_path: Path) -> tuple[ModuleBudget
                 f"{item.module}: {item.actual} lines is below budget {item.budget}; "
                 "run check_module_budget.py update to tighten it"
             )
+    registered = {entry.module for entry in document.entries}
+    for item in _discover_unregistered_oversize(root=root, registered=registered):
+        violations.append(
+            f"{item.module}: {item.actual} lines exceeds discovery threshold "
+            f"{_DISCOVERY_THRESHOLD} and is not registered in "
+            "[tool.memoria.module-budgets]; add a budget entry in the same "
+            "commit or split the module"
+        )
     if violations:
         raise ModuleBudgetError("module budget check rejected:\n- " + "\n- ".join(violations))
     return measurements

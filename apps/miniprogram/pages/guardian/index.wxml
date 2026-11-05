@@ -80,7 +80,7 @@
           </view>
           <switch
             checked="{{consent.active}}"
-            color="#4A52C9"
+            color="#176B5B"
             disabled="{{working || !configOpen}}"
             data-link-id="{{item.linkId}}"
             data-kind="{{consent.kind}}"
@@ -113,7 +113,7 @@
           </view>
           <switch
             checked="{{consent.active}}"
-            color="#4A52C9"
+            color="#176B5B"
             disabled="{{working || !!item.loadError}}"
             data-person-id="{{item.personId}}"
             data-kind="{{consent.kind}}"
@@ -174,6 +174,7 @@
       <view wx:for="{{notifications}}" wx:key="notificationId" class="l2-card">
         <text class="l2-card-title">{{item.minorDisplayName}}</text>
         <text class="l2-card-sub">{{item.message}}</text>
+        <text wx:if="{{item.stageLabel}}" class="caption">{{item.stageLabel}}</text>
         <text wx:if="{{item.timeLabel}}" class="caption">{{item.timeLabel}}</text>
       </view>
     </block>
@@ -185,7 +186,7 @@
   <view wx:if="{{showMinorDelete}}" class="modal-wrap" bindtap="closeMinorDelete">
     <view class="modal-card" catchtap="noop">
       <text class="modal-title">删除 TA 的数据</text>
-      <text class="modal-desc">将永久删除 TA 的记忆、对话和成长记录，且不可恢复。请完整输入「{{minorDeleteConfirmText}}」确认。</text>
+      <text class="modal-desc">将按阶段删除 TA 的在线记忆、对话和成长记录。完成前可能显示「处理中」。备份与外部处理方中的副本按其各自策略清除。不要理解为全部副本已不可恢复。请完整输入「{{minorDeleteConfirmText}}」确认。</text>
       <input class="field-input" value="{{minorDeleteConfirmation}}" placeholder="{{minorDeleteConfirmText}}" placeholder-class="field-placeholder" bindinput="onMinorDeleteConfirmation" />
       <text wx:if="{{minorDeleteError}}" class="error-text">{{minorDeleteError}}</text>
       <view class="button-row">

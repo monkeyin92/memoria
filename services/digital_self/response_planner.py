@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Final, Literal
 
+from services.common.child_archive_claim_marker import is_child_archive_confirmed_claim
 from services.common.companion_turn_policy import COMPANION_TURN_POLICY_INSTRUCTIONS
 from services.digital_self.domain import (
     CognitiveClaimManifestEntry,
@@ -143,6 +144,22 @@ class ResponsePlan:
 type CompanionItem = GroundedItem | ManifestEntry
 
 
+def _uncertain_companion_item_allowed(
+    speaker: PlannerSpeakerDecision,
+    item: CompanionItem,
+) -> bool:
+    if isinstance(item, PersonaTraitManifestEntry) or (
+        isinstance(item, GroundedItem) and item.kind == "persona_trait"
+    ):
+        return speaker.reason_code == "shadow_owner_candidate"
+    if not isinstance(item, GroundedItem) or item.kind != "memory_claim":
+        return False
+    source_event_ids = tuple(
+        event_id for ref in item.source_refs for event_id in ref.source_event_ids
+    )
+    return is_child_archive_confirmed_claim(source_event_ids)
+
+
 class DigitalSelfResponsePlanner:
     """Plan one answer without reading registries, prompts, or live projections."""
 
@@ -248,18 +265,14 @@ class DigitalSelfResponsePlanner:
                 voice_target=VoiceTarget(),
                 disclosure=DisclosureDecision("none"),
             )
-        if speaker_decision.classification != "owner":
-            shadow_style_only = (
-                speaker_decision.classification == "uncertain"
-                and speaker_decision.reason_code == "shadow_owner_candidate"
-                and all(
-                    isinstance(item, PersonaTraitManifestEntry)
-                    or (isinstance(item, GroundedItem) and item.kind == "persona_trait")
-                    for item in companion_items
-                )
+        if speaker_decision.classification != "owner" and not (
+            speaker_decision.classification == "uncertain"
+            and all(
+                _uncertain_companion_item_allowed(speaker_decision, item)
+                for item in companion_items
             )
-            if not shadow_style_only:
-                return cls._direct("companion", None, _PRIVATE_REFUSAL, "privacy")
+        ):
+            return cls._direct("companion", None, _PRIVATE_REFUSAL, "privacy")
         entries = tuple(
             item
             for item in companion_items

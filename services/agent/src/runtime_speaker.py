@@ -39,8 +39,6 @@ from services.agent.src.orchestration.utterance_router import (
     route_target_speaker,
 )
 from services.speaker.domain import (
-    DEVICE_BOUND_SUBJECT_MODEL,
-    DEVICE_BOUND_SUBJECT_REASON,
     SpeakerDecision,
     permissions_for_speaker,
 )
@@ -403,47 +401,21 @@ class DuplexSpeakerMixin:
         )
 
     def _device_bound_subject_decision(self) -> SpeakerDecision | None:
-        """Owner data authority for the one person this device is bound to.
+        """Device bind proves config only (A06). It never becomes speaker owner.
 
-        Only when no voiceprint runs on a device conversation: the signed
-        Runtime Profile must confirm its active subject outside unknown_safe
-        and grant ``memory_recall_private`` for the current fence. Control API
-        re-checks the same profile before it honours the claim.
+        A signed Runtime Profile names who the device is bound to and which
+        capabilities consent allows. That is not proof the current speaker is
+        that person. Ordinary chat still runs as ``uncertain``; private read
+        and confirmed-fact write need a stronger confirm than bind alone.
         """
 
-        if self._speaker_classifier is not None or not self._device_conversation_controls_enabled:
-            return None
-        verified = self._mode_policy.runtime_profile
-        if verified is None:
-            return None
-        profile = verified.profile
-        if (
-            profile.speaker_state != "confirmed"
-            or profile.active_subject_id is None
-            or profile.service_mode == "unknown_safe"
-            or not self.profile_permits(self.fence, capability="memory_recall_private")
-        ):
-            return None
-        return SpeakerDecision(
-            classification="owner",
-            score=None,
-            quality_score=0.0,
-            reason_code=DEVICE_BOUND_SUBJECT_REASON,
-            model_version=DEVICE_BOUND_SUBJECT_MODEL,
-            template_version=None,
-            profile_id=None,
-            permissions=permissions_for_speaker("owner"),
-        )
+        return None
 
     def prospective_speaker_decision(self) -> SpeakerDecision:
-        """The speaker decision the next commit will hold, as far as the signed profile alone decides it.
+        """Speaker decision the next commit will hold when already known.
 
-        ``await_speaker_classification`` gives a device conversation without a voiceprint the bound person's
-        decision from the profile and nothing else, but only when a turn commits.  Until then the runtime holds
-        none (a new session) or the ``classification_pending`` placeholder (a device VAD start resets it), so
-        work that starts while the end-of-speech grace runs, the bound person's memory (TODOLIST N-14 10), found
-        no speaker to start for.  A decision the runtime already holds is returned as it is; with a voiceprint
-        classifier the decision depends on the audio and nothing is predicted.
+        Bind alone never predicts an owner (A06). A held decision is returned
+        as-is; otherwise the current (usually uncertain) decision is used.
         """
 
         decision = self._speaker_decision

@@ -13,6 +13,14 @@
       {
         "value": "assets/companions",
         "type": "folder"
+      },
+      {
+        "value": "assets/voices",
+        "type": "folder"
+      },
+      {
+        "value": "assets/robots",
+        "type": "folder"
       }
     ],
     "include": [

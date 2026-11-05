@@ -9,7 +9,7 @@ ESP32-S3 -> Go Media Edge -> Python Voice Core / Agent
 微信小程序 --------------------------------> 控制面、档案与设备管理（绑定与查看）
 ```
 
-小程序不是实时媒体终端：不采集实时对话、不播放实时 TTS、不建立媒体 WSS；仅 profile 页可在明确授权后有界录制自定义音色样本，不承担手机声纹登记。ESP-VoCat 是机器人产品的实时语音入口。当前协商上限是 `interrupt_assist`；未完成真实 AEC、双讲 T1–T14 和连续轮次验收前，不得宣称全双工。
+小程序不是实时媒体终端：不采集实时对话、不播放实时 TTS、不建立媒体 WSS，不提供声音复刻或声纹登记。ESP-VoCat 是机器人产品的实时语音入口。当前协商上限是 `interrupt_assist`；未完成真实 AEC、双讲 T1–T14 和连续轮次验收前，不得宣称全双工。
 
 ## 产品定位（2026-10-04 重新定位）
 
@@ -17,7 +17,7 @@ ESP32-S3 -> Go Media Edge -> Python Voice Core / Agent
 
 此前设想的老年人（陪伴、关怀、人物复刻、人生故事册）与年轻人（陪伴、潮玩）两个方向先删去：不在当前产品范围，不进入工程队列、验收与对外叙事。代码里已有的长辈、成人服务模式暂留、不再投入，是否清理另行决定；重新启用须单独决定，并重新评估合规与安全闭环。
 
-机器人外形尚未确定；星澜、桃喜、绵绵、阿序、玄墨等吉祥物阵容为**占位资产**，商业计划书等对外材料可暂用，不绑定最终外形，后续可整体替换。
+2026-11-04 更新产品形态。Memoria 是多种实体外形的陪伴机器人系列，外壳轮廓可延续原有几个吉祥物的形状特征，具体机身样式尚未确定。实体面部屏幕只显示眼睛、嘴等表情图案，各款机器人具有自己的代表性表情。小程序只负责设备控制与信息查看，不展示机器人外观、面部屏示意或机器人造型图标。全部机器人共用一个默认声音，取消音色选择。外形、表情、声音与表达风格分别建模，不改变身份、授权或记忆归属。完整定义见 [当前产品定义](docs/product.md#当前产品定义2026-11-04)。
 
 按需档案、带标识导出与可证明删除是贯穿的能力底座。声纹登记与声音复刻已下线；身份来自设备绑定。
 
@@ -26,7 +26,7 @@ ESP32-S3 -> Go Media Edge -> Python Voice Core / Agent
 仓库根目录只有三份长期文档（`tests/test_documentation_budget.py` 守着）：
 
 - `README.md`：产品、架构、开发、协议和固件入口。
-- `HANDOFF.md`：当前生产快照、最近几天的发布与验收收据；更早的日期节归并到 `docs/handoff-archive.md`，这里只留快照、近日收据和永久参考的入口。
+- `HANDOFF.md`：交接入口与近日/历史发布收据；**当前运行组件清单**以 `docs/ops/current-runtime-inventory.json` 为准（说明见 `docs/ops/runtime-inventory.md`），HANDOFF 顶部快照只作指针。更早的日期节归并到 `docs/handoff-archive.md`。
 - `TODOLIST.md`：唯一的优先级执行队列，只保存未完成事项、依赖、完成条件、需要你决定的事和已评估的研究结论；做完的条目直接删除（收据归 HANDOFF 与它的归档，全文在 git 历史里），后续从最高优先级未阻塞项推进。
 
 `docs/` 下每种文档只保留一个聚合文件：`docs/acceptance.md`、`docs/compliance.md`、`docs/design.md`、`docs/eval.md`、`docs/handoff-archive.md`、`docs/product.md`、`docs/runbooks.md` 和 `docs/strategy.md`。记忆评测收据保留在 `docs/memory-evaluation-*.json`。仍禁止 session 记录、ADR、组件 README、其他平行计划和 release note；要新增文档类别，须先改上面的测试。
@@ -109,7 +109,7 @@ node --test apps/miniprogram/tests/*.test.js
 
 不带 `MEMORIA_TEST_POSTGRES_DSN` 时依赖 PostgreSQL 的用例会跳过，覆盖率达不到 85%。带上它时，Control API、governance 与 companionship 测试的所有存储都走生产形态的 PostgreSQL（`testing/postgres_harness.py`：真实 init 脚本建模板库，每个测试一份克隆，按生产角色连接）；只有标 `sqlite_only` 的控制库 SQLite 迁移用例不走。
 
-增长护栏（2026-09-26 起）：`[tool.memoria.module-budgets]` 覆盖全部超过 1,500 行的源模块，只降不升；新模块超过 1,500 行时必须同一提交加入预算。`tests/test_service_layering.py` 冻结 `services/` 的跨包依赖图，新增跨包 import 必须显式修改基线，删除的依赖也要同步收紧。产品转向或权威路径切换时，被取代的实现、配置和测试在同一个 PR 内删除，不保留无消费者的影子路径。
+增长护栏（2026-09-26 起）：`[tool.memoria.module-budgets]` 覆盖全部超过 1,500 行的源模块，只降不升；`scripts/check_module_budget.py check` 会扫描 `services/` 下非 `tests/` 的 `.py`，未登记且超过 1,500 行即失败。新模块超过 1,500 行时必须同一提交加入预算。`tests/test_service_layering.py` 冻结 `services/` 的跨包依赖图，新增跨包 import 必须显式修改基线，删除的依赖也要同步收紧。产品转向或权威路径切换时，被取代的实现、配置和测试在同一个 PR 内删除，不保留无消费者的影子路径。
 
 只要出现旧 generation/tool epoch 误播、主人数据越权、危机回复被普通提示覆盖或危机事件未进入监护通知 outbox，发布结论必须是 REJECT。
 
@@ -404,11 +404,11 @@ Replay 使用现有 `adult_clean`、`child_clean`、`child_pause`、`tv_backgrou
 
 ## UI 产品约束
 
-新账号先选择星澜、桃喜、绵绵、阿序或玄墨（阵容为占位资产，未绑定最终机器人外形，见「产品定位」）。主人声纹由小程序记录授权、机器人端采集，手机不获取录音；当前登记先生成 shadow 档案，只有 Speaker Authority 返回 `active` 后才能作为主人认证，也不得与声音克隆混为一谈。
+所有账号与机器人使用统一默认声音。新绑定不再选择吉祥物或音色，也不为此修改账号已有表达方式。小程序主导航为“今天、回顾、设备、我的”，默认声音说明在设备页。设备与使用者身份来自绑定，不录制手机声纹，不提供声音克隆。
 
-称呼仅在注册时设置，字段为“怎么称呼你？”；“我的/个人信息”不再提供称呼或陪伴方式编辑入口。伙伴音色只通过服务器批准的稳定目录键解析供应商 `voice_id`。
+称呼仅在注册时设置，字段为“怎么称呼你？”；“我的/个人信息”不再提供称呼编辑入口。服务端保留旧角色和 voice profile 作为会话与归档的兼容键，全部设计 profile 解析为同一个批准 speaker。不能直接替换冻结会话的 profile ID，也不能把机身款式写入 `companion_id`。
 
-吉祥物的用户情绪只消费权威 `emotion_observation`；助手说话时只消费 Agent 发布且与 `session_id + turn_id + generation_id + tool_epoch` 匹配的 `assistant_expression`。客户端不得从字幕猜表情，回答结束、断线或中断时必须清除。动效需尊重 `prefers-reduced-motion`。
+设备表情的用户情绪只消费权威 `emotion_observation`；助手说话时只消费 Agent 发布且与 `session_id + turn_id + generation_id + tool_epoch` 匹配的 `assistant_expression`。客户端不得从字幕猜表情，回答结束、断线或中断时必须清除。动效需尊重 `prefers-reduced-motion`。小程序不展示产品外观或面部屏，也不提供实时情绪或屏幕回传。
 
 ## ESP32 固件
 
@@ -457,7 +457,7 @@ uv run python firmware/esp32/scripts/publish_firmware_release.py withdraw --remo
 
 ### 屏幕：黄色点阵脸
 
-360x360 圆屏用代码画黄色点阵脸，黑底，不画边框，也不再把吉祥物贴图打进 assets 分区。表情固定 7 个，不新增。除了说话状态，脸由设备状态决定；说话时读服务端发来的回复表情名，在 7 张脸里挑一张（`happy`/`caring`/`loving`/`neutral` 走说话脸，`curious`/`thinking` 走思考脸，`surprised` 走招呼脸，`sad` 走平静脸；没收到名字或名字不认识时保持说话脸）。危机脚本（`interruptible: false`）在任何状态下都是平静脸。
+当前 ESP-VoCat 实现用代码在 360×360 圆屏绘制黄色点阵脸，黑底，不画边框，也不再把吉祥物贴图打进 assets 分区。状态与表情映射以 `memoria_dot_face.h`、`memoria_dot_face_data.inc` 及测试为准，当前代码包含 10 张脸。下表保留主要状态说明。危机脚本（`interruptible: false`）在任何状态下都是平静脸。新产品要求各机身有代表性眼嘴图案，现有协议尚无独立 `body_style_id` / `face_style_id`，本次小程序重设计不代表多款硬件脸型已实现或完成实机验收。
 
 | 脸 | 串口 `face=` | 何时 |
 | --- | --- | --- |
@@ -469,9 +469,9 @@ uv run python firmware/esp32/scripts/publish_firmware_release.py withdraw --remo
 | 问好 | `greet` | 开机动画还在走，或说话时回复表情是 `surprised` |
 | 配对 | `pair` | 未绑定，二维码卡片在画面上 |
 
-**会动的部分（`FaceAnimator`，`memoria_dot_face.{h,cc}`）。** 待机、聆听、说话时每 2.4–5.6 s 随机眨一次眼（半闭→闭→半闭→睁，约 160 ms，不双眨：方案 v0.2 第 6.6 条要求两次眨眼间隔 ≥2 s）；闭眼就是已批准的闭眼平静脸的眼睑线，按每张脸的眼位平移，脸颊等其它点不动。说话脸的嘴跟扬声器电平走（场景的口型检测器）：静音是平静脸的一字嘴，小声是聆听脸的小圆嘴，响是说话脸原本的大嘴，半开与全开之间至少隔 80 ms；其它脸的嘴不动。进入说话后最多 200 ms 保持原来的脸，等回复表情到了再换，避免先闪说话脸再跳；说话结束后回复的脸再停 800 ms，嘴闭上。危机话术只有原来的慢眨眼，不张嘴、不换脸、不等待。眨眼和嘴形只重画眼睛和嘴的矩形（`FaceDirtyRects` + `lv_obj_invalidate_area`，都在 AI 角标 y 48 以下），换脸仍整屏重画。输入只有设备状态、设备 VAD 起止、危机播放标志、回复表情名和播放电平，不读识别文本和音频内容。
+**会动的部分（`FaceAnimator`，`memoria_dot_face.{h,cc}`）。** 待机、聆听、说话时每 2.4–5.6 s 随机眨一次眼（半闭→闭→半闭→睁，约 160 ms，不双眨：方案 v0.2 第 6.6 条要求两次眨眼间隔 ≥2 s）；闭眼就是已批准的闭眼平静脸的眼睑线，按每张脸的眼位平移，脸颊等其它点不动。说话脸的嘴跟扬声器电平走（场景的口型检测器）：静音是平静脸的一字嘴，小声是聆听脸的小圆嘴，响是说话脸原本的大嘴，半开与全开之间至少隔 80 ms；其它脸的嘴不动。进入说话后最多 200 ms 保持原来的脸，等回复表情到了再换，避免先闪说话脸再跳；说话结束后回复的脸再停 800 ms，嘴闭上。危机话术只有原来的慢眨眼，不张嘴、不换脸、不等待。眨眼和嘴形只重画眼睛和嘴的矩形（`FaceDirtyRects` + `lv_obj_invalidate_area`，都在 y 48 以下，不碰合规意见留给 AI 角标的位置），换脸仍整屏重画。输入只有设备状态、设备 VAD 起止、危机播放标志、回复表情名和播放电平，不读识别文本和音频内容。
 
-几何在 `memoria_dot_face.cc`。13×11 的黄点，方点之间留空。待机时脸在圆屏正中。联网阶段脸在字幕带上方的圆里居中，最上排黄点落在 y 18 到 46。常驻 AI 角标已经从固件删除。点阵脸亮着时不跑吉祥物合成器。二维码卡片、字幕和背光策略不变。小程序里选的伙伴仍然只改下一轮的声音，屏幕不换装。`mascot_*.mmp` 只留在 `firmware/esp32/tests/fixtures/mascots/`，不进镜像。`firmware/esp32/scripts/preview_memoria_mascot.py` 只在主机上预览旧合成器，读的是这批夹具，不是设备画面。
+几何与栅格数据在 `memoria_dot_face.cc` 和 `memoria_dot_face_data.inc`。常驻 AI 角标已经从固件删除。点阵脸亮着时不跑旧吉祥物合成器。二维码卡片、字幕和背光策略不变。小程序不再提供伙伴或音色选择，也不通过软件选择机身外形。`mascot_*.mmp` 只留在 `firmware/esp32/tests/fixtures/mascots/`，不进镜像。`firmware/esp32/scripts/preview_memoria_mascot.py` 只在主机上预览旧合成器，读的是这批夹具，不是设备画面。
 
 ```bash
 uv run pytest firmware/esp32/tests/test_memoria_dot_face.py -q

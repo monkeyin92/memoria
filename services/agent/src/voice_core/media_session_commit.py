@@ -31,6 +31,7 @@ from services.agent.src.orchestration.interruption_guard import (
     is_explicit_farewell_text,
     normalize_short,
 )
+from services.agent.src.runtime_post_playback_guard import POST_PLAYBACK_ECHO_GUARD_MS
 from services.agent.src.voice_core.asr_stream_supervisor import (
     ASRAcceptDecision,
     ASRDecisionReason,
@@ -86,6 +87,7 @@ _CLOSE_RECOVERY_MIN_RESCUE_PEAK_ABS = 8_000
 # 20261029-200043: the slow turns spent 1.0-2.0 s there while ASR already had the sentence.
 _FINAL_VAD_END_WAIT_S = 0.3
 _FINAL_VAD_END_WAIT_SAMPLES = 4_800  # 300 ms of 16 kHz uplink past the final
+UNVOICED_SHORT_FINAL_REASON = "unvoiced_short_final"
 
 
 def _elapsed_ms(started: float) -> int:
@@ -510,6 +512,16 @@ class MediaSessionCommitMixin:
             # The last clause is the playback echo margin: a final there may be the reply's own tail.
             return
         self._schedule_final_vad_end_wait(context)
+
+    @staticmethod
+    def _recorded_after_playback_echo(context: _MediaVoiceSession, start_sample: int) -> bool:
+        """The turn's audio starts past the last reply's echo tail, so the reply cannot be heard in it.
+
+        ``last_playback_end_sample`` already carries the echo-tail margin past the playback end.
+        """
+
+        playback_end = context.last_playback_end_sample
+        return playback_end is not None and start_sample >= int(playback_end)
 
     def _schedule_final_vad_end_wait(self, context: _MediaVoiceSession) -> None:
         pending = context.pending
@@ -1139,6 +1151,8 @@ class MediaSessionCommitMixin:
                     await self._abort_committed_turn(context, result[0], reason="session_closed")
                 return None, "session_closed"
         fence, reason = result
+        if fence is None:
+            self._discard_speculative_reply(context, reason or "user_turn_rejected")
         self._log_commit_timing(
             context, stream_epoch, "committed" if fence is not None else reason,
             commit_started, since_endpoint_ms, timing,
@@ -1279,6 +1293,9 @@ class MediaSessionCommitMixin:
     ) -> tuple[GenerationFence | None, str | None]:
         """Prepare and project one turn while its transport epoch is stable."""
 
+        start_sample = max(start_sample, context.runtime.speech_timeline.committed_sample)
+        if end_sample <= start_sample:
+            return None, "empty_media_turn"
         # Compatibility callers may have populated the authoritative Timeline
         # directly before invoking this seam. Re-project those already-
         # accepted facts rather than letting a valid turn bypass Projection.
@@ -1558,13 +1575,21 @@ class MediaSessionCommitMixin:
             await self._discard_projection(context, interaction.reason)
             context.runtime.publish_assistant_audio("restore", gain=1.0)
             return None, interaction.reason
-        accepted, reason = context.runtime.accept_user_turn(
-            text,
-            input_modality="audio",
-            speech_anchored=True,
-            canonical_speech_epoch=context.runtime.consumed_canonical_speech_epoch,
-            canonical_snapshot_bound=True,
-        )
+        reason: str | None
+        if self._unvoiced_short_final_after_playback(context, text):
+            context.runtime.orchestrator.metrics.inc_guarded_user_input(UNVOICED_SHORT_FINAL_REASON)
+            accepted, reason = False, UNVOICED_SHORT_FINAL_REASON
+        else:
+            accepted, reason = context.runtime.accept_user_turn(
+                text,
+                input_modality="audio",
+                speech_anchored=True,
+                canonical_speech_epoch=context.runtime.consumed_canonical_speech_epoch,
+                canonical_snapshot_bound=True,
+                post_playback_echo_possible=not self._recorded_after_playback_echo(
+                    context, start_sample
+                ),
+            )
         if not accepted:
             if reason == "conversation_end_explicit":
                 context.pending.conversation_close_text = text
@@ -1776,10 +1801,6 @@ class MediaSessionCommitMixin:
         )
         context.output.begin_turn_output(fence)
         context.turn_started_ns = time.monotonic_ns()
-        context.llm_thinking_filler.arm(
-            turn_id=fence.turn_id,
-            now=context.pending.child_speech_ended_mono or time.monotonic(),
-        )
         if should_pause_asr_for_playback(context.identity):
             await context.provider.pause_asr_for_playback(context.identity)
         task_epoch, context_version = self._event_versions(context, fence)
@@ -1808,6 +1829,35 @@ class MediaSessionCommitMixin:
         return fence, None
 
     @staticmethod
+    def _discard_speculative_reply(context: _MediaVoiceSession, reason: str) -> None:
+        """The reply request sent ahead for this commit's sentence is not needed: the commit rejected it."""
+
+        discard = getattr(context.provider, "discard_speculative_reply", None)
+        if not callable(discard):
+            return
+        try:
+            discard(context.identity, reason)
+        except Exception:
+            logger.warning(
+                "media commit speculative reply discard failed session=%s reason=%s",
+                context.identity.session_id,
+                reason,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _unvoiced_short_final_after_playback(context: _MediaVoiceSession, text: str) -> bool:
+        """A device segment with no voiced sample cannot hold a spoken word: one character over it, heard
+        inside the post-playback echo window, is echo or room noise, whatever character ASR made of it."""
+
+        if context.pending.device_voiced_samples != 0 or sum(ch.isalnum() for ch in text) > 1:
+            return False
+        completed_ns = context.runtime._voice_floor.last_playback_completed_ns
+        if completed_ns is None:
+            return False
+        return (time.monotonic_ns() - completed_ns) // 1_000_000 <= POST_PLAYBACK_ECHO_GUARD_MS
+
+    @staticmethod
     def _log_media_turn_committed(
         context: _MediaVoiceSession, fence: GenerationFence, stream_epoch: int,
     ) -> None:
@@ -1815,7 +1865,8 @@ class MediaSessionCommitMixin:
         # the full runtime fence; transport epochs are a different namespace.
         logger.info(
             "media turn committed session=%s session_epoch=%s stream_epoch=%s "
-            "turn_id=%s generation_id=%s tool_epoch=%s",
+            "turn_id=%s generation_id=%s tool_epoch=%s voiced_samples=%s",
             context.identity.session_id, fence.session_epoch, stream_epoch,
             fence.turn_id, fence.generation_id, fence.tool_epoch,
+            context.pending.device_voiced_samples,
         )

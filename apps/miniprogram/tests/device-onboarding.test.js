@@ -773,8 +773,8 @@ test("the activation card talks to people, not to the protocol", () => {
 test("the finish card shows the companion picked on the bind page", () => {
   const template = fs.readFileSync(path.join(root, "pages/device-onboarding/index.wxml"), "utf8");
   const finish = template.slice(template.indexOf(`<view wx:if="{{state === 'complete'}}" class="l2-card done-card">`));
-  assert.match(finish, /<face-badge wx:if="\{\{companionId\}\}" role="\{\{companionId\}\}"/);
-  assert.match(finish, /<device-screen wx:else/);
+  assert.match(finish, /<device-screen online="\{\{true\}\}" size="220"><\/device-screen>/);
+  assert.doesNotMatch(finish, /<face-badge/);
 
   const previousPage = global.Page;
   const previousWx = global.wx;

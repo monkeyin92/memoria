@@ -216,6 +216,15 @@ dependency_changes="$(
   git -C "$ROOT" diff --name-only \
     "$base_commit" "$expected_commit" -- "${dependency_inputs[@]}"
 )"
+# The module line budgets live in pyproject.toml but change no installed package.
+strip_module_budgets() {
+  awk '/^\[/ { skip = ($0 ~ /^\[tool\.memoria\.module-budgets\]/) } !skip'
+}
+if grep -qx pyproject.toml <<<"$dependency_changes" && cmp -s \
+  <(git -C "$ROOT" show "$base_commit:pyproject.toml" | strip_module_budgets) \
+  <(git -C "$ROOT" show "$expected_commit:pyproject.toml" | strip_module_budgets); then
+  dependency_changes="$(grep -vx pyproject.toml <<<"$dependency_changes" || true)"
+fi
 if [[ -n "$dependency_changes" ]]; then
   echo "agent component release rejected; dependency inputs changed:" >&2
   printf '%s\n' "$dependency_changes" >&2

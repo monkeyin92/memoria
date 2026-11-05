@@ -1,0 +1,18 @@
+{
+  "type": "design",
+  "designSystems": [],
+  "primaryDesignSystem": null,
+  "assets": {
+    "Memoria 暖纸色家长端": {
+      "versions": [
+        {
+          "path": "preview.html",
+          "createdAt": "2026-11-04T02:10:06.632Z",
+          "status": "needs-review"
+        }
+      ]
+    }
+  },
+  "createdAt": "2026-11-04T02:10:06.632Z",
+  "updatedAt": "2026-11-04T02:32:34.766Z"
+}

@@ -298,6 +298,7 @@ class MediaSessionStandbyMixin:
                 InteractionPhase.LISTENING,
                 cause=cause,
             )
+        self._resume_owner_silence_if_paused(context)
 
     def _latch_listening_capture(self, context: _MediaVoiceSession) -> None:
         if context.listening_capture_hold or not self._listening_capture_armed(context):
@@ -315,6 +316,15 @@ class MediaSessionStandbyMixin:
                 publish=True,
             )
         self._publish_listening_closed(context)
+        self._resume_owner_silence_if_paused(context)
+
+    def _resume_owner_silence_if_paused(self, context: _MediaVoiceSession) -> None:
+        """A capture hold closes the mic, not the owner's silence budget."""
+        if context.owner_silence_task is not None:
+            return
+        if context.owner_silence_grace_deadline is not None:
+            return
+        self._arm_owner_silence_timer(context, reset=False)
 
     def _publish_listening_closed(self, context: _MediaVoiceSession) -> None:
         completed_ns = context.runtime._voice_floor.last_playback_completed_ns
@@ -366,13 +376,8 @@ class MediaSessionStandbyMixin:
             context.runtime.publish_assistant_state("listening")
 
     def _expire_listening_capture(self, context: _MediaVoiceSession) -> None:
-        deadline = context.listening_capture_deadline
-        if context.listening_capture_hold or deadline is None or time.monotonic() <= deadline:
-            return
-        phase = context.runtime.interaction_phase
-        if phase is not InteractionPhase.LISTENING:
-            return
-        self._latch_listening_capture(context)
+        if self._audio_ingress.listening_capture_expired(context):
+            self._latch_listening_capture(context)
 
     def _pause_owner_silence_timer(self, context: _MediaVoiceSession) -> None:
         if not self._owner_silence_enabled(context):
@@ -395,6 +400,10 @@ class MediaSessionStandbyMixin:
                     cause="listening_capture_hold",
                     publish=False,
                 )
+                # The device was just told "listening"; without this it keeps
+                # the mic open while every frame is dropped here.
+                context.runtime.publish_assistant_state("listening_closed")
+            self._resume_owner_silence_if_paused(context)
             return
         if phase == "listening":
             # Resume the owner's remaining budget; do not mint a fresh window

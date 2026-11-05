@@ -1,0 +1,446 @@
+TAP version 13
+# Subtest: a pick with a bound device says the device will switch
+ok 1 - a pick with a bound device says the device will switch
+  ---
+  duration_ms: 3.695
+  ...
+# Subtest: a pick without a device just says saved
+ok 2 - a pick without a device just says saved
+  ---
+  duration_ms: 0.14325
+  ...
+# Subtest: a failed save puts the card back on the account's companion
+ok 3 - a failed save puts the card back on the account's companion
+  ---
+  duration_ms: 0.128667
+  ...
+# Subtest: a second selection waits for the pending voice setting to finish
+ok 4 - a second selection waits for the pending voice setting to finish
+  ---
+  duration_ms: 2.042667
+  ...
+# Subtest: voices render as a vertical list with the account pick marked current
+ok 5 - voices render as a vertical list with the account pick marked current
+  ---
+  duration_ms: 13.757959
+  ...
+# Subtest: tapping the role already in use does not save again
+ok 6 - tapping the role already in use does not save again
+  ---
+  duration_ms: 2.539333
+  ...
+# Subtest: 自定义表达 opens the custom persona page
+ok 7 - 自定义表达 opens the custom persona page
+  ---
+  duration_ms: 1.598375
+  ...
+# Subtest: the voice row previews the role in use and stops on a second tap
+ok 8 - the voice row previews the role in use and stops on a second tap
+  ---
+  duration_ms: 1.866917
+  ...
+# Subtest: device page registers in app.json
+ok 9 - device page registers in app.json
+  ---
+  duration_ms: 0.962958
+  ...
+# Subtest: no binding manifest shows the empty state
+ok 10 - no binding manifest shows the empty state
+  ---
+  duration_ms: 0.703417
+  ...
+# Subtest: device page can set the bind-time subject remark used on home
+ok 11 - device page can set the bind-time subject remark used on home
+  ---
+  duration_ms: 3.544083
+  ...
+# Subtest: family mode loads candidates and switches with an epoch-bumped profile
+ok 12 - family mode loads candidates and switches with an epoch-bumped profile
+  ---
+  duration_ms: 1.433542
+  ...
+# Subtest: switch result without an epoch bump is rejected and not applied
+ok 13 - switch result without an epoch bump is rejected and not applied
+  ---
+  duration_ms: 0.648917
+  ...
+# Subtest: late refresh response cannot overwrite the switched profile
+ok 14 - late refresh response cannot overwrite the switched profile
+  ---
+  duration_ms: 4.954958
+  ...
+# Subtest: unknown_safe shows explainable degradation and hides sensitive entries
+ok 15 - unknown_safe shows explainable degradation and hides sensitive entries
+  ---
+  duration_ms: 0.652125
+  ...
+# Subtest: capability hiding removes un-granted sensitive entries
+ok 16 - capability hiding removes un-granted sensitive entries
+  ---
+  duration_ms: 0.445375
+  ...
+# Subtest: confirming without a usable session is rejected with an explainable message
+ok 17 - confirming without a usable session is rejected with an explainable message
+  ---
+  duration_ms: 0.983667
+  ...
+# Subtest: ordinary parent_for_child can resolve and confirm with app_confirm
+ok 18 - ordinary parent_for_child can resolve and confirm with app_confirm
+  ---
+  duration_ms: 2.6155
+  ...
+# Subtest: the guardian edits session limits from the device page and sees the signed result
+ok 19 - the guardian edits session limits from the device page and sees the signed result
+  ---
+  duration_ms: 1.808167
+  ...
+# Subtest: the 单次上限 slider keeps an unset quiet window unset on the wire
+ok 20 - the 单次上限 slider keeps an unset quiet window unset on the wire
+  ---
+  duration_ms: 0.77875
+  ...
+# Subtest: the 每天上限 slider saves the daily budget with the current cap and quiet window, and the cap slider leaves it alone
+ok 21 - the 每天上限 slider saves the daily budget with the current cap and quiet window, and the cap slider leaves it alone
+  ---
+  duration_ms: 10.731833
+  ...
+# Subtest: a slider released while another limits save is in flight sends nothing
+ok 22 - a slider released while another limits save is in flight sends nothing
+  ---
+  duration_ms: 5.091667
+  ...
+# Subtest: the usage ring counts today's minutes against the signed daily budget and says when it cannot
+ok 23 - the usage ring counts today's minutes against the signed daily budget and says when it cannot
+  ---
+  duration_ms: 15.476708
+  ...
+# Subtest: the device lists its offline story titles, and says so when it has none to show
+ok 24 - the device lists its offline story titles, and says so when it has none to show
+  ---
+  duration_ms: 4.924958
+  ...
+# Subtest: parent_for_child without app_confirm cannot switch
+ok 25 - parent_for_child without app_confirm cannot switch
+  ---
+  duration_ms: 0.496917
+  ...
+# Subtest: unconfirmed parent_for_child subject stays unlabeled
+ok 26 - unconfirmed parent_for_child subject stays unlabeled
+  ---
+  duration_ms: 0.452833
+  ...
+# Subtest: stale confirm response does not refill after a newer load
+ok 27 - stale confirm response does not refill after a newer load
+  ---
+  duration_ms: 0.740167
+  ...
+# Subtest: age declaration offers only three bands and never claims verification
+ok 28 - age declaration offers only three bands and never claims verification
+  ---
+  duration_ms: 2.668584
+  ...
+# Subtest: age declaration explains owner-only and unavailable authority failures
+ok 29 - age declaration explains owner-only and unavailable authority failures
+  ---
+  duration_ms: 0.674917
+  ...
+# Subtest: confirming is blocked when the server does not allow app confirmation
+ok 30 - confirming is blocked when the server does not allow app confirmation
+  ---
+  duration_ms: 0.341625
+  ...
+# Subtest: candidate voice-match confidence is never decorated or shown
+ok 31 - candidate voice-match confidence is never decorated or shown
+  ---
+  duration_ms: 0.505584
+  ...
+# Subtest: device load failures surface an error without breaking the page
+ok 32 - device load failures surface an error without breaking the page
+  ---
+  duration_ms: 0.282375
+  ...
+# Subtest: device page loads authoritative settings and diagnostics (half-duplex fail-closed)
+ok 33 - device page loads authoritative settings and diagnostics (half-duplex fail-closed)
+  ---
+  duration_ms: 0.37
+  ...
+# Subtest: aec-verified diagnostics expose server-approved modes and voice barge-in
+ok 34 - aec-verified diagnostics expose server-approved modes and voice barge-in
+  ---
+  duration_ms: 0.298125
+  ...
+# Subtest: device page shows the Edge-negotiated effective audio mode, not the requested echo
+ok 35 - device page shows the Edge-negotiated effective audio mode, not the requested echo
+  ---
+  duration_ms: 0.279
+  ...
+# Subtest: diagnostics unavailable fails closed for acoustics controls
+ok 36 - diagnostics unavailable fails closed for acoustics controls
+  ---
+  duration_ms: 0.23825
+  ...
+# Subtest: settings saves go through versioned updateDeviceSettings and revert on conflict
+ok 37 - settings saves go through versioned updateDeviceSettings and revert on conflict
+  ---
+  duration_ms: 0.576833
+  ...
+# Subtest: audio mode picker only submits server-approved values
+ok 38 - audio mode picker only submits server-approved values
+  ---
+  duration_ms: 0.408125
+  ...
+# Subtest: tap-only wake copy stays fixed regardless of legacy wake_mode rows
+ok 39 - tap-only wake copy stays fixed regardless of legacy wake_mode rows
+  ---
+  duration_ms: 0.331166
+  ...
+# Subtest: wake word picker only submits server-approved catalog ids
+ok 40 - wake word picker only submits server-approved catalog ids
+  ---
+  duration_ms: 0.421458
+  ...
+# Subtest: custom wake word validates and saves through the settings API
+ok 41 - custom wake word validates and saves through the settings API
+  ---
+  duration_ms: 0.459416
+  ...
+# Subtest: empty barge-in selection is blocked and voice kind follows AEC evidence
+ok 42 - empty barge-in selection is blocked and voice kind follows AEC evidence
+  ---
+  duration_ms: 0.346083
+  ...
+# Subtest: persona assignment follows the subject override and the binding default
+ok 43 - persona assignment follows the subject override and the binding default
+  ---
+  duration_ms: 0.589375
+  ...
+# Subtest: an override written by the companion picker reads as following the pick
+ok 44 - an override written by the companion picker reads as following the pick
+  ---
+  duration_ms: 0.304541
+  ...
+# Subtest: persona assignment failure keeps the sheet open and reports the error
+ok 45 - persona assignment failure keeps the sheet open and reports the error
+  ---
+  duration_ms: 0.331875
+  ...
+# Subtest: 角色与声音 opens the 伙伴 tab with switchTab, which navigateTo cannot open
+ok 46 - 角色与声音 opens the 伙伴 tab with switchTab, which navigateTo cannot open
+  ---
+  duration_ms: 0.145125
+  ...
+# Subtest: sensitive entries open tab pages with switchTab and other pages with navigateTo
+ok 47 - sensitive entries open tab pages with switchTab and other pages with navigateTo
+  ---
+  duration_ms: 0.144209
+  ...
+# Subtest: wake sheet saves a custom wake word, then closes and gives the tab bar back
+ok 48 - wake sheet saves a custom wake word, then closes and gives the tab bar back
+  ---
+  duration_ms: 0.736042
+  ...
+# Subtest: wake sheet stays open when the save is refused
+ok 49 - wake sheet stays open when the save is refused
+  ---
+  duration_ms: 0.30275
+  ...
+# Subtest: device page shows the network as connected without claiming it is a home network
+ok 50 - device page shows the network as connected without claiming it is a home network
+  ---
+  duration_ms: 0.209292
+  ...
+# Subtest: unbind always clears the child and submits without a data switch
+ok 51 - unbind always clears the child and submits without a data switch
+  ---
+  duration_ms: 1.750916
+  ...
+# Subtest: closing the unbind result releases the page and the tab bar
+ok 52 - closing the unbind result releases the page and the tab bar
+  ---
+  duration_ms: 0.405917
+  ...
+# Subtest: the single unbind confirmation carries the product copy and can be cancelled
+ok 53 - the single unbind confirmation carries the product copy and can be cancelled
+  ---
+  duration_ms: 1.93075
+  ...
+# Subtest: an unfinished delete result is shown as still deleting
+ok 54 - an unfinished delete result is shown as still deleting
+  ---
+  duration_ms: 0.477667
+  ...
+# Subtest: unbind result renders one node per line instead of joining into showModal
+ok 55 - unbind result renders one node per line instead of joining into showModal
+  ---
+  duration_ms: 0.382417
+  ...
+# Subtest: unbind panel copy matches the product confirmation character for character
+ok 56 - unbind panel copy matches the product confirmation character for character
+  ---
+  duration_ms: 0.136791
+  ...
+# Subtest: unbind panel and result never use internal deletion words
+ok 57 - unbind panel and result never use internal deletion words
+  ---
+  duration_ms: 0.17625
+  ...
+# Subtest: self_use unbind shows the same copy without internal words
+ok 58 - self_use unbind shows the same copy without internal words
+  ---
+  duration_ms: 0.348542
+  ...
+# Subtest: unbinding also drops the enable session stored for that robot
+ok 59 - unbinding also drops the enable session stored for that robot
+  ---
+  duration_ms: 0.335167
+  ...
+# Subtest: a failed unbind keeps the enable session
+ok 60 - a failed unbind keeps the enable session
+  ---
+  duration_ms: 0.3355
+  ...
+# Subtest: device page no longer offers an unbind data choice
+ok 61 - device page no longer offers an unbind data choice
+  ---
+  duration_ms: 0.13525
+  ...
+# Subtest: device page shows a bound elder's style labels and resets only after confirmation
+ok 62 - device page shows a bound elder's style labels and resets only after confirmation
+  ---
+  duration_ms: 0.255042
+  ...
+# Subtest: an elder's binder sees safety alerts on the device page (P0-04 D7)
+ok 63 - an elder's binder sees safety alerts on the device page (P0-04 D7)
+  ---
+  duration_ms: 0.226292
+  ...
+# Subtest: trial safety subscribe toggle loads ledger state and opt-outs on the server
+ok 64 - trial safety subscribe toggle loads ledger state and opt-outs on the server
+  ---
+  duration_ms: 0.408541
+  ...
+# Subtest: failed subscription-state load shows unknown caption and retry restores the toggle
+ok 65 - failed subscription-state load shows unknown caption and retry restores the toggle
+  ---
+  duration_ms: 0.171542
+  ...
+# Subtest: 重新配网从新二维码开始，不带旧启用会话
+ok 66 - 重新配网从新二维码开始，不带旧启用会话
+  ---
+  duration_ms: 0.077917
+  ...
+# Subtest: device starts with compact controls and reveals usage and existing stories on demand
+ok 67 - device starts with compact controls and reveals usage and existing stories on demand
+  ---
+  duration_ms: 35.638
+  ...
+# Subtest: the 单次上限 slider runs from 10 to 30 and shows a signed 15 minute cap
+ok 68 - the 单次上限 slider runs from 10 to 30 and shows a signed 15 minute cap
+  ---
+  duration_ms: 5.868959
+  ...
+# Subtest: releasing the 单次上限 slider past 30 saves 30 minutes with the stored quiet window
+ok 69 - releasing the 单次上限 slider past 30 saves 30 minutes with the stored quiet window
+  ---
+  duration_ms: 3.621875
+  ...
+# Subtest: the usage screen counts today's chat against the daily budget the guardian sets beside the per-session cap
+ok 70 - the usage screen counts today's chat against the daily budget the guardian sets beside the per-session cap
+  ---
+  duration_ms: 4.755041
+  ...
+# Subtest: the usage ring fills today's share of the daily budget
+ok 71 - the usage ring fills today's share of the daily budget
+  ---
+  duration_ms: 5.088625
+  ...
+# Subtest: a missing per-session cap displays 15 minutes and the slider rests on 15
+ok 72 - a missing per-session cap displays 15 minutes and the slider rests on 15
+  ---
+  duration_ms: 4.428
+  ...
+# Subtest: a stored cap outside 10 to 30 minutes shows 15 and does not save or prompt
+ok 73 - a stored cap outside 10 to 30 minutes shows 15 and does not save or prompt
+  ---
+  duration_ms: 12.984583
+  ...
+# Subtest: confirming a rebind sends 15 minutes, the same number an old cap displays
+ok 74 - confirming a rebind sends 15 minutes, the same number an old cap displays
+  ---
+  duration_ms: 4.726666
+  ...
+# Subtest: a quiet-only profile keeps the signed cap empty and shows the 15 minute fallback
+ok 75 - a quiet-only profile keeps the signed cap empty and shows the 15 minute fallback
+  ---
+  duration_ms: 4.962334
+  ...
+# Subtest: signed in, the page shows the account card, the robot card and the design's four menu rows
+ok 76 - signed in, the page shows the account card, the robot card and the design's four menu rows
+  ---
+  duration_ms: 16.613
+  ...
+# Subtest: returning to the tab keeps the robot's name on screen while the profile refreshes
+ok 77 - returning to the tab keeps the robot's name on screen while the profile refreshes
+  ---
+  duration_ms: 6.065583
+  ...
+# Subtest: a guest still gets privacy, feedback and about, and 微信登录 opens the login page
+ok 78 - a guest still gets privacy, feedback and about, and 微信登录 opens the login page
+  ---
+  duration_ms: 5.513458
+  ...
+# Subtest: 帮助与反馈 is WeChat's native feedback button only after login
+ok 79 - 帮助与反馈 is WeChat's native feedback button only after login
+  ---
+  duration_ms: 0.723583
+  ...
+# Subtest: 关于 shows the release version, or the build channel before release, and no model filing the server did not report
+ok 80 - 关于 shows the release version, or the build channel before release, and no model filing the server did not report
+  ---
+  duration_ms: 8.200667
+  ...
+# Subtest: chat_llm_providers empty, before the voice agent reports its models, shows no model filing
+ok 81 - chat_llm_providers empty, before the voice agent reports its models, shows no model filing
+  ---
+  duration_ms: 4.370541
+  ...
+# Subtest: chat_llm_providers deepseek keeps the DeepSeek filing
+ok 82 - chat_llm_providers deepseek keeps the DeepSeek filing
+  ---
+  duration_ms: 5.005417
+  ...
+# Subtest: chat_llm_providers qwen lists only the 通义千问 filing
+ok 83 - chat_llm_providers qwen lists only the 通义千问 filing
+  ---
+  duration_ms: 3.072875
+  ...
+# Subtest: chat_llm_providers deepseek and qwen discloses both filings
+ok 84 - chat_llm_providers deepseek and qwen discloses both filings
+  ---
+  duration_ms: 3.801083
+  ...
+# Subtest: 授权与隐私说明 opens the consent page when raw-audio consent is open, the WeChat privacy guideline otherwise
+ok 85 - 授权与隐私说明 opens the consent page when raw-audio consent is open, the WeChat privacy guideline otherwise
+  ---
+  duration_ms: 4.573458
+  ...
+# Subtest: a guardian with guardian_summary_view sees 记忆管理 beside privacy and opens it
+ok 86 - a guardian with guardian_summary_view sees 记忆管理 beside privacy and opens it
+  ---
+  duration_ms: 3.599542
+  ...
+# Subtest: every page state lays out without overflow, capsule or tab bar collisions at 320/375/390/430 and 1.3x font
+ok 87 - every page state lays out without overflow, capsule or tab bar collisions at 320/375/390/430 and 1.3x font
+  ---
+  duration_ms: 13635.395583
+  ...
+# 180 layouts checked
+1..87
+# tests 87
+# suites 0
+# pass 87
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 13869.751542

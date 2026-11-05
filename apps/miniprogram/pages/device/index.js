@@ -151,12 +151,12 @@ function personaRows(binding, payload, options, accountCompanionId = "") {
       role_label: subject.role_label,
       assignment_id: assignmentId,
       persona_id: personaId,
-      persona_name: labels.get(personaId) || personaId || "未设置",
+      persona_name: labels.get(personaId) || (personaId && !personaId.startsWith("cu_") ? "已有表达方式" : personaId) || "未设置",
       is_override: Boolean(override),
       source_label: !override
         ? "跟随设备默认"
         : accountCompanionId && personaId === accountCompanionId
-          ? "跟随陪伴选择"
+          ? "已有账号设置"
           : "已单独分配",
     };
   });
@@ -169,7 +169,7 @@ function personaOptionItems(personas) {
     ...companions.map((companion) => ({
       id: companion.id,
       label: companion.name,
-      note: companion.tagline,
+      note: "设备默认表达",
     })),
     ...custom
       .filter(
@@ -305,11 +305,10 @@ function dailyChatFrom(result) {
 }
 
 function bindingChoiceItems(bindings) {
-  const companion = companionById(defaultCompanionId);
   return (bindings || []).map((binding) => ({
     binding,
     bindingId: binding.binding_id,
-    label: devicePlaceName(binding, companion.name),
+    label: devicePlaceName(binding),
     modeLabel: MODE_META[binding.declared_mode]?.title || "已绑定设备",
   }));
 }
@@ -320,8 +319,8 @@ Page({
     authenticated: false,
     loading: true,
     devicePlaceName: "设备",
-    personaName: "星澜",
-    personaVoice: "角色默认声音",
+    personaName: "Memoria",
+    personaVoice: "默认声音",
     heroRoleId: defaultCompanionId,
     currentUserLabelConfirmed: false,
     online: false,
@@ -424,6 +423,10 @@ Page({
     wakeSheetSelection: "",
     sheetOpen: false,
     diagExpanded: false,
+    usageExpanded: false,
+    memberSettingsExpanded: false,
+    storiesExpanded: false,
+    managementExpanded: false,
     unbindSheetVisible: false,
     unbinding: false,
     unbindError: "",
@@ -465,6 +468,10 @@ Page({
   _enterGuestState() {
     this._flowSeq = (this._flowSeq || 0) + 1;
     this.setData({
+      usageExpanded: false,
+      memberSettingsExpanded: false,
+      storiesExpanded: false,
+      managementExpanded: false,
       authenticated: false,
       loading: false,
       syncingBindings: false,
@@ -1062,7 +1069,7 @@ Page({
         ),
         personaOptions,
         accountCompanionId,
-        devicePlaceName: devicePlaceName(binding, companion.name),
+        devicePlaceName: devicePlaceName(binding),
         personaName: companion.name,
         personaVoice: companion.voiceName,
         heroRoleId: companion.id,
@@ -1165,9 +1172,14 @@ Page({
     this.loadDevice().finally(() => wx.stopPullDownRefresh());
   },
 
-  // 角色页是 tabBar 页，navigateTo 打不开它。
   openCompanion() {
     wx.switchTab({ url: "/pages/companion/index" });
+  },
+
+  openCustomPersona() {
+    if (this.data.personaSaving) return;
+    this.closePersonaSheet();
+    wx.navigateTo({ url: "/pages/persona-custom/index" });
   },
 
   openGuardian() {
@@ -1851,6 +1863,18 @@ Page({
     }
   },
   noop() {},
+  toggleUsage() {
+    this.setData({ usageExpanded: !this.data.usageExpanded });
+  },
+  toggleMemberSettings() {
+    this.setData({ memberSettingsExpanded: !this.data.memberSettingsExpanded });
+  },
+  toggleStories() {
+    this.setData({ storiesExpanded: !this.data.storiesExpanded });
+  },
+  toggleManagement() {
+    this.setData({ managementExpanded: !this.data.managementExpanded });
+  },
   toggleDiag() {
     this.setData({ diagExpanded: !this.data.diagExpanded });
   },
