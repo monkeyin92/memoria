@@ -258,7 +258,7 @@ def followup_utterance_looks_complete(text: str) -> bool:
         return True
     if any(compact.endswith(suffix) for suffix in _FOLLOWUP_INCOMPLETE_SUFFIXES):
         return False
-    return len(compact) >= 6
+    return len(compact) >= 6 or is_semantically_complete(text)
 
 
 def _compact(text: str) -> str:

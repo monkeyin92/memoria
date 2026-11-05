@@ -47,6 +47,9 @@ from services.agent.src.voice_core.media_session import (
 )
 from services.agent.src.voice_core.media_session_commit import _resolve_media_turn_text
 from services.agent.src.voice_core.media_session_pending_turn import PendingTurn
+from services.agent.src.voice_core.media_session_playback_stop import (
+    followup_utterance_looks_complete,
+)
 from services.agent.src.voice_core.media_session_types import (
     DelegationOutputState,
     OutputDispatchResult,
@@ -6267,6 +6270,48 @@ async def test_media_incomplete_followup_waits_for_second_half_before_commit(
     followups = [text for text in _user_turn_texts(context) if "我想听" in text or "恐龙" in text]
     assert followups == ["我想听 恐龙的故事呀"]
     assert window.provider.prepared.count(followups[0]) == 1
+
+
+@pytest.mark.parametrize(
+    ("text", "complete"),
+    [
+        ("意气风发", True),
+        ("意气风发。", True),
+        ("后天呢", True),
+        ("我想听恐龙的故事", True),
+        ("我想听", False),
+        ("", False),
+    ],
+)
+def test_followup_completeness_agrees_with_the_semantic_verdict(text: str, complete: bool) -> None:
+    assert followup_utterance_looks_complete(text) is complete
+
+
+@pytest.mark.asyncio
+async def test_media_semantically_complete_short_followup_commits_after_one_grace(
+    device_media_session: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A four-character idiom the semantic classifier calls complete waited 2.91 s on the hold."""
+
+    monkeypatch.setenv("MEDIA_PLAYBACK_FOLLOWUP_GRACE_S", "0.3")
+    window = await device_media_session("followup-complete-idiom")
+    registry, identity, context = window.registry, window.identity, window.context
+    await _complete_previous_device_playback(window)
+    context.pending.active_vad_start_sample = 195_000
+
+    await _accept_media_asr_final(
+        registry,
+        identity,
+        sentence_id="idiom-1",
+        start_sample=215_000,
+        end_sample=229_000,
+        text="意气风发",
+    )
+    await _wait_until(lambda: window.provider.prepared == ["意气风发"], timeout=1.5)
+
+    followups = [text for text in _user_turn_texts(context) if "意气风发" in text]
+    assert followups == ["意气风发"]
 
 
 @pytest.mark.asyncio
