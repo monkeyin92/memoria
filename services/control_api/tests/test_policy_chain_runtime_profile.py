@@ -26,7 +26,7 @@ from services.control_api.tests.policy_chain_test_support import (
     pytestmark,  # noqa: F401 - pytest discovers the module-wide marker
 )
 from services.guardian.postgres_store import PostgresGuardianStore
-from services.guardian.tests.test_guardian_postgres_store import (
+from services.guardian.tests.guardian_postgres_support import (
     _ensure_roles,
     _role_dsn,
 )
