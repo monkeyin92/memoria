@@ -32,7 +32,7 @@ from services.session_runtime.commands import (
 )
 from services.session_runtime.postgres_store import PostgresSessionRuntimeStore
 from services.session_runtime.service import build_postgres_session_runtime_service
-from services.session_runtime.tests.test_postgres_store import (
+from services.session_runtime.tests.postgres_store_test_support import (
     _SIGNING_KEY,
     _dsn_with,
     _seed_delegated_binding,

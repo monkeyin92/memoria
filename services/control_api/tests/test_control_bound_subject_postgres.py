@@ -45,7 +45,7 @@ from services.session_runtime.subject_resolver import (
     BindingSnapshot,
     sole_bound_subject_id,
 )
-from services.session_runtime.tests.test_postgres_store import (
+from services.session_runtime.tests.postgres_store_test_support import (
     _SIGNING_KEY,
     _seed_binding,
     _seed_delegated_binding,

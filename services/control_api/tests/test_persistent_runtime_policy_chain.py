@@ -73,7 +73,7 @@ from services.session_runtime.service import (
     PostgresSessionRuntimeService,
     build_postgres_session_runtime_service,
 )
-from services.session_runtime.tests.test_postgres_store import (
+from services.session_runtime.tests.postgres_store_test_support import (
     _SIGNING_KEY,
     _seed_delegated_binding,
     postgres_runtime,  # noqa: F401 - pytest discovers imported fixtures by name

@@ -41,7 +41,7 @@ from services.session_runtime.service import (
     PersistentSessionDenied,
     build_postgres_session_runtime_service,
 )
-from services.session_runtime.tests.test_postgres_store import (
+from services.session_runtime.tests.postgres_store_test_support import (
     _DEVICE_ONBOARDING_SCHEMA_SQL,
     _SIGNING_KEY,
     _seed_binding,
