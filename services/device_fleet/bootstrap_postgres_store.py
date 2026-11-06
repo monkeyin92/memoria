@@ -67,9 +67,9 @@ from services.device_fleet.bootstrap_schema import (
     BootstrapSchemaMixin,
 )
 from services.device_fleet.bootstrap_store import (
-    _DEVICE_ACTIVE_CLAIMS,
     _TERMINAL_SESSION_STATES,
 )
+from services.device_fleet.bootstrap_store_claims import _DEVICE_ACTIVE_CLAIMS
 from services.device_fleet.bootstrap_sync import (
     BootstrapSyncFacadeMixin,
     PostgresBootstrapStoreContextError,
