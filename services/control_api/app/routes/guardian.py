@@ -13,7 +13,6 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
-from packages.contracts.generated.python.multi_subject_contracts import CapabilityValue
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.archive.domain import (
@@ -30,12 +29,6 @@ from services.archive.memory_domain import (
 from services.archive.memory_retractions import list_retracted_claims
 from services.archive.object_store import ObjectStore
 from services.common.companion_response_safety import guardian_attention_copy
-from services.consent.bound_subject import (
-    GUARDIAN_MEMORY_CAPABILITIES,
-    MINOR_SESSION_CAPABILITIES,
-    BoundSubjectConsentService,
-    BoundSubjectGrant,
-)
 from services.control_api.app.account_gate import (
     require_capability_for_account_id,
     require_capability_for_subject,
@@ -43,6 +36,13 @@ from services.control_api.app.account_gate import (
 )
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
+from services.control_api.app.guardian_binding_authority import (
+    GuardianConsentCreate,
+    owns_accountless_child,
+    person_grant_body_matches,
+    require_binding_owner_for_subject,
+    sync_bound_subject_authority,
+)
 from services.control_api.app.guardian_push import resolve_minor_display_name
 from services.control_api.app.guardian_recap import (
     child_utterances,
@@ -107,7 +107,6 @@ from services.guardian.parent_alert import (
 )
 from services.guardian.push import PushSubscriptionResult, PushSubscriptionStorePort
 from services.guardian.weekly_report import WeeklyReportProjector
-from services.identity.service import IdentityService
 from services.legacy.domain import LegacyRegistryPort
 from services.memory_scope.child_layers import ChildLayerStore
 from services.speaker.domain import RevokeSpeakerProfile, SpeakerAuthorityPort
@@ -144,26 +143,6 @@ class GuardianLinkConfirm(BaseModel):
 
     binding_code: str = Field(pattern=r"^\d{8}$")
     birth_year_band: BirthYearBand
-
-
-class GuardianConsentCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    consent_kind: ConsentKind
-    policy_version: str = Field(
-        min_length=1,
-        max_length=64,
-        pattern=r"^[a-z0-9][a-z0-9._-]*$",
-    )
-    retention_days: int | None = Field(default=None, ge=1, le=30)
-
-    @model_validator(mode="after")
-    def validate_corpus_retention(self) -> GuardianConsentCreate:
-        if self.consent_kind == "corpus_recording" and self.retention_days is None:
-            raise ValueError("corpus recording consent requires retention_days")
-        if self.consent_kind != "corpus_recording" and self.retention_days is not None:
-            raise ValueError("retention_days is only valid for corpus recording consent")
-        return self
 
 
 class GuardianPushSubscriptionCreate(BaseModel):
@@ -361,157 +340,11 @@ def _person_consent_payload(record: PersonConsentRecord) -> dict[str, Any]:
     }
 
 
-def _person_grant_body_matches(
-    record: PersonConsentRecord,
-    body: GuardianConsentCreate,
-) -> bool:
-    """Whether a replayed idempotency key carries the same grant request.
-
-    Absolute timestamps are recomputed per attempt, so the request is matched
-    on the grantor/subject/kind/policy identity plus the requested retention
-    span; a different payload under the same key conflicts.
-    """
-
-    if (
-        record.consent_kind != body.consent_kind
-        or record.policy_version != body.policy_version
-    ):
-        return False
-    if body.retention_days is None:
-        return record.expires_at is None
-    return (
-        record.expires_at is not None
-        and record.expires_at - record.granted_at
-        == timedelta(days=body.retention_days)
-    )
-
-
-async def _require_binding_owner_for_subject(
-    request: Request,
-    *,
-    user: AuthenticatedUser,
-    subject_person_id: str,
-) -> None:
-    """Authorize a person-level consent against the device binding.
-
-    The only accepted grantor is the account owner of an ACTIVE
-    ``parent_for_child`` binding that names this subject as its primary
-    subject — the same binding-scoped authority that makes a guardian
-    declaration count.  A subject without such a binding is refused: nobody
-    may grant capabilities over a child they do not actually manage.
-    """
-
-    identity = getattr(request.app.state, "identity_service", None)
-    if not isinstance(identity, IdentityService):
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "identity_authority_unavailable"},
-        )
-    manifests = await identity.list_active_manifests_for_person(
-        subject_person_id,
-        actor_person_id=user.user_id,
-    )
-    if not any(
-        manifest.declared_mode == "parent_for_child"
-        and manifest.account_owner_id == user.user_id
-        and subject_person_id in manifest.primary_subject_ids
-        for manifest in manifests
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "guardian_binding_owner_required"},
-        )
-
-
-#: Guardian consent kinds that stand for standing grants in the consent
-#: authority Policy reads (see ``services.consent.bound_subject``).
-_BOUND_SUBJECT_CAPABILITIES: dict[str, tuple[CapabilityValue, ...]] = {
-    "memory_retention": GUARDIAN_MEMORY_CAPABILITIES,
-    "minor_voice_session": MINOR_SESSION_CAPABILITIES,
-}
-
-
-async def _sync_bound_subject_authority(
-    request: Request,
-    *,
-    user: AuthenticatedUser,
-    subject_person_id: str,
-    consent_kind: str,
-    granted: bool,
-    source_key: str,
-) -> None:
-    """Mirror a person-level guardian consent into the consent authority.
-
-    The retention ceiling reads the Guardian ledger and Policy reads the
-    consent authority; one toggle must move both, on every active binding
-    this guardian owns for the child. Without a consent authority (SQLite
-    deployments have no Session Runtime) there is nothing to mirror.
-    """
-
-    capabilities = _BOUND_SUBJECT_CAPABILITIES.get(consent_kind)
-    service = cast(
-        BoundSubjectConsentService | None,
-        getattr(request.app.state, "bound_subject_consent", None),
-    )
-    identity = getattr(request.app.state, "identity_service", None)
-    if capabilities is None or service is None or not isinstance(identity, IdentityService):
-        return
-    manifests = await identity.list_active_manifests_for_person(
-        subject_person_id,
-        actor_person_id=user.user_id,
-    )
-    for manifest in manifests:
-        if (
-            manifest.declared_mode != "parent_for_child"
-            or manifest.account_owner_id != user.user_id
-            or subject_person_id not in manifest.primary_subject_ids
-        ):
-            continue
-        if granted:
-            await service.grant(
-                BoundSubjectGrant(
-                    actor_person_id=user.user_id,
-                    subject_person_id=subject_person_id,
-                    binding_id=manifest.binding_id,
-                    kind="guardian",
-                    capabilities=capabilities,
-                    source_key=source_key,
-                )
-            )
-        else:
-            await service.revoke(
-                actor_person_id=user.user_id,
-                subject_person_id=subject_person_id,
-                binding_id=manifest.binding_id,
-                capabilities=capabilities,
-                reason=f"guardian_{consent_kind}_revoked",
-            )
-
-
 def _deletion_confirmed(confirmation: str) -> bool:
     # compare_digest rejects non-ASCII str, and the phrase is Chinese.
     return secrets.compare_digest(
         confirmation.encode("utf-8"), _DELETE_CONFIRMATION.encode("utf-8")
     )
-
-
-async def _owns_accountless_child(
-    request: Request,
-    *,
-    user: AuthenticatedUser,
-    subject_person_id: str,
-) -> bool:
-    """Whether this guardian binds a device for this child, who has no account."""
-
-    if _profiles(request).get_account(user_id=subject_person_id) is not None:
-        return False
-    try:
-        await _require_binding_owner_for_subject(
-            request, user=user, subject_person_id=subject_person_id
-        )
-    except HTTPException:
-        return False
-    return True
 
 
 async def _active_link_or_403(
@@ -1117,7 +950,7 @@ async def grant_person_consent(
 
     _require_wechat_guardian(request, user)
     key = _require_idempotency_key(idempotency_key)
-    await _require_binding_owner_for_subject(
+    await require_binding_owner_for_subject(
         request,
         user=user,
         subject_person_id=person_id,
@@ -1132,7 +965,7 @@ async def grant_person_consent(
     except GuardianNotFoundError:
         replayed = None
     if replayed is not None:
-        if _person_grant_body_matches(replayed, body):
+        if person_grant_body_matches(replayed, body):
             return _person_consent_payload(replayed)
         raise HTTPException(
             status_code=409, detail={"code": "guardian_consent_conflict"}
@@ -1166,7 +999,7 @@ async def grant_person_consent(
         raise HTTPException(
             status_code=409, detail={"code": "guardian_consent_conflict"}
         ) from exc
-    await _sync_bound_subject_authority(
+    await sync_bound_subject_authority(
         request,
         user=user,
         subject_person_id=person_id,
@@ -1184,7 +1017,7 @@ async def list_person_consents(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
     _require_wechat_guardian(request, user)
-    await _require_binding_owner_for_subject(
+    await require_binding_owner_for_subject(
         request,
         user=user,
         subject_person_id=person_id,
@@ -1244,7 +1077,7 @@ async def revoke_person_consent(
         ) from exc
     # Withdraw the authority grants first-class too; with the binding gone
     # the unbind path already revoked them, so this finds nothing to do.
-    await _sync_bound_subject_authority(
+    await sync_bound_subject_authority(
         request,
         user=user,
         subject_person_id=person_id,
@@ -1268,7 +1101,7 @@ async def _guardian_evidence_account(
     """
 
     evidence_account_id = minor_user_id
-    if await _owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
+    if await owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
         consent = await _store(request).active_consent(
             minor_user_id=minor_user_id,
             consent_kind="memory_retention",
@@ -1491,7 +1324,7 @@ async def _child_memory_account(
     """
 
     _require_wechat_guardian(request, user)
-    if not await _owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
+    if not await owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
         raise HTTPException(
             status_code=403, detail={"code": "guardian_memory_review_unavailable"}
         )
@@ -1925,7 +1758,7 @@ async def export_minor(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> JSONResponse:
     _require_wechat_guardian(request, user)
-    if await _owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
+    if await owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
         # A child with no account: the device stored their turns under the
         # binding owner's account, attributed to the child. Export exactly
         # the rows that prove that attribution, in the guardian audience.
@@ -1969,7 +1802,7 @@ async def delete_minor(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
     _require_wechat_guardian(request, user)
-    if await _owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
+    if await owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
         # Their rows live in the binding owner's account: erase exactly the
         # child's, never the parent's (account deletion is account-wide).
         if not _deletion_confirmed(body.confirmation):
