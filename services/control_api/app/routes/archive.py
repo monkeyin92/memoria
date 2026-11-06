@@ -22,7 +22,6 @@ from services.archive.domain import (
     EvidenceNotFoundError,
     IdempotencyConflictError,
     LifeArchivePort,
-    RawVoiceConsent,
     RawVoiceConsentRequiredError,
 )
 from services.archive.memory_domain import (
@@ -50,6 +49,12 @@ from services.control_api.app.archive_event_conflicts import (
 )
 from services.control_api.app.archive_event_conflicts import (
     event_id_conflict as conflict_409,
+)
+from services.control_api.app.archive_items import (
+    _actual_heard_item,
+    _consent_payload,
+    _owner_turn_item,
+    _search_item,
 )
 from services.control_api.app.bound_subject import (
     DEVICE_BOUND_SUBJECT_UNVERIFIED,
@@ -207,16 +212,6 @@ def _wake_compiler(request: Request) -> None:
     worker = getattr(request.app.state, "memory_compiler_worker", None)
     if isinstance(worker, MemoryCompilerWorker):
         worker.wake()
-
-
-def _consent_payload(consent: RawVoiceConsent) -> dict[str, Any]:
-    return {
-        "consent_grant_id": consent.consent_grant_id,
-        "policy_version": consent.policy_version,
-        "retention_policy": consent.retention_policy,
-        "granted_at": consent.granted_at.isoformat(),
-        "revoked_at": consent.revoked_at.isoformat() if consent.revoked_at else None,
-    }
 
 
 def _require_internal_token(
@@ -797,36 +792,6 @@ async def timeline(
     }
 
 
-def _actual_heard_item(event: EvidenceEvent) -> dict[str, Any] | None:
-    payload = event.payload
-    text = payload.get("text")
-    if not (
-        event.event_type == "assistant.playout_stopped"
-        and event.speaker_class == "assistant"
-        and payload.get("actual_heard") is True
-        and payload.get("history_eligible") is True
-        and payload.get("owner_projection_eligible") is True
-        and payload_text_allowed(payload)
-        and isinstance(text, str)
-        and text.strip()
-        and event.session_id is not None
-        and event.turn_id is not None
-        and event.generation_id is not None
-    ):
-        return None
-    return {
-        "event_id": event.event_id,
-        "occurred_at": event.occurred_at.isoformat(),
-        "session_id": event.session_id,
-        "turn_id": event.turn_id,
-        "generation_id": event.generation_id,
-        "text": text.strip(),
-        # Exact DAC evidence must opt in explicitly. Missing or malformed
-        # telemetry remains an approximate playback record.
-        "approximate": payload.get("approximate") is not False,
-    }
-
-
 @router.get("/conversation-review")
 async def conversation_review(
     request: Request,
@@ -892,33 +857,6 @@ async def conversation_review(
             }
             for item in confirmed.items
         ],
-    }
-
-
-def _owner_turn_item(event: EvidenceEvent) -> dict[str, Any] | None:
-    payload = event.payload
-    text = payload.get("text")
-    if not (
-        event.event_type == "speech.utterance_finalized"
-        and event.speaker_class == "owner"
-        and payload.get("history_eligible") is True
-        and payload.get("owner_projection_eligible") is True
-        and payload_text_allowed(payload)
-        and isinstance(text, str)
-        and text.strip()
-        and event.session_id is not None
-        and event.turn_id is not None
-        and event.generation_id is not None
-    ):
-        return None
-    return {
-        "event_id": event.event_id,
-        "occurred_at": event.occurred_at.isoformat(),
-        "session_id": event.session_id,
-        "turn_id": event.turn_id,
-        "generation_id": event.generation_id,
-        "speaker_class": "owner",
-        "text": text.strip(),
     }
 
 
@@ -1106,31 +1044,6 @@ async def conversation_sessions(
         reverse=True,
     )[:limit]
     return {"items": items}
-
-
-def _search_item(item: Any) -> dict[str, Any]:
-    return {
-        "item_id": item.item_id,
-        "kind": item.kind,
-        "title": item.title,
-        "snippet": item.snippet,
-        "category": item.category,
-        "domain_category": item.domain_category,
-        "memory_kind": item.memory_kind,
-        "entity_ids": list(item.entity_ids),
-        "status": item.status,
-        "source_event_id": item.source_event_id,
-        "source_event_ids": list(item.source_event_ids),
-        "occurred_at": item.occurred_at.isoformat(),
-        "valid_from": item.valid_from.isoformat() if item.valid_from else None,
-        "valid_to": item.valid_to.isoformat() if item.valid_to else None,
-        "observed_at": item.observed_at.isoformat() if item.observed_at else None,
-        "stability": item.stability,
-        "salience": item.salience,
-        "sensitivity": item.sensitivity,
-        "conflict_state": item.conflict_state,
-        "score": item.score,
-    }
 
 
 @router.get("/search")
