@@ -18,7 +18,7 @@ if TYPE_CHECKING:
         MediaVoiceSessionState as _MediaVoiceSession,
     )
 
-logger = logging.getLogger(__name__)
+_COMMIT_LOGGER = logging.getLogger("services.agent.src.voice_core.media_session_commit")
 
 
 def _elapsed_ms(started: float) -> int:
@@ -134,7 +134,7 @@ def _log_empty_media_turn(
         for segment in context.runtime.speech_timeline.pending
         if segment.stream_epoch == stream_epoch and segment.text.strip()
     ]
-    logger.info(
+    _COMMIT_LOGGER.info(
         "media turn has no text session=%s stream_epoch=%s samples=%s-%s stage=%s "
         "pending_text_segments=%s pending_text_ranges=%s text_after_endpoint=%s "
         "pending_end=%s active_vad_start=%s last_playback_end=%s committed_sample=%s",
@@ -154,5 +154,3 @@ def _log_empty_media_turn(
         context.last_playback_end_sample,
         context.asr.last_committed_sample,
     )
-
-
