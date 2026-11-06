@@ -7,7 +7,7 @@ REPORT_DIR="$HOME/projects/memoria/devicetest/run-${STAMP}-soak-card5"
 mkdir -p "$REPORT_DIR"
 export PATH="$HOME/projects/memoria/devicetest/bin:$PATH"
 export AFPLAY_RETRY_LOG="$REPORT_DIR/afplay_retry.log"
-PORT="/dev/cu.usbmodem101"
+PORT=$(ls /dev/cu.usbmodem* 2>/dev/null | head -1)
 SCENARIO="devicetest/scenarios/child_tapwake.json"
 {
   echo "start $(date -Iseconds)"

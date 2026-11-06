@@ -95,7 +95,14 @@ def main():
                 msg = f"keepawake_no_listening_closed:{tag}" + (" (no bridge.log)" if closed is None else "")
                 (failures if a.gate_silence else informational).append(msg)
         elif r.get("kind") == "post_scenario_observation":
-            win = (r["ts"] - r["waited_s"], r["ts"])
+            win_start = r["ts"] - r["waited_s"]
+            # The silence step stops waiting the moment the board idles, so the standby marker can land
+            # before the post window opens: 2026-11-06 19:48 printed screen off at 20:01:48 while the tail
+            # window started at 20:04:03, and the run scored keepawake_no_standby_or_end on evidence it had.
+            silence = [s for s in rows if s.get("kind") == "silence"]
+            if silence:
+                win_start = min(win_start, silence[-1]["ts"] - silence[-1]["after_s"])
+            win = (win_start, r["ts"])
             hit = None if hits is None else found(hits, *win)
             hit = hit or (None if closed is None else found(closed, *win))
             checks.append({"step": "tail", "window": [datetime.fromtimestamp(t).strftime("%H:%M:%S") for t in win],
