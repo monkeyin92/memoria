@@ -88,7 +88,7 @@ def test_the_default_turn_budget_covers_the_followup_window_and_the_commit() -> 
 
     from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
     from services.agent.src.voice_core.media_session_input import _REOPEN_EVIDENCE_WINDOW_S
-    from services.agent.src.voice_core.media_session_playback_stop import (
+    from services.agent.src.voice_core.playback_text import (
         _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S,
     )
 
