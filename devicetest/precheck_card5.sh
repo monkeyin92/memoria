@@ -4,11 +4,11 @@
 set -uo pipefail
 cd "$HOME/projects/memoria"
 TAG=card5-overlay
-EXPECT_IMAGE=memoria-agent:20261104-card5-victim-handoff-v1
+EXPECT_IMAGE=memoria-agent:20261105-card5-hold-completeness-v1
 EXPECT_BUILD=28
 EXPECT_ELF=d0e90d73a
 EXPECT_BYPASS=ed2b4c0e
-EXPECT_VOL=40
+EXPECT_VOL=30
 D="devicetest/precheck-$(date +%Y%m%d-%H%M%S)-${TAG}"; mkdir -p "$D"
 PORT=$(ls /dev/cu.usbmodem* 2>/dev/null | head -1); REM=memoria-prod; FAIL=""
 echo "stamp=$D expect_image=$EXPECT_IMAGE expect_build=$EXPECT_BUILD expect_elf=$EXPECT_ELF vol=$EXPECT_VOL" | tee "$D/meta.txt"
@@ -51,7 +51,7 @@ PREV=$(osascript -e 'output volume of (get volume settings)')
 osascript -e "set volume output volume $EXPECT_VOL"
 V=$(osascript -e 'get volume settings')
 echo "volume prev=$PREV now=$V" | tee -a "$D/meta.txt"
-grep -q 'output volume:40' <<<"$V" || FAIL+=" volume"
+grep -q 'output volume:30' <<<"$V" || FAIL+=" volume"
 grep -q 'output muted:false' <<<"$V" || FAIL+=" muted"
 
 ssh $REM 'docker logs -f -t --since 0s memoria-voice-core-media-bridge-1 2>&1' > "$D/bridge.log" & BP=$!
