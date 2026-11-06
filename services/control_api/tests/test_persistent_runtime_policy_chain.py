@@ -56,7 +56,7 @@ from services.control_api.app.subject_verification import ensure_account_person
 from services.control_api.tests.interaction_api_test_support import _MemoryCatalog
 from services.guardian.domain import ConsentRecord
 from services.guardian.postgres_store import PostgresGuardianStore
-from services.guardian.tests.test_guardian_postgres_store import (
+from services.guardian.tests.guardian_postgres_support import (
     _ensure_roles,
     _role_dsn,
 )

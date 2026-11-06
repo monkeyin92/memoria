@@ -19,7 +19,7 @@ from services.guardian.push import (
     CrisisPushWorker,
     PushSendResult,
 )
-from services.guardian.tests.test_guardian_postgres_store import (
+from services.guardian.tests.guardian_postgres_support import (
     _ensure_roles,
     _postgres_dsn,
     _role_dsn,
