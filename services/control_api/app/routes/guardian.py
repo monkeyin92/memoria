@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hmac
-import secrets
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime, time, timedelta
@@ -17,7 +16,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from services.archive.domain import (
     EvidenceNotFoundError,
     LifeArchivePort,
-    RawVoiceConsentRequiredError,
 )
 from services.archive.memory_domain import (
     MemoryCatalogPort,
@@ -25,7 +23,6 @@ from services.archive.memory_domain import (
     MemorySearchQuery,
 )
 from services.archive.memory_retractions import list_retracted_claims
-from services.archive.object_store import ObjectStore
 from services.common.companion_response_safety import guardian_attention_copy
 from services.control_api.app.account_gate import (
     require_capability_for_account_id,
@@ -40,6 +37,12 @@ from services.control_api.app.guardian_binding_authority import (
     person_grant_body_matches,
     require_binding_owner_for_subject,
     sync_bound_subject_authority,
+)
+from services.control_api.app.guardian_lifecycle import (
+    deletion_confirmed,
+    disable_minor_restricted_assets,
+    erase_child_kind,
+    purge_minor_raw_voice,
 )
 from services.control_api.app.guardian_payloads import (
     active_link_or_403,
@@ -82,7 +85,6 @@ from services.guardian.child_memory import (
     KIND_CHILD_ARCHIVE,
     KIND_DIALOGUE_SUMMARY,
     ArchiveFact,
-    ChildMemoryKind,
     DialogueSummary,
 )
 from services.guardian.consent import GuardianConsentService
@@ -112,10 +114,7 @@ from services.guardian.parent_alert import (
 )
 from services.guardian.push import PushSubscriptionResult, PushSubscriptionStorePort
 from services.guardian.weekly_report import WeeklyReportProjector
-from services.legacy.domain import LegacyRegistryPort
 from services.memory_scope.child_layers import ChildLayerStore
-from services.speaker.domain import RevokeSpeakerProfile, SpeakerAuthorityPort
-from services.voice_profile.domain import VoiceProfilePort
 
 router = APIRouter(prefix="/v1/guardian", tags=["guardian"])
 router.include_router(crisis_script_interrupt_router)
@@ -133,7 +132,6 @@ _WEEKLY_EVENT_TYPES = (
     "study.progress_updated",
     "topic.observation",
 )
-_DELETE_CONFIRMATION = "永久删除孩子的全部数据"
 
 
 class GuardianLinkCreate(BaseModel):
@@ -188,10 +186,6 @@ def _catalog(request: Request) -> MemoryCatalogPort:
     return cast(MemoryCatalogPort, request.app.state.memory_catalog)
 
 
-def _archive_objects(request: Request) -> ObjectStore:
-    return cast(ObjectStore, request.app.state.archive_object_store)
-
-
 def _consents(request: Request) -> GuardianConsentService:
     return cast(GuardianConsentService, request.app.state.guardian_consent_service)
 
@@ -202,40 +196,6 @@ def _terminator(request: Request) -> AccountSessionTerminator:
 
 def _governance(request: Request) -> AccountDataGovernance:
     return cast(AccountDataGovernance, request.app.state.account_data_governance)
-
-
-async def _disable_minor_restricted_assets(request: Request, account_id: str) -> None:
-    now = _now()
-    legacy = cast(LegacyRegistryPort, request.app.state.legacy_registry)
-    for grant in await legacy.list_grants(actor_account_id=account_id, role="owner"):
-        if grant.revoked_at is None:
-            await legacy.revoke(
-                actor_account_id=account_id,
-                grant_id=grant.grant_id,
-                expected_grant_snapshot_sha256=grant.grant_snapshot_sha256,
-                idempotency_key=f"minor-transition:{grant.grant_id}",
-                now=now,
-            )
-    voice = cast(VoiceProfilePort, request.app.state.voice_profile_manager)
-    for voice_profile in await voice.profiles(account_id=account_id):
-        if voice_profile.status != "revoked":
-            await voice.revoke_profile(
-                account_id=account_id,
-                profile_id=voice_profile.profile_id,
-            )
-    consent = await voice.consent(account_id=account_id)
-    if consent is not None and consent.revoked_at is None:
-        await voice.revoke_consent(account_id=account_id)
-    speaker = cast(SpeakerAuthorityPort, request.app.state.speaker_authority)
-    for speaker_profile in await speaker.profiles(account_id):
-        if speaker_profile.status != "revoked":
-            await speaker.revoke(
-                RevokeSpeakerProfile(
-                    account_id=account_id,
-                    profile_id=speaker_profile.profile_id,
-                    reason="subject_transition_to_minor",
-                )
-            )
 
 
 def _settings(request: Request) -> ControlSettings:
@@ -262,36 +222,6 @@ def _require_idempotency_key(value: str | None) -> str:
             detail={"code": "idempotency_key_required"},
         )
     return normalized
-
-
-def _deletion_confirmed(confirmation: str) -> bool:
-    # compare_digest rejects non-ASCII str, and the phrase is Chinese.
-    return secrets.compare_digest(
-        confirmation.encode("utf-8"), _DELETE_CONFIRMATION.encode("utf-8")
-    )
-
-
-async def _purge_minor_raw_voice(request: Request, account_id: str) -> None:
-    archive = _archive(request)
-    references = await archive.raw_voice_blobs(account_id=account_id)
-    active = await archive.active_raw_voice_consent(account_id=account_id)
-    if active is not None:
-        try:
-            revocation = await archive.revoke_raw_voice_consent(
-                account_id=account_id,
-                revoked_at=_now(),
-            )
-            references = tuple({item.object_key: item for item in (*references, *revocation.references)}.values())
-        except RawVoiceConsentRequiredError:
-            pass
-    if not references:
-        return
-    for reference in references:
-        await _archive_objects(request).delete(reference)
-    await archive.purge_raw_voice_blobs(
-        account_id=account_id,
-        object_keys=tuple(reference.object_key for reference in references),
-    )
 
 
 @router.post("/links", status_code=status.HTTP_201_CREATED)
@@ -678,8 +608,8 @@ async def confirm_link(
             now=_now_text(now),
         )
         try:
-            await _purge_minor_raw_voice(request, user.user_id)
-            await _disable_minor_restricted_assets(request, user.user_id)
+            await purge_minor_raw_voice(request, user.user_id)
+            await disable_minor_restricted_assets(request, user.user_id)
         except Exception as exc:
             raise HTTPException(
                 status_code=503,
@@ -1159,13 +1089,6 @@ def _child_layers(request: Request) -> ChildLayerStore:
     return cast(ChildLayerStore, store)
 
 
-def _payload_iso(payload: Mapping[str, object], key: str) -> str | None:
-    value = payload.get(key)
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return None
-
-
 def _consent_id(consent: object) -> str | None:
     if consent is None:
         return None
@@ -1177,23 +1100,6 @@ def _consent_id(consent: object) -> str | None:
         if isinstance(raw, str) and raw.strip():
             return raw.strip()
     return None
-
-
-async def _erase_child_kind(
-    request: Request,
-    *,
-    subject_id: str,
-    kind: ChildMemoryKind,
-    incomplete_code: str,
-) -> dict[str, Any]:
-    layers = _child_layers(request)
-    erased = await layers.erase_kind(subject_id=subject_id, kind=kind, only_expired=False)
-    remaining = await layers.remaining_kind(
-        subject_id=subject_id, kind=kind, only_expired=False
-    )
-    if int(remaining.get("memory_records", 0)):
-        raise HTTPException(status_code=500, detail={"code": incomplete_code})
-    return {"deleted": True, "kind": kind, "erased": dict(erased), "remaining": dict(remaining)}
 
 
 async def _child_memory_account(
@@ -1328,7 +1234,7 @@ async def clear_session_summaries(
     """Physically erase every dialogue summary for this child; remaining must be zero."""
 
     await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
-    return await _erase_child_kind(
+    return await erase_child_kind(
         request,
         subject_id=minor_user_id,
         kind=KIND_DIALOGUE_SUMMARY,
@@ -1484,7 +1390,7 @@ async def clear_child_archive(
     """Physically erase every whitelist archive fact for this child; remaining must be zero."""
 
     await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
-    return await _erase_child_kind(
+    return await erase_child_kind(
         request,
         subject_id=minor_user_id,
         kind=KIND_CHILD_ARCHIVE,
@@ -1688,7 +1594,7 @@ async def delete_minor(
     if await owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
         # Their rows live in the binding owner's account: erase exactly the
         # child's, never the parent's (account deletion is account-wide).
-        if not _deletion_confirmed(body.confirmation):
+        if not deletion_confirmed(body.confirmation):
             raise HTTPException(
                 status_code=422, detail={"code": "deletion_confirmation_invalid"}
             )
@@ -1716,7 +1622,7 @@ async def delete_minor(
         guardian_user_id=user.user_id,
         minor_user_id=minor_user_id,
     )
-    if not _deletion_confirmed(body.confirmation):
+    if not deletion_confirmed(body.confirmation):
         raise HTTPException(status_code=422, detail={"code": "deletion_confirmation_invalid"})
     try:
         return await _governance(request).delete_account(minor_user_id)
