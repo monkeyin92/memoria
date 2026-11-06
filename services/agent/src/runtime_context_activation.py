@@ -17,6 +17,7 @@ from services.agent.src.orchestration.context_snapshot_manager import (
     ContextSnapshot,
     ContextSnapshotDraft,
     ContextTurn,
+    PendingSnapshot,
     scope_context_snapshot_draft,
 )
 
@@ -29,7 +30,6 @@ if TYPE_CHECKING:
     from services.agent.src.orchestration.context_manager import ContextManager
     from services.agent.src.orchestration.context_snapshot_manager import (
         MemoryCapsule,
-        PendingSnapshot,
         PersonaCapsule,
     )
     from services.agent.src.orchestration.orchestrator import Orchestrator
