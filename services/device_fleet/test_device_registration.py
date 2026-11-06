@@ -28,8 +28,8 @@ from services.device_fleet.bootstrap_port import BootstrapStorePort
 from services.device_fleet.bootstrap_postgres_store import PostgresBootstrapStore
 from services.device_fleet.bootstrap_store import (
     SQLiteBootstrapStore,
-    _timestamp,
 )
+from services.device_fleet.bootstrap_store_claims import _timestamp
 from services.device_fleet.bootstrap_store_rows import _parse_timestamp
 from services.device_fleet.bootstrap_sync import _Scope
 
