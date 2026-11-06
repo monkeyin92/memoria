@@ -8,8 +8,10 @@ snapshot the commit will freeze.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from dataclasses import replace
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from services.agent.src.orchestration.context_snapshot_manager import (
     ContextSnapshot,
@@ -18,8 +20,11 @@ from services.agent.src.orchestration.context_snapshot_manager import (
     scope_context_snapshot_draft,
 )
 
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from services.agent.src.contracts.ids import GenerationFence
+    from services.agent.src.generation_records import GenerationRecords
     from services.agent.src.mode_policy_client import ModePolicy
     from services.agent.src.orchestration.context_manager import ContextManager
     from services.agent.src.orchestration.context_snapshot_manager import (
@@ -28,6 +33,7 @@ if TYPE_CHECKING:
         PersonaCapsule,
     )
     from services.agent.src.orchestration.orchestrator import Orchestrator
+    from services.agent.src.orchestration.prosody import SpeechPlan
 
 SpeakerClass = Literal["owner", "guest", "uncertain"]
 
@@ -42,6 +48,9 @@ class DuplexRuntimeContextActivationMixin:
         _pending_context_snapshot: PendingSnapshot | None
         _pending_context_snapshot_epoch: int | None
         _context_snapshot_prepare_epoch: int
+        _context_snapshot_prepare_task: asyncio.Task[Any] | None
+        _generation_records: GenerationRecords
+        context_snapshot_prepare_timeout_s: float
         _mode_policy: ModePolicy
 
         # Core runtime members consumed by this mixin.
@@ -50,6 +59,10 @@ class DuplexRuntimeContextActivationMixin:
 
         @property
         def current_speaker_class(self) -> SpeakerClass: ...
+
+        def _spawn(self, coro: Any, *, name: str) -> asyncio.Task[Any]: ...
+
+        def speech_plan_for_fence(self, fence: GenerationFence) -> SpeechPlan: ...
 
     def _context_snapshot_draft(
         self,
@@ -163,4 +176,129 @@ class DuplexRuntimeContextActivationMixin:
             self.session_id,
             base_version + 1,
             replace(draft, memory_capsule=memory_capsule, persona_capsule=persona_capsule),
+        )
+
+    def context_snapshot_for_fence(self, fence: GenerationFence) -> ContextSnapshot:
+        version = self.orchestrator.context_version_for_fence(fence)
+        snapshot = self.orchestrator.context_snapshots.current(self.session_id)
+        if snapshot.version != version:
+            raise RuntimeError("frozen context snapshot is no longer retained")
+        return snapshot
+
+    async def freeze_context_capsules_for_generation(
+        self,
+        fence: GenerationFence,
+        *,
+        memory_capsule: MemoryCapsule,
+        persona_capsule: PersonaCapsule,
+    ) -> ContextSnapshot | None:
+        """Activate and freeze the exact capsules used by one current reply."""
+
+        if not self.fence.matches(fence):
+            return None
+        self._context_snapshot_prepare_epoch += 1
+        prepare_epoch = self._context_snapshot_prepare_epoch
+        previous = self._context_snapshot_prepare_task
+        if previous is not None and not previous.done():
+            previous.cancel()
+        self._pending_context_snapshot = None
+        self._pending_context_snapshot_epoch = None
+        manager = self.orchestrator.context_snapshots
+        base = manager.current(self.session_id)
+        draft = self._context_snapshot_draft()
+        prepared = await manager.prepare_next(
+            self.session_id,
+            base_version=base.version,
+            committed_events=draft.recent_committed_turns,
+            draft=scope_context_snapshot_draft(
+                ContextSnapshotDraft(
+                    recent_committed_turns=draft.recent_committed_turns,
+                    memory_capsule=memory_capsule,
+                    persona_capsule=persona_capsule,
+                    relationship_policy=draft.relationship_policy,
+                    tool_permission=draft.tool_permission,
+                    speaker_class=draft.speaker_class,
+                    summary=draft.summary,
+                )
+            ),
+        )
+        if (
+            prepare_epoch != self._context_snapshot_prepare_epoch
+            or not self.fence.matches(fence)
+            or not isinstance(prepared, PendingSnapshot)
+            or prepared.candidate.speaker_class != self.current_speaker_class
+        ):
+            return None
+        activated = manager.activate(
+            prepared,
+            expected_current_version=prepared.base_version,
+        )
+        if not isinstance(activated, ContextSnapshot):
+            return None
+        self.orchestrator.delegation.activate_context_version(self.session_id, activated.version)
+        if not self.orchestrator.bind_context_version(fence, activated.version):
+            return None
+        return activated
+
+    def freeze_current_context_for_generation(
+        self,
+        fence: GenerationFence,
+    ) -> ContextSnapshot | None:
+        """Keep the last valid snapshot when background preparation fails."""
+
+        if not self.fence.matches(fence):
+            return None
+        snapshot = self.orchestrator.context_snapshots.current(self.session_id)
+        self.orchestrator.delegation.activate_context_version(
+            self.session_id,
+            snapshot.version,
+        )
+        return snapshot if self.orchestrator.bind_context_version(fence, snapshot.version) else None
+
+    def _schedule_context_snapshot_prepare(
+        self,
+        draft: ContextSnapshotDraft | None = None,
+    ) -> None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._context_snapshot_prepare_epoch += 1
+        prepare_epoch = self._context_snapshot_prepare_epoch
+        previous = self._context_snapshot_prepare_task
+        if previous is not None and not previous.done():
+            previous.cancel()
+        self._pending_context_snapshot = None
+        self._pending_context_snapshot_epoch = None
+        manager = self.orchestrator.context_snapshots
+        base = manager.current(self.session_id)
+        draft = draft or self._context_snapshot_draft()
+
+        async def _prepare() -> None:
+            try:
+                prepared = await asyncio.wait_for(
+                    manager.prepare_next(
+                        self.session_id,
+                        base_version=base.version,
+                        committed_events=draft.recent_committed_turns,
+                        draft=draft if manager.builder is None else None,
+                    ),
+                    timeout=self.context_snapshot_prepare_timeout_s,
+                )
+            except TimeoutError:
+                manager.metrics.inc_context_snapshot_build_failed("timeout")
+                return
+            except Exception:
+                logger.warning("context snapshot prepare failed", exc_info=True)
+                return
+            if prepare_epoch == self._context_snapshot_prepare_epoch and isinstance(
+                prepared,
+                PendingSnapshot,
+            ):
+                self._pending_context_snapshot = prepared
+                self._pending_context_snapshot_epoch = prepare_epoch
+
+        self._context_snapshot_prepare_task = self._spawn(
+            _prepare(),
+            name="context-snapshot-prepare",
         )
