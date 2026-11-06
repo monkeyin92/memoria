@@ -8,12 +8,43 @@ mkdir -p "$REPORT_DIR"
 export PATH="$HOME/projects/memoria/devicetest/bin:$PATH"
 export AFPLAY_RETRY_LOG="$REPORT_DIR/afplay_retry.log"
 PORT="/dev/cu.usbmodem101"
+SCENARIO="devicetest/scenarios/child_tapwake.json"
 {
   echo "start $(date -Iseconds)"
   echo "port=$PORT"
   echo "gates MAX_NO_REPLY=0 P90<=2.0s max<=3.0s; pre gate idle-only 180s (real State line, no assume_idle); turn gate idle|listening|listening_closed 30s (listening window is product state, #453)"
 } | tee "$REPORT_DIR/meta.txt"
 ls -la "$PORT" || { echo "FAIL: serial missing"; exit 2; }
+
+# Freeze the exact scenario and completeness contract before the device run.
+uv run --no-project python - "$SCENARIO" "$REPORT_DIR" <<'PYMANIFEST'
+import hashlib
+import json
+import sys
+from pathlib import Path
+
+scenario = Path(sys.argv[1])
+run = Path(sys.argv[2])
+raw = json.loads(scenario.read_text(encoding="utf-8"))
+steps = raw if isinstance(raw, list) else raw["steps"]
+tagged_steps = [step for step in steps if isinstance(step, dict) and isinstance(step.get("tag"), str)]
+silence_index = next((i for i, step in enumerate(tagged_steps) if step["tag"] == "silence"), len(tagged_steps) - 1)
+tagged_steps = tagged_steps[: silence_index + 1]
+tags = [f"t{i:03d}-{step['tag']}" for i, step in enumerate(tagged_steps, 1)]
+if not tags:
+    raise SystemExit("FAIL: scenario has no tagged steps")
+manifest = {
+    "scenario_hash": hashlib.sha256(scenario.read_bytes()).hexdigest(),
+    "expected_step_tags": tags,
+    "required_logs": ["bridge.log", "serial.log"],
+    "min_valid_interrupt_samples": 0,
+    "require_started": True,
+    "require_completed": True,
+}
+run.mkdir(parents=True, exist_ok=True)
+(run / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+print(f"manifest={run / 'manifest.json'} steps={len(tags)} scenario_sha256={manifest['scenario_hash']}")
+PYMANIFEST
 
 # Reset the board and keep the transcript. open_port() never resets, so a board already parked can
 # never print the `activating -> idle` line the idle-only gate requires (#461).
@@ -40,7 +71,7 @@ ELF=$(grep -ao 'ELF file SHA256: *[0-9a-f]*' "$SERIAL_RAW" | head -1 | awk '{pri
 ELF=${ELF:-missing_no_boot_banner}
 echo "firmware_marker=elf_sha256=$ELF (from boot serial)" | tee -a "$REPORT_DIR/meta.txt"
 uv run --no-project --with pyserial python devicetest/voice_soak_tapwake.py \
-  --scenario devicetest/scenarios/child_tapwake.json \
+  --scenario "$SCENARIO" \
   --bank outputs/voice-bank \
   --port "$PORT" \
   --out "$OUT" \
@@ -51,6 +82,8 @@ uv run --no-project --with pyserial python devicetest/voice_soak_tapwake.py \
   --gate-timeout 180 \
   --turn-gate-timeout 30 \
   2>&1 | tee "$REPORT_DIR/stdout.log" || true
+# The driver creates OUT itself. Attach the frozen manifest before scoring.
+cp -f "$REPORT_DIR/manifest.json" "$OUT/manifest.json"
 python3 devicetest/clock_offset.py post --remote memoria-prod | tee -a "$REPORT_DIR/clock.jsonl" | sed 's/^/clock=/' | tee -a "$REPORT_DIR/meta.txt" || echo "clock=post_failed" | tee -a "$REPORT_DIR/meta.txt"
 ABORT=$(grep -ho '"verdict": "ABORT_[A-Z_0-9]*"' "$OUT/timeline.jsonl" 2>/dev/null | head -1 | cut -d'"' -f4 || true)
 if [[ -n "$ABORT" ]]; then

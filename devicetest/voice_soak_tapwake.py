@@ -62,6 +62,7 @@ USB_WAKE_ACTION_RE = re.compile(r"usb wake action=(\w+)")
 MIC_CLOSED_RE = re.compile(r"listening_closed closed=(true|false)")
 DEFAULT_PORT = "/dev/cu.usbmodem2101"
 DEFAULT_REMOTE = "memoria-prod"
+BRIDGE_FIRST_FRAME_RE = re.compile(r"^(?P<ts>\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+Z).*event=first_frame_sent\b")
 
 
 def now() -> float:
@@ -70,6 +71,27 @@ def now() -> float:
 
 def stamp(t: float) -> str:
     return time.strftime("%H:%M:%S", time.localtime(t)) + f".{int((t % 1) * 1000):03d}"
+
+
+def bridge_first_frame_since(path: Path, offset: int, since: float, until: float) -> float | None:
+    """Return a bridge first-frame timestamp when serial missed the speaking transition."""
+    if not path.is_file():
+        return None
+    from datetime import UTC, datetime
+
+    with path.open("rb") as fh:
+        fh.seek(offset)
+        raw = fh.read()
+    for line in raw.decode("utf-8", "replace").splitlines():
+        match = BRIDGE_FIRST_FRAME_RE.search(line)
+        if match is None:
+            continue
+        ts = datetime.fromisoformat(match.group("ts").replace("Z", "+00:00")).replace(
+            tzinfo=UTC
+        ).timestamp()
+        if since <= ts <= until:
+            return ts
+    return None
 
 
 @dataclass
@@ -606,14 +628,24 @@ def main() -> int:
                 record(kind="said", tag=tag, text=step["say"], voice="bank" if bank is not None and (bank / f"{step.get('tag')}.wav").exists() else "Tingting",
                        rate=step.get("rate", 175), clip_s=round(clip, 2), start=stamp(t0), end=stamp(t1))
                 started = watcher.wait_state({"speaking"}, float(step.get("reply_timeout", 30)), since=t1 - 0.5)
+                reply_started_source = "serial_state"
                 if started is None:
-                    record(kind="no_reply", tag=tag, state=watcher.state)
-                    gate["offset"] = bridge_size(bridge)
-                    continue
+                    bridge_started = bridge_first_frame_since(
+                        bridge, int(gate.get("offset", 0)), t1 - 0.5, now()
+                    )
+                    if bridge_started is None:
+                        record(kind="no_reply", tag=tag, state=watcher.state)
+                    else:
+                        started = bridge_started
+                        reply_started_source = "bridge_first_frame"
+                    if started is None:
+                        gate["offset"] = bridge_size(bridge)
+                        continue
                 latency = started - t1
                 interrupt = step.get("interrupt")
                 outcome = {"kind": "reply", "tag": tag, "latency_s": round(latency, 2),
                            "reply_started_ts": started,
+                           "reply_started_source": reply_started_source,
                            "serial_utc_offset_s": -time.altzone if time.localtime().tm_isdst > 0 else -time.timezone}
                 if interrupt:
                     time.sleep(float(interrupt.get("after", 5)))
