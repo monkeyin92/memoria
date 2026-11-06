@@ -25,12 +25,13 @@ from services.device_fleet.bootstrap_domain import (
     sha256_hex,
 )
 from services.device_fleet.bootstrap_port import BootstrapStorePort
-from services.device_fleet.bootstrap_postgres_store import PostgresBootstrapStore, _Scope
+from services.device_fleet.bootstrap_postgres_store import PostgresBootstrapStore
 from services.device_fleet.bootstrap_store import (
     SQLiteBootstrapStore,
     _timestamp,
 )
 from services.device_fleet.bootstrap_store_rows import _parse_timestamp
+from services.device_fleet.bootstrap_sync import _Scope
 
 TEST_ENVIRONMENT_ID = "memoria-test"
 REGISTRATION_ACTION = "device.public_key_registered"
