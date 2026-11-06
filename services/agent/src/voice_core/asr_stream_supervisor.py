@@ -328,17 +328,13 @@ class ASRStreamSupervisor:
         tail_text = self._tail_after_alnum_prefix(result.text, prefix[1])
         if tail_text is None or not self._alnum_chars(tail_text):
             return rejected
-        tail_result = replace(
-            result,
-            capture_start_sample=committed,
-            text=tail_text,
-            timeline_segment_id=f"{result.sentence_id}:tail:{committed}",
-        )
-        # Earlier tails are stored under their watermark start, so this prefix
-        # stays the sentence's first revision and the tail replays every clause
-        # committed since. An exact repeat stays: it is that turn's own speech.
         return ASRAcceptDecision(
-            self._strip_leading_committed_turn_texts(tail_result),
+            replace(
+                result,
+                capture_start_sample=committed,
+                text=tail_text,
+                timeline_segment_id=f"{result.sentence_id}:tail:{committed}",
+            ),
             ASRDecisionReason.ACCEPTED,
         )
 

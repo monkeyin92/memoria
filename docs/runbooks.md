@@ -951,7 +951,7 @@ uv run --no-project --with pyserial python scripts/voice_soak_serial_logger.py o
 
 拨测句表是 `scripts/voice_soak_scenarios/child.json`。不要另建一份。`voice_soak.py --scenario` 读这一份。
 
-窗口结束后用 run 目录算通过、失败或残缺。命令只读本地文件。每个 run 须有 `manifest.json`（场景哈希、预期步骤标签、所需日志、最少有效打断样本、开始/完成要求）；判分先核完整性，再评指标。缺 manifest、缺步骤、缺所需日志、有效打断样本不足、未开始/未结束或时长不足时，`status` 为 `incomplete`、`passed` 为 false，不能当通过。历史无 manifest 的目录不能追溯伪造。尾窗必须是 `verified_idle`。静音步必须看到 idle。打断由 `voice_soak_evidence.py` 用 bridge 和 serial 日志重算。timeline 里旧的 `stopped` 字段不算数。没复核成停止就不通过。`scripts/voice_soak_verdict.py` 的 `MAX_NO_REPLY` 是 0。`MAX_REPLY_LATENCY_P90_S` 是 2.0，`MAX_REPLY_LATENCY_MAX_S` 是 3.0（2026-10-31 Monkey 定的内测首字门禁）。漏答 `no_reply` 必须为 0。首字时延 `reply_latency_p90_s` 不超过 2.0 秒，最慢一轮 `reply_latency_max_s` 不超过 3.0 秒。时延缺失时脚本判失败。判失败或残缺时脚本以退出码 1 结束。本门禁不宣称真机 soak PASS。打断按 `interrupt_kind` 分开判（2026-10-31，#496 #499）：附和（`backchannel`，如「嗯」）只有确认把回复停了才失败，继续播放算通过；「停」这类 `stop` 打断开始时回复只剩不到 2.5 s，记 `interrupt_too_late_to_stop`，算无法判定，不记产品失败。专测「停」用 `devicetest/scenarios/stop_focus.json`（6 次「停」、2 次「别说了」、2 次「嗯」）；Mac 音量 30 时「停」会被机器人自己的声音盖住，专测需用户同意后用 50，测完恢复 30。共享 checkout 停在旧分支时，用 `origin/main` 的 worktree 跑测试脚本（参考 `devicetest/run_soak_9e6082c3.sh` 的路径改写），否则拿到的是旧的插入时机和判定参数。
+窗口结束后用 run 目录算通过、失败或残缺。命令只读本地文件。每个 run 须有 `manifest.json`（场景哈希、预期步骤标签、所需日志、最少有效打断样本、开始/完成要求）；判分先核完整性，再评指标。缺 manifest、缺步骤、缺所需日志、有效打断样本不足、未开始/未结束或时长不足时，`status` 为 `incomplete`、`passed` 为 false，不能当通过。历史无 manifest 的目录不能追溯伪造。尾窗必须是 `verified_idle`。静音步必须看到 idle。打断由 `voice_soak_evidence.py` 用 bridge 和 serial 日志重算。timeline 里旧的 `stopped` 字段不算数。没复核成停止就不通过。`scripts/voice_soak_verdict.py` 的 `MAX_NO_REPLY` 是 0。`MAX_REPLY_LATENCY_P90_S` 是 2.0，`MAX_REPLY_LATENCY_MAX_S` 是 3.0（2026-10-31 Monkey 定的内测首字门禁）。漏答 `no_reply` 必须为 0。首字时延 `reply_latency_p90_s` 不超过 2.0 秒，最慢一轮 `reply_latency_max_s` 不超过 3.0 秒。时延缺失时脚本判失败。判失败或残缺时脚本以退出码 1 结束。本门禁不宣称真机 soak PASS。打断按 `interrupt_kind` 分开判（2026-10-31，#496 #499）：附和（`backchannel`，如「嗯」）只有确认把回复停了才失败，继续播放算通过；「停」这类 `stop` 打断开始时回复只剩不到 2.5 s，记 `interrupt_too_late_to_stop`，算无法判定，不记产品失败。专测「停」用 `devicetest/scenarios/stop_focus.json`（6 次「停」、2 次「别说了」、2 次「嗯」）。正常对话与专项测试都用 Mac 音量 30，30 下可以直接测「停」和附和，不再要求调到 50，也不另开高音量窗口；特殊情况由 Monkey 当场调整或另行说明。共享 checkout 停在旧分支时，用 `origin/main` 的 worktree 跑测试脚本（参考 `devicetest/run_soak_9e6082c3.sh` 的路径改写），否则拿到的是旧的插入时机和判定参数。
 
 ```bash
 python scripts/voice_soak_verdict.py outputs/acceptance/run-<stamp>-soak
@@ -971,7 +971,7 @@ python scripts/voice_soak_pack.py outputs/acceptance/run-<stamp>-soak
 
 ### 电脑语音测试的停止证据（2026-10-10 修正）
 
-每轮真机、串口命令、刷机与调整音量仍须当场授权；本节只规定判据，不授权执行。运行脚本时显式给用户确认的 `--volume`，不靠脚本默认值；缺声学测量不报端到端声学停止延迟。
+每轮真机、串口命令与刷机仍须当场授权；本节只规定判据，不授权执行。音量不单独要求授权，正常测试固定 Mac 音量 30（2026-11-05 Monkey 定），特殊音量由 Monkey 当场调整或另行说明；运行脚本时显式传入实际 `--volume`，不靠脚本默认值，并在收据里记录实际值。缺声学测量不报端到端声学停止延迟。
 
 `voice_soak.py` 记录 `reply_started_ts`、`interrupt_start_ts` / `interrupt_end_ts` / `interrupt_deadline_ts`、`device_returned_ts` 与串口时区偏移。共用 `voice_soak_evidence.py` 按设备开口 generation 找唯一完整 delivery fence，要求同回复 `preempted` + 实际存在的 `media spoken stop interrupted reply`（flush=True）+ 同代播放收据和窗口内退出说话。自然播完、任务异常、断线、泛化superseded、错代/跨会话、缺日志都不算成功；证据不足为 `stopped=null`、`stop_verdict=unverified`。`voice_soak_analyze.py` 重新核对而不是信任历史布尔值；日志稍后补到可离线再算，原时间线不改。
 

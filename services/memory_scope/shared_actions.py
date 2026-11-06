@@ -8,25 +8,55 @@ does not expose receipt, consent, family or fence fields as action input.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Literal, NoReturn, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 import asyncpg
 from packages.contracts.generated.python.multi_subject_contracts import (
-    DeviceDeclaredModeValue,
     PolicyActionResourceFence,
     PolicyApprovalSnapshotFence,
 )
 
 from services.memory_scope.repository import MemoryAuthoritySnapshot
+from services.memory_scope.shared_action_authority import (
+    _ActionResourceAuthorityAdapter,
+    _ApprovalAuthorityAdapter,
+    _BindingAuthorityAdapter,
+    _CaptureAuthorityAdapter,
+    _fetch_json_value,
+    _MembershipAuthorityAdapter,
+    _PrincipalAuthorityAdapter,
+    _ProposalAuthorityAdapter,
+    _raise_database_error,
+    _raise_policy_error,
+)
+from services.memory_scope.shared_action_evidence import (
+    FamilySharedActionConflictError,
+    FamilySharedActionDeniedError,
+    FamilySharedActionUnavailableError,
+    _ApprovalEvidence,
+    _approvals_from_json,
+    _binding_from_json,
+    _BindingEvidence,
+    _CaptureEvidence,
+    _captures_from_json,
+    _int,
+    _json_object,
+    _membership_from_json,
+    _MembershipEvidence,
+    _proposal_from_json,
+    _ProposalEvidence,
+    _sha256,
+    _text,
+    _time,
+    _tuple_strings,
+)
 from services.policy.action_authorizer import (
     ActionAuthorizationError,
-    ActionExecutionRequest,
     PostgresActionAuthorizer,
 )
 from services.policy.action_fence import (
@@ -34,14 +64,6 @@ from services.policy.action_fence import (
     build_action_resource_fence,
 )
 from services.policy.context import PolicyContext
-from services.policy.evidence import (
-    ApprovalEvidencePort,
-    BindingEvidencePort,
-    BindingStatusValue,
-    CaptureEvidencePort,
-    MembershipEvidencePort,
-    ProposalEvidencePort,
-)
 from services.policy.postgres_receipt_repository import (
     ConnectionBoundPolicyReceiptRepository,
 )
@@ -141,407 +163,6 @@ class FamilySharedActionExecutorPort(Protocol):
     ) -> FamilySharedActionResult: ...
 
 
-class FamilySharedActionUnavailableError(RuntimeError):
-    """The PostgreSQL action authority is not ready or cannot be proven."""
-
-
-class FamilySharedActionDeniedError(PermissionError):
-    """The current authenticated subject is not authorized for the action."""
-
-
-class FamilySharedActionConflictError(RuntimeError):
-    """The current proposal/resource fence lost a CAS race or is stale."""
-
-
-def _decode_json(value: object, *, field: str) -> object:
-    decoded = json.loads(value) if isinstance(value, str) else value
-    if decoded is None:
-        raise FamilySharedActionUnavailableError(f"{field} is unavailable")
-    return decoded
-
-
-def _json_object(value: object, *, field: str) -> dict[str, object]:
-    decoded = _decode_json(value, field=field)
-    if not isinstance(decoded, dict):
-        raise FamilySharedActionUnavailableError(f"{field} is not an object")
-    return {str(key): item for key, item in decoded.items()}
-
-
-def _json_array(value: object, *, field: str) -> list[object]:
-    decoded = _decode_json(value, field=field)
-    if not isinstance(decoded, list):
-        raise FamilySharedActionUnavailableError(f"{field} is not an array")
-    return decoded
-
-
-def _text(value: object, *, field: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise FamilySharedActionUnavailableError(f"{field} is missing")
-    return value
-
-
-def _int(value: object, *, field: str, minimum: int = 0) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-        raise FamilySharedActionUnavailableError(f"{field} is invalid")
-    return value
-
-
-def _time(value: object, *, field: str) -> datetime:
-    if isinstance(value, datetime):
-        result = value
-    elif isinstance(value, str):
-        try:
-            result = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError as exc:
-            raise FamilySharedActionUnavailableError(
-                f"{field} is invalid"
-            ) from exc
-    else:
-        raise FamilySharedActionUnavailableError(f"{field} is invalid")
-    if result.tzinfo is None or result.utcoffset() is None:
-        raise FamilySharedActionUnavailableError(f"{field} must be timezone-aware")
-    return result
-
-
-def _sha256(value: object) -> str:
-    encoded = json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        default=str,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _tuple_strings(value: object, *, field: str) -> tuple[str, ...]:
-    values = _json_array(value, field=field)
-    if not all(isinstance(item, str) and item.strip() for item in values):
-        raise FamilySharedActionUnavailableError(f"{field} contains an invalid id")
-    return tuple(cast(str, item) for item in values)
-
-
-@dataclass(frozen=True, slots=True)
-class _BindingEvidence:
-    binding_id: str
-    version: int
-    device_id: str
-    status: BindingStatusValue
-    declared_mode: DeviceDeclaredModeValue
-    valid_from: datetime
-    valid_until: datetime
-    canonical_hash: str
-
-    def is_active_at(self, now: datetime) -> bool:
-        return (
-            self.status == "active"
-            and self.valid_from <= now < self.valid_until
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class _MembershipEvidence:
-    snapshot_id: str
-    revision: int
-    canonical_hash: str
-    status: str
-    family_space_id: str
-    family_owner_subject_id: str
-    subject_ids: tuple[str, ...]
-    binding_id: str
-    binding_version: int
-    valid_from: datetime
-    valid_until: datetime
-
-    def is_active_at(self, now: datetime) -> bool:
-        return (
-            self.status == "active"
-            and self.valid_from <= now < self.valid_until
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class _CaptureEvidence:
-    evidence_id: str
-    revision: int
-    canonical_hash: str
-    status: str
-    subject_id: str
-    binding_id: str
-    binding_version: int
-    valid_from: datetime
-    valid_until: datetime
-
-    def is_active_at(self, now: datetime) -> bool:
-        return (
-            self.status == "active"
-            and self.valid_from <= now < self.valid_until
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class _ProposalEvidence:
-    proposal_id: str
-    revision: int
-    canonical_hash: str
-    status: str
-    family_space_id: str
-    family_owner_subject_id: str
-    required_approval_subject_ids: tuple[str, ...]
-    valid_until: datetime
-
-    def is_active_at(self, now: datetime) -> bool:
-        return (
-            self.status == "active"
-            and now < self.valid_until
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class _ApprovalEvidence:
-    snapshot_id: str
-    revision: int
-    canonical_hash: str
-    status: str
-    subject_id: str
-    proposal_id: str
-    proposal_revision: int
-    decision: str
-    voted_at: datetime
-
-    def is_active_at(self, now: datetime) -> bool:
-        return self.status == "active" and self.voted_at <= now
-
-
-def _binding_from_json(payload: object) -> _BindingEvidence:
-    row = _json_object(payload, field="binding evidence")
-    binding_id = _text(row.get("binding_id"), field="binding_id")
-    version = _int(row.get("binding_version"), field="binding_version", minimum=1)
-    device_id = _text(row.get("device_id"), field="device_id")
-    valid_from = _time(row.get("valid_from"), field="binding.valid_from")
-    valid_until = (
-        datetime.max.replace(tzinfo=UTC)
-        if row.get("valid_until") is None
-        else _time(row.get("valid_until"), field="binding.valid_until")
-    )
-    canonical_hash = _text(
-        row.get("canonical_hash")
-        or _sha256(
-            {
-                "binding_id": binding_id,
-                "version": version,
-                "device_id": device_id,
-                "declared_mode": row.get("declared_mode"),
-                "valid_from": valid_from.isoformat(),
-                "valid_until": valid_until.isoformat(),
-            }
-        ),
-        field="binding.canonical_hash",
-    )
-    status = _text(row.get("status", "active"), field="binding.status")
-    if status not in {"active", "superseded", "revoked", "expired"}:
-        raise FamilySharedActionUnavailableError("binding.status is invalid")
-    declared_mode = _text(row.get("declared_mode"), field="declared_mode")
-    if declared_mode not in {
-        "parent_for_child",
-        "self_use",
-        "child_for_parent",
-        "family_shared",
-    }:
-        raise FamilySharedActionUnavailableError("declared_mode is invalid")
-    return _BindingEvidence(
-        binding_id=binding_id,
-        version=version,
-        device_id=device_id,
-        status=cast(BindingStatusValue, status),
-        declared_mode=cast(DeviceDeclaredModeValue, declared_mode),
-        valid_from=valid_from,
-        valid_until=valid_until,
-        canonical_hash=canonical_hash,
-    )
-
-
-def _membership_from_json(payload: object) -> _MembershipEvidence:
-    row = _json_object(payload, field="membership evidence")
-    return _MembershipEvidence(
-        snapshot_id=_text(row.get("snapshot_id"), field="membership.snapshot_id"),
-        revision=_int(row.get("revision"), field="membership.revision", minimum=1),
-        canonical_hash=_text(
-            row.get("canonical_hash"), field="membership.canonical_hash"
-        ),
-        status=_text(row.get("status"), field="membership.status"),
-        family_space_id=_text(
-            row.get("family_space_id"), field="membership.family_space_id"
-        ),
-        family_owner_subject_id=_text(
-            row.get("family_owner_subject_id"),
-            field="membership.family_owner_subject_id",
-        ),
-        subject_ids=_tuple_strings(row.get("subject_ids"), field="membership.subject_ids"),
-        binding_id=_text(row.get("binding_id"), field="membership.binding_id"),
-        binding_version=_int(
-            row.get("binding_version"), field="membership.binding_version", minimum=1
-        ),
-        valid_from=_time(row.get("valid_from"), field="membership.valid_from"),
-        valid_until=_time(row.get("valid_until"), field="membership.valid_until"),
-    )
-
-
-def _captures_from_json(payload: object) -> tuple[_CaptureEvidence, ...]:
-    result: list[_CaptureEvidence] = []
-    for item in _json_array(payload, field="capture evidence"):
-        row = _json_object(item, field="capture evidence item")
-        result.append(
-            _CaptureEvidence(
-                evidence_id=_text(row.get("evidence_id"), field="evidence_id"),
-                revision=_int(row.get("revision"), field="capture.revision", minimum=1),
-                canonical_hash=_text(
-                    row.get("canonical_hash"), field="capture.canonical_hash"
-                ),
-                status=_text(row.get("status"), field="capture.status"),
-                subject_id=_text(row.get("subject_id"), field="capture.subject_id"),
-                binding_id=_text(row.get("binding_id"), field="capture.binding_id"),
-                binding_version=_int(
-                    row.get("binding_version"),
-                    field="capture.binding_version",
-                    minimum=1,
-                ),
-                valid_from=_time(row.get("valid_from"), field="capture.valid_from"),
-                valid_until=_time(row.get("valid_until"), field="capture.valid_until"),
-            )
-        )
-    return tuple(result)
-
-
-def _proposal_from_json(payload: object, *, now: datetime) -> tuple[dict[str, object], _ProposalEvidence]:
-    row = _json_object(payload, field="proposal authority")
-    proposal_id = _text(row.get("proposal_id"), field="proposal_id")
-    revision = _int(row.get("proposal_revision"), field="proposal_revision", minimum=1)
-    valid_until = _time(row.get("valid_until"), field="proposal.valid_until")
-    raw_status = _text(row.get("status"), field="proposal.status")
-    # A privacy command may freeze or withdraw an already-promoted record.
-    # The SQL port still owns the command-specific state transition; keeping
-    # every non-withdrawn proposal as current evidence lets the receipt/fence
-    # revalidation cover that revocation path as well.
-    evidence_status = (
-        "active"
-        if raw_status in {"pending", "approvals_complete", "promoted", "frozen"}
-        else "inactive"
-    )
-    required = tuple(
-        dict.fromkeys(
-            (
-                _text(row.get("proposer_subject_id"), field="proposer_subject_id"),
-                *_tuple_strings(row.get("co_subject_ids"), field="co_subject_ids"),
-            )
-        )
-    )
-    evidence = _ProposalEvidence(
-        proposal_id=proposal_id,
-        revision=revision,
-        canonical_hash=_sha256(
-            {
-                "proposal_id": proposal_id,
-                "revision": revision,
-                "family_space_id": row.get("family_space_id"),
-                "proposer_subject_id": row.get("proposer_subject_id"),
-                "co_subject_ids": sorted(required),
-                "status": raw_status,
-            }
-        ),
-        status=evidence_status,
-        family_space_id=_text(row.get("family_space_id"), field="family_space_id"),
-        family_owner_subject_id=_text(
-            row.get("proposer_subject_id"), field="family_owner_subject_id"
-        ),
-        required_approval_subject_ids=required,
-        valid_until=valid_until,
-    )
-    if valid_until <= now and evidence_status == "active":
-        raise FamilySharedActionConflictError("shared proposal fence has expired")
-    return row, evidence
-
-
-def _approvals_from_json(payload: object) -> tuple[_ApprovalEvidence, ...]:
-    latest: dict[str, _ApprovalEvidence] = {}
-    for item in _json_array(payload, field="approval evidence"):
-        row = _json_object(item, field="approval evidence item")
-        evidence = _ApprovalEvidence(
-            snapshot_id=_text(row.get("snapshot_id"), field="approval.snapshot_id"),
-            revision=_int(row.get("revision"), field="approval.revision", minimum=1),
-            canonical_hash=_text(
-                row.get("canonical_hash"), field="approval.canonical_hash"
-            ),
-            status=_text(row.get("status"), field="approval.status"),
-            subject_id=_text(row.get("subject_id"), field="approval.subject_id"),
-            proposal_id=_text(row.get("proposal_id"), field="approval.proposal_id"),
-            proposal_revision=_int(
-                row.get("proposal_revision"),
-                field="approval.proposal_revision",
-                minimum=1,
-            ),
-            decision=_text(row.get("decision"), field="approval.decision"),
-            voted_at=_time(row.get("voted_at"), field="approval.voted_at"),
-        )
-        previous = latest.get(evidence.subject_id)
-        if previous is None or previous.voted_at <= evidence.voted_at:
-            latest[evidence.subject_id] = evidence
-    return tuple(sorted(latest.values(), key=lambda item: item.subject_id))
-
-
-async def _fetch_json_value(
-    connection: asyncpg.Connection,
-    query: str,
-    *args: object,
-    field: str,
-) -> object:
-    try:
-        return await connection.fetchval(query, *args)
-    except asyncpg.PostgresError as exc:
-        _raise_database_error(exc, field=field)
-        raise AssertionError("unreachable") from exc
-
-
-async def _fetch_json_object(
-    connection: asyncpg.Connection,
-    query: str,
-    *args: object,
-    field: str,
-) -> dict[str, object]:
-    return _json_object(
-        await _fetch_json_value(connection, query, *args, field=field),
-        field=field,
-    )
-
-
-def _raise_database_error(
-    exc: asyncpg.PostgresError, *, field: str
-) -> NoReturn:
-    state = getattr(exc, "sqlstate", None)
-    if state in {"SR403", "42501"}:
-        raise FamilySharedActionDeniedError(f"{field} denied") from exc
-    if state in {"SR409", "SR412", "23505"}:
-        raise FamilySharedActionConflictError(f"{field} fence conflict") from exc
-    if state in {"SR404"}:
-        raise FamilySharedActionDeniedError(f"{field} not found") from exc
-    raise FamilySharedActionUnavailableError(f"{field} authority unavailable") from exc
-
-
-def _raise_policy_error(exc: ActionAuthorizationError) -> NoReturn:
-    message = str(exc)
-    if any(
-        marker in message
-        for marker in (
-            "required ",
-            "authority adapter",
-            "transaction",
-            "receipt does not exist",
-        )
-    ):
-        raise FamilySharedActionUnavailableError(message) from exc
-    raise FamilySharedActionDeniedError(message) from exc
-
-
 class _ActionExecutorReceiptRepository(ConnectionBoundPolicyReceiptRepository):
     """Policy receipt bridge for the no-table-privilege action role."""
 
@@ -588,227 +209,6 @@ async def _lock_action_receipt(
     return PolicyReceiptV2.model_validate(
         _json_object(raw, field="policy receipt lock result")
     )
-
-
-class _PrincipalAuthorityAdapter:
-    async def lock_current(
-        self,
-        connection: asyncpg.Connection,
-        receipt: PolicyReceiptV2,
-        request: ActionExecutionRequest,
-    ) -> str:
-        try:
-            valid = await connection.fetchval(
-                """
-                SELECT session_runtime_assert_action_context(
-                    $1, $2, $3, $4, $5, $6, $7
-                )
-                """,
-                receipt.session_id,
-                receipt.runtime_profile_id,
-                receipt.actor_id,
-                receipt.device_id,
-                receipt.binding_id,
-                receipt.binding_version,
-                receipt.session_epoch,
-            )
-            trust_raw = await connection.fetchval(
-                "SELECT action_device_lock_trust($1, $2, $3, $4, $5)",
-                receipt.actor_id,
-                receipt.device_id,
-                receipt.binding_id,
-                receipt.binding_version,
-                request.now,
-            )
-            actor = await connection.fetchval(
-                "SELECT current_setting('app.authenticated_actor', true)"
-            )
-        except asyncpg.PostgresError as exc:
-            _raise_database_error(exc, field="Session/Device authority")
-        if valid is not True or actor != receipt.actor_id:
-            raise ActionAuthorizationError("authenticated principal mismatch")
-        trust = _json_object(trust_raw, field="device authority")
-        if trust.get("device_trust") != request.context.device_trust:
-            raise ActionAuthorizationError("device trust changed during action")
-        return cast(str, actor)
-
-
-class _BindingAuthorityAdapter:
-    async def lock_current(
-        self,
-        connection: asyncpg.Connection,
-        receipt: PolicyReceiptV2,
-        request: ActionExecutionRequest,
-    ) -> BindingEvidencePort:
-        try:
-            raw = await connection.fetchval(
-                "SELECT action_identity_lock_binding($1, $2, $3, $4)",
-                receipt.actor_id,
-                receipt.device_id,
-                receipt.binding_version,
-                request.now,
-            )
-        except asyncpg.PostgresError as exc:
-            _raise_database_error(exc, field="Identity binding authority")
-        if raw is None:
-            raise ActionAuthorizationError("binding authority is unavailable")
-        binding = _binding_from_json(raw)
-        if (
-            binding.binding_id != receipt.binding_id
-            or binding.version != receipt.binding_version
-            or binding.device_id != receipt.device_id
-        ):
-            raise ActionAuthorizationError("binding evidence mismatch")
-        return binding
-
-
-class _MembershipAuthorityAdapter:
-    async def lock_current(
-        self,
-        connection: asyncpg.Connection,
-        receipt: PolicyReceiptV2,
-        request: ActionExecutionRequest,
-    ) -> MembershipEvidencePort:
-        fence = receipt.action_resource_fence
-        family_space_id = fence.family_space_id
-        if family_space_id is None or fence.membership_snapshot_id is None:
-            raise ActionAuthorizationError("membership fence is missing")
-        required = tuple(fence.required_approval_subject_ids)
-        raw = await _fetch_json_value(
-            connection,
-            "SELECT memory_shared_lock_membership($1, $2::text[], $3, $4, $5)",
-            family_space_id,
-            list(required),
-            receipt.binding_id,
-            receipt.binding_version,
-            request.now,
-            field="membership authority",
-        )
-        membership = _membership_from_json(raw)
-        if (
-            membership.snapshot_id != fence.membership_snapshot_id
-            or membership.revision != fence.membership_snapshot_revision
-            or membership.canonical_hash != fence.membership_snapshot_hash
-            or membership.family_owner_subject_id != fence.family_owner_subject_id
-        ):
-            raise ActionAuthorizationError("membership evidence mismatch")
-        return membership
-
-
-class _CaptureAuthorityAdapter:
-    async def lock_current(
-        self,
-        connection: asyncpg.Connection,
-        receipt: PolicyReceiptV2,
-        request: ActionExecutionRequest,
-    ) -> tuple[CaptureEvidencePort, ...]:
-        fence = receipt.action_resource_fence
-        if not fence.capture_evidence_ids:
-            return ()
-        raw = await _fetch_json_value(
-            connection,
-            "SELECT memory_shared_lock_capture_evidence($1::text[], $2, $3, $4, $5)",
-            list(fence.capture_evidence_ids),
-            receipt.subject_id,
-            receipt.binding_id,
-            receipt.binding_version,
-            request.now,
-            field="capture authority",
-        )
-        captures = _captures_from_json(raw)
-        if tuple(sorted(item.evidence_id for item in captures)) != tuple(
-            sorted(fence.capture_evidence_ids)
-        ):
-            raise ActionAuthorizationError("capture evidence set mismatch")
-        return captures
-
-
-class _ProposalAuthorityAdapter:
-    async def lock_current(
-        self,
-        connection: asyncpg.Connection,
-        receipt: PolicyReceiptV2,
-        request: ActionExecutionRequest,
-    ) -> ProposalEvidencePort:
-        proposal_id = receipt.action_resource_fence.proposal_id
-        if proposal_id is None:
-            raise ActionAuthorizationError("proposal fence is missing")
-        raw = await _fetch_json_value(
-            connection,
-            "SELECT memory_shared_lock_proposal($1, $2, $3)",
-            proposal_id,
-            receipt.actor_id,
-            request.now,
-            field="proposal authority",
-        )
-        row, proposal = _proposal_from_json(raw, now=request.now)
-        source_ids = _tuple_strings(
-            row.get("source_evidence_ids"), field="proposal.source_evidence_ids"
-        )
-        if source_ids:
-            # The action fence for approval/promotion intentionally omits
-            # capture ids, but the proposal authority still locks the
-            # original capture evidence before Policy revalidation returns.
-            await _fetch_json_value(
-                connection,
-                "SELECT memory_shared_lock_capture_evidence($1::text[], $2, $3, $4, $5)",
-                list(source_ids),
-                proposal.family_owner_subject_id,
-                receipt.binding_id,
-                receipt.binding_version,
-                request.now,
-                field="proposal capture authority",
-            )
-        if proposal.revision != receipt.action_resource_fence.proposal_revision:
-            raise ActionAuthorizationError("proposal revision mismatch")
-        return proposal
-
-
-class _ApprovalAuthorityAdapter:
-    async def lock_current(
-        self,
-        connection: asyncpg.Connection,
-        receipt: PolicyReceiptV2,
-        request: ActionExecutionRequest,
-    ) -> tuple[ApprovalEvidencePort, ...]:
-        proposal_id = receipt.action_resource_fence.proposal_id
-        if proposal_id is None:
-            raise ActionAuthorizationError("approval proposal is missing")
-        raw = await _fetch_json_value(
-            connection,
-            "SELECT memory_shared_lock_approvals($1, $2)",
-            proposal_id,
-            request.now,
-            field="approval authority",
-        )
-        return _approvals_from_json(raw)
-
-
-class _ActionResourceAuthorityAdapter:
-    async def lock_current(
-        self,
-        connection: asyncpg.Connection,
-        receipt: PolicyReceiptV2,
-        request: ActionExecutionRequest,
-    ) -> PolicyActionResourceFence:
-        fence = receipt.action_resource_fence
-        try:
-            valid = await connection.fetchval(
-                """
-                SELECT memory_shared_lock_action_resource(
-                    $1, $2, $3, $4
-                )
-                """,
-                receipt.capability,
-                fence.action_resource_id,
-                fence.proposal_id,
-                fence.proposal_revision or 0,
-            )
-        except asyncpg.PostgresError as exc:
-            _raise_database_error(exc, field="shared action resource authority")
-        if valid is not True:
-            raise ActionAuthorizationError("shared action resource is stale")
-        return fence
 
 
 class PostgresFamilySharedActionExecutor:

@@ -65,13 +65,13 @@ from services.device_fleet.bootstrap_domain import (
 )
 from services.device_fleet.bootstrap_service import DeviceOnboardingService
 from services.guardian.domain import GuardianStorePort
+from services.session_runtime.commands import StartPersistentSessionCommand
 from services.session_runtime.postgres_store import SessionRuntimeConflict
 from services.session_runtime.service import (
     PersistentSessionDenied,
     PersistentSessionNotFound,
     PersistentSessionUnavailable,
     PostgresSessionRuntimeService,
-    StartPersistentSessionCommand,
 )
 
 router = APIRouter(prefix="/v1/media", tags=["media"])

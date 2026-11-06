@@ -7,7 +7,7 @@ Field 2026-10-29 soak (t017/t018): the uplink carried a whole new question and a
 from __future__ import annotations
 
 import pytest
-from services.agent.src.voice_core.media_session_playback_stop import content_barge_in_wanted
+from services.agent.src.voice_core.playback_text import content_barge_in_wanted
 
 STOP_QUESTION = "等一下，我想问另一个问题，云是怎么变出来的？"
 

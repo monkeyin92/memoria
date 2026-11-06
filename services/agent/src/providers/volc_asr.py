@@ -234,7 +234,6 @@ class VolcASRSession:
         self._task_open = False
         self._origin_known = False
         self._sentence_id = 0
-        self._sentence_open = False
         self._last_final_text = ""
         self._rotation_pending = False
         self._failed = False
@@ -349,7 +348,6 @@ class VolcASRSession:
         self._audio_sequence = 1
         self._audio_buffer.clear()
         self._sentence_id = 0
-        self._sentence_open = False
         self._last_final_text = ""
         self._evidence.reset()
         self._task_open = True
@@ -539,16 +537,12 @@ class VolcASRSession:
         sentence_end = final or transcript.definite
         if sentence_end and transcript.text == self._last_final_text:
             return
-        # The Volc ``full`` result is cumulative for one task. Partials and the
-        # final of one sentence must share an id so the timeline replaces the
-        # earlier text instead of joining every growing prefix.
-        if not self._sentence_open:
-            self._sentence_id += 1
-            self._sentence_open = True
-        sentence_id = self._sentence_id
+        # Partials and the final of one sentence share its id, so the timeline
+        # replaces the partial instead of committing both texts.
+        sentence_id = self._sentence_id + 1
         if sentence_end:
+            self._sentence_id = sentence_id
             self._last_final_text = transcript.text
-            self._sentence_open = False
         await self.events.put(
             FunASRServerEvent(
                 event="result-generated",

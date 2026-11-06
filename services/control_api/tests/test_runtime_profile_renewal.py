@@ -31,14 +31,14 @@ from services.control_api.app.multi_subject_runtime import (
 )
 from services.control_api.app.routes.multi_subject import _session_denied
 from services.identity.domain import BindingManifest, ManifestRole
+from services.session_runtime.commands import StartPersistentSessionCommand
 from services.session_runtime.service import (
     PersistentSessionDenied,
     PersistentSessionExpired,
     PostgresSessionRuntimeService,
-    StartPersistentSessionCommand,
     build_postgres_session_runtime_service,
 )
-from services.session_runtime.tests.test_postgres_store import (
+from services.session_runtime.tests.postgres_store_test_support import (
     _SIGNING_KEY,
     postgres_runtime,  # noqa: F401 - pytest discovers imported fixtures by name
 )

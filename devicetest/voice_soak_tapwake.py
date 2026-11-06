@@ -62,6 +62,7 @@ USB_WAKE_ACTION_RE = re.compile(r"usb wake action=(\w+)")
 MIC_CLOSED_RE = re.compile(r"listening_closed closed=(true|false)")
 DEFAULT_PORT = "/dev/cu.usbmodem2101"
 DEFAULT_REMOTE = "memoria-prod"
+BRIDGE_FIRST_FRAME_RE = re.compile(r"^(?P<ts>\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+Z).*event=first_frame_sent\b")
 
 
 def now() -> float:
@@ -70,6 +71,27 @@ def now() -> float:
 
 def stamp(t: float) -> str:
     return time.strftime("%H:%M:%S", time.localtime(t)) + f".{int((t % 1) * 1000):03d}"
+
+
+def bridge_first_frame_since(path: Path, offset: int, since: float, until: float) -> float | None:
+    """Return a bridge first-frame timestamp when serial missed the speaking transition."""
+    if not path.is_file():
+        return None
+    from datetime import UTC, datetime
+
+    with path.open("rb") as fh:
+        fh.seek(offset)
+        raw = fh.read()
+    for line in raw.decode("utf-8", "replace").splitlines():
+        match = BRIDGE_FIRST_FRAME_RE.search(line)
+        if match is None:
+            continue
+        ts = datetime.fromisoformat(match.group("ts").replace("Z", "+00:00")).replace(
+            tzinfo=UTC
+        ).timestamp()
+        if since <= ts <= until:
+            return ts
+    return None
 
 
 @dataclass
@@ -208,8 +230,14 @@ class SerialWatcher:
                     return None
                 self.cond.wait(min(remaining, 0.25))
 
-    def observe_post_scenario(self, timeout: float) -> dict[str, object]:
-        """Keep collecting serial events for a bounded tail and snapshot the final state."""
+    def observe_post_scenario(self, timeout: float, idle_evidence_since: float | None = None) -> dict[str, object]:
+        """Keep collecting serial events for a bounded tail and snapshot the final state.
+
+        `idle_evidence_since` is the idle transition a preceding silence step already saw. That step stops
+        waiting the moment the board idles, so its transition can land a few tens of milliseconds before this
+        window opens: on 2026-11-06 19:48 the board idled 82 ms before the tail, and the run scored
+        evidence_insufficient for an idle it had already observed.
+        """
         settle_started_monotonic = time.monotonic()
         with self.cond:
             settle_deadline = settle_started_monotonic + MAX_POST_SCENARIO_SETTLE_S
@@ -228,10 +256,11 @@ class SerialWatcher:
             final_state_since = self.state_since
             state_source = self.state_source
 
+        accepted_since = started_at if idle_evidence_since is None else min(started_at, idle_evidence_since)
         idle_observed = (
             final_state == "idle"
             and state_source == "serial_transition"
-            and final_state_since >= started_at
+            and final_state_since >= accepted_since
         )
         verdict = (
             "timeout"
@@ -241,6 +270,7 @@ class SerialWatcher:
 
         return {
             "idle_observed": idle_observed,
+            "idle_evidence_since": stamp(idle_evidence_since) if idle_evidence_since is not None else None,
             "final_state": final_state,
             "final_state_source": state_source,
             "final_state_since": stamp(final_state_since),
@@ -349,6 +379,18 @@ def set_volume(level: int) -> int:
     return previous
 
 
+def output_audible() -> bool:
+    """False when macOS mutes the output or drops it to zero behind the run.
+
+    The 2026-11-06 19:48 soak had the system output muted for 2m53s mid-run (a remote-control session took
+    it): four turns became no_reply while the Mac still opened a speaker session for every clip. Checked
+    before each line so the run aborts with ABORT_OUTPUT_MUTED instead of scoring a dead speaker.
+    """
+    settings = subprocess.run(["osascript", "-e", "get volume settings"],
+                              capture_output=True, text=True).stdout
+    return "output muted:true" not in settings and "output volume:0," not in settings
+
+
 def follow_logs(out: Path, remote: str) -> list[subprocess.Popen[bytes]]:
     procs = []
     for name, container in (("bridge", "memoria-voice-core-media-bridge-1"),
@@ -412,6 +454,10 @@ def main() -> int:
     previous_volume = set_volume(args.volume)
     record(kind="start", volume=args.volume, previous_volume=previous_volume, duration_min=args.duration_min)
     try:
+        if not output_audible():
+            record(kind="abort", verdict="ABORT_OUTPUT_MUTED",
+                   reason="macOS output muted or at volume 0 before the run")
+            return 7
         # The gate needs a real State line: a port that opened but printed no State line proves nothing
         # about the firmware state, so wait for the transition instead of assuming idle.
         if watcher.wait_state({"idle"}, args.gate_timeout, require_source="serial_transition") is None:
@@ -533,6 +579,7 @@ def main() -> int:
 
         turn = 0
         deadline_reached = False
+        idle_evidence_since: float | None = None
         for _loop in (range(args.loops) if args.loops else itertools.count()):
             for step in steps:
                 if now() >= deadline:
@@ -548,6 +595,10 @@ def main() -> int:
                     # e.g. stay silent and watch the owner-silence timeout / standby
                     t0 = now()
                     got = watcher.wait_state({"idle"}, float(step["expect_idle_wait"]))
+                    if got is not None and got >= t0 and watcher.state_source == "serial_transition":
+                        # Hand the transition to the post-scenario gate: this wait returns the moment the
+                        # board idles, so its idle can land tens of milliseconds before that gate opens.
+                        idle_evidence_since = got
                     record(kind="silence", tag=tag, went_idle=got is not None, after_s=round(now() - t0, 1))
                     continue
                 got = gate_wait(tag, "turn", args.turn_gate_timeout)
@@ -602,22 +653,40 @@ def main() -> int:
                 quiet_for = now() - watcher.state_since
                 if quiet_for < 1.5:
                     time.sleep(1.5 - quiet_for)
+                if not output_audible():
+                    record(kind="abort", verdict="ABORT_OUTPUT_MUTED", tag=tag,
+                           reason="macOS output muted or at volume 0 before the line")
+                    return 7
                 t0, t1, clip = speak(step["say"], int(step.get("rate", 175)), out, tag, bank, step.get("tag"))
                 record(kind="said", tag=tag, text=step["say"], voice="bank" if bank is not None and (bank / f"{step.get('tag')}.wav").exists() else "Tingting",
                        rate=step.get("rate", 175), clip_s=round(clip, 2), start=stamp(t0), end=stamp(t1))
                 started = watcher.wait_state({"speaking"}, float(step.get("reply_timeout", 30)), since=t1 - 0.5)
+                reply_started_source = "serial_state"
                 if started is None:
-                    record(kind="no_reply", tag=tag, state=watcher.state)
-                    gate["offset"] = bridge_size(bridge)
-                    continue
+                    bridge_started = bridge_first_frame_since(
+                        bridge, int(gate.get("offset", 0)), t1 - 0.5, now()
+                    )
+                    if bridge_started is None:
+                        record(kind="no_reply", tag=tag, state=watcher.state)
+                    else:
+                        started = bridge_started
+                        reply_started_source = "bridge_first_frame"
+                    if started is None:
+                        gate["offset"] = bridge_size(bridge)
+                        continue
                 latency = started - t1
                 interrupt = step.get("interrupt")
                 outcome = {"kind": "reply", "tag": tag, "latency_s": round(latency, 2),
                            "reply_started_ts": started,
+                           "reply_started_source": reply_started_source,
                            "serial_utc_offset_s": -time.altzone if time.localtime().tm_isdst > 0 else -time.timezone}
                 if interrupt:
                     time.sleep(float(interrupt.get("after", 5)))
                     if watcher.state == "speaking":
+                        if not output_audible():
+                            record(kind="abort", verdict="ABORT_OUTPUT_MUTED", tag=tag,
+                                   reason="macOS output muted or at volume 0 before the stop line")
+                            return 7
                         i0, i1, _ = speak(interrupt["say"], int(interrupt.get("rate", 175)), out, tag + "-stop",
                                           bank, step.get("tag", "") + "-stop")
                         settle = float(interrupt.get("settle", 8))
@@ -642,7 +711,7 @@ def main() -> int:
             if deadline_reached:
                 break
         record(kind="scenario_done", turns=turn, deadline_reached=deadline_reached)
-        post_scenario = watcher.observe_post_scenario(args.post_scenario_wait)
+        post_scenario = watcher.observe_post_scenario(args.post_scenario_wait, idle_evidence_since=idle_evidence_since)
         record(kind="post_scenario_observation", **post_scenario)
         if post_scenario["verdict"] == "timeout":
             return 3

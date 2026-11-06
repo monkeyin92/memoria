@@ -17,7 +17,7 @@ from services.control_api.app.account_gate import (
     require_capability_for_account_id,
 )
 from services.control_api.app.main import create_app
-from services.control_api.tests.test_interaction_api import (
+from services.control_api.tests.interaction_api_test_support import (
     _attach_signed_runtime_profile,
 )
 

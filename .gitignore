@@ -79,3 +79,10 @@ infra/voices/previews/
 .tmp-gate/
 # Local scratch/cache directory used when the home cache is not writable
 .tmp/
+
+# Device-test run receipts and raw audit tarballs stay local (not source)
+devicetest/run-*/
+devicetest/precheck-*/
+devicetest/safety-*/
+devicetest/targeted-*/
+.audit/raw-receipts-*.tar.gz

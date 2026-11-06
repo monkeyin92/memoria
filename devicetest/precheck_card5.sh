@@ -4,7 +4,7 @@
 set -uo pipefail
 cd "$HOME/projects/memoria"
 TAG=card5-overlay
-EXPECT_IMAGE=memoria-agent:20261104-card5-wave-main-v1
+EXPECT_IMAGE=memoria-agent:20261105-card5-hold-completeness-v1
 EXPECT_BUILD=28
 EXPECT_ELF=d0e90d73a
 EXPECT_BYPASS=ed2b4c0e
