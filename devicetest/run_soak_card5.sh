@@ -9,10 +9,13 @@ export PATH="$HOME/projects/memoria/devicetest/bin:$PATH"
 export AFPLAY_RETRY_LOG="$REPORT_DIR/afplay_retry.log"
 PORT=$(ls /dev/cu.usbmodem* 2>/dev/null | head -1)
 SCENARIO="devicetest/scenarios/child_tapwake.json"
+# The turn gate waits for a state to speak into. 60 s, not 30: after the t019 spoken stop the device
+# correctly answers the stopping phrase's new question, and on 2026-11-07 00:22 that answer ran 31 s,
+# so a 30 s gate timed out 50 ms before listening and skipped t020 (verdict incomplete).
 {
   echo "start $(date -Iseconds)"
   echo "port=$PORT"
-  echo "gates MAX_NO_REPLY=0 P90<=2.0s max<=3.0s; pre gate idle-only 180s (real State line, no assume_idle); turn gate idle|listening|listening_closed 30s (listening window is product state, #453)"
+  echo "gates MAX_NO_REPLY=0 P90<=2.0s max<=3.0s; pre gate idle-only 180s (real State line, no assume_idle); turn gate idle|listening|listening_closed 60s (listening window is product state, #453)"
 } | tee "$REPORT_DIR/meta.txt"
 ls -la "$PORT" || { echo "FAIL: serial missing"; exit 2; }
 
@@ -80,7 +83,7 @@ uv run --no-project --with pyserial python devicetest/voice_soak_tapwake.py \
   --remote memoria-prod \
   --serial-log "$SERIAL_RAW" \
   --gate-timeout 180 \
-  --turn-gate-timeout 30 \
+  --turn-gate-timeout 60 \
   2>&1 | tee "$REPORT_DIR/stdout.log" || true
 # The driver creates OUT itself. Attach the frozen manifest before scoring.
 cp -f "$REPORT_DIR/manifest.json" "$OUT/manifest.json"

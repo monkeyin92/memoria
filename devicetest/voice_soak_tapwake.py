@@ -379,16 +379,23 @@ def set_volume(level: int) -> int:
     return previous
 
 
-def output_audible() -> bool:
-    """False when macOS mutes the output or drops it to zero behind the run.
+def output_audible(expected_volume: int | None = None) -> bool:
+    """False when macOS mutes the output, drops it to zero, or lowers it below the requested level.
 
     The 2026-11-06 19:48 soak had the system output muted for 2m53s mid-run (a remote-control session took
-    it): four turns became no_reply while the Mac still opened a speaker session for every clip. Checked
-    before each line so the run aborts with ABORT_OUTPUT_MUTED instead of scoring a dead speaker.
+    it): four turns became no_reply while the Mac still opened a speaker session for every clip. The 00:14
+    soak on 2026-11-07 then ran every line at ~19% because the system volume was lowered before the first
+    clip while the receipt still said 30. Checked before each line so the run aborts with
+    ABORT_OUTPUT_MUTED instead of scoring audio the device never heard at the requested level.
     """
     settings = subprocess.run(["osascript", "-e", "get volume settings"],
                               capture_output=True, text=True).stdout
-    return "output muted:true" not in settings and "output volume:0," not in settings
+    if "output muted:true" in settings or "output volume:0," in settings:
+        return False
+    if expected_volume is None:
+        return True
+    match = re.search(r"output volume:(\d+)", settings)
+    return match is not None and int(match.group(1)) >= expected_volume - 2
 
 
 def follow_logs(out: Path, remote: str) -> list[subprocess.Popen[bytes]]:
@@ -454,9 +461,9 @@ def main() -> int:
     previous_volume = set_volume(args.volume)
     record(kind="start", volume=args.volume, previous_volume=previous_volume, duration_min=args.duration_min)
     try:
-        if not output_audible():
+        if not output_audible(args.volume):
             record(kind="abort", verdict="ABORT_OUTPUT_MUTED",
-                   reason="macOS output muted or at volume 0 before the run")
+                   reason="macOS output muted, at volume 0, or below the requested level before the run")
             return 7
         # The gate needs a real State line: a port that opened but printed no State line proves nothing
         # about the firmware state, so wait for the transition instead of assuming idle.
@@ -653,9 +660,9 @@ def main() -> int:
                 quiet_for = now() - watcher.state_since
                 if quiet_for < 1.5:
                     time.sleep(1.5 - quiet_for)
-                if not output_audible():
+                if not output_audible(args.volume):
                     record(kind="abort", verdict="ABORT_OUTPUT_MUTED", tag=tag,
-                           reason="macOS output muted or at volume 0 before the line")
+                           reason="macOS output muted, at volume 0, or below the requested level before the line")
                     return 7
                 t0, t1, clip = speak(step["say"], int(step.get("rate", 175)), out, tag, bank, step.get("tag"))
                 record(kind="said", tag=tag, text=step["say"], voice="bank" if bank is not None and (bank / f"{step.get('tag')}.wav").exists() else "Tingting",
@@ -683,9 +690,9 @@ def main() -> int:
                 if interrupt:
                     time.sleep(float(interrupt.get("after", 5)))
                     if watcher.state == "speaking":
-                        if not output_audible():
+                        if not output_audible(args.volume):
                             record(kind="abort", verdict="ABORT_OUTPUT_MUTED", tag=tag,
-                                   reason="macOS output muted or at volume 0 before the stop line")
+                                   reason="macOS output muted, at volume 0, or below the requested level before the stop line")
                             return 7
                         i0, i1, _ = speak(interrupt["say"], int(interrupt.get("rate", 175)), out, tag + "-stop",
                                           bank, step.get("tag", "") + "-stop")
