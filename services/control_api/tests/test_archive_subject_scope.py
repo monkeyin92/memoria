@@ -13,7 +13,7 @@ from httpx import ASGITransport, AsyncClient
 from services.archive.domain import EvidenceEvent
 from services.control_api.app import persistent_runtime_profile
 from services.control_api.app.main import create_app
-from services.control_api.tests.test_archive_api import (
+from services.control_api.tests.archive_api_test_support import (
     PersonaObservationStub,
     _configure,
     _register_minor,
