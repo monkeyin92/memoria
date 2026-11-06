@@ -151,13 +151,16 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 - [ ] 判据「开麦后 1 s 内不再出现 rms > 1e-4 的 `Device VAD start`，且问候首帧在 listening 后 ≤ 2.2 s 的不少于 9/10」第十六轮按字面不满足（≤ 2.2 s 的只有 2/10，问候比前几轮晚 0.2–0.4 s，原因没查，服务端侧与第十五轮同量级），判据要防的失败一次也没出现；2.2 s 的阈值是否放宽，你定。
 - [ ] 回声窗口（0.8 s 余量、1 s 跨边界）没动；盖在问候上的那句整句落在窗口内、超出边界约 0.6 s 不足 1 s 的情形没覆盖，放宽有把机器人自己的漏音当成用户话的风险。
 
-### [ ] N-14 说完到开口的时延（目标 P90 ≤ 2.0 s、最慢 ≤ 3.0 s，2026-10-31 改；现状 11-01 P50 约 2.0–2.2 s、P90 约 3.1 s）
+### [ ] N-14 说完到开口的时延（目标 P90 ≤ 2.0 s、最慢 ≤ 3.0 s，2026-10-31 改；现状 11-01 P50 约 2.0–2.2 s、P90 约 3.1 s；2026-11-06 你决定暂缓达标，见下）
 
+- **2026-11-06 你决定暂缓达标**：今天三轮卡 5 soak 的延迟 p90 分别 3.36、2.53、2.58 s，最慢 8.15、3.04、3.67 s；11-05 两轮 2.90–3.39 s，跨候选稳定超线。按 20:29 那轮自带的逐轮分段（41 个回复，p50/p90）：收音 0.36/0.79、ASR 终稿到提交 0.95/1.20、LLM 首字 0.13/0.43、TTS 首音 0.45/0.57、下发 0.20/0.26 s。按 p90 最大的两块是厂商 ASR 终稿等待 1.20 s 与端点静音窗 0.79 s（前者不归我们、后者是产品取舍），不是设备硬件上限；记作“优先级暂缓”，不记作“不可解”。卡 5 门禁是否随之豁免延迟判据需要你明确，目前仍按原判据、不据此解锁 R02。重启条件：要恢复达标时先做 ASR 终稿与端点两刀，再跑卡 5 soak。收据见 `docs/acceptance.md`「Card5 gate retry … evening 2026-11-06」。
 - **2026-11-01 迭代**（详见 `docs/acceptance.md`「内测准入门禁 2026-11-01 迭代」）：③ 投机起跑回复已做（#506，LLM 段降到约 0），profile 刷新并行（#509）；首句 TTS 预合成做了但暂缓（#514，预估只省约 0.1 s）。剩余大头：说完到 ASR 终稿（火山终稿延迟与重连，各轮差异大）、设备 VAD 结束晚、提交路径上的结束对话判定。
 - **2026-11-02 ASR final→commit warmup（PR #523，已合 main；卡 4 overlay `20261102-card-1-3-overlay-v1` 已含，安静窗 soak 未完成）**：accepted final 有稳定起点、完整文本、ASR endpoint 覆盖且不在播放回声或重叠边界时，提前启动既有 close/live/memory warmup。232237 离线复算 ASR p90 1.18 秒、reply p95 2.71 秒、最慢 3.19 秒，本刀未证明收益；P90≤2.0/最慢≤3.0 待卡 5 soak。
 - **2026-11-04 卡 3 单刀量化**：232237 上刀 `asr_final→commit`（tapwake「ASR」）measured p50 0.91 / p90 1.18 / max 1.31 s（54/62 最慢段）；刀内 close p90 0.76 s（#523 对同采集）。度量杠杆：`devicetest/tapwake_report.py` → `knife_asr_final_to_commit`，`scripts/voice_commit_timing.py` 刀段对照基线。无新运行时改动；Hold #514/#448。详见 `docs/acceptance.md`「卡 3 · ASR final→commit」。
 
 - **2026-11-02 卡 5 vol30 复测（overlay `20261102-card-1-3-overlay-v1`，门禁未过）**：42 步触顶 15 分钟，38 回复、3 no_reply、P50 1.96 s、P90 3.02 s、最慢 4.24 s，三条门禁全未过。3 次 no_reply 在设备侧全程 `vad.idle`（rms 0.0002–0.0010 vs floor 0.0030），用户 VAD 未起拍，是音量 30 的拾音下限，不是后端丢回复；不改判据。下一步按看板口径加一轮同配置 vol20 对照，把音量与优化拆开。收据在 `docs/acceptance.md`「卡 5 vol30 复测 2026-11-02」，harness 修复见 `HANDOFF.md`。
+
+- **2026-11-06 卡 5 门禁重跑（`20261105-card5-hold-completeness-v1`，两轮 soak，门禁未过）**：safety 安静重跑 20/20 PASS（`devicetest/safety-20261106-183225-card5-overlay/`）。第一次干净 soak（19:48）的 4 个 no_reply 是 Mac 被 UU远程 会话静音造成（ControlCenter 19:59:08.347 到 20:02:01.469 输出 0.0/muted），设备串口全窗 `vad.idle` 贴底噪，不是候选信号。带静音守卫重跑（20:29）没有静音：43 步、41 回复、1 no_reply（t002：前一轮快速回复的 committed 边界把它的 ASR ready 结果判成 `straddles_committed_without_timing`，volc 随后 `final_result_timeout`，回合按 `empty+vendor_silent` 丢弃），延迟 p90 2.58 s / 最慢 3.67 s，两条门禁仍不过；尾窗 idle 与 keepawake 这次通过。下一步用 main（含 #564 committed-boundary 与 ASR failover 修复）构建候选后重跑 precheck→safety→soak（vol30）。收据在 `docs/acceptance.md`「Card5 gate retry … evening 2026-11-06」。
 
 - **2026-10-31 基线拆分**（run-20261031-204642，34 轮，`tapwake_report.py` 分段 + `media turn commit timing`）：说完→ASR 终稿 p50 0.31 s；终稿→提交 p50 1.13 s（宽限等待 `final_to_start_ms` p50 505、结束对话判定尾巴 `close_ms` p50 173 / p90 508、`prepare_ms` p50 289）；提交→LLM 首字 p50 0.71 s（28 轮有打点）；LLM→TTS 首包 p50 0.49 s（只有 17 轮有 `doubao_first_pcm` 打点，待补）；下发→设备开口 p50 0.11 s。下一步按便宜到贵：① 上线 #483（宽限从说完时起算，已在 main；**2026-10-31 22:38 随 `20261031-batch-6fad1896` 上线**，复测 run-20261031-223809 对比 204642：P50 2.50→2.43 s、P90 3.51→2.85 s、最慢 4.42→3.25 s、2 秒内 1→5 轮，终稿→提交开始 p50 505→343 ms，各一轮，门禁仍未过）；② 结束对话判定尾巴与 `prepare_committed_turn` 并行；③ 宽限期内投机起跑回复（要先设计，唯一可能把 P90 压到 2 s 的一档）。
 
