@@ -926,9 +926,9 @@ class MediaTurnEndpointMixin:
 
         if await self._commit_final_before_tail(context):
             return
-
         discarded: ProjectionPatch | None = None
         resume_owned_output = False
+        stale_empty_tail = context.pending.turn_input_fence not in (None, context.runtime.fence)
         async with context.turn_commit_lock:
             current = self._sessions.get(session_id)
             if (
@@ -958,7 +958,7 @@ class MediaTurnEndpointMixin:
             partial.capture_end_sample if partial is not None else None,
             self._classify_provider_final_missing(context),
         )
-        if endpoint_sample > 0 and not resume_owned_output:
+        if endpoint_sample > 0 and not resume_owned_output and not stale_empty_tail:
             self._nudge_empty_turn(context, endpoint_sample=endpoint_sample)
 
     @staticmethod

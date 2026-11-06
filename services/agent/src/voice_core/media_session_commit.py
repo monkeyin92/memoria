@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 import logging
 import time
-from dataclasses import asdict, replace
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from services.agent.src.clock_fact_queries import is_clock_fact_query
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.conversation_projection import (
     CommitEvidence,
@@ -35,7 +33,6 @@ from services.agent.src.runtime_post_playback_guard import POST_PLAYBACK_ECHO_GU
 from services.agent.src.voice_core.asr_stream_supervisor import (
     ASRAcceptDecision,
     ASRDecisionReason,
-    ASROverlapEvidence,
 )
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.interruption import (
@@ -43,6 +40,15 @@ from services.agent.src.voice_core.interruption import (
     evidence_from_speech_segment,
 )
 from services.agent.src.voice_core.media_protocol import should_pause_asr_for_playback
+from services.agent.src.voice_core.media_session_commit_recovery import (
+    MediaSessionCommitRecoveryMixin,
+)
+from services.agent.src.voice_core.media_session_commit_text import (
+    _elapsed_ms,
+    _log_empty_media_turn,
+    _mark_stage,
+    _resolve_media_turn_text,
+)
 from services.agent.src.voice_core.media_session_pending_turn import open_turn_verdict_scope
 from services.agent.src.voice_core.media_session_playback_stop import (
     CONTENT_BARGE_IN_CAUSE,
@@ -80,8 +86,6 @@ media_pb2: Any = _media_pb2
 # same run measured rms >= 2812 with clipped peaks.  Dropping a real but
 # quiet farewell only defers standby to the owner-silence timeout; honouring
 # a hallucinated one loses the pending reply, so this gate leans to reject.
-_CLOSE_RECOVERY_MIN_RESCUE_RMS = 1_000
-_CLOSE_RECOVERY_MIN_RESCUE_PEAK_ABS = 8_000
 
 # After an accepted final the commit waits at most this long for the device VAD end.  Soak
 # 20261029-200043: the slow turns spent 1.0-2.0 s there while ASR already had the sentence.
@@ -90,128 +94,7 @@ _FINAL_VAD_END_WAIT_SAMPLES = 4_800  # 300 ms of 16 kHz uplink past the final
 UNVOICED_SHORT_FINAL_REASON = "unvoiced_short_final"
 
 
-def _elapsed_ms(started: float) -> int:
-    return int((time.monotonic() - started) * 1000)
-
-
-def _mark_stage(timing: dict[str, int] | None, stage: str, started: float) -> None:
-    """Record how long one awaited step of the commit took, for the commit timing log line."""
-
-    if timing is not None:
-        timing[stage] = _elapsed_ms(started)
-
-
-def _preferred_clock_fact_text(
-    context: _MediaVoiceSession,
-    *,
-    stream_epoch: int,
-    start_sample: int,
-    end_sample: int,
-) -> str | None:
-    forced = context.pending.clock_fact_forced_text
-    if forced and is_clock_fact_query(forced):
-        return forced
-    candidates = [
-        segment.text.strip()
-        for segment in context.runtime.speech_timeline.segments_in_range(
-            stream_epoch=stream_epoch,
-            start_sample=start_sample,
-            end_sample=end_sample,
-        )
-        if segment.text.strip() and is_clock_fact_query(segment.text)
-    ]
-    if not candidates:
-        return None
-    return max(candidates, key=len)
-
-
-def _preferred_live_query_text(context: _MediaVoiceSession) -> str | None:
-    forced = context.pending.live_query_forced_text
-    if forced and context.runtime.live_lookup_needed(forced):
-        return forced
-    return None
-
-
-def _resolve_media_turn_text(
-    context: _MediaVoiceSession,
-    *,
-    stream_epoch: int,
-    start_sample: int,
-    end_sample: int,
-) -> str | None:
-    """Resolve authoritative media commit text for one sample range."""
-
-    text = context.runtime.project_media_user_turn(
-        stream_epoch=stream_epoch,
-        start_sample=start_sample,
-        end_sample=end_sample,
-    )
-    preferred_clock = _preferred_clock_fact_text(
-        context,
-        stream_epoch=stream_epoch,
-        start_sample=start_sample,
-        end_sample=end_sample,
-    )
-    preferred_live = _preferred_live_query_text(context)
-    if preferred_live:
-        # An authoritative forced text means the in-range timeline text comes
-        # from a blocking interval (e.g. playback echo that overlapped the
-        # user final), so length comparison against it is meaningless.
-        if context.pending.live_query_forced_authoritative:
-            return preferred_live
-        if not text or len(preferred_live.strip()) > len(text.strip()):
-            return preferred_live
-    if not preferred_clock:
-        return text
-    if not text or not is_clock_fact_query(text):
-        return preferred_clock
-    if text.strip() != preferred_clock:
-        return preferred_clock
-    return text
-
-
-def _log_empty_media_turn(
-    context: _MediaVoiceSession,
-    stream_epoch: int,
-    start_sample: int,
-    end_sample: int,
-    stage: str,
-) -> None:
-    """Say why a turn commits no text: its end is otherwise silent.
-
-    ``_commit_pending_turn`` reports every other reason as "did not start
-    reply"; an empty turn only surfaced later as the tail-timeout discard, so
-    an accepted final that had vanished from the timeline left no trace.
-    """
-
-    text_segments = [
-        segment
-        for segment in context.runtime.speech_timeline.pending
-        if segment.stream_epoch == stream_epoch and segment.text.strip()
-    ]
-    logger.info(
-        "media turn has no text session=%s stream_epoch=%s samples=%s-%s stage=%s "
-        "pending_text_segments=%s pending_text_ranges=%s text_after_endpoint=%s "
-        "pending_end=%s active_vad_start=%s last_playback_end=%s committed_sample=%s",
-        context.identity.session_id,
-        stream_epoch,
-        start_sample,
-        end_sample,
-        stage,
-        len(text_segments),
-        [
-            (segment.capture_start_sample, segment.capture_end_sample)
-            for segment in text_segments[:4]
-        ],
-        sum(segment.capture_start_sample >= end_sample for segment in text_segments),
-        context.pending.turn_end_sample,
-        context.pending.active_vad_start_sample,
-        context.last_playback_end_sample,
-        context.asr.last_committed_sample,
-    )
-
-
-class MediaSessionCommitMixin:
+class MediaSessionCommitMixin(MediaSessionCommitRecoveryMixin):
     """Commit a single sample range through Projection and Runtime fences."""
 
     if TYPE_CHECKING:
@@ -434,6 +317,7 @@ class MediaSessionCommitMixin:
             )
         if accepted.is_final:
             context.last_final_accepted_at = time.monotonic()
+            context.pending.last_accepted_final = accepted
             # Establish the range fence before projection/transcript yields.
             self._split_pending_turn_at_unvoiced_gap(context, accepted)
         # The provider result is never forwarded after supervisor policy has
@@ -687,379 +571,6 @@ class MediaSessionCommitMixin:
     def _asr_precedes_pending_turn(context: _MediaVoiceSession, result: ASRResult) -> bool:
         floor = context.pending.pending_turn_onset_floor
         return floor is not None and result.capture_start_sample < floor
-
-    async def _recover_rejected_semantic_final(
-        self,
-        context: _MediaVoiceSession,
-        *,
-        session_id: str,
-        result: ASRResult,
-        reason: ASRDecisionReason,
-    ) -> None:
-        if self._asr_precedes_pending_turn(context, result):
-            return
-        text = result.text.strip()
-        if not text:
-            return
-        if is_clock_fact_query(text):
-            await self._recover_rejected_clock_fact_final(
-                context,
-                session_id=session_id,
-                result=result,
-                reason=reason,
-            )
-            return
-        close_needed, live_lookup_needed = await asyncio.gather(
-            context.runtime.resolve_conversation_close_needed(text),
-            context.runtime.resolve_live_lookup_needed(text),
-        )
-        if (
-            not self._stream_epoch_is_current(context, result.stream_epoch)
-            or self._asr_precedes_pending_turn(context, result)
-        ):
-            return
-        if close_needed or live_lookup_needed:
-            await self._recover_straddling_live_query_final(
-                context,
-                session_id=session_id,
-                result=result,
-                reason=reason,
-            )
-
-    async def _recover_rejected_clock_fact_final(
-        self,
-        context: _MediaVoiceSession,
-        *,
-        session_id: str,
-        result: ASRResult,
-        reason: ASRDecisionReason,
-    ) -> None:
-        """Keep clock/date turns when overlap policy drops an otherwise valid final."""
-
-        if reason is not ASRDecisionReason.CROSS_SENTENCE_OVERLAP:
-            return
-        if (
-            not self._stream_epoch_is_current(context, result.stream_epoch)
-            or self._asr_precedes_pending_turn(context, result)
-        ):
-            return
-        context.pending.admitted_input_stream_epoch = result.stream_epoch
-        segment = asr_result_to_segment(result, session_id=session_id)
-        if context.runtime.speech_timeline.can_add(segment):
-            if context.runtime.ingest_media_speech_segment(segment):
-                await self._apply_projection_segment(context, segment)
-                if (
-                    not self._stream_epoch_is_current(context, result.stream_epoch)
-                    or self._asr_precedes_pending_turn(context, result)
-                ):
-                    return
-                task_epoch, context_version = self._event_versions(
-                    context, context.runtime.fence
-                )
-                await self.bridge.emit_transcript(
-                    session_id,
-                    segment,
-                    task_epoch=task_epoch,
-                    context_version=context_version,
-                )
-        else:
-            context.pending.clock_fact_forced_text = result.text.strip()
-        if (
-            not self._stream_epoch_is_current(context, result.stream_epoch)
-            or self._asr_precedes_pending_turn(context, result)
-        ):
-            return
-        # Timeline ingest above is intentional; only suppress re-arm/commit while
-        # an earlier reply still owns the session (late offline finals).
-        if self._reply_in_flight(context):
-            logger.warning(
-                "media clock-fact recovery commit skipped: reply in flight "
-                "session=%s text_len=%s samples=%s-%s",
-                session_id,
-                len(result.text.strip()),
-                result.capture_start_sample,
-                result.capture_end_sample,
-            )
-            return
-        # Observe sets turn_start. Pinning the endpoint alone left
-        # epoch 1384 as invalid_pending until ASR tail timeout.
-        self._observe_final_asr_result(context, result)
-
-    async def _recover_straddling_live_query_final(
-        self,
-        context: _MediaVoiceSession,
-        *,
-        session_id: str,
-        result: ASRResult,
-        reason: ASRDecisionReason,
-    ) -> None:
-        """Keep weather/live turns when overlap policy drops an otherwise valid final.
-
-        Two rejection shapes are recovered here:
-        - STRADDLES_COMMITTED_WITHOUT_TIMING: the final spans an already-
-          committed range; trim its start to the committed watermark.
-        - CROSS_SENTENCE_OVERLAP: a blocking interval (e.g. playback echo
-          transcribed while the assistant was speaking) overlaps the user
-          final. The in-range timeline text is then untrustworthy, so the
-          forced text is marked authoritative to win commit-time resolution
-          regardless of length.
-        """
-
-        if reason not in (
-            ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING,
-            ASRDecisionReason.CROSS_SENTENCE_OVERLAP,
-        ):
-            return
-        if self._asr_precedes_pending_turn(context, result):
-            return
-        text = result.text.strip()
-        if not text:
-            return
-        close_needed, live_lookup_needed = await asyncio.gather(
-            context.runtime.resolve_conversation_close_needed(text),
-            context.runtime.resolve_live_lookup_needed(text),
-        )
-        if (
-            not self._stream_epoch_is_current(context, result.stream_epoch)
-            or self._asr_precedes_pending_turn(context, result)
-        ):
-            return
-        if not (close_needed or live_lookup_needed):
-            return
-        if (
-            close_needed
-            and not live_lookup_needed
-            and self._rejected_rescue_is_low_energy(context, result, reason)
-        ):
-            logger.warning(
-                "media close recovery rejected: low-energy rescue final "
-                "session=%s text_len=%s reason=%s rescue_rms=%s rescue_peak_abs=%s",
-                session_id,
-                len(text),
-                reason.value,
-                result.rescue_rms,
-                result.rescue_peak_abs,
-            )
-            return
-        committed = context.asr.last_committed_sample
-        if result.capture_end_sample <= committed:
-            # Silent early-return here starved a weather turn with zero ERROR
-            # (2026-09-03 epoch 1361). Keep the gate, but make it audible.
-            logger.warning(
-                "media live-query recovery skipped: already committed "
-                "session=%s reason=%s text_len=%s samples=%s-%s committed=%s",
-                session_id,
-                reason.value,
-                len(text),
-                result.capture_start_sample,
-                result.capture_end_sample,
-                committed,
-            )
-            return
-        if (
-            reason is ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING
-            and committed - result.capture_start_sample
-            > result.capture_end_sample - committed
-        ):
-            # The straddles_committed_without_timing shape has no complete word
-            # timings, so the text cannot be cut at the watermark: what remains
-            # of the result is its audio only if most of that audio is still
-            # uncommitted.  When the final is mostly audio that was already
-            # committed and answered, adopting its text re-answers that audio as
-            # a second turn.  Real session 2026-09-14 epoch 1946 asked the next
-            # day's weather once, the offline rescue of that same audio arrived
-            # as a second 20-character transcript, and the adopted text
-            # preempted the pending first answer.
-            logger.warning(
-                "media live-query recovery dropped: final is mostly committed "
-                "session=%s reason=%s text_len=%s samples=%s-%s committed=%s",
-                session_id,
-                reason.value,
-                len(text),
-                result.capture_start_sample,
-                result.capture_end_sample,
-                committed,
-            )
-            return
-        adjusted_start = max(committed, result.capture_start_sample)
-        adjusted = replace(
-            result,
-            capture_start_sample=adjusted_start,
-        )
-        context.pending.admitted_input_stream_epoch = adjusted.stream_epoch
-        segment = asr_result_to_segment(adjusted, session_id=session_id)
-        if context.runtime.speech_timeline.can_add(segment):
-            if context.runtime.ingest_media_speech_segment(segment):
-                await self._apply_projection_segment(context, segment)
-                if (
-                    not self._stream_epoch_is_current(context, adjusted.stream_epoch)
-                    or self._asr_precedes_pending_turn(context, adjusted)
-                ):
-                    return
-                task_epoch, context_version = self._event_versions(
-                    context, context.runtime.fence
-                )
-                await self.bridge.emit_transcript(
-                    session_id,
-                    segment,
-                    task_epoch=task_epoch,
-                    context_version=context_version,
-                )
-            else:
-                logger.warning(
-                    "media live-query recovery ingest failed session=%s reason=%s "
-                    "text_len=%s samples=%s-%s",
-                    session_id,
-                    reason.value,
-                    len(text),
-                    adjusted.capture_start_sample,
-                    adjusted.capture_end_sample,
-                )
-        else:
-            logger.warning(
-                "media live-query recovery can_add failed session=%s reason=%s "
-                "text_len=%s samples=%s-%s",
-                session_id,
-                reason.value,
-                len(text),
-                adjusted.capture_start_sample,
-                adjusted.capture_end_sample,
-            )
-        if (
-            not self._stream_epoch_is_current(context, adjusted.stream_epoch)
-            or self._asr_precedes_pending_turn(context, adjusted)
-        ):
-            return
-        # A farewell is terminal even when overlap/echo makes the same ASR
-        # final also resemble a live lookup.  Device shutdown must win over
-        # any tool intent so a trailing "再见" cannot trigger another reply.
-        if close_needed:
-            self._observe_final_asr_result(context, adjusted)
-            self._maybe_early_commit_conversation_close(context, adjusted)
-            if context.pending.turn_endpoint_sample is not None:
-                self._schedule_turn_commit(context)
-            return
-        context.pending.live_query_forced_text = text
-        if reason is ASRDecisionReason.CROSS_SENTENCE_OVERLAP:
-            # The blocking interval's text (e.g. playback echo) stays on the
-            # in-range timeline, so the recovered text must win commit-time
-            # resolution unconditionally rather than by length.
-            context.pending.live_query_forced_authoritative = True
-        # Forced text is already the authoritative commit text. Always observe
-        # turn bounds; re-arm/commit only when no reply is already in flight.
-        self._observe_final_asr_result(context, adjusted)
-        if context.pending.live_query_forced_authoritative:
-            if self._reply_in_flight(context):
-                logger.warning(
-                    "media live-query recovery arm skipped: reply in flight "
-                    "session=%s text_len=%s samples=%s-%s",
-                    session_id,
-                    len(text),
-                    adjusted.capture_start_sample,
-                    adjusted.capture_end_sample,
-                )
-            else:
-                self._arm_live_query_forced_endpoint(context, adjusted)
-
-    @staticmethod
-    def _rejected_rescue_is_low_energy(
-        context: _MediaVoiceSession,
-        result: ASRResult,
-        reason: ASRDecisionReason,
-    ) -> bool:
-        """Reject rescue farewells whose audio lacks speech evidence.
-
-        Both recovered rejection shapes qualify: a straddling rescue final is
-        just as unverified as an overlapping one.  Prefer the energy measured
-        on the rescued segment itself; the provider's current task snapshot
-        is a fallback that may already describe a later task.
-        """
-
-        if (
-            reason
-            not in (
-                ASRDecisionReason.CROSS_SENTENCE_OVERLAP,
-                ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING,
-            )
-            or not result.rescue_synthesized
-        ):
-            return False
-        if result.rescue_rms is not None and result.rescue_peak_abs is not None:
-            return (
-                result.rescue_rms < _CLOSE_RECOVERY_MIN_RESCUE_RMS
-                and result.rescue_peak_abs < _CLOSE_RECOVERY_MIN_RESCUE_PEAK_ABS
-            )
-        snapshot_getter = getattr(context.provider, "current_asr_audio_task_snapshot", None)
-        snapshot = snapshot_getter() if callable(snapshot_getter) else None
-        if snapshot is None or snapshot.task_epoch != result.task_epoch:
-            return False
-        rms = snapshot.rms
-        peak_abs = snapshot.peak_abs
-        if rms is None or peak_abs is None:
-            return False
-        rescue = getattr(getattr(context.provider, "config", None), "rescue_config", None)
-        if rescue is None:
-            rescue = getattr(
-                getattr(getattr(context.provider, "_asr", None), "config", None),
-                "rescue_config",
-                None,
-            )
-        min_rms = int(getattr(rescue, "min_rms", 100))
-        min_peak_abs = int(getattr(rescue, "min_peak_abs", 350))
-        return bool(rms < min_rms and peak_abs < min_peak_abs)
-
-    def _log_asr_rejection(
-        self,
-        session_id: str,
-        result: ASRResult,
-        reason: ASRDecisionReason,
-        *,
-        stage: str,
-        overlap: ASROverlapEvidence | None = None,
-    ) -> None:
-        # Diagnostics: a dropped provider result is otherwise metric-only.  A
-        # final rejection is loud; partial revisions stay at INFO because they
-        # are expected churn on a healthy stream.  A rejected final also says
-        # whether it was a spoken stop heard during playback (no text).
-        level = logging.WARNING if result.is_final else logging.INFO
-        context = self._sessions.get(session_id)
-        diagnosis = (
-            self._playback_stop_diagnosis(context, result)
-            if result.is_final and context is not None
-            else ""
-        )
-        logger.log(
-            level,
-            "media ASR result rejected session=%s stage=%s reason=%s is_final=%s "
-            "text_len=%s task_epoch=%s stream_epoch=%s samples=%s-%s "
-            "rescue_synthesized=%s %s overlap=%s",
-            session_id,
-            stage,
-            reason.value,
-            result.is_final,
-            len(result.text),
-            result.task_epoch,
-            result.stream_epoch,
-            result.capture_start_sample,
-            result.capture_end_sample,
-            result.rescue_synthesized,
-            diagnosis,
-            json.dumps(asdict(overlap) if overlap is not None else None, separators=(",", ":")),
-        )
-
-    def _reject_accepted_final(
-        self,
-        session_id: str,
-        result: ASRResult,
-        reason: ASRDecisionReason,
-        *,
-        stage: str,
-    ) -> ASRAcceptDecision:
-        """A result the supervisor accepted but the session dropped; finals were silent."""
-
-        if result.is_final:
-            self._log_asr_rejection(session_id, result, reason, stage=stage)
-        return ASRAcceptDecision(None, reason)
 
     async def _commit_final_before_tail(self, context: _MediaVoiceSession) -> bool:
         """Commit an accepted final of this turn before the tail timeout drops it.

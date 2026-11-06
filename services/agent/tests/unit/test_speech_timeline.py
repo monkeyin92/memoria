@@ -72,6 +72,20 @@ def test_late_text_straddling_a_committed_turn_requires_a_normalized_tail() -> N
     assert timeline.projected_text(stream_epoch=1, start_sample=320, end_sample=640) == "新文字"
 
 
+def test_projected_text_can_drop_a_previous_segment_crossing_the_turn_start() -> None:
+    timeline = SpeechTimeline()
+    timeline.add(segment("old", start=0, end=640, text="旧受害文本"))
+    timeline.add(segment("current", start=320, end=960, text="我同学被别人打了"))
+
+    assert timeline.projected_text(stream_epoch=1, start_sample=320, end_sample=960) == "旧受害文本 我同学被别人打了"
+    assert timeline.projected_text(
+        stream_epoch=1,
+        start_sample=320,
+        end_sample=960,
+        exclude_cross_boundary=True,
+    ) == "我同学被别人打了"
+
+
 def test_same_logical_version_is_idempotent_except_for_final_upgrade() -> None:
     timeline = SpeechTimeline()
     partial = segment(
