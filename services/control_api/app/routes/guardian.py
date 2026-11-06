@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import hmac
 import secrets
 import uuid
@@ -16,7 +15,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.archive.domain import (
-    EvidenceEvent,
     EvidenceNotFoundError,
     LifeArchivePort,
     RawVoiceConsentRequiredError,
@@ -42,6 +40,16 @@ from services.control_api.app.guardian_binding_authority import (
     person_grant_body_matches,
     require_binding_owner_for_subject,
     sync_bound_subject_authority,
+)
+from services.control_api.app.guardian_payloads import (
+    active_link_or_403,
+    binding_code,
+    binding_digest,
+    consent_payload,
+    link_payload,
+    person_consent_payload,
+    record_link_event,
+    require_wechat_guardian,
 )
 from services.control_api.app.guardian_push import resolve_minor_display_name
 from services.control_api.app.guardian_recap import (
@@ -88,13 +96,10 @@ from services.guardian.domain import (
     AgeEvidenceStatus,
     BirthYearBand,
     ConsentKind,
-    ConsentRecord,
     GuardianAccessDeniedError,
     GuardianConflictError,
-    GuardianLink,
     GuardianNotFoundError,
     GuardianStorePort,
-    PersonConsentRecord,
     Relation,
     SubjectCategory,
     SubjectTransitionError,
@@ -259,132 +264,10 @@ def _require_idempotency_key(value: str | None) -> str:
     return normalized
 
 
-def _binding_code(
-    request: Request,
-    *,
-    guardian_user_id: str,
-    minor_user_id: str,
-    idempotency_key: str,
-) -> str:
-    secret = _settings(request).memoria_auth_secret.get_secret_value().encode("utf-8")
-    digest = hmac.new(
-        secret,
-        (
-            "memoria:guardian-binding-v1\0"
-            f"{guardian_user_id}\0{minor_user_id}\0{idempotency_key}"
-        ).encode(),
-        hashlib.sha256,
-    ).digest()
-    return f"{int.from_bytes(digest[:8], 'big') % 100_000_000:08d}"
-
-
-def _binding_digest(code: str) -> str:
-    return hashlib.sha256(f"memoria:guardian-binding-v1\0{code}".encode()).hexdigest()
-
-
-def _require_wechat_guardian(request: Request, user: AuthenticatedUser) -> None:
-    require_capability_for_subject(user, "guardian_manage", store=_profiles(request))
-    if not _profiles(request).has_external_identity(
-        user_id=user.user_id,
-        provider="wechat_openid",
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "guardian_wechat_identity_required"},
-        )
-
-
-def _link_payload(request: Request, link: GuardianLink, *, actor_user_id: str) -> dict[str, Any]:
-    minor = _profiles(request).get_subject_profile(user_id=link.minor_user_id) or {}
-    return {
-        "link_id": link.link_id,
-        "guardian_user_id": link.guardian_user_id,
-        "minor_user_id": link.minor_user_id,
-        "minor_display_name": str(minor.get("display_name") or "孩子"),
-        "relation": link.relation,
-        "status": link.status,
-        "verified_via": link.verified_via,
-        "actor_role": "guardian" if actor_user_id == link.guardian_user_id else "minor",
-        "binding_expires_at": link.binding_expires_at.isoformat(),
-        "created_at": link.created_at.isoformat(),
-        "activated_at": link.activated_at.isoformat() if link.activated_at else None,
-        "revoked_at": link.revoked_at.isoformat() if link.revoked_at else None,
-    }
-
-
-def _consent_payload(record: ConsentRecord) -> dict[str, Any]:
-    return {
-        "consent_id": record.consent_id,
-        "link_id": record.link_id,
-        "consent_kind": record.consent_kind,
-        "policy_version": record.policy_version,
-        "granted_at": record.granted_at.isoformat(),
-        "expires_at": record.expires_at.isoformat() if record.expires_at else None,
-        "revoked_at": record.revoked_at.isoformat() if record.revoked_at else None,
-        "active": record.active,
-    }
-
-
-def _person_consent_payload(record: PersonConsentRecord) -> dict[str, Any]:
-    return {
-        "consent_id": record.consent_id,
-        "subject_person_id": record.subject_person_id,
-        "grantor_person_id": record.grantor_person_id,
-        "consent_kind": record.consent_kind,
-        "policy_version": record.policy_version,
-        "granted_at": record.granted_at.isoformat(),
-        "expires_at": record.expires_at.isoformat() if record.expires_at else None,
-        "revoked_at": record.revoked_at.isoformat() if record.revoked_at else None,
-        "active": record.active,
-        "basis": "binding_owner_declaration",
-    }
-
-
 def _deletion_confirmed(confirmation: str) -> bool:
     # compare_digest rejects non-ASCII str, and the phrase is Chinese.
     return secrets.compare_digest(
         confirmation.encode("utf-8"), _DELETE_CONFIRMATION.encode("utf-8")
-    )
-
-
-async def _active_link_or_403(
-    request: Request,
-    *,
-    guardian_user_id: str,
-    minor_user_id: str,
-) -> GuardianLink:
-    link = await _store(request).active_link(
-        guardian_user_id=guardian_user_id,
-        minor_user_id=minor_user_id,
-    )
-    if link is None:
-        raise HTTPException(status_code=403, detail={"code": "guardian_link_required"})
-    return link
-
-
-async def _record_link_event(
-    request: Request,
-    *,
-    link: GuardianLink,
-    event_type: str,
-    event_id: str,
-    occurred_at: datetime,
-) -> None:
-    await _archive(request).record(
-        EvidenceEvent(
-            event_id=event_id,
-            account_id=link.minor_user_id,
-            event_type=event_type,
-            occurred_at=occurred_at,
-            speaker_class="system",
-            source="guardian.link",
-            payload={
-                "link_id": link.link_id,
-                "relation": link.relation,
-                "verified_via": link.verified_via,
-                "status": link.status,
-            },
-        )
     )
 
 
@@ -418,14 +301,14 @@ async def create_link(
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     key = _require_idempotency_key(idempotency_key)
     if body.minor_user_id == user.user_id:
         raise HTTPException(status_code=422, detail={"code": "guardian_self_link_forbidden"})
     target = _profiles(request).get_subject_profile(user_id=body.minor_user_id)
     if target is None:
         raise HTTPException(status_code=404, detail={"code": "minor_account_not_found"})
-    code = _binding_code(
+    code = binding_code(
         request,
         guardian_user_id=user.user_id,
         minor_user_id=body.minor_user_id,
@@ -446,7 +329,7 @@ async def create_link(
                 minor_user_id=body.minor_user_id,
                 relation=body.relation,
                 verified_via="wechat_identity",
-                binding_code_hash=_binding_digest(code),
+                binding_code_hash=binding_digest(code),
                 binding_expires_at=now + _BINDING_TTL,
                 now=now,
             )
@@ -456,7 +339,7 @@ async def create_link(
             or link.relation != body.relation
         ):
             raise GuardianConflictError("idempotency key was reused for another guardian link")
-        await _record_link_event(
+        await record_link_event(
             request,
             link=link,
             event_type="guardian.link_created",
@@ -465,7 +348,7 @@ async def create_link(
         )
     except GuardianConflictError as exc:
         raise HTTPException(status_code=409, detail={"code": "guardian_link_conflict"}) from exc
-    payload = _link_payload(request, link, actor_user_id=user.user_id)
+    payload = link_payload(request, link, actor_user_id=user.user_id)
     payload["binding_code"] = code
     return payload
 
@@ -478,7 +361,7 @@ async def list_links(
     links = await _store(request).list_links_for_actor(actor_user_id=user.user_id)
     return {
         "items": [
-            _link_payload(request, link, actor_user_id=user.user_id) for link in links
+            link_payload(request, link, actor_user_id=user.user_id) for link in links
         ]
     }
 
@@ -555,7 +438,7 @@ async def guardian_notifications(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     notifications = await _notification_store(request).guardian_notifications(
         guardian_user_id=user.user_id,
         limit=limit,
@@ -568,7 +451,7 @@ async def unread_guardian_notifications(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     unread = await _notification_store(request).unread_guardian_notifications(
         guardian_user_id=user.user_id,
     )
@@ -584,7 +467,7 @@ async def guardian_notification(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     try:
         notification = await _notification_store(request).guardian_notification(
             guardian_user_id=user.user_id,
@@ -604,7 +487,7 @@ async def mark_guardian_notification_read(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     try:
         read_at = await _notification_store(request).mark_guardian_notification_read(
             guardian_user_id=user.user_id,
@@ -659,7 +542,7 @@ async def guardian_push_subscription_status(
     zeroes the server balance so we stop sending pushes.
     """
 
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     settings = _settings(request)
     template_id = settings.wechat_subscribe_crisis_template_id.strip()
     if not template_id:
@@ -697,7 +580,7 @@ async def record_guardian_push_subscription(
     WeChat identity, so a client can never direct alerts to another user.
     """
 
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     settings = _settings(request)
     template_id = settings.wechat_subscribe_crisis_template_id.strip()
     if not settings.guardian_push_enabled or not template_id:
@@ -749,7 +632,7 @@ async def confirm_link(
     if body.birth_year_band not in {"under_14", "14_17"}:
         raise HTTPException(status_code=422, detail={"code": "minor_age_band_required"})
     now = _now()
-    digest = _binding_digest(body.binding_code)
+    digest = binding_digest(body.binding_code)
     try:
         current = await _store(request).get_link(
             link_id=link_id,
@@ -803,7 +686,7 @@ async def confirm_link(
                 detail={"code": "minor_restricted_asset_cleanup_incomplete"},
             ) from exc
         await _terminator(request).terminate_account(user.user_id)
-        await _record_link_event(
+        await record_link_event(
             request,
             link=link,
             event_type="guardian.link_confirmed",
@@ -818,7 +701,7 @@ async def confirm_link(
             detail={"code": "guardian_link_confirmation_rejected"},
         ) from exc
     return {
-        "link": _link_payload(request, link, actor_user_id=user.user_id),
+        "link": link_payload(request, link, actor_user_id=user.user_id),
         "subject": {
             "subject_category": updated["subject_category"],
             "birth_year_band": updated["birth_year_band"],
@@ -836,7 +719,7 @@ async def grant_consent(
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     key = _require_idempotency_key(idempotency_key)
     event_id = f"guardian-consent-grant:{_idempotency_uuid('guardian-consent', key)}"
     now = _now()
@@ -862,7 +745,7 @@ async def grant_consent(
         raise HTTPException(status_code=403, detail={"code": "guardian_link_required"}) from exc
     except GuardianConflictError as exc:
         raise HTTPException(status_code=409, detail={"code": "guardian_consent_conflict"}) from exc
-    return _consent_payload(consent)
+    return consent_payload(consent)
 
 
 @router.get("/links/{link_id}/consents")
@@ -878,7 +761,7 @@ async def list_consents(
         )
     except GuardianNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"code": "guardian_link_not_found"}) from exc
-    return {"items": [_consent_payload(record) for record in records]}
+    return {"items": [consent_payload(record) for record in records]}
 
 
 @router.delete("/links/{link_id}/consents/{consent_id}")
@@ -889,7 +772,7 @@ async def revoke_consent(
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     key = _require_idempotency_key(idempotency_key)
     try:
         current = await _store(request).get_consent(
@@ -926,7 +809,7 @@ async def revoke_consent(
         raise HTTPException(status_code=403, detail={"code": "guardian_link_required"}) from exc
     except GuardianConflictError as exc:
         raise HTTPException(status_code=409, detail={"code": "guardian_consent_conflict"}) from exc
-    return _consent_payload(consent)
+    return consent_payload(consent)
 
 
 @router.post(
@@ -948,7 +831,7 @@ async def grant_person_consent(
     same record is then read by the policy gates through ``active_consent``.
     """
 
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     key = _require_idempotency_key(idempotency_key)
     await require_binding_owner_for_subject(
         request,
@@ -966,7 +849,7 @@ async def grant_person_consent(
         replayed = None
     if replayed is not None:
         if person_grant_body_matches(replayed, body):
-            return _person_consent_payload(replayed)
+            return person_consent_payload(replayed)
         raise HTTPException(
             status_code=409, detail={"code": "guardian_consent_conflict"}
         )
@@ -1007,7 +890,7 @@ async def grant_person_consent(
         granted=True,
         source_key=consent.consent_id,
     )
-    return _person_consent_payload(consent)
+    return person_consent_payload(consent)
 
 
 @router.get("/minors/{person_id}/consents")
@@ -1016,7 +899,7 @@ async def list_person_consents(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     await require_binding_owner_for_subject(
         request,
         user=user,
@@ -1026,7 +909,7 @@ async def list_person_consents(
         subject_person_id=person_id,
         actor_person_id=user.user_id,
     )
-    return {"items": [_person_consent_payload(record) for record in records]}
+    return {"items": [person_consent_payload(record) for record in records]}
 
 
 @router.delete("/minors/{person_id}/consents/{consent_id}")
@@ -1046,7 +929,7 @@ async def revoke_person_consent(
     recorded grantor revokes it or the subject lineage is deleted (P2-03).
     """
 
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     key = _require_idempotency_key(idempotency_key)
     # Deliberately no ACTIVE-binding prerequisite: unbinding must never strand
     # a consent without a revoke entry.  The person-scoped store still proves
@@ -1085,7 +968,7 @@ async def revoke_person_consent(
         granted=False,
         source_key=consent.consent_id,
     )
-    return _person_consent_payload(consent)
+    return person_consent_payload(consent)
 
 
 async def _guardian_evidence_account(
@@ -1108,7 +991,7 @@ async def _guardian_evidence_account(
         )
         evidence_account_id = user.user_id
     else:
-        await _active_link_or_403(
+        await active_link_or_403(
             request,
             guardian_user_id=user.user_id,
             minor_user_id=minor_user_id,
@@ -1134,7 +1017,7 @@ async def weekly_summary(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
     week_start: Annotated[date | None, Query()] = None,
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     evidence_account_id = await _guardian_evidence_account(
         request, user=user, minor_user_id=minor_user_id
     )
@@ -1173,7 +1056,7 @@ async def _child_turns(
 ) -> tuple[list[Any], ZoneInfo]:
     """The child's consented turns of the last 90 days (guardian access already proven)."""
 
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     evidence_account_id = await _guardian_evidence_account(
         request, user=user, minor_user_id=minor_user_id
     )
@@ -1323,7 +1206,7 @@ async def _child_memory_account(
     guardian link carries summaries and reports, not the child's memory.
     """
 
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     if not await owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
         raise HTTPException(
             status_code=403, detail={"code": "guardian_memory_review_unavailable"}
@@ -1757,7 +1640,7 @@ async def export_minor(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> JSONResponse:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     if await owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
         # A child with no account: the device stored their turns under the
         # binding owner's account, attributed to the child. Export exactly
@@ -1772,7 +1655,7 @@ async def export_minor(
                 "Cache-Control": "no-store",
             },
         )
-    await _active_link_or_403(
+    await active_link_or_403(
         request,
         guardian_user_id=user.user_id,
         minor_user_id=minor_user_id,
@@ -1801,7 +1684,7 @@ async def delete_minor(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     if await owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
         # Their rows live in the binding owner's account: erase exactly the
         # child's, never the parent's (account deletion is account-wide).
@@ -1828,7 +1711,7 @@ async def delete_minor(
             raise HTTPException(
                 status_code=503, detail={"code": "child_data_deletion_incomplete"}
             ) from exc
-    await _active_link_or_403(
+    await active_link_or_403(
         request,
         guardian_user_id=user.user_id,
         minor_user_id=minor_user_id,
