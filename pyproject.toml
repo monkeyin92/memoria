@@ -144,5 +144,5 @@ show_missing = true
 "services/control_api/app/routes/guardian.py" = 1638
 "services/agent/src/voice_core/media_session_commit.py" = 1872
 "services/agent/src/providers/doubao_tts.py" = 1456
-"services/agent/src/voice_core/media_session_output_stream.py" = 1621
+"services/agent/src/voice_core/media_session_output_stream.py" = 1451
 "services/agent/src/voice_core/media_session_playback_stop.py" = 1503
