@@ -239,6 +239,23 @@ class ExistingVoiceProviderAdapter:
         audio_start = getattr(asr, "task_audio_start_sample", None)
         audio_end = getattr(asr, "task_audio_end_sample", None)
         send_count = int(getattr(asr, "task_audio_send_count", 0))
+        # A provider task can be replaced while the ingress callback is still
+        # draining the old task's PCM. Treat that mixed snapshot as stale
+        # evidence instead of allowing the metadata value object to tear down
+        # the bridge request loop.
+        if (
+            audio_start is not None
+            and audio_end is not None
+            and (audio_start < task_sample_origin or audio_end <= audio_start)
+        ):
+            logger.warning(
+                "discarding stale provider ASR audio snapshot task_epoch=%s origin=%s start=%s end=%s",
+                task_epoch,
+                task_sample_origin,
+                audio_start,
+                audio_end,
+            )
+            return None
         if audio_start is None or audio_end is None or send_count < 1:
             audio_start = None
             audio_end = None

@@ -21,6 +21,7 @@ from services.agent.src.providers.volc_protocol import (
     FULL_CLIENT_REQUEST,
     FULL_SERVER_RESPONSE,
     SERVER_ERROR_RESPONSE,
+    VolcTranscript,
     build_full_client_request,
     parse_frame,
 )
@@ -158,6 +159,20 @@ def _sequence_of_connections(connections: list[FakeVolcConnection]) -> Any:
 
 async def _next_event(session: VolcASRSession) -> Any:
     return await asyncio.wait_for(session.events.get(), timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_cumulative_partials_share_one_sentence_id() -> None:
+    session = VolcASRSession(_config(_one_connection(FakeVolcConnection())))
+
+    await session._emit_transcript(VolcTranscript("我想", False, 0, 200), final=False)
+    await session._emit_transcript(VolcTranscript("我想拿刀", False, 0, 500), final=False)
+    await session._emit_transcript(VolcTranscript("我想拿刀划自己", False, 0, 900), final=True)
+
+    events = [await _next_event(session) for _ in range(3)]
+    assert [event.sentence.sentence_id for event in events] == [1, 1, 1]
+    assert [event.sentence.text for event in events] == ["我想", "我想拿刀", "我想拿刀划自己"]
+    await session.aclose()
 
 
 def _pcm(samples: int = 1600, amplitude: int = 200) -> bytes:

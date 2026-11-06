@@ -115,6 +115,7 @@ class PendingTurn:
     turn_commit_retry_stream_epoch: int | None = None
     turn_commit_retry_endpoint_sample: int | None = None
     pending_partial: ASRResult | None = None
+    last_accepted_final: ASRResult | None = None
     clock_fact_partial_text: str | None = None
     clock_fact_partial_stable_since: float | None = None
     # When set, a clock/date final already chose the turn endpoint; later VAD
@@ -226,6 +227,7 @@ class PendingTurn:
         self.warmed_commit_text = None
         self.committed_asr_keys.clear()
         self.pending_partial = None
+        self.last_accepted_final = None
         self.clock_fact_partial_text = None
         self.clock_fact_partial_stable_since = None
         self.clock_fact_endpoint_pinned = None

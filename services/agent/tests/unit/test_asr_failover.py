@@ -747,6 +747,7 @@ async def test_reset_for_gap_discards_the_old_task_and_arms_the_next() -> None:
     await session.send_pcm(_pcm(), capture_start_sample=0)
     await session.reset_for_gap()
     assert primaries[0].closed is True
+    assert len(primaries) == 2
     assert session.degraded is False
 
     await session.send_pcm(_pcm(), capture_start_sample=5 * 16_000)

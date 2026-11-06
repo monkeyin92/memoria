@@ -316,6 +316,7 @@ class FailoverASRSession:
         self._last_sent_sample = 0
         self._last_committed_sample = 0
         self._rotation_pending = False
+        self._gap_primary_ready = False
         self._segment_start: int | None = None
         self._segment_end: int | None = None
         self._segment_pcm = bytearray()
@@ -658,6 +659,13 @@ class FailoverASRSession:
         self._segment_epoch += 1
         self._task_sample_origin = start
         self._reset_task_evidence()
+        if self._gap_primary_ready:
+            self._gap_primary_ready = False
+            primary = self._primary
+            if primary is not None:
+                self.task_id = primary.task_id or self.task_id
+                self._task_epoch = max(self._task_epoch, primary.task_epoch)
+            return
         if self._primary is not None and not self._degraded:
             self.task_id = self._primary.task_id or self.task_id
             self._task_epoch = max(self._task_epoch, self._primary.task_epoch)
@@ -1079,6 +1087,7 @@ class FailoverASRSession:
         self._degraded = False
         self._degrade_reason = None
         self._rotation_pending = True
+        self._gap_primary_ready = await self._open_primary(segment_is_healthy=True)
         self._finalize_at = None
         self._reset_segment_evidence()
         logger.info("asr failover reset for upstream gap task_epoch=%s", self._task_epoch)
