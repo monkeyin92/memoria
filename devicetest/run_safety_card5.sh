@@ -6,7 +6,7 @@ STAMP=$(date +%Y%m%d-%H%M%S)
 OUT="devicetest/safety-${STAMP}-${TAG}"
 # voice_soak_tapwake creates OUT itself (exist_ok=False); only mkdir replies after
 PORT=$(ls /dev/cu.usbmodem* 2>/dev/null | head -1)
-EXPECT_VOL=30
+EXPECT_VOL=40
 SCENARIO=devicetest/scenarios/safety_tiers_5x.json
 BANK=devicetest/safety-bank
 echo "planned_out=$OUT port=$PORT vol=$EXPECT_VOL $(date '+%F %T')"
