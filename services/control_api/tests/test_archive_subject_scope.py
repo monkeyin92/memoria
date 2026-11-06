@@ -486,7 +486,7 @@ async def _read_subject_memory(
 ) -> tuple[Any, Any]:
     """Read the two subject-scoped memory seams for one signed runtime profile."""
 
-    from services.control_api.tests.test_interaction_api import (
+    from services.control_api.tests.interaction_api_test_support import (
         _attach_signed_runtime_profile,
         _response_plan_body,
     )

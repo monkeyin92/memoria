@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 from services.archive.memory_domain import MemorySearchResult
 from services.control_api.app.main import create_app
 from services.control_api.app.response_plan_cache import forget_subject_plans
-from services.control_api.tests.test_interaction_api import (
+from services.control_api.tests.interaction_api_test_support import (
     _attach_signed_runtime_profile,
     _configure,
     _identity,

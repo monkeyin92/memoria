@@ -14,7 +14,7 @@ from packages.contracts.generated.python.multi_subject_contracts import PolicyRe
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.transactional_effect_commit import fence_fingerprint
 from services.control_api.app.main import create_app
-from services.control_api.tests.test_interaction_api import (
+from services.control_api.tests.interaction_api_test_support import (
     _attach_signed_runtime_profile,
     _configure,
     _identity,

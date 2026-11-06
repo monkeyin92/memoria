@@ -53,7 +53,7 @@ from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
 from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
 from services.control_api.app.main import create_app
 from services.control_api.app.subject_verification import ensure_account_person
-from services.control_api.tests.test_interaction_api import _MemoryCatalog
+from services.control_api.tests.interaction_api_test_support import _MemoryCatalog
 from services.guardian.domain import ConsentRecord
 from services.guardian.postgres_store import PostgresGuardianStore
 from services.guardian.tests.test_guardian_postgres_store import (
