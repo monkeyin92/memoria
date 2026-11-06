@@ -566,7 +566,7 @@ async def test_a_restart_between_the_final_and_the_commit_names_what_changed(
     """2026-11-01 device soak run-20261101-152438: 5 of 20 head starts were ``restarted`` at the commit,
     and nothing said which input had moved since the ASR final."""
 
-    caplog.set_level(logging.INFO, logger="services.agent.src.reply_pipeline")
+    caplog.set_level(logging.INFO, logger="services.agent.src.reply_speculation")
     runtime = _runtime(f"speculative-restart-{changed}")
     agent = _pipeline(runtime, _Model())
     await _earlier_turn(runtime, agent)

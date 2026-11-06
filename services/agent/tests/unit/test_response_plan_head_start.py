@@ -13,7 +13,7 @@ import logging
 from typing import Any
 
 import pytest
-from services.agent.src import reply_pipeline
+from services.agent.src import reply_warmup
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.llm_types import StopResponse
@@ -117,7 +117,7 @@ def _outcomes(caplog: pytest.LogCaptureFixture) -> list[str]:
 async def test_the_request_sent_before_the_commit_is_the_one_the_commit_uses(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.INFO, logger="services.agent.src.reply_pipeline")
+    caplog.set_level(logging.INFO, logger="services.agent.src.reply_warmup")
     runtime = _runtime("plan-head-start-used")
     planner = _Planner()
     pipeline = _pipeline(runtime, planner)
@@ -132,7 +132,7 @@ async def test_the_request_sent_before_the_commit_is_the_one_the_commit_uses(
 
     asked = planner.requests[1:]
     assert len(asked) == 1, "one request, sent before the commit and used by it"
-    assert asked[0]["task"] == reply_pipeline.EARLY_RESPONSE_PLAN_TASK_NAME
+    assert asked[0]["task"] == reply_warmup.EARLY_RESPONSE_PLAN_TASK_NAME
     assert asked[0]["fence"] == fence
     assert asked[0]["recall_context"] == (EARLIER,)
     plan = pipeline.response_plans.get(fence)
@@ -210,7 +210,7 @@ async def test_a_head_start_for_another_sentence_is_not_used() -> None:
 async def test_a_fence_that_moves_before_the_commit_gets_its_own_request(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    caplog.set_level(logging.INFO, logger="services.agent.src.reply_pipeline")
+    caplog.set_level(logging.INFO, logger="services.agent.src.reply_warmup")
     runtime = _runtime("plan-head-start-fence-moved")
 
     async def close_verdict(_text: str) -> bool:
@@ -227,7 +227,7 @@ async def test_a_fence_that_moves_before_the_commit_gets_its_own_request(
 
     assert committed != predicted
     assert [r["fence"] for r in planner.requests] == [predicted, committed]
-    assert planner.requests[1]["task"] != reply_pipeline.EARLY_RESPONSE_PLAN_TASK_NAME
+    assert planner.requests[1]["task"] != reply_warmup.EARLY_RESPONSE_PLAN_TASK_NAME
     plan = pipeline.response_plans.get(committed)
     assert plan is not None and plan.fence == committed
     assert _outcomes(caplog) == ["other_fence"]

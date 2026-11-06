@@ -102,6 +102,43 @@ def test_post_watermark_exact_repeat_of_committed_text_is_kept() -> None:
     assert decision.accepted.text == _OTHER
 
 
+def test_post_watermark_final_peels_committed_clauses_beyond_short_history() -> None:
+    """Long sessions must peel an older clause from a cumulative provider final."""
+
+    supervisor = ASRStreamSupervisor()
+    supervisor.start_task()
+    supervisor.record_audio(start_sample=0, frame_samples=32_000)
+    committed = tuple(f"历史句{i}" for i in range(10))
+
+    for index, text in enumerate(committed):
+        result = ASRResult(
+            1,
+            f"history-{index}",
+            index + 1,
+            index * 1_600,
+            (index + 1) * 1_600,
+            text,
+            True,
+        )
+        decision = supervisor.accept_result(result, session_id="session")
+        assert decision.accepted is not None
+        supervisor.mark_committed((index + 1) * 1_600)
+
+    cumulative = ASRResult(
+        1,
+        "current",
+        99,
+        16_000,
+        19_200,
+        f"{committed[0]}{committed[-1]}当前句",
+        True,
+    )
+    decision = supervisor.accept_result(cumulative, session_id="session")
+
+    assert decision.accepted is not None
+    assert decision.accepted.text == "当前句"
+
+
 @pytest.mark.asyncio
 async def test_dense_victim_then_other_commit_does_not_inherit_victim_text(
     device_media_session: Any,

@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from services.agent.src import reply_pipeline
+from services.agent.src import reply_pipeline, reply_warmup
 from services.agent.src.contracts.ids import CancellationContext
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.handlers import LanguageModelRequest
@@ -259,7 +259,7 @@ async def test_a_failing_memory_fetch_never_blocks_the_reply() -> None:
 
 @pytest.mark.asyncio
 async def test_a_slow_memory_fetch_is_cut_off_at_its_bound(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(reply_pipeline, "_DEVICE_MEMORY_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(reply_warmup, "_DEVICE_MEMORY_TIMEOUT_S", 0.05)
     runtime = _runtime("device-memory-slow")
     planner = _Planner((_memory(),))
 
@@ -412,7 +412,7 @@ async def test_a_fetch_started_before_the_commit_is_the_one_the_commit_uses(
 ) -> None:
     """Round 12 (2026-10-03): the fetch (about 0.42 s) started only after the grace, on the child's wait."""
 
-    caplog.set_level(logging.INFO, logger="services.agent.src.reply_pipeline")
+    caplog.set_level(logging.INFO, logger="services.agent.src.reply_warmup")
     runtime = _runtime("device-memory-warmed")
     planner = _Planner((_memory(),))
 
@@ -464,7 +464,7 @@ async def test_a_warmed_fetch_for_another_sentence_is_not_used(
 ) -> None:
     """A final that grew into a longer sentence, or the wrong one: the commit fetches for its own text."""
 
-    caplog.set_level(logging.INFO, logger="services.agent.src.reply_pipeline")
+    caplog.set_level(logging.INFO, logger="services.agent.src.reply_warmup")
     runtime = _runtime("device-memory-warmed-other-text")
     planner = _Planner((_memory(),))
 
@@ -553,7 +553,7 @@ async def test_a_newer_sentence_replaces_the_warmed_fetch_and_stops_the_old_one(
 async def test_a_warmed_fetch_that_nobody_used_for_a_while_is_not_used(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(reply_pipeline, "_WARMED_MEMORY_MAX_AGE_S", 0.0)
+    monkeypatch.setattr(reply_warmup, "_WARMED_MEMORY_MAX_AGE_S", 0.0)
     runtime = _runtime("device-memory-warmed-stale")
     planner = _Planner((_memory(),))
 
@@ -790,7 +790,7 @@ async def test_vad_reset_without_stronger_confirm_warms_no_private_memory() -> N
 async def test_first_sentence_classify_via_bind_alone_does_not_ground_private_memory(
     caplog: pytest.LogCaptureFixture, reset: bool
 ) -> None:
-    caplog.set_level(logging.INFO, logger="services.agent.src.reply_pipeline")
+    caplog.set_level(logging.INFO, logger="services.agent.src.reply_warmup")
     runtime = _fresh_device_session(f"device-memory-first-sentence-used-{reset}")
     if reset:
         _pending(runtime)

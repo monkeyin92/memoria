@@ -11,8 +11,8 @@ from services.control_api.app.bound_subject import (
     claims_device_bound_subject,
     runtime_profile_trusts_bound_subject,
 )
+from services.control_api.app.response_plan_contract import ResponsePlanSpeakerDecision
 from services.control_api.app.routes.interaction import (
-    ResponsePlanSpeakerDecision,
     _SubjectMemoryScope,
     _trusted_speaker_decision,
 )

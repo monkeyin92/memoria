@@ -10,15 +10,17 @@ import traceback
 import pytest
 from scripts import provider_smoke_test
 from services.agent.src.contracts.ids import GenerationFence
-from services.agent.src.providers import doubao_tts
+from services.agent.src.providers import doubao_tts_support
 from services.agent.src.providers.doubao_tts import (
     DOUBAO_PERSONAL_VOICE_MODEL,
-    DoubaoBeforeAudioError,
-    DoubaoPCMContinuityError,
-    DoubaoTimestampError,
     DoubaoTTS,
     DoubaoTTSConfig,
     DoubaoTTSPool,
+)
+from services.agent.src.providers.doubao_tts_support import (
+    DoubaoBeforeAudioError,
+    DoubaoPCMContinuityError,
+    DoubaoTimestampError,
 )
 from services.agent.src.providers.doubao_voice_catalog import catalog_by_id
 from services.agent.src.providers.provider_errors import (
@@ -1137,7 +1139,7 @@ async def test_a_rejected_account_costs_one_handshake_not_one_per_session() -> N
 
     server = MockDoubaoServer(reject_status=403)
     server.start()
-    latch = doubao_tts.DoubaoAuthLatch(open_s=300.0)
+    latch = doubao_tts_support.DoubaoAuthLatch(open_s=300.0)
     first = DoubaoTTS(_config(server), auth_latch=latch)
     try:
         stream = first.stream(conn_options=APIConnectOptions(max_retry=0))
