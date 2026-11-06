@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hmac
 import uuid
-from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any, Literal, cast
 from zoneinfo import ZoneInfo
@@ -23,7 +22,6 @@ from services.archive.memory_domain import (
     MemorySearchQuery,
 )
 from services.archive.memory_retractions import list_retracted_claims
-from services.common.companion_response_safety import guardian_attention_copy
 from services.control_api.app.account_gate import (
     require_capability_for_account_id,
     require_capability_for_subject,
@@ -38,12 +36,19 @@ from services.control_api.app.guardian_binding_authority import (
     require_binding_owner_for_subject,
     sync_bound_subject_authority,
 )
+from services.control_api.app.guardian_child_data import (
+    child_memory_account,
+    child_turns,
+    consent_reference,
+    guardian_evidence_account,
+)
 from services.control_api.app.guardian_lifecycle import (
     deletion_confirmed,
     disable_minor_restricted_assets,
     erase_child_kind,
     purge_minor_raw_voice,
 )
+from services.control_api.app.guardian_notifications import safety_alert_items
 from services.control_api.app.guardian_payloads import (
     active_link_or_403,
     binding_code,
@@ -54,9 +59,7 @@ from services.control_api.app.guardian_payloads import (
     record_link_event,
     require_wechat_guardian,
 )
-from services.control_api.app.guardian_push import resolve_minor_display_name
 from services.control_api.app.guardian_recap import (
-    child_utterances,
     day_activity,
     recap_for_day,
 )
@@ -89,11 +92,7 @@ from services.guardian.child_memory import (
 )
 from services.guardian.consent import GuardianConsentService
 from services.guardian.corpus import CorpusRetentionService
-from services.guardian.crisis import CrisisNotificationStorePort, GuardianNotification
-from services.guardian.crisis_delivery_receipt import (
-    crisis_delivery_receipt_payload,
-    project_crisis_delivery_receipt,
-)
+from services.guardian.crisis import CrisisNotificationStorePort
 from services.guardian.domain import (
     AgeEvidenceStatus,
     BirthYearBand,
@@ -106,11 +105,6 @@ from services.guardian.domain import (
     SubjectCategory,
     SubjectTransitionError,
     validate_subject_transition,
-)
-from services.guardian.parent_alert import (
-    PARENT_ALERT_COPY,
-    alert_time_label,
-    interrupted_parent_detail,
 )
 from services.guardian.push import PushSubscriptionResult, PushSubscriptionStorePort
 from services.guardian.weekly_report import WeeklyReportProjector
@@ -296,72 +290,6 @@ async def list_links(
     }
 
 
-def _safety_alert_item(
-    notification: GuardianNotification,
-    *,
-    minor_display_name: str,
-    zone: ZoneInfo,
-) -> dict[str, Any]:
-    copy = (
-        PARENT_ALERT_COPY[notification.reply_template_id]
-        if notification.reply_template_id is not None
-        else None
-    )
-    receipt = project_crisis_delivery_receipt(notification)
-    return {
-        "notification_id": notification.notification_id,
-        "minor_user_id": notification.minor_user_id,
-        "minor_display_name": minor_display_name,
-        "occurred_at": notification.created_at.isoformat(),
-        "occurred_label": alert_time_label(notification.created_at, zone),
-        "delivery_status": notification.status,
-        "delivery_receipt": crisis_delivery_receipt_payload(receipt),
-        "channel": notification.channel,
-        "message": guardian_attention_copy(
-            possibly_story_retell=notification.possibly_story_retell
-        ),
-        "category_label": "" if copy is None else copy.category_label,
-        "summary": "" if copy is None else copy.summary,
-        "robot_said": "" if copy is None else copy.robot_said,
-        "parent_action": "" if copy is None else copy.parent_action,
-        "contains_transcript": False,
-        "contains_severity": False,
-    }
-
-
-def _interrupted_detail(notification: GuardianNotification) -> str | None:
-    return interrupted_parent_detail(
-        notification.reply_template_id,
-        script_interrupted=notification.script_interrupted,
-    )
-
-
-async def _safety_alert_items(
-    request: Request,
-    user: AuthenticatedUser,
-    notifications: Sequence[GuardianNotification],
-) -> list[dict[str, Any]]:
-    display_name = resolve_minor_display_name(
-        _profiles(request),
-        getattr(request.app.state, "identity_service", None),
-    )
-    zone = ZoneInfo(_settings(request).memoria_timezone)
-    items: list[dict[str, Any]] = []
-    for item in notifications:
-        payload = _safety_alert_item(
-            item,
-            minor_display_name=str(
-                await display_name(user.user_id, item.minor_user_id) or "TA"
-            ),
-            zone=zone,
-        )
-        detail = _interrupted_detail(item)
-        if detail is not None:
-            payload["detail"] = detail
-        items.append(payload)
-    return items
-
-
 @router.get("/notifications")
 async def guardian_notifications(
     request: Request,
@@ -373,7 +301,7 @@ async def guardian_notifications(
         guardian_user_id=user.user_id,
         limit=limit,
     )
-    return {"items": await _safety_alert_items(request, user, notifications)}
+    return {"items": await safety_alert_items(request, user, notifications)}
 
 
 @router.get("/notifications/unread")
@@ -387,7 +315,7 @@ async def unread_guardian_notifications(
     )
     if unread is None:
         return {"newest": None, "others_count": 0}
-    (newest,) = await _safety_alert_items(request, user, (unread.newest,))
+    (newest,) = await safety_alert_items(request, user, (unread.newest,))
     return {"newest": newest, "others_count": unread.others_count}
 
 
@@ -407,7 +335,7 @@ async def guardian_notification(
         raise HTTPException(
             status_code=404, detail={"code": "guardian_notification_not_found"}
         ) from exc
-    (item,) = await _safety_alert_items(request, user, (notification,))
+    (item,) = await safety_alert_items(request, user, (notification,))
     return item
 
 
@@ -901,45 +829,6 @@ async def revoke_person_consent(
     return person_consent_payload(consent)
 
 
-async def _guardian_evidence_account(
-    request: Request, *, user: AuthenticatedUser, minor_user_id: str
-) -> str:
-    """Whose account holds this child's evidence, once the guardian's access is proven.
-
-    A one-to-one device stores the child's turns in the binding owner's account,
-    attributed to the child; the guardian's views come with the long-term memory the
-    owner ticked for the child (user decision 2026-09-26): switching that off closes
-    them too. A child with an account of their own needs an active guardian link and
-    the weekly-report consent instead.
-    """
-
-    evidence_account_id = minor_user_id
-    if await owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
-        consent = await _store(request).active_consent(
-            minor_user_id=minor_user_id,
-            consent_kind="memory_retention",
-        )
-        evidence_account_id = user.user_id
-    else:
-        await active_link_or_403(
-            request,
-            guardian_user_id=user.user_id,
-            minor_user_id=minor_user_id,
-        )
-        require_capability_for_account_id(
-            minor_user_id,
-            "guardian_weekly_report",
-            store=_profiles(request),
-        )
-        consent = await _store(request).active_consent(
-            minor_user_id=minor_user_id,
-            consent_kind="weekly_report",
-        )
-    if consent is None:
-        raise HTTPException(status_code=403, detail={"code": "guardian_consent_required"})
-    return evidence_account_id
-
-
 @router.get("/minors/{minor_user_id}/summary")
 async def weekly_summary(
     minor_user_id: str,
@@ -948,7 +837,7 @@ async def weekly_summary(
     week_start: Annotated[date | None, Query()] = None,
 ) -> dict[str, Any]:
     require_wechat_guardian(request, user)
-    evidence_account_id = await _guardian_evidence_account(
+    evidence_account_id = await guardian_evidence_account(
         request, user=user, minor_user_id=minor_user_id
     )
     zone = ZoneInfo(_settings(request).memoria_timezone)
@@ -978,31 +867,6 @@ async def weekly_summary(
     return report.public_payload()
 
 
-_RECAP_LOOKBACK_DAYS = 90
-
-
-async def _child_turns(
-    request: Request, *, user: AuthenticatedUser, minor_user_id: str
-) -> tuple[list[Any], ZoneInfo]:
-    """The child's consented turns of the last 90 days (guardian access already proven)."""
-
-    require_wechat_guardian(request, user)
-    evidence_account_id = await _guardian_evidence_account(
-        request, user=user, minor_user_id=minor_user_id
-    )
-    zone = ZoneInfo(_settings(request).memoria_timezone)
-    now = _now()
-    events = await _archive(request).evidence_window(
-        account_id=evidence_account_id,
-        subject_id=minor_user_id,
-        occurred_after=now - timedelta(days=_RECAP_LOOKBACK_DAYS),
-        occurred_before=now,
-        event_types=("speech.utterance_finalized",),
-        limit=10_000,
-    )
-    return child_utterances(events, subject_id=minor_user_id, zone=zone), zone
-
-
 @router.get("/minors/{minor_user_id}/days")
 async def child_days(
     minor_user_id: str,
@@ -1012,7 +876,7 @@ async def child_days(
 ) -> dict[str, Any]:
     """Which days the child talked, newest first. Counts only: no words, no recap."""
 
-    utterances, _ = await _child_turns(request, user=user, minor_user_id=minor_user_id)
+    utterances, _ = await child_turns(request, user=user, minor_user_id=minor_user_id)
     return {"items": day_activity(utterances, limit=limit)}
 
 
@@ -1030,7 +894,7 @@ async def child_day_recap(
     stretch of the child's words, or cannot be produced, is a counts-only one.
     """
 
-    utterances, _ = await _child_turns(request, user=user, minor_user_id=minor_user_id)
+    utterances, _ = await child_turns(request, user=user, minor_user_id=minor_user_id)
     day_turns = [item for item in utterances if item.day == recap_day]
     if not day_turns:
         raise HTTPException(status_code=404, detail={"code": "no_conversation_that_day"})
@@ -1089,37 +953,6 @@ def _child_layers(request: Request) -> ChildLayerStore:
     return cast(ChildLayerStore, store)
 
 
-def _consent_id(consent: object) -> str | None:
-    if consent is None:
-        return None
-    value = getattr(consent, "consent_id", None)
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    if isinstance(consent, Mapping):
-        raw = consent.get("consent_id")
-        if isinstance(raw, str) and raw.strip():
-            return raw.strip()
-    return None
-
-
-async def _child_memory_account(
-    request: Request, *, user: AuthenticatedUser, minor_user_id: str
-) -> str:
-    """Whose archive holds the memories of a child who has no account, once the guardian is proven.
-
-    Only the adult who bound the device for the child reviews what the robot may remember about
-    them.  A child with an account of their own keeps their memories behind that account: a
-    guardian link carries summaries and reports, not the child's memory.
-    """
-
-    require_wechat_guardian(request, user)
-    if not await owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
-        raise HTTPException(
-            status_code=403, detail={"code": "guardian_memory_review_unavailable"}
-        )
-    return await _guardian_evidence_account(request, user=user, minor_user_id=minor_user_id)
-
-
 @router.get("/minors/{minor_user_id}/session-summaries")
 async def list_session_summaries(
     minor_user_id: str,
@@ -1129,7 +962,7 @@ async def list_session_summaries(
 ) -> dict[str, Any]:
     """Stored dialogue summaries for the parent mini program (no verbatim quotes)."""
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     layers = _child_layers(request)
     items = await layers.list(
         subject_id=minor_user_id,
@@ -1165,7 +998,7 @@ async def create_session_summary(
 ) -> dict[str, Any]:
     """Ingest one paraphrased session summary after a conversation ends."""
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     consent = await _store(request).active_consent(
         minor_user_id=minor_user_id, consent_kind="memory_retention"
     )
@@ -1209,7 +1042,7 @@ async def delete_session_summary(
 ) -> dict[str, Any]:
     """Physically delete one dialogue summary; a re-query must return nothing."""
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     layers = _child_layers(request)
     existing = await layers.get(
         subject_id=minor_user_id, record_id=record_id, viewer_subject_id=account_id
@@ -1233,7 +1066,7 @@ async def clear_session_summaries(
 ) -> dict[str, Any]:
     """Physically erase every dialogue summary for this child; remaining must be zero."""
 
-    await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     return await erase_child_kind(
         request,
         subject_id=minor_user_id,
@@ -1252,7 +1085,7 @@ async def list_child_archive(
 ) -> dict[str, Any]:
     """Whitelist long-term archive facts (appellation, preference, pet_name)."""
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     layers = _child_layers(request)
     views = await layers.list_archive_views(
         subject_id=minor_user_id,
@@ -1272,7 +1105,7 @@ async def create_child_archive_fact(
 ) -> dict[str, Any]:
     """Write one whitelist archive fact; requires separate child_archive consent."""
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     consent = await _store(request).active_consent(
         minor_user_id=minor_user_id, consent_kind="child_archive"
     )
@@ -1306,11 +1139,11 @@ async def review_child_archive_fact(
 ) -> dict[str, Any]:
     """Parent confirm, correct (supersede), or withdraw one archive fact."""
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     consent = await _store(request).active_consent(
         minor_user_id=minor_user_id, consent_kind="child_archive"
     )
-    consent_id = _consent_id(consent)
+    consent_id = consent_reference(consent)
     if consent is None or not consent_id:
         raise HTTPException(status_code=403, detail={"code": "child_archive_consent_required"})
     layers = _child_layers(request)
@@ -1363,7 +1196,7 @@ async def delete_child_archive_fact(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     layers = _child_layers(request)
     existing = await layers.get(
         subject_id=minor_user_id, record_id=record_id, viewer_subject_id=account_id
@@ -1389,7 +1222,7 @@ async def clear_child_archive(
 ) -> dict[str, Any]:
     """Physically erase every whitelist archive fact for this child; remaining must be zero."""
 
-    await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     return await erase_child_kind(
         request,
         subject_id=minor_user_id,
@@ -1407,7 +1240,7 @@ async def touch_child_activity(
 ) -> dict[str, Any]:
     """Reset the 180-day child_archive idle clock (dialogue or mini program open)."""
 
-    await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     activity = getattr(request.app.state, "subject_activity_store", None)
     if activity is None:
         raise HTTPException(status_code=503, detail={"code": "subject_activity_unavailable"})
@@ -1429,7 +1262,7 @@ async def child_memories(
     reach the child's conversations, so this is the guardian's gate on what the robot recalls.
     """
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     catalog = _catalog(request)
     queue = await catalog.review_queue(account_id=account_id, subject_id=minor_user_id)
     kept = await catalog.search(
@@ -1482,7 +1315,7 @@ async def child_retracted_memories(
     retracted claims, not a cached page in the mini program.
     """
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     items = await list_retracted_claims(
         _catalog(request),
         account_id=account_id,
@@ -1519,7 +1352,7 @@ async def review_child_memory(
     not-found as an id that does not exist.
     """
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     try:
         reviewed = await _catalog(request).review(
             MemoryClaimReview(
