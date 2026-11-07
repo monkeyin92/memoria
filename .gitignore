@@ -82,6 +82,7 @@ infra/voices/previews/
 
 # Device-test run receipts and raw audit tarballs stay local (not source)
 devicetest/run-*/
+devicetest/r02-*/
 devicetest/precheck-*/
 devicetest/safety-*/
 devicetest/targeted-*/
