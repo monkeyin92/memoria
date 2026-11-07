@@ -895,16 +895,26 @@ class StepFunPrimaryTTS:
         voice_kind: str | None = None,
         resource_id: str | None = None,
     ) -> None:
-        # A personal clone is a Doubao-only voice contract. StepFun must not
-        # speak a different voice under that identity, and this branch's backup
-        # keeps its configured designed voice instead of adopting the clone.
+        # A profile with an explicit Doubao provider must be spoken by Doubao.
+        # StepFun's configured voice is a male preset, so letting its primary
+        # stream run after updating the backup would make the effective voice
+        # differ from the bound profile (including on the device wake ack).
+        self._force_backup = (
+            provider == "volcengine_doubao" and voice_kind in {"designed", "personal"}
+        )
+        self._degrade_reason = (
+            "personal_voice"
+            if self._force_backup and voice_kind == "personal"
+            else "designed_voice"
+            if self._force_backup
+            else ""
+        )
         if is_clone_or_icl_voice(
             voice=voice,
             voice_kind=voice_kind,
             resource_id=resource_id,
             provider=provider,
         ):
-            self._force_backup = voice_kind == "personal"
             logger.warning("tts_failover_kept_configured_backup_voice reason=clone_or_icl_voice")
             return
         apply_profile = getattr(self.backup, "apply_voice_profile", None)
@@ -930,6 +940,7 @@ class StepFunPrimaryTTS:
 
     def use_baseline_voice(self) -> None:
         self._force_backup = False
+        self._degrade_reason = ""
         for provider in (self.primary, self.backup):
             baseline = getattr(provider, "use_baseline_voice", None)
             if callable(baseline):
