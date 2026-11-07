@@ -20,7 +20,7 @@ def _stop_rows(delay: float = 0.4) -> list[dict]:
             rows.append(
                 {
                     "kind": "reply",
-                    "tag": f"stop{index:02d}-{slug}-{trial:02d}",
+                    "tag": f"t{trial:03d}-stop{index:02d}-{slug}-{trial:02d}",
                     "stop_verdict": "stopped",
                     "stop_delay_from_speech_end_s": delay,
                     "stop_reason": "spoken_stop_and_device_playout",
@@ -36,7 +36,7 @@ def _back_rows() -> list[dict]:
             rows.append(
                 {
                     "kind": "reply",
-                    "tag": f"back{index:02d}-{slug}-{trial:02d}",
+                    "tag": f"t{trial:03d}-back{index:02d}-{slug}-{trial:02d}",
                     "stop_verdict": "not_stopped",
                     "still_speaking_after_interrupt": True,
                     "stop_reason": "playback_continued",
@@ -52,7 +52,7 @@ def _content_rows(stopped: int = 10, stop_delay: float = 0.6, answer_delay: floa
         rows.append(
             {
                 "kind": "reply",
-                "tag": f"content-{trial:02d}",
+                "tag": f"t{trial:03d}-content-{trial:02d}",
                 "stop_verdict": "stopped" if is_stopped else "not_stopped",
                 "stop_delay_from_speech_end_s": stop_delay if is_stopped else None,
                 "next_first_syllable_s": answer_delay if is_stopped else None,
@@ -117,7 +117,7 @@ def _crisis_rows(stopped: int = 0, quiet: int = 5) -> list[dict]:
         rows.append(
             {
                 "kind": "reply",
-                "tag": f"crisis-{trial:02d}",
+                "tag": f"t{trial:03d}-crisis-{trial:02d}",
                 "stop_verdict": "stopped" if is_stopped else "not_stopped",
                 "still_speaking_after_interrupt": not is_stopped,
                 "quiet_after_reply": trial <= quiet,
