@@ -1,0 +1,97 @@
+[
+  {
+    "gate": "stop",
+    "limit_s": 0.8,
+    "rows": [
+      {
+        "word": "停。",
+        "key": "01-ting",
+        "trials": 0,
+        "scorable": 0,
+        "too_late": 0,
+        "stopped": 0,
+        "unverified": 0,
+        "p90_speech_end_s": null,
+        "pass": false
+      },
+      {
+        "word": "停一下。",
+        "key": "02-ting-yixia",
+        "trials": 0,
+        "scorable": 0,
+        "too_late": 0,
+        "stopped": 0,
+        "unverified": 0,
+        "p90_speech_end_s": null,
+        "pass": false
+      },
+      {
+        "word": "别说了。",
+        "key": "03-bie-shuo-le",
+        "trials": 0,
+        "scorable": 0,
+        "too_late": 0,
+        "stopped": 0,
+        "unverified": 0,
+        "p90_speech_end_s": null,
+        "pass": false
+      },
+      {
+        "word": "不要说了。",
+        "key": "04-bu-yao-shuo-le",
+        "trials": 0,
+        "scorable": 0,
+        "too_late": 0,
+        "stopped": 0,
+        "unverified": 0,
+        "p90_speech_end_s": null,
+        "pass": false
+      },
+      {
+        "word": "好了好了。",
+        "key": "05-hao-le-hao-le",
+        "trials": 0,
+        "scorable": 0,
+        "too_late": 0,
+        "stopped": 0,
+        "unverified": 0,
+        "p90_speech_end_s": null,
+        "pass": false
+      },
+      {
+        "word": "够了。",
+        "key": "06-gou-le",
+        "trials": 0,
+        "scorable": 0,
+        "too_late": 0,
+        "stopped": 0,
+        "unverified": 0,
+        "p90_speech_end_s": null,
+        "pass": false
+      },
+      {
+        "word": "安静。",
+        "key": "07-anjing",
+        "trials": 0,
+        "scorable": 0,
+        "too_late": 0,
+        "stopped": 0,
+        "unverified": 0,
+        "p90_speech_end_s": null,
+        "pass": false
+      },
+      {
+        "word": "等一下。",
+        "key": "08-deng-yixia",
+        "trials": 0,
+        "scorable": 0,
+        "too_late": 0,
+        "stopped": 0,
+        "unverified": 0,
+        "p90_speech_end_s": null,
+        "pass": false
+      }
+    ],
+    "pass": false
+  }
+]

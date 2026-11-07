@@ -94,6 +94,18 @@ manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\
 print(f"manifest={manifest_path} steps={len(tags)}")
 PYMANIFEST
 
+  # The driver's idle-only gate needs a real `activating -> idle` line from a board reset; the
+  # logger alone cannot supply it for a board that is already idle and prints nothing.
+  boot="$RUN/boot-${suite}.log"
+  uv run --no-project --with pyserial python - "$PORT" >"$boot" 2>&1 <<'PYRESET'
+import serial,sys,time
+s=serial.Serial(sys.argv[1],115200,timeout=0.2); s.dtr=False; s.rts=True; time.sleep(0.2); s.rts=False; s.dtr=True
+end=time.time()+25; b=b""
+while time.time()<end: b+=s.read(4096)
+s.close(); sys.stdout.write(b.decode(errors="replace"))
+PYRESET
+  grep -q 'activating -> idle' "$boot" || { echo "FAIL: no activating->idle after reset for $suite" >&2; FAILED+=" $suite(boot)"; continue; }
+  cp -f "$boot" "$serial_raw"
   uv run --no-project --with pyserial python scripts/voice_soak_serial_logger.py "$serial_raw" --port "$PORT" \
     >"$RUN/logger-${suite}.out" 2>&1 &
   LOGGER_PID=$!
@@ -134,6 +146,7 @@ PYMANIFEST
   fi
 done
 
+restore_volume
 {
   echo "finished $(date -Iseconds)"
   echo "volume restored=$(osascript -e 'get volume settings')"
