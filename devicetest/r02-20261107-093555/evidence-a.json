@@ -1,0 +1,10 @@
+{
+  "schema_version": "voice-soak-stop-v2",
+  "run": "outputs/acceptance/run-20261107-093555-r02-stop",
+  "source_sha256": {
+    "timeline.jsonl": "8b49b347efdc472bb63ebd2b26d01980ac7ddbf384a15721437028bfef3a1ed4",
+    "bridge.log": "778585bd70de0807929143c93bf36a1c9a1d79ad795c56cef84db66e8f222943",
+    "serial.log": "15406826b6956fe7ddf0e8690671b010030ee85f96e7f85848da7e745d5160d5"
+  },
+  "interruptions": {}
+}

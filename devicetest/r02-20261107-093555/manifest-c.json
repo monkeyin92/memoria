@@ -1,0 +1,22 @@
+{
+  "scenario_hash": "033f88f1ec0280456081c001e17c63f556997b8832c61321def34cf8d9ff0374",
+  "expected_step_tags": [
+    "t001-content-01",
+    "t002-content-02",
+    "t003-content-03",
+    "t004-content-04",
+    "t005-content-05",
+    "t006-content-06",
+    "t007-content-07",
+    "t008-content-08",
+    "t009-content-09",
+    "t010-content-10"
+  ],
+  "required_logs": [
+    "bridge.log",
+    "serial.log"
+  ],
+  "min_valid_interrupt_samples": 0,
+  "require_started": true,
+  "require_completed": true
+}

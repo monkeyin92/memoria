@@ -1,0 +1,11 @@
+[
+  {
+    "gate": "crisis",
+    "trials": 0,
+    "kept_playing": 0,
+    "stopped": 0,
+    "quiet_after_reply": 0,
+    "unverified": 0,
+    "pass": false
+  }
+]
