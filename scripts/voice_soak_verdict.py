@@ -325,7 +325,7 @@ def judge(
         row.get("tag"): row.get("interrupt_kind", "stop") for row in rows if row.get("kind") == "reply"
     }
     for tag, assessment in audited.items():
-        if interrupt_kinds.get(tag) == "backchannel":
+        if interrupt_kinds.get(tag) in {"backchannel", "crisis"}:
             if assessment.get("stopped") is True:
                 failures.append(f"backchannel_stopped: {tag}")
             continue

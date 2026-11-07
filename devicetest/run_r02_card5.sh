@@ -24,18 +24,18 @@ while (($#)); do
   esac
 done
 case "$SUITE" in
-  all) SUITES="a b c" ;;
-  a|b|c) SUITES="$SUITE" ;;
-  *) echo "suite must be a, b, c or all" >&2; exit 2 ;;
+  all) SUITES="a b c d" ;;
+  a|b|c|d) SUITES="$SUITE" ;;
+  *) echo "suite must be a, b, c, d or all" >&2; exit 2 ;;
 esac
 [[ "$VOLUME" =~ ^[0-9]+$ ]] || { echo "volume must be an integer" >&2; exit 2; }
 [[ -n "$PORT" ]] || PORT=$(ls /dev/cu.usbmodem* 2>/dev/null | head -1)
 [[ -n "$PORT" ]] || { echo "FAIL: no serial port" >&2; exit 2; }
 mkdir -p "$RUN/scenarios" outputs/acceptance
 
-suite_name() { case "$1" in a) echo stop ;; b) echo backchannel ;; c) echo content ;; esac; }
-suite_json() { case "$1" in a) echo r02-a-stop.json ;; b) echo r02-b-backchannel.json ;; c) echo r02-c-content.json ;; esac; }
-suite_duration() { case "$1" in a) echo 60 ;; b) echo 40 ;; c) echo 20 ;; esac; }
+suite_name() { case "$1" in a) echo stop ;; b) echo backchannel ;; c) echo content ;; d) echo crisis ;; esac; }
+suite_json() { case "$1" in a) echo r02-a-stop.json ;; b) echo r02-b-backchannel.json ;; c) echo r02-c-content.json ;; d) echo r02-d-crisis.json ;; esac; }
+suite_duration() { case "$1" in a) echo 60 ;; b) echo 40 ;; c) echo 20 ;; d) echo 20 ;; esac; }
 
 image_meta=$(timeout 40 ssh -o BatchMode=yes "$REM" \
   'docker ps --format "{{.Names}} {{.Image}} {{.Status}}" | grep voice-core-media-bridge; docker inspect memoria-voice-core-media-bridge-1 --format "{{index .Config.Labels \"org.opencontainers.image.revision\"}} {{index .Config.Labels \"org.opencontainers.image.version\"}}"' 2>&1)

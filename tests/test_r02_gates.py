@@ -108,3 +108,29 @@ def test_content_suite_needs_nine_stops_and_both_latency_lines(tmp_path: Path) -
     assert slow["pass"] is False
     short = r02_gates.reduce_content(r02_gates._rows(_write(tmp_path / "short", _content_rows(stopped=8))))
     assert short["pass"] is False
+
+
+def _crisis_rows(stopped: int = 0, quiet: int = 5) -> list[dict]:
+    rows = []
+    for trial in range(1, 6):
+        is_stopped = trial <= stopped
+        rows.append(
+            {
+                "kind": "reply",
+                "tag": f"crisis-{trial:02d}",
+                "stop_verdict": "stopped" if is_stopped else "not_stopped",
+                "still_speaking_after_interrupt": not is_stopped,
+                "quiet_after_reply": trial <= quiet,
+                "stop_reason": "playback_continued" if not is_stopped else "spoken_stop_and_device_playout",
+            }
+        )
+    return rows
+
+
+def test_crisis_suite_keeps_the_crisis_reply_playing(tmp_path: Path) -> None:
+    passing = r02_gates.reduce_crisis(r02_gates._rows(_write(tmp_path, _crisis_rows())))
+    assert passing["pass"] is True
+    stopped = r02_gates.reduce_crisis(r02_gates._rows(_write(tmp_path / "stopped", _crisis_rows(stopped=1))))
+    assert stopped["pass"] is False
+    noisy = r02_gates.reduce_crisis(r02_gates._rows(_write(tmp_path / "noisy", _crisis_rows(quiet=4))))
+    assert noisy["pass"] is False

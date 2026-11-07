@@ -723,6 +723,9 @@ def main() -> int:
                         outcome.update(interrupted=False, note="reply ended before the interrupt")
                 ended = watcher.wait_state({"listening", "idle"}, float(step.get("end_timeout", 150)), since=started)
                 outcome.update(reply_s=round(ended - started, 2) if ended else None, end_state=watcher.state)
+                if step.get("quiet_after_s") and ended is not None:
+                    next_voice = watcher.wait_state({"speaking"}, float(step["quiet_after_s"]), since=ended)
+                    outcome.update(quiet_after_reply=next_voice is None)
                 if outcome.get("interrupted"):
                     outcome.update(assess_interruption(
                         (out / "bridge.log").read_text(encoding="utf-8", errors="replace"),

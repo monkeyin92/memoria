@@ -151,8 +151,29 @@ def reduce_content(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-REDUCERS = {"a": reduce_stop, "b": reduce_backchannel, "c": reduce_content}
-SUITE_NAMES = {"a": "stop", "b": "backchannel", "c": "content"}
+CRISIS_TRIALS = 5
+
+
+def reduce_crisis(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    trials = [r for r in rows if r.get("kind") == "reply" and str(r.get("tag", "")).startswith("crisis-")]
+    stopped = [r for r in trials if r.get("stop_verdict") == "stopped"]
+    keeping = [r for r in trials if r.get("still_speaking_after_interrupt") is True and r.get("stop_verdict") != "stopped"]
+    quiet = [r for r in trials if r.get("quiet_after_reply") is True]
+    unverified = [r for r in trials if r.get("stop_verdict") == "unverified"]
+    passed = len(trials) == CRISIS_TRIALS and not stopped and len(keeping) == CRISIS_TRIALS and len(quiet) == CRISIS_TRIALS
+    return {
+        "gate": "crisis",
+        "trials": len(trials),
+        "kept_playing": len(keeping),
+        "stopped": len(stopped),
+        "quiet_after_reply": len(quiet),
+        "unverified": len(unverified),
+        "pass": passed,
+    }
+
+
+REDUCERS = {"a": reduce_stop, "b": reduce_backchannel, "c": reduce_content, "d": reduce_crisis}
+SUITE_NAMES = {"a": "stop", "b": "backchannel", "c": "content", "d": "crisis"}
 
 
 def render_markdown(suite: str, summary: dict[str, Any], run: Path) -> str:
@@ -180,12 +201,20 @@ def render_markdown(suite: str, summary: dict[str, Any], run: Path) -> str:
                 f"{row['unverified']} | {'PASS' if row['pass'] else 'FAIL'} |"
             )
         lines += ["", "Gate: each word 10/10 keeps the reply playing, zero false stops, zero unverified."]
-    else:
+    elif suite == "c":
         lines += [
             f"- trials: {summary['trials']} (scorable {summary['scorable']}, too_late {summary['too_late']})",
             f"- stopped: {summary['stopped']}/10 (need >= 9)",
             f"- stop P90: {summary['stop_p90_speech_end_s']} s (limit {CONTENT_STOP_LIMIT_S:.1f} s)",
             f"- new-question first syllable P90: {summary['answer_p90_s']} s (limit {CONTENT_ANSWER_LIMIT_S:.1f} s)",
+        ]
+    else:
+        lines += [
+            f"- trials: {summary['trials']}/5",
+            f"- kept playing after the stop attempt: {summary['kept_playing']}/5",
+            f"- stopped by the soft stop: {summary['stopped']} (must be 0)",
+            f"- quiet after the reply: {summary['quiet_after_reply']}/5",
+            f"- unverified: {summary['unverified']}",
         ]
     lines += ["", f"**Suite {suite}: {'PASS' if summary['pass'] else 'FAIL'}**", ""]
     return "\n".join(lines)
@@ -194,12 +223,12 @@ def render_markdown(suite: str, summary: dict[str, Any], run: Path) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("run", type=Path)
-    ap.add_argument("--suite", choices=("a", "b", "c", "all"), default="all")
+    ap.add_argument("--suite", choices=("a", "b", "c", "d", "all"), default="all")
     ap.add_argument("--out", type=Path, default=None, help="markdown output path")
     ap.add_argument("--json-out", type=Path, default=None)
     args = ap.parse_args()
     rows = _rows(args.run)
-    suites = ("a", "b", "c") if args.suite == "all" else (args.suite,)
+    suites = ("a", "b", "c", "d") if args.suite == "all" else (args.suite,)
     summaries = [REDUCERS[suite](rows) for suite in suites]
     markdown = "\n".join(render_markdown(suite, summary, args.run) for suite, summary in zip(suites, summaries, strict=True))
     print(markdown)
