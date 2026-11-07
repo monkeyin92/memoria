@@ -155,6 +155,7 @@ MemoriaMascotDisplay::MemoriaMascotDisplay(esp_lcd_panel_io_handle_t panel_io,
         return;
     }
     scene_->Seed(esp_random());
+    face_animator_ = memoria::FaceAnimator(esp_random());
 #if CONFIG_MEMORIA_BENCH_SERIAL
     // The bench image times the stages of every eighth render (RenderProfile); the product image never does.
     scene_->SetProfileClock(+[]() -> uint32_t { return static_cast<uint32_t>(esp_timer_get_time()); });
@@ -465,7 +466,16 @@ void MemoriaMascotDisplay::SetEmotion(const char* emotion) {
         expression_[i].store(emotion[i]);
     }
     expression_[i].store('\0');
+    expression_seq_.fetch_add(1);
     ESP_LOGI(TAG, "expression=%s", emotion);
+}
+
+void MemoriaMascotDisplay::NoteVoiceActivity(bool speaking) {
+    if (speaking) {
+        voice_ended_.store(false);
+    } else if (Application::GetInstance().GetDeviceState() == kDeviceStateListening) {
+        voice_ended_.store(true);
+    }
 }
 
 void MemoriaMascotDisplay::SetStatus(const char* status) {
@@ -520,9 +530,6 @@ void MemoriaMascotDisplay::ShowNotification(const std::string& notification, int
 }
 
 void MemoriaMascotDisplay::SetChatMessage(const char* role, const char* content) {
-    if (role != nullptr && content != nullptr && std::strcmp(role, "user") == 0 && content[0] != '\0') {
-        user_spoke_.store(true);
-    }
     // The user agent line printed at boot is a diagnostic, not a subtitle.
     if (role != nullptr && content != nullptr && std::strcmp(role, "system") == 0 &&
         SystemInfo::GetUserAgent() == content) {
@@ -587,7 +594,7 @@ memoria::ScenePhase MemoriaMascotDisplay::CurrentPhase(uint32_t now_ms) {
         return ScenePhase::kIdle;
     }
     if (state != kDeviceStateListening) {
-        user_spoke_.store(false);
+        voice_ended_.store(false);
     }
     switch (state) {
         case kDeviceStateWifiConfiguring:
@@ -596,7 +603,7 @@ memoria::ScenePhase MemoriaMascotDisplay::CurrentPhase(uint32_t now_ms) {
             return static_cast<int32_t>(error_until_ms_.load() - now_ms) > 0 ? ScenePhase::kError
                                                                               : ScenePhase::kIdle;
         case kDeviceStateListening:
-            return user_spoke_.load() ? ScenePhase::kThinking : ScenePhase::kListening;
+            return voice_ended_.load() ? ScenePhase::kThinking : ScenePhase::kListening;
         case kDeviceStateSpeaking:
             return ScenePhase::kSpeaking;
         case kDeviceStateAudioTesting:
@@ -691,6 +698,7 @@ void MemoriaMascotDisplay::AnimationLoop() {
         // flushing the frame before this one.
         const int64_t frame_started = esp_timer_get_time();
         int64_t drawn_busy_us = 0;
+        bool partial_drawn = false;
         if (Lock(100)) {
             const uint32_t frame_now = NowMs();
             // The audio tasks' level taps (memoria_audio_level.h): drained every frame, lit or not, so the
@@ -728,13 +736,17 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 scene_->Shake(frame_now);
             }
             bool painted = false;
+            bool partial = false;
+            uint64_t painted_pixels = 0;
             const int64_t render_started = esp_timer_get_time();
             if (!screen_off_ && framebuffer_ != nullptr) {
                 memoria::FaceFacts facts;
                 facts.state = static_cast<int>(Application::GetInstance().GetDeviceState());
                 facts.crisis = facts.state == memoria::kFaceStateSpeaking &&
                                !memoria::PlaybackStopRegistry::GetInstance().allowed();
-                facts.user_spoke = user_spoke_.load();
+                facts.voice_ended = voice_ended_.load();
+                facts.listening_closed = listening_closed_.load(std::memory_order_relaxed);
+                facts.expression_seq = expression_seq_.load();
                 facts.intro = scene_->intro_active(frame_now);
                 facts.setup = qr_visible_.load();
                 for (int i = 0; i < memoria::kExpressionNameMax; ++i) {
@@ -743,34 +755,42 @@ void MemoriaMascotDisplay::AnimationLoop() {
                         break;
                     }
                 }
-                const memoria::FaceId face = memoria::FaceForFacts(facts);
-                memoria::FaceFrame frame;
-                frame.face = face;
-                frame.captioned = caption_mix_ > 0;
-                // FaceForFacts puts the crisis round on calm before anything
-                // else, so the blink only ever modifies that face.
-                if (facts.crisis) {
-                    if (!crisis_blink_on_) {
-                        crisis_blink_on_ = true;
-                        crisis_blink_started_ms_ = frame_now;
-                    }
-                    frame.eyes_closed =
-                        memoria::CrisisEyesClosed(frame_now - crisis_blink_started_ms_);
-                } else {
-                    crisis_blink_on_ = false;
-                }
-                // A frame equal to the last painted one is already on the
-                // panel, so it needs no rebuild and no invalidate. Blink
-                // windows, the caption lift, and state changes all flow
-                // through the frame's fields, so they keep repainting.
+                memoria::SpeechMouth mouth;
+                mouth.open = scene_->speech_mouth_open();
+                mouth.wide = scene_->speech_mouth_wide();
+                // FaceForFacts puts the crisis round on calm before anything else; the animator gives it the
+                // slow crisis blink only, no mouth and no held faces.
+                memoria::FaceFrame frame = face_animator_.Next(facts, caption_mix_ > 0, mouth, frame_now);
+#if CONFIG_MEMORIA_BENCH_SERIAL
+                BenchFaceFrame(&frame, phase == memoria::ScenePhase::kIdle, frame_now);
+#endif
+                // A frame equal to the last painted one is already on the panel, so it needs no rebuild and no
+                // invalidate. A blink or a mouth change repaints its own rectangles only (memoria_dot_face.h).
                 if (!frame_shown_ || frame != shown_frame_) {
-                    memoria::PaintDotFace(framebuffer_, width_, height_, frame);
+                    memoria::FaceRect dirty[memoria::kFaceDirtyMax];
+                    int dirty_count = 1;
+                    dirty[0] = memoria::FaceRect{0, 0, width_, height_};
+                    if (frame_shown_) {
+                        dirty_count = memoria::FaceDirtyRects(shown_frame_, frame, dirty);
+                        partial = dirty_count > 0 && frame.face == shown_frame_.face &&
+                                  frame.captioned == shown_frame_.captioned;
+                    }
+                    for (int i = 0; i < dirty_count; ++i) {
+                        const memoria::FaceRect& rect = dirty[i];
+                        memoria::PaintDotFace(framebuffer_, width_, height_, frame, rect);
+                        painted_pixels += static_cast<uint64_t>(rect.x1 - rect.x0) * static_cast<uint64_t>(rect.y1 - rect.y0);
+                        if (container_ != nullptr) {
+                            // LVGL areas are inclusive, in screen coordinates; the container sits at the origin.
+                            lv_area_t area = {rect.x0, rect.y0, rect.x1 - 1, rect.y1 - 1};
+                            lv_obj_invalidate_area(container_, &area);
+                        }
+                    }
                     if (!frame_shown_ || frame.face != shown_frame_.face) {
                         ESP_LOGI(TAG, "face=%s", memoria::FaceName(frame.face));
                     }
                     shown_frame_ = frame;
                     frame_shown_ = true;
-                    painted = true;
+                    painted = dirty_count > 0;
                 }
             }
             const int64_t render_us = esp_timer_get_time() - render_started;
@@ -782,7 +802,7 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 ++stats_drawn;
                 stats_render_us += render_us;
                 stats_render_max_us = render_us > stats_render_max_us ? render_us : stats_render_max_us;
-                const uint64_t pixels = static_cast<uint64_t>(width_) * static_cast<uint64_t>(height_);
+                const uint64_t pixels = painted_pixels;
                 stats_pixels += pixels;
 #if CONFIG_MEMORIA_BENCH_SERIAL
                 ++bench.drawn;
@@ -792,9 +812,6 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 }
                 bench.pixels += pixels;
 #endif
-                if (container_ != nullptr) {
-                    lv_obj_invalidate(container_);
-                }
             }
             const uint8_t opa = scene_->chrome_opa(frame_now);
             const uint8_t text_opa =
@@ -804,12 +821,20 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 ApplyChromeOpacity(opa);
             }
             Unlock();
+            partial_drawn = partial;
             if (painted) {
                 drawn_busy_us = esp_timer_get_time() - frame_started;
+#if CONFIG_MEMORIA_BENCH_SERIAL
+                BenchFaceNote(render_us, painted_pixels, drawn_busy_us);
+#endif
             }
         }
         if (drawn_busy_us > 0) {
-            pacer.NoteDrawn(static_cast<uint32_t>(drawn_busy_us));
+            // Only the blink and mouth repaints recur, so only they pace the frames; a whole-panel repaint
+            // on a face change is a one-off and would otherwise hold the pace down until the next change.
+            if (partial_drawn) {
+                pacer.NoteDrawn(static_cast<uint32_t>(drawn_busy_us));
+            }
             stats_busy_us += drawn_busy_us;
 #if CONFIG_MEMORIA_BENCH_SERIAL
             bench.busy_us += static_cast<uint64_t>(drawn_busy_us);
@@ -869,8 +894,12 @@ void MemoriaMascotDisplay::AnimationLoop() {
             BenchLogTasks();
         }
 #endif
-        const TickType_t interval = pdMS_TO_TICKS(
-            screen_off_ ? kScreenOffPollMs : pacer.NextIntervalMs(scene_->FrameIntervalMs(NowMs())));
+        uint32_t wanted_ms = scene_->FrameIntervalMs(NowMs());
+        if (face_animator_.animating() && wanted_ms > memoria::kFaceAnimationFrameMs) {
+            wanted_ms = memoria::kFaceAnimationFrameMs;  // a blink takes four frames 40 ms apart, listening too
+        }
+        const TickType_t interval =
+            pdMS_TO_TICKS(screen_off_ ? kScreenOffPollMs : pacer.NextIntervalMs(wanted_ms));
         if (xTaskGetTickCount() - wake > interval) {
             wake = xTaskGetTickCount();  // after a companion decode: no catch-up burst
         }

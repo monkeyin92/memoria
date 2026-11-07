@@ -1576,6 +1576,12 @@ private:
                 display_->SetListeningClosed(closed);
             }
         });
+        // The device's own vad.end puts the thinking face up (the dot face reads no audio or text itself).
+        memoria::SetVoiceActivityHandler([this](bool speaking) {
+            if (display_ != nullptr) {
+                display_->NoteVoiceActivity(speaking);
+            }
+        });
         memoria::SetCompanionSink([](const char* companion_id) {
             auto* display = static_cast<MemoriaMascotDisplay*>(Board::GetInstance().GetDisplay());
             if (display != nullptr) {
