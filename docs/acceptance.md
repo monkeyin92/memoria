@@ -4027,3 +4027,34 @@ An attempt at 00:14 is excluded. Its lines ran at about 19% because the system o
 Soak PASS under the latency waiver: `devicetest/run-20261107-003640-soak-card5/`, output `outputs/acceptance/run-20261107-003640-soak-card5`. All 43 manifest-tagged steps played with 42 replies and `no_reply=0`. The four stop steps were confirmed stopped (`t012-story-stop`, `t016-long-stop`, `t017-new-question-mid`, `t019-early-mid`); `t018-backchannel` was correctly not stopped and is not gated. The 30 s silence closed listening inside the t042 window, and the tail reached idle at 00:55:19 with `verified_idle` and `screen off (idle)` evidence. Latency measured `p50 2.0 s`, `p90 2.61 s`, `max 3.0 s`; the p90 is over the 2.0 s budget and the operator waiver of 2026-11-06 keeps that criterion non-blocking. Per-stage split (42 replies): capture and endpointer p50 0.30 s, p90 0.72 s; ASR final to commit p50 0.97 s, p90 1.17 s; LLM first token p50 0.12 s, p90 0.39 s; TTS first audio p50 0.46 s, p90 0.53 s; USB downlink p50 0.15 s, p90 0.21 s.
 
 With the latency criterion waived, the card5 gate passes on this candidate: precheck PASS, safety PASS, and soak PASS on no_reply, stop, tail idle and keepawake. R02's blocking condition, a same-candidate card5 soak pass, is met under that waiver.
+
+## R02 interrupt and backchannel acceptance, stop-word suite a on 2026-11-07 (window stopped)
+
+R02 runs on the same candidate as the card5 gate: `memoria-agent:20261106-card5-committed-boundary-v1`, revision `b03756b3c5268c90596bd1acda32a7b314094d9a`. The operator freed the volume for this round on 2026-11-07, so the actual value is recorded rather than fixed: the window ran at system output 50 and restored 30 afterwards. The operator also dropped the physical 拍头/点屏 row from this round; it is recorded as not required, not as unverified. The crisis soft-stop row is automated: five approved crisis lines from `devicetest/scenarios/safety_tiers_5x.json`, a soft `停。` during playback, and a quiet check after the reply.
+
+Harness: PR #571 added the scenario builder (`devicetest/build_r02_scenarios.py`, stop 8x10, backchannel 6x10, content barge-in 10, crisis 5), the per-word reducer (`devicetest/r02_gates.py`) and the runner (`devicetest/run_r02_card5.sh`). PR #573 fixed the reducer's tag parsing: the driver records `t<turn>-<step>` tags and the first version matched bare step tags, so a real run reduced to zero-denominator tables.
+
+The first window (09:35) aborted with `ABORT_PRE_WAIT` on all four suites before any test audio played: the runner started the serial logger on an already-idle board, and the driver's idle-only gate needs a real `activating -> idle` line from a board reset. The runner now resets the board before each suite and seeds that suite's serial log with the boot transcript, the same pattern as the card5 soak wrapper. That run is marked `devicetest/r02-20261107-093555/ABORTED.txt`.
+
+The second window started at 09:49 on port `/dev/cu.usbmodem2101`. Suite a (stop words, 80 trials) completed at 10:27:57 with all 80 turns run; the operator stopped the window at 10:30:22, so suites b, c and d did not run. Volume was restored to 30 by hand and the serial port released; no harness processes were left. Receipts: `devicetest/r02-20261107-094902/`, output `outputs/acceptance/run-20261107-094902-r02-stop`; the per-word table is `gates-a.md` and `gates-a.json`.
+
+Suite a per-word result (10 trials per word, nearest-rank P90 of speech end to device stop):
+
+| word | trials recorded | scorable | stopped | P90 (speech end -> stop) |
+| --- | --- | --- | --- | --- |
+| 停。 | 10 | 10 | 10/10 | 1.54 s |
+| 好了好了。 | 10 | 10 | 10/10 | 1.64 s |
+| 不要说了。 | 9 | 9 | 9/9 | 2.23 s |
+| 别说了。 | 9 | 8 | 8/8 | 2.00 s |
+| 够了。 | 9 | 9 | 8/9 | 1.49 s |
+| 安静。 | 10 | 10 | 9/10 | 2.50 s |
+| 等一下。 | 10 | 10 | 9/10 | 1.24 s |
+| 停一下。 | 9 | 9 | 5/9 | 1.94 s |
+
+Four stop trials have no reply at all (`no_reply` at t018 and t035, `tool_wait_timeout` at t029, `no_reply` at t060), so several words have fewer than ten attempts; one more attempt (t021, `别说了`) is unscorable as `interrupt_too_late_to_stop` because only 1.97 s of playback remained at clip start. The missing denominators are execution evidence, not stop-word results: those words need a rerun before their denominator is ten.
+
+The not-stopped cases separate into two classes instead of one blended failure. The ASR class is explicit in the bridge log ("media playback-stop not taken ... reason=not_stop_word"): four `停一下` attempts came back as `听一下`, and one `够了` attempt came back as `不啦`, so the stop word was never recognized and the reply played on. The other three (one each for `够了`, `安静`, `等一下`) are recorded as not stopped with 16 to 21 s of playback left but have no matching bridge receipt yet, so they stay "to recheck" rather than being attributed to ASR or to the stop path.
+
+The timing criterion fails across the board: every word's P90 is between 1.24 and 2.50 s against the 0.8 s target, with the best word at 1.24 s and the worst at 2.50 s. The measured path is speech end -> ASR final -> server stop -> device playback close, so it cannot be faster than the ASR final wait, which the card5 latency split already measured at about 1.2 s p90. Reaching 0.8 s needs either a stop path that acts on partial ASR results or a product decision that the stop criterion is bounded by the vendor final wait; the 2026-11-07 evidence does not support claiming the 0.8 s line yet.
+
+Verdict for this round: not a gate pass. Suite a fails the 10/10-per-word and the 0.8 s P90 lines, suites b, c and d are missing, and four words still lack full denominators. Next: recheck the three unexplained not-stopped cases against bridge receipts, rerun the words with missing attempts, then run the backchannel, content barge-in and crisis suites.
