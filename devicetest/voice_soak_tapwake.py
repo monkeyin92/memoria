@@ -696,12 +696,29 @@ def main() -> int:
                             return 7
                         i0, i1, _ = speak(interrupt["say"], int(interrupt.get("rate", 175)), out, tag + "-stop",
                                           bank, step.get("tag", "") + "-stop")
+                        expect_playing = bool(interrupt.get("expect_playing"))
                         settle = float(interrupt.get("settle", 8))
-                        returned = watcher.wait_state({"listening", "idle"}, settle, since=i0)
+                        # A backchannel must leave the reply playing, so sample the state right after the
+                        # word instead of waiting a full settle for a transition that should not happen.
+                        returned = watcher.wait_state({"listening", "idle"},
+                                                      2.0 if expect_playing else settle, since=i0)
                         outcome.update(interrupted=True, interrupt_text=interrupt["say"],
                                        interrupt_kind=interrupt.get("kind", "stop"),
                                        interrupt_start_ts=i0, interrupt_end_ts=i1,
-                                       interrupt_deadline_ts=i1 + settle, device_returned_ts=returned)
+                                       interrupt_deadline_ts=i1 + settle, device_returned_ts=returned,
+                                       expect_playing=expect_playing,
+                                       still_speaking_after_interrupt=watcher.state == "speaking")
+                        if interrupt.get("expect_answer"):
+                            # The phrase asks a new question: the answer is a fresh turn after the stop.
+                            answer_started = watcher.wait_state(
+                                {"speaking"}, float(interrupt.get("answer_timeout", 25)), since=i1)
+                            outcome.update(
+                                next_speak_ts=answer_started,
+                                next_first_syllable_s=round(answer_started - i1, 2) if answer_started is not None else None,
+                            )
+                            if answer_started is not None:
+                                watcher.wait_state({"listening", "idle"},
+                                                   float(step.get("end_timeout", 150)), since=answer_started)
                     else:
                         outcome.update(interrupted=False, note="reply ended before the interrupt")
                 ended = watcher.wait_state({"listening", "idle"}, float(step.get("end_timeout", 150)), since=started)
