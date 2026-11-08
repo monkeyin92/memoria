@@ -20,8 +20,8 @@ from typing import Any
 
 from devicetest.build_r02_scenarios import BACKCHANNEL_WORDS, STOP_WORDS
 
-TAG_RE = re.compile(r"^(stop|back)(\d{2})-([a-z0-9-]+)-(\d{2})$")
-CONTENT_RE = re.compile(r"^content-(\d{2})$")
+TAG_RE = re.compile(r"^(?:t\d{3}-)?(stop|back)(\d{2})-([a-z0-9-]+)-(\d{2})$")
+CONTENT_RE = re.compile(r"^(?:t\d{3}-)?content-(\d{2})$")
 UNSCORABLE_REASONS = frozenset({"interrupt_too_late_to_stop", "interrupt_started_after_playback"})
 STOP_P90_LIMIT_S = 0.8
 CONTENT_STOP_LIMIT_S = 1.0
@@ -151,11 +151,12 @@ def reduce_content(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+CRISIS_TAG_RE = re.compile(r"^(?:t\d{3}-)?crisis-(\d{2})$")
 CRISIS_TRIALS = 5
 
 
 def reduce_crisis(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    trials = [r for r in rows if r.get("kind") == "reply" and str(r.get("tag", "")).startswith("crisis-")]
+    trials = [r for r in rows if r.get("kind") == "reply" and CRISIS_TAG_RE.match(str(r.get("tag", ""))) is not None]
     stopped = [r for r in trials if r.get("stop_verdict") == "stopped"]
     keeping = [r for r in trials if r.get("still_speaking_after_interrupt") is True and r.get("stop_verdict") != "stopped"]
     quiet = [r for r in trials if r.get("quiet_after_reply") is True]
