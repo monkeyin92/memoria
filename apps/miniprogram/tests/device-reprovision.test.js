@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 
+const { loadPage } = require("../scripts/mp-harness/runtime");
 const {
   OnboardingController,
   normalizeIntrospectResponse,
@@ -228,4 +229,81 @@ test("onboarding page passes its entry mode and hides claim steps while reprovis
   assert.match(script, /new OnboardingController\(\{\s*mode: this\._mode,/);
   assert.match(template, /<block wx:if="\{\{!reprovision\}\}">[\s\S]*确认归属[\s\S]*激活完成[\s\S]*<\/block>/);
   assert.match(template, /network.phase === 'online' && !reprovision/);
+});
+
+test("add and first-bind onboarding still open the child-info consent gate", async () => {
+  const queries = [{ fresh: "1" }, { mode: "add", fresh: "1" }];
+  for (const query of queries) {
+    const harness = loadPage("pages/device-onboarding/index", {
+      api: { hasAuthenticatedSession: () => true },
+      storage: {},
+    });
+    try {
+      await harness.run(query);
+      const navigations = harness.wxCalls
+        .filter((call) => call.name === "navigateTo")
+        .map((call) => call.args[0]?.url);
+      assert.deepEqual(navigations, ["/pages/child-consent/index?redirect=%2Fpages%2Fhome%2Findex"]);
+      assert.equal(harness.page.data.state, "prepare");
+      assert.equal(harness.page.data.reprovision, false);
+    } finally {
+      harness.restore();
+    }
+  }
+});
+
+test("reprovision starts without the child-info consent gate", async () => {
+  const harness = loadPage("pages/device-onboarding/index", {
+    api: { hasAuthenticatedSession: () => true },
+    storage: {},
+  });
+  try {
+    await harness.run({ mode: "reprovision", fresh: "1" });
+    const navigations = harness.wxCalls
+      .filter((call) => call.name === "navigateTo")
+      .map((call) => call.args[0]?.url);
+    assert.deepEqual(navigations, []);
+    assert.equal(harness.page.data.state, "prepare");
+    assert.equal(harness.page.data.reprovision, true);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("reprovision mode cannot bypass consent when it restores a session", async () => {
+  const harness = loadPage("pages/device-onboarding/index", {
+    api: { hasAuthenticatedSession: () => true },
+    storage: {},
+  });
+  try {
+    await harness.run({ mode: "reprovision", fresh: "1", session_id: "onb_add" });
+    const navigations = harness.wxCalls
+      .filter((call) => call.name === "navigateTo")
+      .map((call) => call.args[0]?.url);
+    assert.deepEqual(navigations, ["/pages/child-consent/index?redirect=%2Fpages%2Fhome%2Findex"]);
+    assert.equal(harness.page.data.state, "prepare");
+  } finally {
+    harness.restore();
+  }
+});
+
+test("reprovision mode cannot bypass consent for an external QR entry", async () => {
+  const harness = loadPage("pages/device-onboarding/index", {
+    api: { hasAuthenticatedSession: () => true },
+    storage: {},
+  });
+  try {
+    await harness.run({
+      mode: "reprovision",
+      fresh: "1",
+      q: encodeURIComponent("https://aginice.cn/memoria-bind/?b=payload"),
+    });
+    const navigations = harness.wxCalls
+      .filter((call) => call.name === "navigateTo")
+      .map((call) => call.args[0]?.url);
+    assert.deepEqual(navigations, ["/pages/child-consent/index?redirect=%2Fpages%2Fhome%2Findex"]);
+    assert.equal(harness.page.data.reprovision, true);
+  } finally {
+    harness.restore();
+  }
 });
