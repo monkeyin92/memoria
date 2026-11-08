@@ -4055,7 +4055,7 @@ Three stop trials have no reply at all (`no_reply` at t018, t035, and t060). One
 
 The not-stopped cases separate into two classes instead of one blended failure. The ASR class is explicit in the bridge log ("media playback-stop not taken ... reason=not_stop_word"): four `停一下` attempts came back as `听一下`, and one `够了` attempt came back as `不啦`, so the stop word was never recognized and the reply played on. The other three (one each for `够了`, `安静`, `等一下`) are recorded as not stopped with 16 to 21 s of playback left but have no matching bridge receipt yet, so they stay "to recheck" rather than being attributed to ASR or to the stop path.
 
-The stop receipt is not the same as user-visible silence. A cross-run check found that 35/37 content-path stops in the 09:49 run and 18/18 in the 11:13 run emitted a new reply before the next test clip began. The revised offline evidence schema keeps `stopped` as the receipt result and adds `silence_verdict`; it classifies 56 samples as `silent`, 54 as `reply_resumed`, and 1 as `unverified` across the two runs. R02 suite a now requires `silence_verdict=silent`, so the old 111 stop receipts cannot pass the gate by themselves. The detailed analysis records the counts, fence rule, and remaining evidence boundary in `docs/r02-latency-analysis-20261107.md`.
+The stop receipt is not the same as user-visible silence. The revised offline evidence schema keeps `stopped` as the receipt result and adds `silence_verdict`; across the two complete stop runs it classifies 56 samples as `silent`, 54 as `reply_resumed`, 1 as `unverified`, and 19 as `not_applicable`. The 09:49 run has 31 silent and 37 resumed replies among 68 stop receipts. The 11:13 run has 25 silent, 17 resumed replies, and 1 unverified result among 43 stop receipts. R02 suite a now requires `silence_verdict=silent`, so the old 111 stop receipts cannot pass the gate by themselves. The detailed analysis records the counts, fence rule, and remaining evidence boundary in `docs/r02-latency-analysis-20261107.md`.
 
 The timing criterion fails across the board: every word's P90 is between 1.24 and 2.50 s against the 0.8 s target, with the best word at 1.24 s and the worst at 2.50 s. The measured path is speech end -> ASR final -> server stop -> device playback close, so it cannot be faster than the ASR final wait, which the card5 latency split already measured at about 1.2 s p90. Reaching 0.8 s needs either a stop path that acts on partial ASR results or a product decision that the stop criterion is bounded by the vendor final wait; the 2026-11-07 evidence does not support claiming the 0.8 s line yet.
 
@@ -4071,14 +4071,14 @@ All 80 samples received a reply. The stop audit found 63 `stopped`, 16 `not_stop
 
 | word | stopped | silent | reply_resumed | silence_unverified | not_stopped |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 停。 | 9 | 9 | 0 | 1 | 1 |
-| 停一下。 | 1 | 0 | 1 | 9 | 9 |
+| 停。 | 9 | 9 | 0 | 0 | 1 |
+| 停一下。 | 1 | 0 | 1 | 0 | 9 |
 | 别说了。 | 10 | 10 | 0 | 0 | 0 |
 | 不要说了。 | 10 | 10 | 0 | 0 | 0 |
-| 好了好了。 | 8 | 4 | 4 | 2 | 2 |
-| 够了。 | 8 | 8 | 0 | 2 | 1 |
+| 好了好了。 | 8 | 4 | 4 | 0 | 2 |
+| 够了。 | 8 | 8 | 0 | 0 | 1 |
 | 安静。 | 10 | 10 | 0 | 0 | 0 |
-| 等一下。 | 7 | 7 | 0 | 3 | 3 |
+| 等一下。 | 7 | 7 | 0 | 0 | 3 |
 
 The main failure classes are measured from the bridge and device records. Thirteen finals were outside the stop-word list, two contained a leading or accumulated phrase, one sample had no stop final after the uplink was interrupted, one had a device `pat` stop without a matching spoken-stop receipt, and five stopped replies were followed by a new reply. The five resumed replies were `t014` and `t044` through `t047`; the latter four have accumulated text evidence, while `t014` has only length evidence.
 

@@ -62,7 +62,7 @@ speculative reply 的时间差异也出现在服务端首帧分段中。保存�
 
 这些后续回复的首帧通常在设备回 listening 后约 1.6 到 1.7 秒出现。第一轮 P50 回复时长为 16.6 秒，第二轮为 12.4 秒。第一轮有 8 个样本在下一条测试音频开始时仍在播放，第二轮也有 8 个样本仍在播放。它们会污染后续 turn 的 ASR、提交和回复关联。
 
-因此两轮合计 111 个同代 stop receipt 不能作为 111 个用户可听静音结果。离线实现现已把这两个概念分开：`audit_interruptions()` 保留 `stopped`，并附加 `silence_verdict`、fence、后续 delivery 和延迟字段；R02 suite a 的 gate 只接受 `silence_verdict=silent`。对已有记录的 v3 重算为 56 个 `silent`、54 个 `reply_resumed`、1 个 `unverified`，另有 19 个没有有效 stop receipt 的样本标为 `not_applicable`。其中 09:49 轮为 31/37 静默、37/37 后续回复；11:13 轮为 25/43 静默、17 个后续回复、1 个后续下发缺少设备首帧收据。这里的“静默”只表示在下一条 `said` 的结束时间或尾窗观察点前没有匹配到后续回复，不等于声学录音证明。
+因此两轮合计 111 个同代 stop receipt 不能作为 111 个用户可听静音结果。离线实现现已把这两个概念分开：`audit_interruptions()` 保留 `stopped`，并附加 `silence_verdict`、fence、后续 delivery 和延迟字段；R02 suite a 的 gate 只接受 `silence_verdict=silent`。对已有记录的 v3 重算为 56 个 `silent`、54 个 `reply_resumed`、1 个 `unverified`，另有 19 个没有有效 stop receipt 的样本标为 `not_applicable`。其中 09:49 轮有 68 个 stop receipt，31 个静默、37 个后续回复；11:13 轮有 43 个 stop receipt，25 个静默、17 个后续回复、1 个静默证据不足。这里的“静默”只表示在下一条 `said` 的结束时间或尾窗观察点前没有匹配到后续回复，不等于声学录音证明。
 
 这条证据把问题拆成两部分。设备停止当前音频的尾段仍然很短。服务端在 stop receipt 后重新提交或重新播报，才是 content-path 没有保持静音的主要问题。content final 的文本长度 P50 约 30，ASR 时间跨度 P50 约 8.7 秒，而 lexical final 的文本长度 P50 为 4 到 5，时间跨度约 1.5 秒。日志没有 final 文本，所以“回复回声与 stop 词合并”仍是推断。
 

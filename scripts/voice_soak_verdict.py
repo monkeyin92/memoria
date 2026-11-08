@@ -349,7 +349,7 @@ def judge(
                 failures.append(
                     f"reply_resumed_after_stop: {tag} {assessment.get('later_reply_delivery_id')}"
                 )
-            elif silence_verdict != "silent":
+            elif silence_verdict == "unverified":
                 failures.append(f"silence_unverified: {tag} {assessment.get('silence_reason')}")
 
     observations = [row for row in rows if row.get("kind") == "post_scenario_observation"]

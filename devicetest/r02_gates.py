@@ -205,14 +205,14 @@ def render_markdown(suite: str, summary: dict[str, Any], run: Path) -> str:
     lines = [f"# R02 suite {suite} ({SUITE_NAMES[suite]}) — run {run}", ""]
     if suite == "a":
         lines += [
-            "| word | trials | scorable | too_late | stopped | silent | reply_resumed | silence_unverified | P90 speech end | pass |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| word | trials | scorable | too_late | stopped | unverified | silent | reply_resumed | silence_unverified | P90 speech end | pass |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
         for row in summary["rows"]:
             p90 = "n/a" if row["p90_speech_end_s"] is None else f"{row['p90_speech_end_s']:.2f} s"
             lines.append(
                 f"| {row['word']} | {row['trials']} | {row['scorable']} | {row['too_late']} | "
-                f"{row['stopped']} | {row['silent']} | {row['reply_resumed']} | "
+                f"{row['stopped']} | {row['unverified']} | {row['silent']} | {row['reply_resumed']} | "
                 f"{row['silence_unverified']} | {p90} | {'PASS' if row['pass'] else 'FAIL'} |"
             )
         lines += [
