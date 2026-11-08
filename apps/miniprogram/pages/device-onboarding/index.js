@@ -169,7 +169,12 @@ Page({
     // Opened from the robot's QR: say why a login comes first.
     const reason = this._linkedQr ? "scan_device" : "manage_device";
     if (!(await requireLogin({ reason }))) return;
-    if (!ensureChildInfoConsent(currentRoute())) return;
+    const isFreshReprovisionEntry =
+      this._mode === "reprovision" &&
+      this._freshStart &&
+      !this._initialSessionId &&
+      !this._linkedQr;
+    if (!isFreshReprovisionEntry && !ensureChildInfoConsent(currentRoute())) return;
     if (this._linkedQr) {
       const linkedQr = this._linkedQr;
       this._linkedQr = "";
