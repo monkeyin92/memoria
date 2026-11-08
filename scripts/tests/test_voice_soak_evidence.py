@@ -17,12 +17,19 @@ from scripts.voice_soak_evidence import assess_interruption, audit_interruptions
 
 BASE = datetime(2026, 10, 10, 0, 5, tzinfo=UTC).timestamp()
 DELIVERY = "session-a/epoch-1/turn-2/generation-3/tool-0"
+NEXT_DELIVERY = "session-a/epoch-1/turn-3/generation-4/tool-0"
 
 
-def delivery_line(seconds: float, event: str, terminal: str = "", reason: str = "") -> str:
+def delivery_line(
+    seconds: float,
+    event: str,
+    terminal: str = "",
+    reason: str = "",
+    delivery_id: str = DELIVERY,
+) -> str:
     at = datetime.fromtimestamp(BASE + seconds, UTC).isoformat().replace("+00:00", "Z")
     return (
-        f"{at} INFO:media reply delivery session=session-a delivery_id={DELIVERY} "
+        f"{at} INFO:media reply delivery session=session-a delivery_id={delivery_id} "
         f"event={event} terminal={terminal} terminal_reason={reason} "
         "first_frame_sent=True provider_completed=True playback_ended=True actual_heard=True\n"
     )
@@ -289,6 +296,122 @@ def test_current_assessment_can_be_repaired_when_delayed_logs_arrive(evidence) -
     row.update(assess_interruption("", serial, attempt))
     assert row["stopped"] is None
     assert audit_interruptions([row], bridge, serial)["t1"]["stopped"] is True
+
+
+def test_a_later_reply_before_the_next_clip_end_is_reported_separately(evidence) -> None:
+    bridge, serial, attempt = evidence
+    rows = [
+        {"kind": "said", "tag": "t1", "ts": BASE - 1, "start": "08:04:58.000"},
+        {"kind": "reply", "tag": "t1", "interrupted": True, **attempt},
+        {"kind": "said", "tag": "t2", "ts": BASE + 8, "start": "08:05:07.000"},
+    ]
+    bridge += delivery_line(6.0, "first_frame_sent", delivery_id=NEXT_DELIVERY)
+    serial += serial_line(6.1, "MemoriaProtocol: First playable downlink frame generation=4 seq=0")
+
+    result = audit_interruptions(rows, bridge, serial)["t1"]
+
+    assert result["stopped"] is True
+    assert result["stop_verdict"] == "stopped"
+    assert result["silence_verdict"] == "reply_resumed"
+    assert result["silence_reason"] == "later_reply_started"
+    assert result["later_reply_delivery_id"] == NEXT_DELIVERY
+
+
+def test_next_speak_none_does_not_mark_a_stop_as_answer_expected(evidence) -> None:
+    bridge, serial, attempt = evidence
+    attempt["next_speak_ts"] = None
+    rows = [
+        {"kind": "said", "tag": "t1", "ts": BASE - 1},
+        {"kind": "reply", "tag": "t1", "interrupted": True, **attempt},
+        {"kind": "said", "tag": "t2", "ts": BASE + 8},
+    ]
+    bridge += delivery_line(6.0, "first_frame_sent", delivery_id=NEXT_DELIVERY)
+    serial += serial_line(6.1, "MemoriaProtocol: First playable downlink frame generation=4 seq=0")
+
+    result = audit_interruptions(rows, bridge, serial)["t1"]
+
+    assert result["silence_verdict"] == "reply_resumed"
+
+
+def test_a_boundary_failure_stops_the_silence_fence_before_a_later_step(evidence) -> None:
+    bridge, serial, attempt = evidence
+    rows = [
+        {"kind": "said", "tag": "t1", "ts": BASE - 1},
+        {"kind": "reply", "tag": "t1", "interrupted": True, **attempt},
+        {"kind": "no_reply", "tag": "t2", "ts": BASE + 7},
+        {"kind": "said", "tag": "t3", "ts": BASE + 20},
+    ]
+
+    result = audit_interruptions(rows, bridge, serial)["t1"]
+
+    assert result["silence_verdict"] == "unverified"
+    assert result["silence_reason"] == "no_silence_observation"
+
+
+def test_a_boundary_failure_cannot_borrow_a_later_step_reply(evidence) -> None:
+    bridge, serial, attempt = evidence
+    rows = [
+        {"kind": "said", "tag": "t1", "ts": BASE - 1},
+        {"kind": "reply", "tag": "t1", "interrupted": True, **attempt},
+        {"kind": "no_reply", "tag": "t2", "ts": BASE + 7},
+        {"kind": "said", "tag": "t3", "ts": BASE + 20},
+    ]
+    bridge += delivery_line(8.0, "first_frame_sent", delivery_id=NEXT_DELIVERY)
+    serial += serial_line(8.1, "MemoriaProtocol: First playable downlink frame generation=4 seq=0")
+
+    result = audit_interruptions(rows, bridge, serial)["t1"]
+
+    assert result["silence_verdict"] == "unverified"
+    assert result["silence_reason"] == "no_silence_observation"
+    assert result["later_reply_count"] == 0
+
+
+def test_duplicate_device_starts_keep_the_matching_start(evidence) -> None:
+    bridge, serial, attempt = evidence
+    rows = [
+        {"kind": "said", "tag": "t1", "ts": BASE - 1},
+        {"kind": "reply", "tag": "t1", "interrupted": True, **attempt},
+        {"kind": "said", "tag": "t2", "ts": BASE + 12},
+    ]
+    bridge += delivery_line(6.0, "first_frame_sent", delivery_id=NEXT_DELIVERY)
+    serial += serial_line(6.1, "MemoriaProtocol: First playable downlink frame generation=4 seq=0")
+    serial += serial_line(10.0, "MemoriaProtocol: First playable downlink frame generation=4 seq=1")
+
+    result = audit_interruptions(rows, bridge, serial)["t1"]
+
+    assert result["silence_verdict"] == "reply_resumed"
+
+
+def test_a_later_reply_after_the_next_clip_does_not_rewrite_the_stop(evidence) -> None:
+    bridge, serial, attempt = evidence
+    rows = [
+        {"kind": "said", "tag": "t1", "ts": BASE - 1, "start": "08:04:58.000"},
+        {"kind": "reply", "tag": "t1", "interrupted": True, **attempt},
+        {"kind": "said", "tag": "t2", "ts": BASE + 12, "start": "08:05:07.000"},
+    ]
+    bridge += delivery_line(12.5, "first_frame_sent", delivery_id=NEXT_DELIVERY)
+
+    result = audit_interruptions(rows, bridge, serial)["t1"]
+
+    assert result["stopped"] is True
+    assert result["silence_verdict"] == "silent"
+    assert result["silence_reason"] == "no_reply_before_fence"
+
+
+def test_a_reply_start_at_the_next_clip_end_is_outside_the_silence_window(evidence) -> None:
+    bridge, serial, attempt = evidence
+    rows = [
+        {"kind": "said", "tag": "t1", "ts": BASE - 1, "start": "08:04:58.000"},
+        {"kind": "reply", "tag": "t1", "interrupted": True, **attempt},
+        {"kind": "said", "tag": "t2", "ts": BASE + 12, "start": "08:05:07.000"},
+    ]
+    bridge += delivery_line(12.0, "first_frame_sent", delivery_id=NEXT_DELIVERY)
+    serial += serial_line(12.1, "MemoriaProtocol: First playable downlink frame generation=4 seq=0")
+
+    result = audit_interruptions(rows, bridge, serial)["t1"]
+
+    assert result["silence_verdict"] == "silent"
+    assert result["silence_reason"] == "no_reply_before_fence"
 
 
 def test_an_unrelated_later_stop_cannot_explain_an_earlier_cancellation(evidence) -> None:
