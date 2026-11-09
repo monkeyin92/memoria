@@ -2,20 +2,21 @@
 
 日期：2026-11-09
 
-这次实验把 360×360 圆屏的主脸从预栅格化点阵帧切换为实时 RGB565 绘制。当前版本使用固定粉色背景和两只黑色药丸眼。眼睛支持平移、呼吸缩放、上移和眨眼，点阵脸仍保留为回退路径。
+这次实验把 360×360 圆屏的主脸从预栅格化点阵帧切换为实时 RGB565 绘制。当前版本使用固定粉色背景和两只黑色药丸眼；眼睛中心位置和间距固定，删除了连续平移、呼吸缩放和漂移，避免画面卡顿与眼睛持续晃动。说话时只在固定的中性、瞪眼、窄眼三种表情之间每 700 ms 离散切换，其他状态使用固定表情，点阵脸仍保留为回退路径。
 
 ## 产物
 
 - C++ 渲染器：`firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/memoria_pill_face.cc`。
 - 渲染数据结构：`firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/memoria_pill_face.h`。
 - 显示开关：`memoria_mascot_display.cc` 中的 `kPillAnimationExperiment`，当前为 `true`。
-- 同一份 C++ 渲染器生成的预览：[memoria-pill-face-preview-20261109.mp4](assets/memoria-pill-face-preview-20261109.mp4)。
+- 表情参考板：[memoria-pill-face-expression-reference-20261109.png](assets/memoria-pill-face-expression-reference-20261109.png)。
+- 连续动画版本的历史预览：[memoria-pill-face-preview-20261109.mp4](assets/memoria-pill-face-preview-20261109.mp4)。当前实现以表情状态和测试为准。
 
 ## 固件与备份
 
 上一版实验镜像曾完成构建和写入校验，但当前设备画面仍是原来的蓝色，不能把那次写入记录当成粉色版本的真机验收。
 
-本次粉色固定背景版本已重新构建并刷入设备。实际写入的产品 app 镜像为 `firmware/esp32/artifacts/memoria-esp-vocat-app.bin`，SHA-256 为 `1c6d453d8384b56b257fae058a5e40ca1232d20844da0d512b0ec509fea0c738`，大小为 `3381200 bytes`。干净提交构建的 app SHA-256 为 `644e177dd2f5b078b01354cce47ae6a2c4b0bae463112077cf97c397eded8477`；本次重试沿用了当前产品构建目录中的镜像。
+本次固定表情版本已重新构建，产品 app 镜像为 `firmware/esp32/artifacts/memoria-esp-vocat-app.bin`，SHA-256 为 `4aa9f292e6c2ce870a2e09f1a2b98734b642469b02b2ba52c5396e229005f760`，大小为 `3381136 bytes`。截至本记录更新时，设备串口端口尚未重新出现，因此这份新镜像还没有完成真机刷写；上一版已刷入的粉色镜像 SHA-256 为 `1c6d453d8384b56b257fae058a5e40ca1232d20844da0d512b0ec509fea0c738`。
 
 刷写前的备份目录是 `devicetest/flash-backups/20261109-display-animation-baseline/`。其中保存了刷前 app、bootloader/分区表、NVS/OTA/PHY、identity 二进制和各分区的芯片 MD5。刷前关键 MD5 为：app `c46cdf55af5c686f70c242f772f77ebd`，identity `db3c2ccded4c3c957c3563bdb6812b64`。
 
@@ -23,7 +24,7 @@
 
 主机侧 `uv run --no-project pytest -q firmware/esp32/tests` 通过，进程退出码为 0。渲染器单独用 clang++ 编译并生成了预览。产品构建通过，app 分区仍有约 18% 空间。
 
-设备侧写入已确认：bootloader、分区表、OTA 数据、assets 和 app 均报告 `Hash of data verified`，刷后 `device namespace: present`。刷后串口已读到 HTTP 连接、静音时段和 `MemoriaPower` 运行日志。当前还没有真机照片，因此粉色背景与动画的视觉验收仍待现场观察。
+上一版设备侧写入已确认：bootloader、分区表、OTA 数据、assets 和 app 均报告 `Hash of data verified`，刷后 `device namespace: present`。新固定表情版本尚未刷写，因而尚无对应的串口或屏幕验收证据；刷入后仍需现场确认粉色背景、眼睛稳定性和说话时离散表情切换。
 
 本次刷写日志保存在 `devicetest/flash-backups/20261109-display-animation-baseline/flash-pink-retry-2.log`，串口日志保存在 `devicetest/flash-backups/20261109-display-animation-baseline/serial-pink-retry.log`。
 

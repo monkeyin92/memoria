@@ -27,7 +27,7 @@ extern "C" const char memoria_bench_build_marker[];
 class Backlight;
 
 // LCD display for the Memoria ESP-VoCat. The 360x360 panel can show the
-// experimental smooth pill face or the dot face fallback. The scene still
+// experimental state-driven pill face or the dot face fallback. The scene still
 // times the boot beat, the caption band, and the chrome. LVGL keeps the text
 // and the binding QR card. A server emotion name picks the face only while the
 // device speaks. While the device is getting online the face lifts and the
@@ -151,6 +151,7 @@ private:
     std::string pending_companion_;
     // The last painted frame's inputs: an equal frame is already on the panel.
     memoria::FaceFrame shown_frame_{};
+    memoria::PillExpression shown_pill_expression_ = memoria::PillExpression::kNeutral;
     bool frame_shown_ = false;
     // Anchor of the crisis-round slow blink (CrisisEyesClosed), set anew each
     // time a round begins.

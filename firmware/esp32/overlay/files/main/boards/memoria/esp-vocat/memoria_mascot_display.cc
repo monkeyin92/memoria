@@ -811,11 +811,16 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 } else {
                     crisis_blink_on_ = false;
                 }
+                const memoria::PillExpression pill_expression =
+                    memoria::PillExpressionFor(frame.face, frame_now);
                 // A frame equal to the last painted one is already on the
                 // panel, so it needs no rebuild and no invalidate. Blink
-                // windows, the caption lift, and state changes all flow
-                // through the frame's fields, so they keep repainting.
-                if (kPillAnimationExperiment || !frame_shown_ || frame != shown_frame_) {
+                // windows, the caption lift, state changes, and coarse speech
+                // expression changes are the only repaint triggers.
+                const bool pill_expression_changed =
+                    kPillAnimationExperiment &&
+                    (!frame_shown_ || pill_expression != shown_pill_expression_);
+                if (!frame_shown_ || frame != shown_frame_ || pill_expression_changed) {
                     if (kPillAnimationExperiment) {
                         const memoria::PillFaceFrame pill = memoria::MakePillFaceFrame(
                             frame.face, frame.eyes_closed,
@@ -828,6 +833,7 @@ void MemoriaMascotDisplay::AnimationLoop() {
                         ESP_LOGI(TAG, "face=%s", memoria::FaceName(frame.face));
                     }
                     shown_frame_ = frame;
+                    shown_pill_expression_ = pill_expression;
                     frame_shown_ = true;
                     painted = true;
                 }

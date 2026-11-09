@@ -24,7 +24,10 @@ int main() {
     constexpr int kSize = 360;
     std::vector<uint16_t> buffer(kSize * kSize);
     const auto calm = memoria::MakePillFaceFrame(memoria::FaceId::kCalm, false, 0, 0);
-    const auto later = memoria::MakePillFaceFrame(memoria::FaceId::kCalm, false, 0, 700);
+    const auto calm_later = memoria::MakePillFaceFrame(memoria::FaceId::kCalm, false, 0, 700);
+    const auto speaking = memoria::MakePillFaceFrame(memoria::FaceId::kSpeak, false, 0, 0);
+    const auto speaking_later =
+        memoria::MakePillFaceFrame(memoria::FaceId::kSpeak, false, 0, 700);
     const auto closed = memoria::MakePillFaceFrame(memoria::FaceId::kCalm, true, 0, 700);
     memoria::PaintPillFace(buffer.data(), kSize, kSize, calm);
     uint32_t first = 2166136261u;
@@ -32,20 +35,34 @@ int main() {
         first ^= pixel;
         first *= 16777619u;
     }
-    memoria::PaintPillFace(buffer.data(), kSize, kSize, later);
-    uint32_t second = 2166136261u;
+    memoria::PaintPillFace(buffer.data(), kSize, kSize, calm_later);
+    uint32_t calm_second = 2166136261u;
     for (uint16_t pixel : buffer) {
-        second ^= pixel;
-        second *= 16777619u;
+        calm_second ^= pixel;
+        calm_second *= 16777619u;
     }
-    std::printf("sig %u %u\n", first, second);
+    memoria::PaintPillFace(buffer.data(), kSize, kSize, speaking);
+    uint32_t speech_first = 2166136261u;
+    for (uint16_t pixel : buffer) {
+        speech_first ^= pixel;
+        speech_first *= 16777619u;
+    }
+    memoria::PaintPillFace(buffer.data(), kSize, kSize, speaking_later);
+    uint32_t speech_second = 2166136261u;
+    for (uint16_t pixel : buffer) {
+        speech_second ^= pixel;
+        speech_second *= 16777619u;
+    }
+    std::printf("sig %u %u %u %u\n", first, calm_second, speech_first, speech_second);
     std::printf("palette %06x %06x\n", calm.background_rgb, calm.eye_rgb);
     std::printf("open %d %d %u %u\n", calm.left.cx, calm.right.cx, calm.left.width,
                 calm.left.height);
     std::printf("closed %u %u\n", closed.left.width, closed.left.height);
-    return first == second || closed.left.height >= calm.left.height ||
+    return first != calm_second || speech_first == speech_second ||
+                   closed.left.height >= calm.left.height ||
                    calm.background_rgb != memoria::kPillBackgroundRgb ||
-                   calm.eye_rgb != memoria::kPillEyeRgb || later.background_rgb != calm.background_rgb
+                   calm.eye_rgb != memoria::kPillEyeRgb ||
+                   calm_later.background_rgb != calm.background_rgb
                ? 1
                : 0;
 }
@@ -83,7 +100,7 @@ def tool():
         yield binary
 
 
-def test_smooth_frame_changes_with_time_and_closed_eyes_are_shorter(tool: pathlib.Path) -> None:
+def test_static_faces_and_discrete_speech_expressions(tool: pathlib.Path) -> None:
     completed = subprocess.run([str(tool)], text=True, capture_output=True, check=True)
     lines = completed.stdout.splitlines()
     assert lines[0].startswith("sig ")

@@ -17,7 +17,14 @@ struct PillEye {
     uint16_t height = 0;
 };
 
-// One complete visual frame for the experimental smooth face. The display
+enum class PillExpression : uint8_t {
+    kNeutral = 0,
+    kNarrow,
+    kWide,
+    kSquint,
+};
+
+// One complete visual frame for the experimental state-driven face. The display
 // task owns the clock and state mapping; this type contains only render data.
 struct PillFaceFrame {
     uint32_t background_rgb = kPillBackgroundRgb;
@@ -26,6 +33,11 @@ struct PillFaceFrame {
     PillEye right;
     bool eyes_closed = false;
 };
+
+// Non-speaking faces keep one fixed expression. Speaking alone advances
+// between fixed expression frames at coarse time boundaries; it never moves
+// or scales the eyes continuously.
+PillExpression PillExpressionFor(FaceId face, uint32_t now_ms);
 
 PillFaceFrame MakePillFaceFrame(FaceId face, bool eyes_closed, uint8_t lift, uint32_t now_ms);
 

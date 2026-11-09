@@ -7,7 +7,7 @@
 namespace memoria {
 namespace {
 
-constexpr float kPi = 3.14159265358979323846f;
+constexpr uint32_t kSpeechExpressionPeriodMs = 700;
 
 struct Rgb {
     int r;
@@ -61,36 +61,6 @@ int IntegerSqrt(int value) {
     return result;
 }
 
-struct Palette {
-    int scale;
-};
-
-Palette PaletteFor(FaceId face) {
-    switch (face) {
-        case FaceId::kHappy:
-            return {148};
-        case FaceId::kListen:
-            return {138};
-        case FaceId::kThink:
-            return {142};
-        case FaceId::kSpeak:
-            return {150};
-        case FaceId::kSurprised:
-            return {174};
-        case FaceId::kShy:
-            return {138};
-        case FaceId::kSleepy:
-            return {126};
-        case FaceId::kComfort:
-            return {144};
-        case FaceId::kWake:
-            return {156};
-        case FaceId::kCalm:
-        default:
-            return {136};
-    }
-}
-
 PillEye WithSize(int cx, int cy, int width, int height) {
     PillEye eye;
     eye.cx = static_cast<int16_t>(std::clamp(cx, -1000, 1000));
@@ -129,27 +99,72 @@ void DrawCapsule(uint16_t* buffer, int width, int height, const PillEye& eye, ui
 
 }  // namespace
 
+PillExpression PillExpressionFor(FaceId face, uint32_t now_ms) {
+    if (face == FaceId::kSpeak) {
+        // Speech is the only state with a coarse expression cadence. The
+        // frame is held for 700 ms, so the renderer never chases the frame
+        // clock with a continuous sway or breathing animation.
+        switch ((now_ms / kSpeechExpressionPeriodMs) % 3) {
+            case 1:
+                return PillExpression::kWide;
+            case 2:
+                return PillExpression::kNarrow;
+            default:
+                return PillExpression::kNeutral;
+        }
+    }
+    switch (face) {
+        case FaceId::kListen:
+        case FaceId::kThink:
+            return PillExpression::kNarrow;
+        case FaceId::kSurprised:
+            return PillExpression::kWide;
+        case FaceId::kHappy:
+        case FaceId::kShy:
+        case FaceId::kSleepy:
+        case FaceId::kComfort:
+            return PillExpression::kSquint;
+        case FaceId::kWake:
+        case FaceId::kCalm:
+        default:
+            return PillExpression::kNeutral;
+    }
+}
+
 PillFaceFrame MakePillFaceFrame(FaceId face, bool eyes_closed, uint8_t lift, uint32_t now_ms) {
-    const Palette palette = PaletteFor(face);
-    const float t = static_cast<float>(now_ms % 2400) / 2400.0f;
-    const float sway = std::sin(t * 2.0f * kPi);
-    const float breathe = 0.5f + 0.5f * std::sin((t * 2.0f + 0.17f) * kPi);
+    const PillExpression expression = PillExpressionFor(face, now_ms);
     const int center_y = 172 - static_cast<int>(lift);
-    const int drift = static_cast<int>(sway * 14.0f);
-    const int separation = 48 + static_cast<int>(sway * 5.0f);
-    const int width = static_cast<int>(palette.scale * (0.20f + 0.06f * breathe));
-    const int height = static_cast<int>(palette.scale * (0.65f + 0.18f * breathe));
+    constexpr int kEyeSeparation = 48;
+    int width = 40;
+    int height = 112;
+    switch (expression) {
+        case PillExpression::kNarrow:
+            width = 48;
+            height = 64;
+            break;
+        case PillExpression::kWide:
+            width = 48;
+            height = 148;
+            break;
+        case PillExpression::kSquint:
+            width = 48;
+            height = 28;
+            break;
+        case PillExpression::kNeutral:
+        default:
+            break;
+    }
 
     PillFaceFrame frame;
     frame.background_rgb = kPillBackgroundRgb;
     frame.eye_rgb = kPillEyeRgb;
     frame.eyes_closed = eyes_closed;
     if (eyes_closed) {
-        frame.left = WithSize(180 - separation, center_y, 42, 16);
-        frame.right = WithSize(180 + separation, center_y, 42, 16);
+        frame.left = WithSize(180 - kEyeSeparation, center_y, 48, 16);
+        frame.right = WithSize(180 + kEyeSeparation, center_y, 48, 16);
     } else {
-        frame.left = WithSize(180 - separation + drift, center_y, width, height);
-        frame.right = WithSize(180 + separation + drift / 2, center_y, width, height);
+        frame.left = WithSize(180 - kEyeSeparation, center_y, width, height);
+        frame.right = WithSize(180 + kEyeSeparation, center_y, width, height);
     }
     return frame;
 }
