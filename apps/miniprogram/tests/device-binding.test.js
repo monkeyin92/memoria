@@ -221,6 +221,14 @@ test("memory_level must follow the long-term memory offer selection", () => {
     }),
   );
   assert.equal(unticked.service_preferences.memory_level, "none");
+  const missingMinorMemory = validRequest({
+    service_preferences: { ...minorPreferences },
+    consent_offer_ids: ["offer_minor_voice_session_v1"],
+  });
+  assert.throws(
+    () => binding.buildBindingRequest(missingMinorMemory),
+    /memory_level 必须与长期记忆授权一致/,
+  );
 
   const seniorRequest = (memoryLevel, offerIds) =>
     validRequest({
@@ -242,6 +250,12 @@ test("memory_level must follow the long-term memory offer selection", () => {
     () => binding.buildBindingRequest(seniorRequest("personal", [])),
     /memory_level 必须与长期记忆授权一致/,
   );
+  const missingSeniorMemory = seniorRequest("personal", ["offer_senior_memory_retention_v1"]);
+  delete missingSeniorMemory.service_preferences.memory_level;
+  assert.throws(
+    () => binding.buildBindingRequest(missingSeniorMemory),
+    /memory_level 必须与长期记忆授权一致/,
+  );
 
   const selfRequest = (memoryLevel, offerIds) =>
     validRequest({
@@ -256,6 +270,12 @@ test("memory_level must follow the long-term memory offer selection", () => {
   );
   assert.throws(
     () => binding.buildBindingRequest(selfRequest("none", ["offer_self_memory_retention_v1"])),
+    /memory_level 必须与长期记忆授权一致/,
+  );
+  const missingMemory = selfRequest("personal", ["offer_self_memory_retention_v1"]);
+  delete missingMemory.service_preferences.memory_level;
+  assert.throws(
+    () => binding.buildBindingRequest(missingMemory),
     /memory_level 必须与长期记忆授权一致/,
   );
   assert.equal(
@@ -398,6 +418,11 @@ test("consent catalogs keep sensitive capabilities off by default", () => {
   assert.equal(seniorMemory.proxyConsent, true);
   assert.match(seniorMemory.label, /我代父母同意/);
   assert.match(seniorMemory.description, /随时在小程序里撤回/);
+
+  const familyOffers = binding.consentOffersFor("family_shared");
+  const familySpace = familyOffers.find((offer) => offer.id === "offer_family_space_v1");
+  assert.equal(familySpace.defaultChecked, true);
+  assert.equal(familySpace.requiredForSubmit, true);
 });
 
 function validRuntimeProfile(overrides = {}) {

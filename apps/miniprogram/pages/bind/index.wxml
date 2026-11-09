@@ -189,7 +189,10 @@
           <text wx:if="{{item.requiredForSubmit}}" class="offer-note">完成绑定前必须勾选</text>
         </view>
       </view>
-      <text class="form-note">敏感能力（长期记忆、数字自我、传承、原始音频等）只有明确勾选才会申请；孩子和父母的长期记忆默认不勾选，不勾选也能完成绑定。</text>
+      <text wx:if="{{declaredMode === 'self_use'}}" class="form-note">长期记忆默认已勾选，取消勾选也能完成绑定并只保留当次对话；数字自我、传承、原始音频默认不勾选，勾选后才会开启。</text>
+      <text wx:elif="{{declaredMode === 'parent_for_child'}}" class="form-note">孩子的长期记忆默认不勾选；勾选后会记录学习与成长，并开通每周成长小结；未勾选也能完成绑定，只保留当次对话。</text>
+      <text wx:elif="{{declaredMode === 'child_for_parent'}}" class="form-note">父母的长期记忆默认不勾选；勾选后由你代父母同意；未勾选也能完成绑定，只保留当次对话。</text>
+      <text wx:else class="form-note">家庭空间与共享记忆用于共同使用；成员加入后再分别管理各自的私人记忆。</text>
       <view wx:if="{{subscriptionPushEnabled && crisisSubscribeRequired}}" class="notice notice-warn">
         <text class="l2-card-title">安全提醒是完成绑定的前提</text>
         <text class="l2-card-sub">{{crisisPush.enabled ? crisisPush.explanation : '安全提醒尚未开通，暂时不能完成这类绑定。'}}</text>

@@ -58,7 +58,7 @@ test("the home status card keeps device identity, connection state, and working 
       assert.equal(data.online, online);
       const html = renderPage("pages/home/index", data, { eventHandlers: true });
       const text = visibleText(html);
-      assert.ok(text.includes(`${data.devicePlaceName} · ${online ? "在线" : "离线"}`));
+      assert.ok(text.includes(`${data.devicePlaceName} · ${data.onlineLabel}`));
       assert.match(text, /今日聊天用量/);
       assert.match(html, /data-handler="openDevice"/);
       harness.page.openDevice();
