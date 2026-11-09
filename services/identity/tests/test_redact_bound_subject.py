@@ -10,7 +10,7 @@ from services.identity.authority import DeterministicConsentSnapshotResolver
 from services.identity.domain import IdentityAccessDeniedError, RelationshipLifecycleError
 from services.identity.in_memory_store import InMemoryIdentityStore
 from services.identity.service import REDACTED_DISPLAY_NAME, IdentityService
-from services.identity.tests.test_service import _TEST_AUTHORITY
+from services.identity.tests.service_test_support import _TEST_AUTHORITY
 
 NOW = datetime.now(UTC)
 

@@ -689,6 +689,26 @@ async def test_existing_provider_adapter_aligns_replacement_task_to_external_flo
 
 
 @pytest.mark.asyncio
+async def test_existing_provider_adapter_discards_stale_audio_after_task_rotation() -> None:
+    asr = FakeASR()
+    asr.task_sample_origin = 320
+    asr.task_audio_start_sample = 0
+    asr.task_audio_end_sample = 320
+    asr.task_audio_send_count = 1
+    asr.task_pcm_sample_count = 320
+    asr.task_pcm_peak_abs = 100
+    asr.task_pcm_rms = 10.0
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    adapter._asr = asr
+
+    assert adapter.current_asr_audio_task_snapshot is None
+
+
+@pytest.mark.asyncio
 async def test_existing_provider_adapter_recovers_failed_session_at_absolute_sample() -> None:
     sessions: list[FakeASR] = []
 

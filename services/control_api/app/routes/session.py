@@ -73,12 +73,12 @@ from services.self_model.domain import (
     SelfModelNotFoundError,
     SelfModelRegistryPort,
 )
+from services.session_runtime.commands import StartPersistentSessionCommand
 from services.session_runtime.postgres_store import SessionRuntimeConflict
 from services.session_runtime.service import (
     PersistentSessionDenied,
     PersistentSessionUnavailable,
     PostgresSessionRuntimeService,
-    StartPersistentSessionCommand,
 )
 from services.tutor.domain import SessionFocus
 

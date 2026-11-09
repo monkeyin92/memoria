@@ -13,7 +13,7 @@ from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.archive.compiler_worker import MemoryCompilerWorker
 from services.archive.domain import (
@@ -22,7 +22,6 @@ from services.archive.domain import (
     EvidenceNotFoundError,
     IdempotencyConflictError,
     LifeArchivePort,
-    RawVoiceConsent,
     RawVoiceConsentRequiredError,
 )
 from services.archive.memory_domain import (
@@ -51,6 +50,12 @@ from services.control_api.app.archive_event_conflicts import (
 from services.control_api.app.archive_event_conflicts import (
     event_id_conflict as conflict_409,
 )
+from services.control_api.app.archive_items import (
+    _actual_heard_item,
+    _consent_payload,
+    _owner_turn_item,
+    _search_item,
+)
 from services.control_api.app.bound_subject import (
     DEVICE_BOUND_SUBJECT_UNVERIFIED,
     claims_device_bound_subject,
@@ -69,6 +74,14 @@ from services.control_api.app.security import (
     require_authenticated_user,
     verify_password,
 )
+from services.control_api.app.session_evidence import (
+    EvidenceEventCreate,
+    SessionEvidenceEventCreate,
+    append_legacy_shell_event,
+    canonical_turn_eligibility,
+    memory_capture_candidate,
+    resolve_legacy_access,
+)
 from services.control_api.app.wechat_auth import WechatAuthError, code_to_session, openid_hash
 from services.evolution.account_fence import AccountWriteBlockedError
 from services.governance.account_data import (
@@ -84,16 +97,6 @@ from services.guardian.retention import (
 )
 from services.identity.domain import IdentityNotFoundError
 from services.identity.service import IdentityService
-from services.legacy.domain import (
-    LegacyAccessDeniedError,
-    LegacyAccessPurpose,
-    LegacyAccessSnapshot,
-    LegacyAuditTarget,
-    LegacyFence,
-    LegacyIdempotencyConflictError,
-    LegacyNotFoundError,
-    LegacyRegistryPort,
-)
 
 router = APIRouter(prefix="/v1/archive", tags=["archive"])
 logger = logging.getLogger(__name__)
@@ -152,99 +155,6 @@ AGENT_MEMORY_WRITE_FENCE_FIELDS = (
 )
 
 
-class EvidenceEventCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    event_id: str = Field(min_length=1, max_length=128)
-    account_id: str = Field(min_length=1, max_length=128)
-    subject_id: str | None = Field(default=None, min_length=1, max_length=128)
-    event_type: str = Field(min_length=1, max_length=96)
-    occurred_at: datetime
-    speaker_class: Literal["owner", "guest", "uncertain", "assistant", "system"]
-    source: str = Field(min_length=1, max_length=96)
-    payload: dict[str, Any]
-    session_id: str | None = Field(default=None, max_length=128)
-    turn_id: int | None = Field(default=None, ge=0)
-    generation_id: int | None = Field(default=None, ge=0)
-    speaker_identity_id: str | None = Field(default=None, max_length=128)
-    consent_grant_id: str | None = Field(default=None, max_length=128)
-    schema_version: int = Field(default=1, ge=1, le=100)
-    supersedes_event_id: str | None = Field(default=None, max_length=128)
-
-    @field_validator("payload")
-    @classmethod
-    def limit_payload(cls, payload: dict[str, Any]) -> dict[str, Any]:
-        return _limit_payload(payload)
-
-
-class SessionEvidenceEventCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    event_id: str = Field(min_length=1, max_length=128)
-    session_id: str = Field(min_length=1, max_length=128)
-    event_type: Literal[
-        "speech.utterance_finalized",
-        "speaker.classified",
-        "assistant.playout_progressed",
-        "assistant.playout_stopped",
-    ]
-    occurred_at: datetime
-    speaker_class: Literal["owner", "guest", "uncertain", "assistant"]
-    source: str = Field(min_length=1, max_length=96)
-    payload: dict[str, Any]
-    turn_id: int | None = Field(default=None, ge=0)
-    generation_id: int | None = Field(default=None, ge=0)
-    tool_epoch: int | None = Field(default=None, ge=0)
-    # Agent-owned MemoryWriteFence envelope.  These claims are accepted at
-    # the transport boundary so the real Agent event is not rejected, but
-    # they are never copied directly into archive evidence.  The route emits
-    # a bounded server-owned projection candidate and the PostgreSQL Memory
-    # projector independently revalidates Session + Policy authority.
-    session_epoch: int | None = Field(default=None, ge=0)
-    device_id: str | None = Field(default=None, max_length=128)
-    subject_revision: int | None = Field(default=None, ge=0)
-    active_subject_id: str | None = Field(default=None, max_length=128)
-    runtime_profile_id: str | None = Field(default=None, max_length=128)
-    actor_id: str | None = Field(default=None, max_length=128)
-    binding_id: str | None = Field(default=None, max_length=128)
-    binding_version: int | None = Field(default=None, ge=1)
-    memory_scope: Literal[
-        "unknown",
-        "session_ephemeral",
-        "personal_private",
-        "guardian_summary",
-        "family_shared",
-        "legacy_archive",
-    ] = "unknown"
-    policy_receipt_id: str | None = Field(default=None, max_length=128)
-    raw_audio_receipt_id: str | None = Field(default=None, max_length=128)
-    training_receipt_id: str | None = Field(default=None, max_length=128)
-    no_model_training: bool = True
-    event_sequence: int | None = Field(default=None, ge=1)
-    speaker_identity_id: str | None = Field(default=None, max_length=128)
-    consent_grant_id: str | None = Field(default=None, max_length=128)
-    schema_version: int = Field(default=1, ge=1, le=100)
-    supersedes_event_id: str | None = Field(default=None, max_length=128)
-
-    @field_validator("payload")
-    @classmethod
-    def limit_payload(cls, payload: dict[str, Any]) -> dict[str, Any]:
-        return _limit_payload(payload)
-
-    @model_validator(mode="after")
-    def enforce_playout_evidence(self) -> SessionEvidenceEventCreate:
-        if self.event_type.startswith("assistant."):
-            if self.speaker_class != "assistant" or self.payload.get("actual_heard") is not True:
-                raise ValueError("assistant archive events require actual-heard evidence")
-            if self.turn_id is None or self.generation_id is None:
-                raise ValueError("assistant archive events require turn_id and generation_id")
-            if self.payload.get("response_provenance") is not None and self.tool_epoch is None:
-                raise ValueError("response provenance requires the complete generation fence")
-        elif self.speaker_class == "assistant":
-            raise ValueError("assistant speaker_class is only valid for assistant events")
-        return self
-
-
 class RawVoiceConsentCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -255,15 +165,6 @@ class RawVoiceConsentCreate(BaseModel):
         pattern=r"^[a-z0-9][a-z0-9._-]*$",
     )
     retention_policy: Literal["account_lifetime"] = "account_lifetime"
-
-
-def _limit_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    import json
-
-    encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-    if len(encoded.encode()) > 64 * 1024:
-        raise ValueError("payload must not exceed 64 KiB")
-    return payload
 
 
 def _archive(request: Request) -> LifeArchivePort:
@@ -280,60 +181,6 @@ def _store(request: Request) -> MemoryStore:
 
 def _catalog(request: Request) -> MemoryCatalogPort:
     return cast(MemoryCatalogPort, request.app.state.memory_catalog)
-
-
-def _legacy_registry(request: Request) -> LegacyRegistryPort:
-    return cast(LegacyRegistryPort, request.app.state.legacy_registry)
-
-
-def _legacy_snapshot_matches_session(
-    access: LegacyAccessSnapshot,
-    frozen: FrozenMode,
-) -> bool:
-    return bool(
-        access.actor_role == frozen.legacy_actor_role
-        and access.resource_owner_account_id == frozen.resource_owner_account_id
-        and access.grantee_account_id == frozen.legacy_grantee_account_id
-        and access.grant_id == frozen.legacy_grant_id
-        and access.shell_id == frozen.legacy_shell_id
-        and access.version_id == frozen.digital_self_version_id
-        and access.manifest_sha256 == frozen.manifest_sha256
-        and access.grant_snapshot_sha256 == frozen.legacy_grant_snapshot_sha256
-        and access.scope_sha256 == frozen.legacy_scope_sha256
-        and access.relationship_profile_id == frozen.relationship_profile_id
-        and access.relationship_profile_version == frozen.relationship_profile_version
-        and access.voice_allowed is frozen.legacy_voice_allowed
-        and access.expires_at.isoformat() == frozen.legacy_expires_at
-    )
-
-
-async def _resolve_legacy_access(
-    request: Request,
-    *,
-    session: Mapping[str, Any],
-    now: datetime,
-) -> LegacyAccessSnapshot:
-    frozen = FrozenMode.from_session(session)
-    if ModePolicy.availability(frozen).status != "available" or not frozen.legacy_grant_id:
-        raise HTTPException(status_code=409, detail={"code": "legacy_access_unavailable"})
-    purpose: LegacyAccessPurpose = (
-        "owner_preview" if frozen.legacy_actor_role == "owner_preview" else "grantee_session"
-    )
-    try:
-        access = await _legacy_registry(request).resolve_access(
-            actor_account_id=str(session["user_id"]),
-            grant_id=frozen.legacy_grant_id,
-            purpose=purpose,
-            now=now,
-        )
-    except (LegacyAccessDeniedError, LegacyNotFoundError) as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "legacy_access_unavailable"},
-        ) from exc
-    if not _legacy_snapshot_matches_session(access, frozen):
-        raise HTTPException(status_code=409, detail={"code": "legacy_access_stale"})
-    return access
 
 
 def _governance(request: Request) -> AccountDataGovernance:
@@ -367,16 +214,6 @@ def _wake_compiler(request: Request) -> None:
         worker.wake()
 
 
-def _consent_payload(consent: RawVoiceConsent) -> dict[str, Any]:
-    return {
-        "consent_grant_id": consent.consent_grant_id,
-        "policy_version": consent.policy_version,
-        "retention_policy": consent.retention_policy,
-        "granted_at": consent.granted_at.isoformat(),
-        "revoked_at": consent.revoked_at.isoformat() if consent.revoked_at else None,
-    }
-
-
 def _require_internal_token(
     request: Request,
     capability: Literal["archive_write"],
@@ -393,243 +230,6 @@ def _require_archive_write_token(
     token: Annotated[str | None, Header(alias="X-Memoria-Internal-Token")] = None,
 ) -> None:
     _require_internal_token(request, "archive_write", token)
-
-
-async def _append_legacy_shell_event(
-    request: Request,
-    *,
-    body: SessionEvidenceEventCreate,
-    access: LegacyAccessSnapshot,
-    tool_epoch: int | None,
-    response_provenance: Mapping[str, Any] | None,
-) -> JSONResponse:
-    shell_role: Literal["grantee", "digital_self"] | None = None
-    if access.actor_role == "grantee" and body.event_type == "speech.utterance_finalized":
-        if body.speaker_class == "owner":
-            shell_role = "grantee"
-    elif access.actor_role == "grantee" and body.event_type == "assistant.playout_stopped":
-        shell_role = "digital_self"
-    if shell_role is None:
-        return JSONResponse(
-            status_code=200,
-            content={"event_id": body.event_id, "shell_turn_id": None, "isolated": True},
-        )
-    text = body.payload.get("text")
-    if (
-        not isinstance(text, str)
-        or not text.strip()
-        or body.turn_id is None
-        or body.generation_id is None
-        or tool_epoch is None
-        or access.shell_id is None
-    ):
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "legacy_shell_fence_invalid"},
-        )
-    idempotency_key = "archive:" + hashlib.sha256(body.event_id.encode()).hexdigest()
-    try:
-        turn = await _legacy_registry(request).append_shell_turn(
-            actor_account_id=access.grantee_account_id,
-            shell_id=access.shell_id,
-            actor_role=shell_role,
-            actual_heard_text=text.strip(),
-            fence=LegacyFence(
-                session_id=body.session_id,
-                turn_id=str(body.turn_id),
-                generation_id=str(body.generation_id),
-                tool_epoch=tool_epoch,
-            ),
-            idempotency_key=idempotency_key,
-            now=body.occurred_at.astimezone(UTC),
-        )
-    except (LegacyAccessDeniedError, LegacyNotFoundError) as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "legacy_access_unavailable"},
-        ) from exc
-    except LegacyIdempotencyConflictError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "legacy_shell_idempotency_conflict"},
-        ) from exc
-    if shell_role == "digital_self":
-        disclosures = (
-            response_provenance.get("disclosures") if response_provenance is not None else None
-        )
-        if not isinstance(disclosures, list):
-            disclosures = []
-        try:
-            registry = _legacy_registry(request)
-            fence = LegacyFence(
-                session_id=body.session_id,
-                turn_id=str(body.turn_id),
-                generation_id=str(body.generation_id),
-                tool_epoch=tool_epoch,
-            )
-            now = body.occurred_at.astimezone(UTC)
-            actual_voice_profile_id = (
-                response_provenance.get("actual_voice_profile_id")
-                if response_provenance is not None
-                else None
-            )
-            if isinstance(actual_voice_profile_id, str) and actual_voice_profile_id:
-                await registry.append_runtime_audit(
-                    actor_account_id=access.grantee_account_id,
-                    grant_id=access.grant_id,
-                    action="select_voice",
-                    decision="allowed",
-                    reason="voice_selected",
-                    fence=fence,
-                    target=LegacyAuditTarget("voice_profile", actual_voice_profile_id),
-                    now=now,
-                )
-            if "privacy_refusal" in disclosures:
-                await registry.append_runtime_audit(
-                    actor_account_id=access.grantee_account_id,
-                    grant_id=access.grant_id,
-                    action="refuse",
-                    decision="denied",
-                    reason="privacy_refusal",
-                    fence=fence,
-                    target=None,
-                    now=now,
-                )
-            elif "unknown" in disclosures:
-                await registry.append_runtime_audit(
-                    actor_account_id=access.grantee_account_id,
-                    grant_id=access.grant_id,
-                    action="refuse",
-                    decision="denied",
-                    reason="unknown_refusal",
-                    fence=fence,
-                    target=None,
-                    now=now,
-                )
-            else:
-                await registry.append_runtime_audit(
-                    actor_account_id=access.grantee_account_id,
-                    grant_id=access.grant_id,
-                    action="plan_answer",
-                    decision="allowed",
-                    reason="answer_planned",
-                    fence=fence,
-                    target=None,
-                    now=now,
-                )
-        except (LegacyAccessDeniedError, LegacyNotFoundError) as exc:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "legacy_access_unavailable"},
-            ) from exc
-    return JSONResponse(
-        status_code=201,
-        content={
-            "event_id": body.event_id,
-            "shell_turn_id": turn.shell_turn_id,
-            "isolated": True,
-        },
-    )
-
-
-def _canonical_turn_eligibility(event: EvidenceEvent) -> tuple[bool, bool] | None:
-    interaction = event.payload.get("interaction")
-    if not isinstance(interaction, Mapping):
-        return None
-    history = event.payload.get("history_eligible")
-    owner_projection = event.payload.get("owner_projection_eligible")
-    if not isinstance(history, bool) or not isinstance(owner_projection, bool):
-        return None
-    if (
-        interaction.get("history_eligible") is not history
-        or interaction.get("owner_projection_eligible") is not owner_projection
-    ):
-        return None
-    nested_history = interaction.get("history_eligible")
-    nested_owner_projection = interaction.get("owner_projection_eligible")
-    if not isinstance(nested_history, bool) or not isinstance(nested_owner_projection, bool):
-        return None
-    return nested_history, nested_owner_projection
-
-
-def _memory_capture_candidate(
-    *,
-    body: SessionEvidenceEventCreate,
-    claims: dict[str, Any],
-    trusted_interaction: dict[str, Any],
-    retention_allowed: bool,
-) -> dict[str, object] | None:
-    """Return only the bounded input for the durable authority projector.
-
-    This is deliberately a *candidate*, not authority.  The action-executor
-    PostgreSQL port checks the current Session profile and the exact Policy
-    receipt before inserting ``memory_capture_evidence``.  Keeping the raw
-    Agent claims out of the archive payload also prevents a nested caller
-    field from becoming trusted by accident.
-    """
-
-    if not (
-        body.event_type == "speech.utterance_finalized"
-        and body.speaker_class == "owner"
-        and body.turn_id is not None
-        and body.generation_id is not None
-        and body.tool_epoch is not None
-        and retention_allowed
-        and trusted_interaction.get("interaction_mode") == "companion"
-        and trusted_interaction.get("simulated_output") is False
-        and trusted_interaction.get("owner_projection_eligible") is True
-    ):
-        return None
-    required_text = (
-        "device_id",
-        "active_subject_id",
-        "runtime_profile_id",
-        "actor_id",
-        "binding_id",
-    )
-    if any(
-        not isinstance(claims.get(field), str)
-        or not cast(str, claims[field]).strip()
-        for field in required_text
-    ):
-        return None
-    if claims.get("memory_scope") not in {
-        "personal_private",
-        "guardian_summary",
-        "family_shared",
-    }:
-        return None
-    required_positive = ("session_epoch", "binding_version", "event_sequence")
-    if any(
-        not isinstance(claims.get(field), int)
-        or isinstance(claims[field], bool)
-        or cast(int, claims[field]) < 1
-        for field in required_positive
-    ):
-        return None
-    subject_revision = claims.get("subject_revision")
-    if (
-        not isinstance(subject_revision, int)
-        or isinstance(subject_revision, bool)
-        or subject_revision < 0
-    ):
-        return None
-    return {
-        "active_subject_id": cast(str, claims["active_subject_id"]),
-        "actor_id": cast(str, claims["actor_id"]),
-        "binding_id": cast(str, claims["binding_id"]),
-        "binding_version": cast(int, claims["binding_version"]),
-        "device_id": cast(str, claims["device_id"]),
-        "event_sequence": cast(int, claims["event_sequence"]),
-        "generation_id": body.generation_id,
-        "memory_scope": cast(str, claims["memory_scope"]),
-        "runtime_profile_id": cast(str, claims["runtime_profile_id"]),
-        "session_id": body.session_id,
-        "session_epoch": cast(int, claims["session_epoch"]),
-        "subject_revision": subject_revision,
-        "tool_epoch": body.tool_epoch,
-        "turn_id": body.turn_id,
-    }
 
 
 @router.post("/events")
@@ -742,7 +342,7 @@ async def append_session_event(
 ) -> JSONResponse:
     session = require_active_voice_session(request, body.session_id)
     legacy_access = (
-        await _resolve_legacy_access(request, session=session, now=datetime.now(UTC))
+        await resolve_legacy_access(request, session=session, now=datetime.now(UTC))
         if str(session["interaction_mode"]) == "legacy"
         else None
     )
@@ -806,7 +406,7 @@ async def append_session_event(
                 status_code=425,
                 detail={"code": "parent_turn_not_recorded"},
             )
-        parent_eligibility = _canonical_turn_eligibility(parent)
+        parent_eligibility = canonical_turn_eligibility(parent)
         if parent_eligibility is None:
             raise HTTPException(
                 status_code=409,
@@ -845,11 +445,11 @@ async def append_session_event(
     ) is not None:
         # Claims identify a subject only after the existing runtime authority
         # accepts the same profile/epoch. Never let a stale turn name the adult.
-        from services.control_api.app.routes.interaction import (
-            _current_persistent_runtime_profile,
+        from services.control_api.app.persistent_runtime_profile import (
+            current_persistent_runtime_profile,
         )
 
-        profile = await _current_persistent_runtime_profile(
+        profile = await current_persistent_runtime_profile(
             request, session, session_id=body.session_id
         )
         current_profile = profile
@@ -957,14 +557,14 @@ async def append_session_event(
         payload["tool_epoch"] = tool_epoch
     if canonical_response_provenance is not None:
         payload["response_provenance"] = canonical_response_provenance
-    memory_capture_candidate = _memory_capture_candidate(
+    capture_candidate = memory_capture_candidate(
         body=body,
         claims=memory_write_fence,
         trusted_interaction=trusted_interaction,
         retention_allowed=retention_allowed,
     )
-    if memory_capture_candidate is not None:
-        payload["memory_capture_candidate_v1"] = memory_capture_candidate
+    if capture_candidate is not None:
+        payload["memory_capture_candidate_v1"] = capture_candidate
     if (
         body.event_type == "speech.utterance_finalized"
         and body.speaker_class == "owner"
@@ -978,7 +578,7 @@ async def append_session_event(
     ):
         payload["memory_write_intent"] = dict(EXPLICIT_MEMORY_INTENT)
     if legacy_access is not None:
-        return await _append_legacy_shell_event(
+        return await append_legacy_shell_event(
             request,
             body=body,
             access=legacy_access,
@@ -1192,36 +792,6 @@ async def timeline(
     }
 
 
-def _actual_heard_item(event: EvidenceEvent) -> dict[str, Any] | None:
-    payload = event.payload
-    text = payload.get("text")
-    if not (
-        event.event_type == "assistant.playout_stopped"
-        and event.speaker_class == "assistant"
-        and payload.get("actual_heard") is True
-        and payload.get("history_eligible") is True
-        and payload.get("owner_projection_eligible") is True
-        and payload_text_allowed(payload)
-        and isinstance(text, str)
-        and text.strip()
-        and event.session_id is not None
-        and event.turn_id is not None
-        and event.generation_id is not None
-    ):
-        return None
-    return {
-        "event_id": event.event_id,
-        "occurred_at": event.occurred_at.isoformat(),
-        "session_id": event.session_id,
-        "turn_id": event.turn_id,
-        "generation_id": event.generation_id,
-        "text": text.strip(),
-        # Exact DAC evidence must opt in explicitly. Missing or malformed
-        # telemetry remains an approximate playback record.
-        "approximate": payload.get("approximate") is not False,
-    }
-
-
 @router.get("/conversation-review")
 async def conversation_review(
     request: Request,
@@ -1287,33 +857,6 @@ async def conversation_review(
             }
             for item in confirmed.items
         ],
-    }
-
-
-def _owner_turn_item(event: EvidenceEvent) -> dict[str, Any] | None:
-    payload = event.payload
-    text = payload.get("text")
-    if not (
-        event.event_type == "speech.utterance_finalized"
-        and event.speaker_class == "owner"
-        and payload.get("history_eligible") is True
-        and payload.get("owner_projection_eligible") is True
-        and payload_text_allowed(payload)
-        and isinstance(text, str)
-        and text.strip()
-        and event.session_id is not None
-        and event.turn_id is not None
-        and event.generation_id is not None
-    ):
-        return None
-    return {
-        "event_id": event.event_id,
-        "occurred_at": event.occurred_at.isoformat(),
-        "session_id": event.session_id,
-        "turn_id": event.turn_id,
-        "generation_id": event.generation_id,
-        "speaker_class": "owner",
-        "text": text.strip(),
     }
 
 
@@ -1501,31 +1044,6 @@ async def conversation_sessions(
         reverse=True,
     )[:limit]
     return {"items": items}
-
-
-def _search_item(item: Any) -> dict[str, Any]:
-    return {
-        "item_id": item.item_id,
-        "kind": item.kind,
-        "title": item.title,
-        "snippet": item.snippet,
-        "category": item.category,
-        "domain_category": item.domain_category,
-        "memory_kind": item.memory_kind,
-        "entity_ids": list(item.entity_ids),
-        "status": item.status,
-        "source_event_id": item.source_event_id,
-        "source_event_ids": list(item.source_event_ids),
-        "occurred_at": item.occurred_at.isoformat(),
-        "valid_from": item.valid_from.isoformat() if item.valid_from else None,
-        "valid_to": item.valid_to.isoformat() if item.valid_to else None,
-        "observed_at": item.observed_at.isoformat() if item.observed_at else None,
-        "stability": item.stability,
-        "salience": item.salience,
-        "sensitivity": item.sensitivity,
-        "conflict_state": item.conflict_state,
-        "score": item.score,
-    }
 
 
 @router.get("/search")

@@ -2,25 +2,19 @@
 
 from __future__ import annotations
 
-import hashlib
 import hmac
-import secrets
 import uuid
-from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Any, Literal, cast
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
-from packages.contracts.generated.python.multi_subject_contracts import CapabilityValue
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from services.archive.domain import (
-    EvidenceEvent,
     EvidenceNotFoundError,
     LifeArchivePort,
-    RawVoiceConsentRequiredError,
 )
 from services.archive.memory_domain import (
     MemoryCatalogPort,
@@ -28,14 +22,6 @@ from services.archive.memory_domain import (
     MemorySearchQuery,
 )
 from services.archive.memory_retractions import list_retracted_claims
-from services.archive.object_store import ObjectStore
-from services.common.companion_response_safety import guardian_attention_copy
-from services.consent.bound_subject import (
-    GUARDIAN_MEMORY_CAPABILITIES,
-    MINOR_SESSION_CAPABILITIES,
-    BoundSubjectConsentService,
-    BoundSubjectGrant,
-)
 from services.control_api.app.account_gate import (
     require_capability_for_account_id,
     require_capability_for_subject,
@@ -43,9 +29,37 @@ from services.control_api.app.account_gate import (
 )
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
-from services.control_api.app.guardian_push import resolve_minor_display_name
+from services.control_api.app.guardian_binding_authority import (
+    GuardianConsentCreate,
+    owns_accountless_child,
+    person_grant_body_matches,
+    require_binding_owner_for_subject,
+    sync_bound_subject_authority,
+)
+from services.control_api.app.guardian_child_data import (
+    child_memory_account,
+    child_turns,
+    consent_reference,
+    guardian_evidence_account,
+)
+from services.control_api.app.guardian_lifecycle import (
+    deletion_confirmed,
+    disable_minor_restricted_assets,
+    erase_child_kind,
+    purge_minor_raw_voice,
+)
+from services.control_api.app.guardian_notifications import safety_alert_items
+from services.control_api.app.guardian_payloads import (
+    active_link_or_403,
+    binding_code,
+    binding_digest,
+    consent_payload,
+    link_payload,
+    person_consent_payload,
+    record_link_event,
+    require_wechat_guardian,
+)
 from services.control_api.app.guardian_recap import (
-    child_utterances,
     day_activity,
     recap_for_day,
 )
@@ -74,44 +88,27 @@ from services.guardian.child_memory import (
     KIND_CHILD_ARCHIVE,
     KIND_DIALOGUE_SUMMARY,
     ArchiveFact,
-    ChildMemoryKind,
     DialogueSummary,
 )
 from services.guardian.consent import GuardianConsentService
 from services.guardian.corpus import CorpusRetentionService
-from services.guardian.crisis import CrisisNotificationStorePort, GuardianNotification
-from services.guardian.crisis_delivery_receipt import (
-    crisis_delivery_receipt_payload,
-    project_crisis_delivery_receipt,
-)
+from services.guardian.crisis import CrisisNotificationStorePort
 from services.guardian.domain import (
     AgeEvidenceStatus,
     BirthYearBand,
     ConsentKind,
-    ConsentRecord,
     GuardianAccessDeniedError,
     GuardianConflictError,
-    GuardianLink,
     GuardianNotFoundError,
     GuardianStorePort,
-    PersonConsentRecord,
     Relation,
     SubjectCategory,
     SubjectTransitionError,
     validate_subject_transition,
 )
-from services.guardian.parent_alert import (
-    PARENT_ALERT_COPY,
-    alert_time_label,
-    interrupted_parent_detail,
-)
 from services.guardian.push import PushSubscriptionResult, PushSubscriptionStorePort
 from services.guardian.weekly_report import WeeklyReportProjector
-from services.identity.service import IdentityService
-from services.legacy.domain import LegacyRegistryPort
 from services.memory_scope.child_layers import ChildLayerStore
-from services.speaker.domain import RevokeSpeakerProfile, SpeakerAuthorityPort
-from services.voice_profile.domain import VoiceProfilePort
 
 router = APIRouter(prefix="/v1/guardian", tags=["guardian"])
 router.include_router(crisis_script_interrupt_router)
@@ -129,7 +126,6 @@ _WEEKLY_EVENT_TYPES = (
     "study.progress_updated",
     "topic.observation",
 )
-_DELETE_CONFIRMATION = "永久删除孩子的全部数据"
 
 
 class GuardianLinkCreate(BaseModel):
@@ -144,26 +140,6 @@ class GuardianLinkConfirm(BaseModel):
 
     binding_code: str = Field(pattern=r"^\d{8}$")
     birth_year_band: BirthYearBand
-
-
-class GuardianConsentCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    consent_kind: ConsentKind
-    policy_version: str = Field(
-        min_length=1,
-        max_length=64,
-        pattern=r"^[a-z0-9][a-z0-9._-]*$",
-    )
-    retention_days: int | None = Field(default=None, ge=1, le=30)
-
-    @model_validator(mode="after")
-    def validate_corpus_retention(self) -> GuardianConsentCreate:
-        if self.consent_kind == "corpus_recording" and self.retention_days is None:
-            raise ValueError("corpus recording consent requires retention_days")
-        if self.consent_kind != "corpus_recording" and self.retention_days is not None:
-            raise ValueError("retention_days is only valid for corpus recording consent")
-        return self
 
 
 class GuardianPushSubscriptionCreate(BaseModel):
@@ -204,10 +180,6 @@ def _catalog(request: Request) -> MemoryCatalogPort:
     return cast(MemoryCatalogPort, request.app.state.memory_catalog)
 
 
-def _archive_objects(request: Request) -> ObjectStore:
-    return cast(ObjectStore, request.app.state.archive_object_store)
-
-
 def _consents(request: Request) -> GuardianConsentService:
     return cast(GuardianConsentService, request.app.state.guardian_consent_service)
 
@@ -218,40 +190,6 @@ def _terminator(request: Request) -> AccountSessionTerminator:
 
 def _governance(request: Request) -> AccountDataGovernance:
     return cast(AccountDataGovernance, request.app.state.account_data_governance)
-
-
-async def _disable_minor_restricted_assets(request: Request, account_id: str) -> None:
-    now = _now()
-    legacy = cast(LegacyRegistryPort, request.app.state.legacy_registry)
-    for grant in await legacy.list_grants(actor_account_id=account_id, role="owner"):
-        if grant.revoked_at is None:
-            await legacy.revoke(
-                actor_account_id=account_id,
-                grant_id=grant.grant_id,
-                expected_grant_snapshot_sha256=grant.grant_snapshot_sha256,
-                idempotency_key=f"minor-transition:{grant.grant_id}",
-                now=now,
-            )
-    voice = cast(VoiceProfilePort, request.app.state.voice_profile_manager)
-    for voice_profile in await voice.profiles(account_id=account_id):
-        if voice_profile.status != "revoked":
-            await voice.revoke_profile(
-                account_id=account_id,
-                profile_id=voice_profile.profile_id,
-            )
-    consent = await voice.consent(account_id=account_id)
-    if consent is not None and consent.revoked_at is None:
-        await voice.revoke_consent(account_id=account_id)
-    speaker = cast(SpeakerAuthorityPort, request.app.state.speaker_authority)
-    for speaker_profile in await speaker.profiles(account_id):
-        if speaker_profile.status != "revoked":
-            await speaker.revoke(
-                RevokeSpeakerProfile(
-                    account_id=account_id,
-                    profile_id=speaker_profile.profile_id,
-                    reason="subject_transition_to_minor",
-                )
-            )
 
 
 def _settings(request: Request) -> ControlSettings:
@@ -280,304 +218,6 @@ def _require_idempotency_key(value: str | None) -> str:
     return normalized
 
 
-def _binding_code(
-    request: Request,
-    *,
-    guardian_user_id: str,
-    minor_user_id: str,
-    idempotency_key: str,
-) -> str:
-    secret = _settings(request).memoria_auth_secret.get_secret_value().encode("utf-8")
-    digest = hmac.new(
-        secret,
-        (
-            "memoria:guardian-binding-v1\0"
-            f"{guardian_user_id}\0{minor_user_id}\0{idempotency_key}"
-        ).encode(),
-        hashlib.sha256,
-    ).digest()
-    return f"{int.from_bytes(digest[:8], 'big') % 100_000_000:08d}"
-
-
-def _binding_digest(code: str) -> str:
-    return hashlib.sha256(f"memoria:guardian-binding-v1\0{code}".encode()).hexdigest()
-
-
-def _require_wechat_guardian(request: Request, user: AuthenticatedUser) -> None:
-    require_capability_for_subject(user, "guardian_manage", store=_profiles(request))
-    if not _profiles(request).has_external_identity(
-        user_id=user.user_id,
-        provider="wechat_openid",
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "guardian_wechat_identity_required"},
-        )
-
-
-def _link_payload(request: Request, link: GuardianLink, *, actor_user_id: str) -> dict[str, Any]:
-    minor = _profiles(request).get_subject_profile(user_id=link.minor_user_id) or {}
-    return {
-        "link_id": link.link_id,
-        "guardian_user_id": link.guardian_user_id,
-        "minor_user_id": link.minor_user_id,
-        "minor_display_name": str(minor.get("display_name") or "孩子"),
-        "relation": link.relation,
-        "status": link.status,
-        "verified_via": link.verified_via,
-        "actor_role": "guardian" if actor_user_id == link.guardian_user_id else "minor",
-        "binding_expires_at": link.binding_expires_at.isoformat(),
-        "created_at": link.created_at.isoformat(),
-        "activated_at": link.activated_at.isoformat() if link.activated_at else None,
-        "revoked_at": link.revoked_at.isoformat() if link.revoked_at else None,
-    }
-
-
-def _consent_payload(record: ConsentRecord) -> dict[str, Any]:
-    return {
-        "consent_id": record.consent_id,
-        "link_id": record.link_id,
-        "consent_kind": record.consent_kind,
-        "policy_version": record.policy_version,
-        "granted_at": record.granted_at.isoformat(),
-        "expires_at": record.expires_at.isoformat() if record.expires_at else None,
-        "revoked_at": record.revoked_at.isoformat() if record.revoked_at else None,
-        "active": record.active,
-    }
-
-
-def _person_consent_payload(record: PersonConsentRecord) -> dict[str, Any]:
-    return {
-        "consent_id": record.consent_id,
-        "subject_person_id": record.subject_person_id,
-        "grantor_person_id": record.grantor_person_id,
-        "consent_kind": record.consent_kind,
-        "policy_version": record.policy_version,
-        "granted_at": record.granted_at.isoformat(),
-        "expires_at": record.expires_at.isoformat() if record.expires_at else None,
-        "revoked_at": record.revoked_at.isoformat() if record.revoked_at else None,
-        "active": record.active,
-        "basis": "binding_owner_declaration",
-    }
-
-
-def _person_grant_body_matches(
-    record: PersonConsentRecord,
-    body: GuardianConsentCreate,
-) -> bool:
-    """Whether a replayed idempotency key carries the same grant request.
-
-    Absolute timestamps are recomputed per attempt, so the request is matched
-    on the grantor/subject/kind/policy identity plus the requested retention
-    span; a different payload under the same key conflicts.
-    """
-
-    if (
-        record.consent_kind != body.consent_kind
-        or record.policy_version != body.policy_version
-    ):
-        return False
-    if body.retention_days is None:
-        return record.expires_at is None
-    return (
-        record.expires_at is not None
-        and record.expires_at - record.granted_at
-        == timedelta(days=body.retention_days)
-    )
-
-
-async def _require_binding_owner_for_subject(
-    request: Request,
-    *,
-    user: AuthenticatedUser,
-    subject_person_id: str,
-) -> None:
-    """Authorize a person-level consent against the device binding.
-
-    The only accepted grantor is the account owner of an ACTIVE
-    ``parent_for_child`` binding that names this subject as its primary
-    subject — the same binding-scoped authority that makes a guardian
-    declaration count.  A subject without such a binding is refused: nobody
-    may grant capabilities over a child they do not actually manage.
-    """
-
-    identity = getattr(request.app.state, "identity_service", None)
-    if not isinstance(identity, IdentityService):
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "identity_authority_unavailable"},
-        )
-    manifests = await identity.list_active_manifests_for_person(
-        subject_person_id,
-        actor_person_id=user.user_id,
-    )
-    if not any(
-        manifest.declared_mode == "parent_for_child"
-        and manifest.account_owner_id == user.user_id
-        and subject_person_id in manifest.primary_subject_ids
-        for manifest in manifests
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "guardian_binding_owner_required"},
-        )
-
-
-#: Guardian consent kinds that stand for standing grants in the consent
-#: authority Policy reads (see ``services.consent.bound_subject``).
-_BOUND_SUBJECT_CAPABILITIES: dict[str, tuple[CapabilityValue, ...]] = {
-    "memory_retention": GUARDIAN_MEMORY_CAPABILITIES,
-    "minor_voice_session": MINOR_SESSION_CAPABILITIES,
-}
-
-
-async def _sync_bound_subject_authority(
-    request: Request,
-    *,
-    user: AuthenticatedUser,
-    subject_person_id: str,
-    consent_kind: str,
-    granted: bool,
-    source_key: str,
-) -> None:
-    """Mirror a person-level guardian consent into the consent authority.
-
-    The retention ceiling reads the Guardian ledger and Policy reads the
-    consent authority; one toggle must move both, on every active binding
-    this guardian owns for the child. Without a consent authority (SQLite
-    deployments have no Session Runtime) there is nothing to mirror.
-    """
-
-    capabilities = _BOUND_SUBJECT_CAPABILITIES.get(consent_kind)
-    service = cast(
-        BoundSubjectConsentService | None,
-        getattr(request.app.state, "bound_subject_consent", None),
-    )
-    identity = getattr(request.app.state, "identity_service", None)
-    if capabilities is None or service is None or not isinstance(identity, IdentityService):
-        return
-    manifests = await identity.list_active_manifests_for_person(
-        subject_person_id,
-        actor_person_id=user.user_id,
-    )
-    for manifest in manifests:
-        if (
-            manifest.declared_mode != "parent_for_child"
-            or manifest.account_owner_id != user.user_id
-            or subject_person_id not in manifest.primary_subject_ids
-        ):
-            continue
-        if granted:
-            await service.grant(
-                BoundSubjectGrant(
-                    actor_person_id=user.user_id,
-                    subject_person_id=subject_person_id,
-                    binding_id=manifest.binding_id,
-                    kind="guardian",
-                    capabilities=capabilities,
-                    source_key=source_key,
-                )
-            )
-        else:
-            await service.revoke(
-                actor_person_id=user.user_id,
-                subject_person_id=subject_person_id,
-                binding_id=manifest.binding_id,
-                capabilities=capabilities,
-                reason=f"guardian_{consent_kind}_revoked",
-            )
-
-
-def _deletion_confirmed(confirmation: str) -> bool:
-    # compare_digest rejects non-ASCII str, and the phrase is Chinese.
-    return secrets.compare_digest(
-        confirmation.encode("utf-8"), _DELETE_CONFIRMATION.encode("utf-8")
-    )
-
-
-async def _owns_accountless_child(
-    request: Request,
-    *,
-    user: AuthenticatedUser,
-    subject_person_id: str,
-) -> bool:
-    """Whether this guardian binds a device for this child, who has no account."""
-
-    if _profiles(request).get_account(user_id=subject_person_id) is not None:
-        return False
-    try:
-        await _require_binding_owner_for_subject(
-            request, user=user, subject_person_id=subject_person_id
-        )
-    except HTTPException:
-        return False
-    return True
-
-
-async def _active_link_or_403(
-    request: Request,
-    *,
-    guardian_user_id: str,
-    minor_user_id: str,
-) -> GuardianLink:
-    link = await _store(request).active_link(
-        guardian_user_id=guardian_user_id,
-        minor_user_id=minor_user_id,
-    )
-    if link is None:
-        raise HTTPException(status_code=403, detail={"code": "guardian_link_required"})
-    return link
-
-
-async def _record_link_event(
-    request: Request,
-    *,
-    link: GuardianLink,
-    event_type: str,
-    event_id: str,
-    occurred_at: datetime,
-) -> None:
-    await _archive(request).record(
-        EvidenceEvent(
-            event_id=event_id,
-            account_id=link.minor_user_id,
-            event_type=event_type,
-            occurred_at=occurred_at,
-            speaker_class="system",
-            source="guardian.link",
-            payload={
-                "link_id": link.link_id,
-                "relation": link.relation,
-                "verified_via": link.verified_via,
-                "status": link.status,
-            },
-        )
-    )
-
-
-async def _purge_minor_raw_voice(request: Request, account_id: str) -> None:
-    archive = _archive(request)
-    references = await archive.raw_voice_blobs(account_id=account_id)
-    active = await archive.active_raw_voice_consent(account_id=account_id)
-    if active is not None:
-        try:
-            revocation = await archive.revoke_raw_voice_consent(
-                account_id=account_id,
-                revoked_at=_now(),
-            )
-            references = tuple({item.object_key: item for item in (*references, *revocation.references)}.values())
-        except RawVoiceConsentRequiredError:
-            pass
-    if not references:
-        return
-    for reference in references:
-        await _archive_objects(request).delete(reference)
-    await archive.purge_raw_voice_blobs(
-        account_id=account_id,
-        object_keys=tuple(reference.object_key for reference in references),
-    )
-
-
 @router.post("/links", status_code=status.HTTP_201_CREATED)
 async def create_link(
     body: GuardianLinkCreate,
@@ -585,14 +225,14 @@ async def create_link(
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     key = _require_idempotency_key(idempotency_key)
     if body.minor_user_id == user.user_id:
         raise HTTPException(status_code=422, detail={"code": "guardian_self_link_forbidden"})
     target = _profiles(request).get_subject_profile(user_id=body.minor_user_id)
     if target is None:
         raise HTTPException(status_code=404, detail={"code": "minor_account_not_found"})
-    code = _binding_code(
+    code = binding_code(
         request,
         guardian_user_id=user.user_id,
         minor_user_id=body.minor_user_id,
@@ -613,7 +253,7 @@ async def create_link(
                 minor_user_id=body.minor_user_id,
                 relation=body.relation,
                 verified_via="wechat_identity",
-                binding_code_hash=_binding_digest(code),
+                binding_code_hash=binding_digest(code),
                 binding_expires_at=now + _BINDING_TTL,
                 now=now,
             )
@@ -623,7 +263,7 @@ async def create_link(
             or link.relation != body.relation
         ):
             raise GuardianConflictError("idempotency key was reused for another guardian link")
-        await _record_link_event(
+        await record_link_event(
             request,
             link=link,
             event_type="guardian.link_created",
@@ -632,7 +272,7 @@ async def create_link(
         )
     except GuardianConflictError as exc:
         raise HTTPException(status_code=409, detail={"code": "guardian_link_conflict"}) from exc
-    payload = _link_payload(request, link, actor_user_id=user.user_id)
+    payload = link_payload(request, link, actor_user_id=user.user_id)
     payload["binding_code"] = code
     return payload
 
@@ -645,75 +285,9 @@ async def list_links(
     links = await _store(request).list_links_for_actor(actor_user_id=user.user_id)
     return {
         "items": [
-            _link_payload(request, link, actor_user_id=user.user_id) for link in links
+            link_payload(request, link, actor_user_id=user.user_id) for link in links
         ]
     }
-
-
-def _safety_alert_item(
-    notification: GuardianNotification,
-    *,
-    minor_display_name: str,
-    zone: ZoneInfo,
-) -> dict[str, Any]:
-    copy = (
-        PARENT_ALERT_COPY[notification.reply_template_id]
-        if notification.reply_template_id is not None
-        else None
-    )
-    receipt = project_crisis_delivery_receipt(notification)
-    return {
-        "notification_id": notification.notification_id,
-        "minor_user_id": notification.minor_user_id,
-        "minor_display_name": minor_display_name,
-        "occurred_at": notification.created_at.isoformat(),
-        "occurred_label": alert_time_label(notification.created_at, zone),
-        "delivery_status": notification.status,
-        "delivery_receipt": crisis_delivery_receipt_payload(receipt),
-        "channel": notification.channel,
-        "message": guardian_attention_copy(
-            possibly_story_retell=notification.possibly_story_retell
-        ),
-        "category_label": "" if copy is None else copy.category_label,
-        "summary": "" if copy is None else copy.summary,
-        "robot_said": "" if copy is None else copy.robot_said,
-        "parent_action": "" if copy is None else copy.parent_action,
-        "contains_transcript": False,
-        "contains_severity": False,
-    }
-
-
-def _interrupted_detail(notification: GuardianNotification) -> str | None:
-    return interrupted_parent_detail(
-        notification.reply_template_id,
-        script_interrupted=notification.script_interrupted,
-    )
-
-
-async def _safety_alert_items(
-    request: Request,
-    user: AuthenticatedUser,
-    notifications: Sequence[GuardianNotification],
-) -> list[dict[str, Any]]:
-    display_name = resolve_minor_display_name(
-        _profiles(request),
-        getattr(request.app.state, "identity_service", None),
-    )
-    zone = ZoneInfo(_settings(request).memoria_timezone)
-    items: list[dict[str, Any]] = []
-    for item in notifications:
-        payload = _safety_alert_item(
-            item,
-            minor_display_name=str(
-                await display_name(user.user_id, item.minor_user_id) or "TA"
-            ),
-            zone=zone,
-        )
-        detail = _interrupted_detail(item)
-        if detail is not None:
-            payload["detail"] = detail
-        items.append(payload)
-    return items
 
 
 @router.get("/notifications")
@@ -722,12 +296,12 @@ async def guardian_notifications(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     notifications = await _notification_store(request).guardian_notifications(
         guardian_user_id=user.user_id,
         limit=limit,
     )
-    return {"items": await _safety_alert_items(request, user, notifications)}
+    return {"items": await safety_alert_items(request, user, notifications)}
 
 
 @router.get("/notifications/unread")
@@ -735,13 +309,13 @@ async def unread_guardian_notifications(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     unread = await _notification_store(request).unread_guardian_notifications(
         guardian_user_id=user.user_id,
     )
     if unread is None:
         return {"newest": None, "others_count": 0}
-    (newest,) = await _safety_alert_items(request, user, (unread.newest,))
+    (newest,) = await safety_alert_items(request, user, (unread.newest,))
     return {"newest": newest, "others_count": unread.others_count}
 
 
@@ -751,7 +325,7 @@ async def guardian_notification(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     try:
         notification = await _notification_store(request).guardian_notification(
             guardian_user_id=user.user_id,
@@ -761,7 +335,7 @@ async def guardian_notification(
         raise HTTPException(
             status_code=404, detail={"code": "guardian_notification_not_found"}
         ) from exc
-    (item,) = await _safety_alert_items(request, user, (notification,))
+    (item,) = await safety_alert_items(request, user, (notification,))
     return item
 
 
@@ -771,7 +345,7 @@ async def mark_guardian_notification_read(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     try:
         read_at = await _notification_store(request).mark_guardian_notification_read(
             guardian_user_id=user.user_id,
@@ -826,7 +400,7 @@ async def guardian_push_subscription_status(
     zeroes the server balance so we stop sending pushes.
     """
 
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     settings = _settings(request)
     template_id = settings.wechat_subscribe_crisis_template_id.strip()
     if not template_id:
@@ -864,7 +438,7 @@ async def record_guardian_push_subscription(
     WeChat identity, so a client can never direct alerts to another user.
     """
 
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     settings = _settings(request)
     template_id = settings.wechat_subscribe_crisis_template_id.strip()
     if not settings.guardian_push_enabled or not template_id:
@@ -916,7 +490,7 @@ async def confirm_link(
     if body.birth_year_band not in {"under_14", "14_17"}:
         raise HTTPException(status_code=422, detail={"code": "minor_age_band_required"})
     now = _now()
-    digest = _binding_digest(body.binding_code)
+    digest = binding_digest(body.binding_code)
     try:
         current = await _store(request).get_link(
             link_id=link_id,
@@ -962,15 +536,15 @@ async def confirm_link(
             now=_now_text(now),
         )
         try:
-            await _purge_minor_raw_voice(request, user.user_id)
-            await _disable_minor_restricted_assets(request, user.user_id)
+            await purge_minor_raw_voice(request, user.user_id)
+            await disable_minor_restricted_assets(request, user.user_id)
         except Exception as exc:
             raise HTTPException(
                 status_code=503,
                 detail={"code": "minor_restricted_asset_cleanup_incomplete"},
             ) from exc
         await _terminator(request).terminate_account(user.user_id)
-        await _record_link_event(
+        await record_link_event(
             request,
             link=link,
             event_type="guardian.link_confirmed",
@@ -985,7 +559,7 @@ async def confirm_link(
             detail={"code": "guardian_link_confirmation_rejected"},
         ) from exc
     return {
-        "link": _link_payload(request, link, actor_user_id=user.user_id),
+        "link": link_payload(request, link, actor_user_id=user.user_id),
         "subject": {
             "subject_category": updated["subject_category"],
             "birth_year_band": updated["birth_year_band"],
@@ -1003,7 +577,7 @@ async def grant_consent(
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     key = _require_idempotency_key(idempotency_key)
     event_id = f"guardian-consent-grant:{_idempotency_uuid('guardian-consent', key)}"
     now = _now()
@@ -1029,7 +603,7 @@ async def grant_consent(
         raise HTTPException(status_code=403, detail={"code": "guardian_link_required"}) from exc
     except GuardianConflictError as exc:
         raise HTTPException(status_code=409, detail={"code": "guardian_consent_conflict"}) from exc
-    return _consent_payload(consent)
+    return consent_payload(consent)
 
 
 @router.get("/links/{link_id}/consents")
@@ -1045,7 +619,7 @@ async def list_consents(
         )
     except GuardianNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"code": "guardian_link_not_found"}) from exc
-    return {"items": [_consent_payload(record) for record in records]}
+    return {"items": [consent_payload(record) for record in records]}
 
 
 @router.delete("/links/{link_id}/consents/{consent_id}")
@@ -1056,7 +630,7 @@ async def revoke_consent(
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     key = _require_idempotency_key(idempotency_key)
     try:
         current = await _store(request).get_consent(
@@ -1093,7 +667,7 @@ async def revoke_consent(
         raise HTTPException(status_code=403, detail={"code": "guardian_link_required"}) from exc
     except GuardianConflictError as exc:
         raise HTTPException(status_code=409, detail={"code": "guardian_consent_conflict"}) from exc
-    return _consent_payload(consent)
+    return consent_payload(consent)
 
 
 @router.post(
@@ -1115,9 +689,9 @@ async def grant_person_consent(
     same record is then read by the policy gates through ``active_consent``.
     """
 
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     key = _require_idempotency_key(idempotency_key)
-    await _require_binding_owner_for_subject(
+    await require_binding_owner_for_subject(
         request,
         user=user,
         subject_person_id=person_id,
@@ -1132,8 +706,8 @@ async def grant_person_consent(
     except GuardianNotFoundError:
         replayed = None
     if replayed is not None:
-        if _person_grant_body_matches(replayed, body):
-            return _person_consent_payload(replayed)
+        if person_grant_body_matches(replayed, body):
+            return person_consent_payload(replayed)
         raise HTTPException(
             status_code=409, detail={"code": "guardian_consent_conflict"}
         )
@@ -1166,7 +740,7 @@ async def grant_person_consent(
         raise HTTPException(
             status_code=409, detail={"code": "guardian_consent_conflict"}
         ) from exc
-    await _sync_bound_subject_authority(
+    await sync_bound_subject_authority(
         request,
         user=user,
         subject_person_id=person_id,
@@ -1174,7 +748,7 @@ async def grant_person_consent(
         granted=True,
         source_key=consent.consent_id,
     )
-    return _person_consent_payload(consent)
+    return person_consent_payload(consent)
 
 
 @router.get("/minors/{person_id}/consents")
@@ -1183,8 +757,8 @@ async def list_person_consents(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
-    await _require_binding_owner_for_subject(
+    require_wechat_guardian(request, user)
+    await require_binding_owner_for_subject(
         request,
         user=user,
         subject_person_id=person_id,
@@ -1193,7 +767,7 @@ async def list_person_consents(
         subject_person_id=person_id,
         actor_person_id=user.user_id,
     )
-    return {"items": [_person_consent_payload(record) for record in records]}
+    return {"items": [person_consent_payload(record) for record in records]}
 
 
 @router.delete("/minors/{person_id}/consents/{consent_id}")
@@ -1213,7 +787,7 @@ async def revoke_person_consent(
     recorded grantor revokes it or the subject lineage is deleted (P2-03).
     """
 
-    _require_wechat_guardian(request, user)
+    require_wechat_guardian(request, user)
     key = _require_idempotency_key(idempotency_key)
     # Deliberately no ACTIVE-binding prerequisite: unbinding must never strand
     # a consent without a revoke entry.  The person-scoped store still proves
@@ -1244,7 +818,7 @@ async def revoke_person_consent(
         ) from exc
     # Withdraw the authority grants first-class too; with the binding gone
     # the unbind path already revoked them, so this finds nothing to do.
-    await _sync_bound_subject_authority(
+    await sync_bound_subject_authority(
         request,
         user=user,
         subject_person_id=person_id,
@@ -1252,46 +826,7 @@ async def revoke_person_consent(
         granted=False,
         source_key=consent.consent_id,
     )
-    return _person_consent_payload(consent)
-
-
-async def _guardian_evidence_account(
-    request: Request, *, user: AuthenticatedUser, minor_user_id: str
-) -> str:
-    """Whose account holds this child's evidence, once the guardian's access is proven.
-
-    A one-to-one device stores the child's turns in the binding owner's account,
-    attributed to the child; the guardian's views come with the long-term memory the
-    owner ticked for the child (user decision 2026-09-26): switching that off closes
-    them too. A child with an account of their own needs an active guardian link and
-    the weekly-report consent instead.
-    """
-
-    evidence_account_id = minor_user_id
-    if await _owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
-        consent = await _store(request).active_consent(
-            minor_user_id=minor_user_id,
-            consent_kind="memory_retention",
-        )
-        evidence_account_id = user.user_id
-    else:
-        await _active_link_or_403(
-            request,
-            guardian_user_id=user.user_id,
-            minor_user_id=minor_user_id,
-        )
-        require_capability_for_account_id(
-            minor_user_id,
-            "guardian_weekly_report",
-            store=_profiles(request),
-        )
-        consent = await _store(request).active_consent(
-            minor_user_id=minor_user_id,
-            consent_kind="weekly_report",
-        )
-    if consent is None:
-        raise HTTPException(status_code=403, detail={"code": "guardian_consent_required"})
-    return evidence_account_id
+    return person_consent_payload(consent)
 
 
 @router.get("/minors/{minor_user_id}/summary")
@@ -1301,8 +836,8 @@ async def weekly_summary(
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
     week_start: Annotated[date | None, Query()] = None,
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
-    evidence_account_id = await _guardian_evidence_account(
+    require_wechat_guardian(request, user)
+    evidence_account_id = await guardian_evidence_account(
         request, user=user, minor_user_id=minor_user_id
     )
     zone = ZoneInfo(_settings(request).memoria_timezone)
@@ -1332,31 +867,6 @@ async def weekly_summary(
     return report.public_payload()
 
 
-_RECAP_LOOKBACK_DAYS = 90
-
-
-async def _child_turns(
-    request: Request, *, user: AuthenticatedUser, minor_user_id: str
-) -> tuple[list[Any], ZoneInfo]:
-    """The child's consented turns of the last 90 days (guardian access already proven)."""
-
-    _require_wechat_guardian(request, user)
-    evidence_account_id = await _guardian_evidence_account(
-        request, user=user, minor_user_id=minor_user_id
-    )
-    zone = ZoneInfo(_settings(request).memoria_timezone)
-    now = _now()
-    events = await _archive(request).evidence_window(
-        account_id=evidence_account_id,
-        subject_id=minor_user_id,
-        occurred_after=now - timedelta(days=_RECAP_LOOKBACK_DAYS),
-        occurred_before=now,
-        event_types=("speech.utterance_finalized",),
-        limit=10_000,
-    )
-    return child_utterances(events, subject_id=minor_user_id, zone=zone), zone
-
-
 @router.get("/minors/{minor_user_id}/days")
 async def child_days(
     minor_user_id: str,
@@ -1366,7 +876,7 @@ async def child_days(
 ) -> dict[str, Any]:
     """Which days the child talked, newest first. Counts only: no words, no recap."""
 
-    utterances, _ = await _child_turns(request, user=user, minor_user_id=minor_user_id)
+    utterances, _ = await child_turns(request, user=user, minor_user_id=minor_user_id)
     return {"items": day_activity(utterances, limit=limit)}
 
 
@@ -1384,7 +894,7 @@ async def child_day_recap(
     stretch of the child's words, or cannot be produced, is a counts-only one.
     """
 
-    utterances, _ = await _child_turns(request, user=user, minor_user_id=minor_user_id)
+    utterances, _ = await child_turns(request, user=user, minor_user_id=minor_user_id)
     day_turns = [item for item in utterances if item.day == recap_day]
     if not day_turns:
         raise HTTPException(status_code=404, detail={"code": "no_conversation_that_day"})
@@ -1443,61 +953,6 @@ def _child_layers(request: Request) -> ChildLayerStore:
     return cast(ChildLayerStore, store)
 
 
-def _payload_iso(payload: Mapping[str, object], key: str) -> str | None:
-    value = payload.get(key)
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return None
-
-
-def _consent_id(consent: object) -> str | None:
-    if consent is None:
-        return None
-    value = getattr(consent, "consent_id", None)
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    if isinstance(consent, Mapping):
-        raw = consent.get("consent_id")
-        if isinstance(raw, str) and raw.strip():
-            return raw.strip()
-    return None
-
-
-async def _erase_child_kind(
-    request: Request,
-    *,
-    subject_id: str,
-    kind: ChildMemoryKind,
-    incomplete_code: str,
-) -> dict[str, Any]:
-    layers = _child_layers(request)
-    erased = await layers.erase_kind(subject_id=subject_id, kind=kind, only_expired=False)
-    remaining = await layers.remaining_kind(
-        subject_id=subject_id, kind=kind, only_expired=False
-    )
-    if int(remaining.get("memory_records", 0)):
-        raise HTTPException(status_code=500, detail={"code": incomplete_code})
-    return {"deleted": True, "kind": kind, "erased": dict(erased), "remaining": dict(remaining)}
-
-
-async def _child_memory_account(
-    request: Request, *, user: AuthenticatedUser, minor_user_id: str
-) -> str:
-    """Whose archive holds the memories of a child who has no account, once the guardian is proven.
-
-    Only the adult who bound the device for the child reviews what the robot may remember about
-    them.  A child with an account of their own keeps their memories behind that account: a
-    guardian link carries summaries and reports, not the child's memory.
-    """
-
-    _require_wechat_guardian(request, user)
-    if not await _owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
-        raise HTTPException(
-            status_code=403, detail={"code": "guardian_memory_review_unavailable"}
-        )
-    return await _guardian_evidence_account(request, user=user, minor_user_id=minor_user_id)
-
-
 @router.get("/minors/{minor_user_id}/session-summaries")
 async def list_session_summaries(
     minor_user_id: str,
@@ -1507,7 +962,7 @@ async def list_session_summaries(
 ) -> dict[str, Any]:
     """Stored dialogue summaries for the parent mini program (no verbatim quotes)."""
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     layers = _child_layers(request)
     items = await layers.list(
         subject_id=minor_user_id,
@@ -1543,7 +998,7 @@ async def create_session_summary(
 ) -> dict[str, Any]:
     """Ingest one paraphrased session summary after a conversation ends."""
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     consent = await _store(request).active_consent(
         minor_user_id=minor_user_id, consent_kind="memory_retention"
     )
@@ -1587,7 +1042,7 @@ async def delete_session_summary(
 ) -> dict[str, Any]:
     """Physically delete one dialogue summary; a re-query must return nothing."""
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     layers = _child_layers(request)
     existing = await layers.get(
         subject_id=minor_user_id, record_id=record_id, viewer_subject_id=account_id
@@ -1611,8 +1066,8 @@ async def clear_session_summaries(
 ) -> dict[str, Any]:
     """Physically erase every dialogue summary for this child; remaining must be zero."""
 
-    await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
-    return await _erase_child_kind(
+    await child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    return await erase_child_kind(
         request,
         subject_id=minor_user_id,
         kind=KIND_DIALOGUE_SUMMARY,
@@ -1630,7 +1085,7 @@ async def list_child_archive(
 ) -> dict[str, Any]:
     """Whitelist long-term archive facts (appellation, preference, pet_name)."""
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     layers = _child_layers(request)
     views = await layers.list_archive_views(
         subject_id=minor_user_id,
@@ -1650,7 +1105,7 @@ async def create_child_archive_fact(
 ) -> dict[str, Any]:
     """Write one whitelist archive fact; requires separate child_archive consent."""
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     consent = await _store(request).active_consent(
         minor_user_id=minor_user_id, consent_kind="child_archive"
     )
@@ -1684,11 +1139,11 @@ async def review_child_archive_fact(
 ) -> dict[str, Any]:
     """Parent confirm, correct (supersede), or withdraw one archive fact."""
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     consent = await _store(request).active_consent(
         minor_user_id=minor_user_id, consent_kind="child_archive"
     )
-    consent_id = _consent_id(consent)
+    consent_id = consent_reference(consent)
     if consent is None or not consent_id:
         raise HTTPException(status_code=403, detail={"code": "child_archive_consent_required"})
     layers = _child_layers(request)
@@ -1741,7 +1196,7 @@ async def delete_child_archive_fact(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
 ) -> dict[str, Any]:
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     layers = _child_layers(request)
     existing = await layers.get(
         subject_id=minor_user_id, record_id=record_id, viewer_subject_id=account_id
@@ -1767,8 +1222,8 @@ async def clear_child_archive(
 ) -> dict[str, Any]:
     """Physically erase every whitelist archive fact for this child; remaining must be zero."""
 
-    await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
-    return await _erase_child_kind(
+    await child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    return await erase_child_kind(
         request,
         subject_id=minor_user_id,
         kind=KIND_CHILD_ARCHIVE,
@@ -1785,7 +1240,7 @@ async def touch_child_activity(
 ) -> dict[str, Any]:
     """Reset the 180-day child_archive idle clock (dialogue or mini program open)."""
 
-    await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     activity = getattr(request.app.state, "subject_activity_store", None)
     if activity is None:
         raise HTTPException(status_code=503, detail={"code": "subject_activity_unavailable"})
@@ -1807,7 +1262,7 @@ async def child_memories(
     reach the child's conversations, so this is the guardian's gate on what the robot recalls.
     """
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     catalog = _catalog(request)
     queue = await catalog.review_queue(account_id=account_id, subject_id=minor_user_id)
     kept = await catalog.search(
@@ -1860,7 +1315,7 @@ async def child_retracted_memories(
     retracted claims, not a cached page in the mini program.
     """
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     items = await list_retracted_claims(
         _catalog(request),
         account_id=account_id,
@@ -1897,7 +1352,7 @@ async def review_child_memory(
     not-found as an id that does not exist.
     """
 
-    account_id = await _child_memory_account(request, user=user, minor_user_id=minor_user_id)
+    account_id = await child_memory_account(request, user=user, minor_user_id=minor_user_id)
     try:
         reviewed = await _catalog(request).review(
             MemoryClaimReview(
@@ -1924,8 +1379,8 @@ async def export_minor(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> JSONResponse:
-    _require_wechat_guardian(request, user)
-    if await _owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
+    require_wechat_guardian(request, user)
+    if await owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
         # A child with no account: the device stored their turns under the
         # binding owner's account, attributed to the child. Export exactly
         # the rows that prove that attribution, in the guardian audience.
@@ -1939,7 +1394,7 @@ async def export_minor(
                 "Cache-Control": "no-store",
             },
         )
-    await _active_link_or_403(
+    await active_link_or_403(
         request,
         guardian_user_id=user.user_id,
         minor_user_id=minor_user_id,
@@ -1968,11 +1423,11 @@ async def delete_minor(
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, Any]:
-    _require_wechat_guardian(request, user)
-    if await _owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
+    require_wechat_guardian(request, user)
+    if await owns_accountless_child(request, user=user, subject_person_id=minor_user_id):
         # Their rows live in the binding owner's account: erase exactly the
         # child's, never the parent's (account deletion is account-wide).
-        if not _deletion_confirmed(body.confirmation):
+        if not deletion_confirmed(body.confirmation):
             raise HTTPException(
                 status_code=422, detail={"code": "deletion_confirmation_invalid"}
             )
@@ -1995,12 +1450,12 @@ async def delete_minor(
             raise HTTPException(
                 status_code=503, detail={"code": "child_data_deletion_incomplete"}
             ) from exc
-    await _active_link_or_403(
+    await active_link_or_403(
         request,
         guardian_user_id=user.user_id,
         minor_user_id=minor_user_id,
     )
-    if not _deletion_confirmed(body.confirmation):
+    if not deletion_confirmed(body.confirmation):
         raise HTTPException(status_code=422, detail={"code": "deletion_confirmation_invalid"})
     try:
         return await _governance(request).delete_account(minor_user_id)

@@ -12,8 +12,8 @@ from __future__ import annotations
 import time
 
 import pytest
-from services.agent.src.voice_core import media_session_playback_stop as playback_stop
-from services.agent.src.voice_core.media_session_playback_stop import (
+from services.agent.src.voice_core.playback_text import (
+    _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S,
     PLAYBACK_FOLLOWUP_GRACE_ENV,
     playback_followup_grace_s,
 )
@@ -47,7 +47,7 @@ def test_anything_else_keeps_the_default_instead_of_shortening_it_blindly(
 
 
 def test_the_default_is_the_ceiling_the_turn_budget_was_sized_for() -> None:
-    assert playback_stop._PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S == 1.2
+    assert _PLAYBACK_FOLLOWUP_ENDPOINT_GRACE_S == 1.2
 
 
 async def _seconds_to_answer_a_followup(session_id: str, *parts: str) -> float:

@@ -1,10 +1,10 @@
 #!/bin/bash
-# Precheck for board card 5 (vol30 retest) against the live MEM-52 wave cutover image.
-# Expectations match memoria-prod after 20261104-card5-wave-main-v1 (commit ddaf683b).
+# Precheck for board card 5 (vol30 retest) against the committed-boundary candidate cut
+# from current main (PR #564 fixes) on 2026-11-06.
 set -uo pipefail
 cd "$HOME/projects/memoria"
 TAG=card5-overlay
-EXPECT_IMAGE=memoria-agent:20261104-card5-wave-main-v1
+EXPECT_IMAGE=memoria-agent:20261106-card5-committed-boundary-v1
 EXPECT_BUILD=28
 EXPECT_ELF=d0e90d73a
 EXPECT_BYPASS=ed2b4c0e

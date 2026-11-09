@@ -41,6 +41,7 @@ from services.device_fleet.tests.test_bootstrap_vertical_slice import (
     _fixture,
     _online,
 )
+from services.session_runtime.commands import StartPersistentSessionCommand
 from services.session_runtime.postgres_store import (
     SessionRuntimeConflict,
     SessionRuntimeContext,
@@ -50,7 +51,6 @@ from services.session_runtime.service import (
     PersistentSessionDenied,
     PersistentSessionNotFound,
     PersistentSessionUnavailable,
-    StartPersistentSessionCommand,
 )
 
 

@@ -1,4 +1,4 @@
-"""Text-free, offline evidence for spoken stops in the robot soak driver.
+"""Text-free, offline evidence for spoken stops and post-stop silence.
 
 A state transition or an arbitrary cancellation is not an interruption. Correlate
 the device's playable generation to one full delivery fence, then require a spoken
@@ -26,6 +26,7 @@ START_TOLERANCE_S = 2.0
 # Fastest observed spoken stop: ~1.4 s clip, final ~0.33 s later, then the stop.
 # A clip that starts with less playback left cannot win the race against the end.
 MIN_PLAYBACK_LEFT_FOR_STOP_S = 2.5
+MIN_SILENCE_WINDOW_S = 5.0
 UNVERIFIABLE_STOP_REASONS = frozenset(
     {"interrupt_started_after_playback", "interrupt_too_late_to_stop"}
 )
@@ -74,6 +75,168 @@ def _serial_rows(
         )
         rows.append((timestamp, kind, dict(FIELDS.findall(line))))
     return rows
+
+
+def _silence_fence(rows: list[dict[str, Any]], index: int) -> tuple[float | None, str]:
+    for row in rows[index + 1 :]:
+        boundary = {
+            "no_reply": "no_reply_boundary",
+            "step_failed": "step_failed_boundary",
+            "wake_try": "wake_try_boundary",
+        }.get(row.get("kind"))
+        if boundary is not None:
+            timestamp = row.get("ts")
+            return (
+                float(timestamp) if isinstance(timestamp, (int, float)) and not isinstance(timestamp, bool) else None,
+                boundary,
+            )
+        if row.get("kind") == "said" and isinstance(row.get("ts"), (int, float)):
+            return float(row["ts"]), "next_said_end"
+        if row.get("kind") == "post_scenario_observation" and isinstance(row.get("ts"), (int, float)):
+            return float(row["ts"]), "post_scenario_observation"
+    return None, "none"
+
+
+def _observed_until(rows: list[dict[str, Any]], events: list[tuple[float, str, dict[str, str]]]) -> float | None:
+    timestamps = [
+        float(row["ts"])
+        for row in rows
+        if isinstance(row.get("ts"), (int, float)) and not isinstance(row.get("ts"), bool)
+    ]
+    timestamps.extend(at for at, _, _ in events)
+    return max(timestamps) if timestamps else None
+
+
+def assess_post_stop_silence(
+    bridge: str,
+    serial: str,
+    attempt: Mapping[str, Any],
+    receipt: Mapping[str, Any],
+    fence_ts: float | None,
+    fence_source: str,
+    observed_until_ts: float | None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "silence_verdict": "unverified",
+        "silence_reason": "no_next_clip_fence",
+        "silence_fence_ts": fence_ts,
+        "silence_fence_source": fence_source,
+        "silence_window_s": None,
+        "later_reply_count": 0,
+        "later_reply_delivery_id": None,
+        "later_reply_generation": None,
+        "later_reply_started_ts": None,
+        "later_reply_delay_s": None,
+    }
+    if receipt.get("stopped") is not True:
+        result.update(silence_verdict="not_applicable", silence_reason="no_stop_receipt")
+        return result
+    if attempt.get("interrupt_kind") in {"backchannel", "crisis"}:
+        result.update(silence_verdict="not_applicable", silence_reason="kind_not_a_stop")
+        return result
+    next_speak_ts = attempt.get("next_speak_ts")
+    if isinstance(next_speak_ts, (int, float)) and not isinstance(next_speak_ts, bool):
+        result.update(silence_verdict="not_applicable", silence_reason="answer_expected")
+        return result
+
+    returned = attempt.get("device_returned_ts")
+    delivery_id = receipt.get("reply_delivery_id")
+    if not isinstance(returned, (int, float)) or not isinstance(delivery_id, str):
+        result.update(silence_verdict="unverified", silence_reason="missing_stop_return")
+        return result
+    identity = DELIVERY.fullmatch(delivery_id)
+    if identity is None:
+        result.update(silence_verdict="unverified", silence_reason="missing_stop_delivery")
+        return result
+    observation_fence = fence_source in {"next_said_end", "post_scenario_observation"}
+    upper = fence_ts if fence_ts is not None else observed_until_ts
+    if upper is not None:
+        result["silence_window_s"] = round(upper - float(returned), 3)
+    if upper is None or upper <= float(returned):
+        result.update(
+            silence_verdict="unverified",
+            silence_reason="no_next_clip_fence" if fence_ts is None else "no_silence_observation",
+        )
+        return result
+
+    events = _bridge_rows(bridge)
+    device = _serial_rows(
+        serial,
+        float(returned),
+        int(attempt.get("serial_utc_offset_s", 8 * 3600)),
+    )
+    try:
+        current_generation = int(identity["generation"])
+    except ValueError:
+        result.update(silence_verdict="unverified", silence_reason="invalid_stop_generation")
+        return result
+    lower = float(attempt.get("interrupt_start_ts", returned))
+    later_starts = sorted(
+        (at, int(fields["generation"]))
+        for at, kind, fields in device
+        if kind == "start"
+        and lower <= at < upper
+        and fields.get("generation", "").isdigit()
+        and int(fields["generation"]) > current_generation
+    )
+    later_deliveries = []
+    for at, kind, fields in events:
+        if kind != "delivery" or fields.get("event") != "first_frame_sent":
+            continue
+        if not lower <= at < upper:
+            continue
+        other = DELIVERY.fullmatch(fields.get("delivery_id", ""))
+        if other is None or other["session"] != identity["session"]:
+            continue
+        try:
+            generation = int(other["generation"])
+        except ValueError:
+            continue
+        if generation > current_generation:
+            later_deliveries.append((at, fields["delivery_id"], generation))
+    later_deliveries.sort()
+    if later_deliveries:
+        at, later_id, generation = later_deliveries[0]
+        result.update(
+            later_reply_count=len(later_deliveries),
+            later_reply_delivery_id=later_id,
+            later_reply_generation=generation,
+            later_reply_started_ts=at,
+            later_reply_delay_s=round(at - float(returned), 3),
+        )
+        if any(
+            started_generation == generation
+            and abs(started_at - at) <= START_TOLERANCE_S
+            for started_at, started_generation in later_starts
+        ):
+            result.update(silence_verdict="reply_resumed", silence_reason="later_reply_started")
+        else:
+            result.update(
+                silence_verdict="unverified",
+                silence_reason="later_delivery_without_device_receipt",
+            )
+        return result
+    if later_starts:
+        started_at, generation = later_starts[0]
+        result.update(
+            later_reply_count=len(later_starts),
+            later_reply_generation=int(generation),
+            later_reply_started_ts=started_at,
+            later_reply_delay_s=round(started_at - float(returned), 3),
+            silence_verdict="unverified",
+            silence_reason="unattributed_device_start",
+        )
+        return result
+    if not observation_fence:
+        result.update(silence_verdict="unverified", silence_reason="no_silence_observation")
+        return result
+    if fence_ts is None:
+        return result
+    if result["silence_window_s"] < MIN_SILENCE_WINDOW_S:
+        result.update(silence_verdict="unverified", silence_reason="silence_window_too_short")
+        return result
+    result.update(silence_verdict="silent", silence_reason="no_reply_before_fence")
+    return result
 
 
 def assess_interruption(bridge: str, serial: str, attempt: Mapping[str, Any]) -> dict[str, Any]:
@@ -229,7 +392,9 @@ def audit_interruptions(
     """
     said = {row["tag"]: row for row in rows if row.get("kind") == "said"}
     assessed = {}
-    for row in rows:
+    events = _bridge_rows(bridge)
+    observed_until_ts = _observed_until(rows, events)
+    for index, row in enumerate(rows):
         if row.get("kind") != "reply" or not row.get("interrupted"):
             continue
         attempt = dict(row)
@@ -241,7 +406,20 @@ def audit_interruptions(
             and isinstance(latency, (int, float))
         ):
             attempt["reply_started_ts"] = speech_end + latency
-        assessed[row["tag"]] = assess_interruption(bridge, serial, attempt)
+        assessment = assess_interruption(bridge, serial, attempt)
+        fence_ts, fence_source = _silence_fence(rows, index)
+        assessment.update(
+            assess_post_stop_silence(
+                bridge,
+                serial,
+                attempt,
+                assessment,
+                fence_ts,
+                fence_source,
+                observed_until_ts,
+            )
+        )
+        assessed[row["tag"]] = assessment
     return assessed
 
 
@@ -257,7 +435,7 @@ def main(argv: list[str] | None = None) -> int:
     data = {name: path.read_bytes() if path.exists() else b"" for name, path in paths.items()}
     rows = [json.loads(line) for line in data["timeline.jsonl"].splitlines() if line.strip()]
     report = {
-        "schema_version": "voice-soak-stop-v2",
+        "schema_version": "voice-soak-stop-v3",
         "run": str(args.run),
         "source_sha256": {
             name: hashlib.sha256(content).hexdigest() if content else None

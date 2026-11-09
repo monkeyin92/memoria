@@ -47,6 +47,7 @@ class SoakManifest:
     require_started: bool = True
     require_completed: bool = True
     min_duration_s: float | None = None
+    require_post_stop_silence: bool = False
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,7 @@ def manifest_dict(
     require_started: bool = True,
     require_completed: bool = True,
     min_duration_s: float | None = None,
+    require_post_stop_silence: bool = False,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "scenario_hash": scenario_hash,
@@ -118,6 +120,7 @@ def manifest_dict(
         "min_valid_interrupt_samples": min_valid_interrupt_samples,
         "require_started": require_started,
         "require_completed": require_completed,
+        "require_post_stop_silence": require_post_stop_silence,
     }
     if min_duration_s is not None:
         payload["min_duration_s"] = min_duration_s
@@ -177,8 +180,13 @@ def load_manifest(run: Path) -> SoakManifest | tuple[str, ...]:
 
     require_started = raw.get("require_started", True)
     require_completed = raw.get("require_completed", True)
-    if not isinstance(require_started, bool) or not isinstance(require_completed, bool):
-        return ("incomplete: manifest.require_started/require_completed must be bool",)
+    require_post_stop_silence = raw.get("require_post_stop_silence", False)
+    if (
+        not isinstance(require_started, bool)
+        or not isinstance(require_completed, bool)
+        or not isinstance(require_post_stop_silence, bool)
+    ):
+        return ("incomplete: manifest.require_started/require_completed/require_post_stop_silence must be bool",)
 
     min_duration_s = raw.get("min_duration_s")
     parsed_duration = None
@@ -195,6 +203,7 @@ def load_manifest(run: Path) -> SoakManifest | tuple[str, ...]:
         require_started,
         require_completed,
         parsed_duration,
+        require_post_stop_silence,
     )
 
 
@@ -325,7 +334,7 @@ def judge(
         row.get("tag"): row.get("interrupt_kind", "stop") for row in rows if row.get("kind") == "reply"
     }
     for tag, assessment in audited.items():
-        if interrupt_kinds.get(tag) == "backchannel":
+        if interrupt_kinds.get(tag) in {"backchannel", "crisis"}:
             if assessment.get("stopped") is True:
                 failures.append(f"backchannel_stopped: {tag}")
             continue
@@ -334,6 +343,14 @@ def judge(
             and assessment.get("stop_reason") not in UNVERIFIABLE_STOP_REASONS
         ):
             failures.append(f"stop_not_confirmed: {tag} {assessment.get('stop_verdict')}")
+        if loaded.require_post_stop_silence:
+            silence_verdict = assessment.get("silence_verdict")
+            if silence_verdict == "reply_resumed":
+                failures.append(
+                    f"reply_resumed_after_stop: {tag} {assessment.get('later_reply_delivery_id')}"
+                )
+            elif silence_verdict == "unverified":
+                failures.append(f"silence_unverified: {tag} {assessment.get('silence_reason')}")
 
     observations = [row for row in rows if row.get("kind") == "post_scenario_observation"]
     if not observations:

@@ -168,8 +168,16 @@ class ASRStreamSupervisor:
                     and start_sample < self.last_committed_sample
                     and end_sample > previous
                 ):
-                    self._committed_turn_texts.append(cleaned)
-            while len(self._committed_turn_texts) > 8:
+                    normalized = self._alnum_chars(cleaned)
+                    if normalized and not any(
+                        self._alnum_chars(previous_text) == normalized
+                        for previous_text in self._committed_turn_texts
+                    ):
+                        self._committed_turn_texts.append(cleaned)
+            # A long provider final can replay more than eight earlier clauses.
+            # Keep a bounded set of distinct committed spines so text outside a
+            # short recent window cannot leak into the next safety decision.
+            while len(self._committed_turn_texts) > 64:
                 self._committed_turn_texts.pop(0)
         self.timeline.commit_range(
             stream_epoch=self.stream_epoch,

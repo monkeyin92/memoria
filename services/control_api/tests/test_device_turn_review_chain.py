@@ -22,12 +22,12 @@ from services.agent.src.media_agent_factory import ProductionMediaSessionFactory
 from services.agent.src.mode_policy_client import parse_mode_policy
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.control_api.app.main import create_app
-from services.control_api.tests.test_archive_api import (
+from services.control_api.tests.archive_api_test_support import (
     _configure,
     _register_minor,
     _register_verified_adult,
 )
-from services.control_api.tests.test_interaction_api import (
+from services.control_api.tests.interaction_api_test_support import (
     _RUNTIME_PROFILE_SIGNING_KEY,
     _attach_signed_runtime_profile,
 )

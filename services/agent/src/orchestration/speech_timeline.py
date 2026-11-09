@@ -417,16 +417,22 @@ class SpeechTimeline:
         stream_epoch: int,
         start_sample: int,
         end_sample: int,
+        exclude_cross_boundary: bool = False,
     ) -> str:
         """Project the current canonical text without committing the range."""
 
-        return self._canonical_text_from_segments(
-            self.segments_in_range(
-                stream_epoch=stream_epoch,
-                start_sample=start_sample,
-                end_sample=end_sample,
-            )
+        segments = self.segments_in_range(
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
         )
+        if exclude_cross_boundary:
+            segments = tuple(
+                segment
+                for segment in segments
+                if segment.capture_start_sample >= start_sample
+            )
+        return self._canonical_text_from_segments(segments)
 
     def canonical_text(
         self,
