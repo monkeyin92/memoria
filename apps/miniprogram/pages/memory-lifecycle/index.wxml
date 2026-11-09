@@ -3,7 +3,13 @@
   <text class="page-title">记忆管理</text>
   <text class="page-lede">看看机器人记住了什么，确认它可以提起的事，或撤回不想让它再提起的事。</text>
 
-  <view wx:if="{{unavailable}}" class="notice">{{unavailable}}</view>
+  <view wx:if="{{authRequired}}" class="notice">
+    <text class="notice-title">请先登录</text>
+    <text class="notice-copy">登录后才能查看和管理孩子的记忆。</text>
+    <button class="primary-button empty-button" bindtap="openLifecycleLogin">重新登录</button>
+  </view>
+
+  <view wx:elif="{{unavailable}}" class="notice">{{unavailable}}</view>
 
   <block wx:else>
     <view wx:if="{{loading}}" class="card lifecycle-loading">

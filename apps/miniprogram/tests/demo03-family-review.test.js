@@ -188,6 +188,83 @@ test("home today count uses session reads and composes the daily summary", async
   });
 });
 
+test("guardian home today count uses the bound child's days, not the parent's sessions", async () => {
+  await withWx(async () => {
+    const definition = loadPage("../pages/home/index");
+    const page = instantiate(definition);
+    let sessionReads = 0;
+    const binding = {
+      declared_mode: "parent_for_child",
+      status: "active",
+      account_owner_id: "person_owner",
+      primary_subject_ids: ["person_owner", "person_child"],
+    };
+    const restore = stubApi({
+      getGuardianChildDays: async (minorId, limit) => {
+        assert.equal(minorId, "person_child");
+        assert.equal(limit, 30);
+        return { items: [{ day: todayKey(), message_count: 4 }] };
+      },
+      getConversationReview: async () => ({ memory_candidates: [] }),
+      getConversationSessions: async () => {
+        sessionReads += 1;
+        return { items: [{ occurred_at: new Date().toISOString() }] };
+      },
+    });
+    try {
+      const result = await page._loadToday({ user_id: "person_owner" }, binding);
+      assert.equal(result.todayCount, 4);
+      assert.equal(result.todayCountKnown, true);
+      assert.equal(result.todayMeta, "今天 · 4 次对话");
+      assert.equal(sessionReads, 0);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("guardian home shows an unavailable count when the child days read fails", async () => {
+  await withWx(async () => {
+    const definition = loadPage("../pages/home/index");
+    const page = instantiate(definition);
+    let sessionReads = 0;
+    const binding = {
+      declared_mode: "parent_for_child",
+      status: "active",
+      account_owner_id: "person_owner",
+      primary_subject_ids: ["person_owner", "person_child"],
+    };
+    const restore = stubApi({
+      getGuardianChildDays: async () => {
+        throw new Error("child days unavailable");
+      },
+      getConversationReview: async () => ({ memory_candidates: [] }),
+      getConversationSessions: async () => {
+        sessionReads += 1;
+        return { items: [{ occurred_at: new Date().toISOString() }] };
+      },
+    });
+    try {
+      const result = await page._loadToday({ user_id: "person_owner" }, binding);
+      assert.equal(result.todayCount, null);
+      assert.equal(result.todayCountKnown, false);
+      assert.equal(sessionReads, 0);
+      page.setData({ authenticated: true, hasBinding: true });
+      const text = visibleText(
+        renderPage("pages/home/index", {
+          ...page.data,
+          ...result,
+          showChildMemory: true,
+        }),
+      );
+      assert.match(text, /今天对话暂时无法读取/);
+      assert.doesNotMatch(text, /今天对话 0 次/);
+    } finally {
+      restore();
+    }
+  });
+});
+
 test("home keeps the recent child summary when the legacy day read is closed", async () => {
   await withWx(async () => {
     const definition = loadPage("../pages/home/index");
@@ -210,6 +287,9 @@ test("home keeps the recent child summary when the legacy day read is closed", a
             status: 503,
           });
         },
+        getGuardianChildDays: async () => ({
+          items: [{ day: todayKey(), message_count: 2 }],
+        }),
         getChildSessionSummaries: async () => ({
           items: [
             {
@@ -227,11 +307,9 @@ test("home keeps the recent child summary when the legacy day read is closed", a
     try {
       page.setData({ authenticated: true });
       await page.loadHome();
-      assert.equal(page.data.todayCount, 1, "today's count comes from sessions");
+      assert.equal(page.data.todayCount, 2, "today's count comes from the child's days");
+      assert.equal(page.data.todayCountKnown, true);
       assert.equal(page.data.summaryCount, 1, "the stat counts every recent summary");
-      assert.equal(page.data.todayTitle, "近期摘要");
-      assert.equal(page.data.todayOverview, "最近在聊画画和幼儿园的新朋友。");
-      assert.equal(page.data.dailySummaryText, "最近：最近在聊画画和幼儿园的新朋友。");
       assert.equal(page.data.memoryPreviews.length, 1);
       const text = visibleText(renderPage("pages/home/index", page.data));
       assert.match(text, /近期回顾 最近在聊画画和幼儿园的新朋友。/);
@@ -265,6 +343,7 @@ test("home shows the existing empty state when neither day rows nor child summar
             status: 503,
           });
         },
+        getGuardianChildDays: async () => ({ items: [] }),
         getChildSessionSummaries: async () => ({ items: [] }),
       }),
     );

@@ -2,7 +2,7 @@ const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
 const { defaultCompanionId } = require("../../utils/companions");
-const { currentRoute, requireLogin } = require("../../utils/auth-gate");
+const { currentRoute, isAuthError, openLogin, requireLogin } = require("../../utils/auth-gate");
 const { ensureChildInfoConsent } = require("../../utils/child-consent");
 const {
   MODE_META,
@@ -32,10 +32,6 @@ const {
 } = require("../../utils/crisis-alerts");
 const { SESSION_MINUTE_OPTIONS, SESSION_MINUTES_DEFAULT } = require("../../utils/session-length");
 const FAMILY_MEMBER_AGE_BANDS = ["under_14", "14_17", "adult"];
-const MEMORY_LEVEL_OPTIONS = [
-  { value: "personal", label: "完整个人记忆" },
-  { value: "none", label: "仅当前对话，不长期记忆" },
-];
 const INTERVIEW_FREQUENCY_OPTIONS = [
   { value: "low", label: "偶尔主动问候" },
   { value: "medium", label: "适度主动采访" },
@@ -94,7 +90,6 @@ function defaultForm(mode, identity) {
   if (mode === "self_use") {
     return {
       selfNickname: "",
-      memoryLevelIndex: 0,
       interviewFrequencyIndex: 0,
     };
   }
@@ -119,6 +114,7 @@ Page({
   data: {
     statusBarStyle: statusBarStyle(),
     step: "loading",
+    authRequired: false,
     claimId: "",
     onboardingSessionId: "",
     deviceTail: "",
@@ -140,7 +136,6 @@ Page({
     sessionMinuteOptions: SESSION_MINUTE_OPTIONS,
     sessionMinuteIndex: SESSION_MINUTE_OPTIONS.indexOf(SESSION_MINUTES_DEFAULT),
     quietHoursLabel: nightModeQuietHoursLabel(DEFAULT_QUIET_HOURS),
-    memoryLevelOptions: MEMORY_LEVEL_OPTIONS,
     interviewFrequencyOptions: INTERVIEW_FREQUENCY_OPTIONS,
     speechSpeedOptions: SPEECH_SPEED_OPTIONS,
     adminVisibilityOptions: ADMIN_VISIBILITY_OPTIONS,
@@ -175,13 +170,37 @@ Page({
       onboardingSessionId: this._onboardingSessionId,
       deviceTail: /^[A-Za-z0-9]{1,16}$/.test(tail) ? tail : "",
     });
+    const app = getApp();
+    this._unsubscribeAuthCleared = app?.subscribeAuthCleared?.(() => this._enterAuthRequired());
   },
 
   async onShow() {
-    if (!(await requireLogin({ reason: "bind_device" }))) return;
+    if (!(await requireLogin({ reason: "bind_device" }))) {
+      this._enterAuthRequired();
+      return;
+    }
+    this.setData({ authRequired: false });
     if (!ensureChildInfoConsent(currentRoute())) return;
     if (this._claimLoaded) return;
     await this.loadClaim();
+  },
+
+  onUnload() {
+    this._unsubscribeAuthCleared?.();
+    this._unsubscribeAuthCleared = null;
+  },
+
+  _enterAuthRequired() {
+    this.setData({
+      authRequired: true,
+      claimLoading: false,
+      submitting: false,
+      error: "",
+    });
+  },
+
+  openBindLogin() {
+    openLogin({ reason: "bind_device", redirect: currentRoute() });
   },
 
   async loadClaim() {
@@ -214,6 +233,11 @@ Page({
       this.setData({ claim, claimLoading: false, step: "mode", error: "" });
       return claim;
     } catch (error) {
+      if (isAuthError(error)) {
+        this._claimLoaded = false;
+        this._enterAuthRequired();
+        return null;
+      }
       this._claimLoaded = true;
       this.setData({
         claimLoading: false,
@@ -469,6 +493,10 @@ Page({
         (status === "committed" || !isExpired(claim.expires_at))
       );
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterAuthRequired();
+        return false;
+      }
       const code = String(error?.code || "").toUpperCase();
       if (code === "CLAIM_EXPIRED" || code === "QR_SESSION_EXPIRED") return false;
       // The submit itself stays server-authoritative; a network hiccup must
@@ -547,8 +575,7 @@ Page({
       };
     } else if (mode === "self_use") {
       subjectPersonId = identity.user_id;
-      preferences.memory_level =
-        MEMORY_LEVEL_OPTIONS[form.memoryLevelIndex]?.value || "personal";
+      preferences.memory_level = memoryLevelForOffers(mode, this.data.acceptedOfferIds);
       preferences.interview_frequency =
         INTERVIEW_FREQUENCY_OPTIONS[form.interviewFrequencyIndex]?.value || "low";
     } else if (mode === "child_for_parent") {
@@ -597,6 +624,10 @@ Page({
         api,
       });
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterAuthRequired();
+        return;
+      }
       this.setData({
         error: error?.message || "订阅安全提醒失败，绑定未提交。",
       });
@@ -631,6 +662,10 @@ Page({
         crisisSubscribeAccepted: gate.kind === "accepted",
       });
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterAuthRequired();
+        return;
+      }
       const code = String(error?.code || error?.detail?.code || "").toUpperCase();
       this.setData({
         error: error?.message || "绑定失败，请稍后重试。",

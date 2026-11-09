@@ -45,15 +45,20 @@ test("the production package keeps retired companion art and old voice samples o
 
 test("the home status card keeps device identity, connection state, and working device navigation", async () => {
   for (const online of [true, false]) {
-    const harness = loadPage("pages/home/index", fx.authed(online ? {} : {
-      getActivationStatus: async () => ({ status: "failed", network: { internet: false } }),
+    const harness = loadPage("pages/home/index", fx.authed({
+      ...(online
+        ? {}
+        : {
+            getActivationStatus: async () => ({ status: "failed", network: { internet: false } }),
+          }),
+      getDeviceDiagnostics: async () => ({ live_runtime: { connected: online } }),
     }));
     try {
       const data = await harness.run();
       assert.equal(data.online, online);
       const html = renderPage("pages/home/index", data, { eventHandlers: true });
       const text = visibleText(html);
-      assert.ok(text.includes(`${data.devicePlaceName} · ${online ? "在线" : "离线"}`));
+      assert.ok(text.includes(`${data.devicePlaceName} · ${data.onlineLabel}`));
       assert.match(text, /今日聊天用量/);
       assert.match(html, /data-handler="openDevice"/);
       harness.page.openDevice();

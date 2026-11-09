@@ -102,6 +102,11 @@
   text-align: center;
 }
 
+.attention-retry-row {
+  justify-content: center;
+  margin-top: 16px;
+}
+
 .attention-done {
   margin-top: 16px;
 }

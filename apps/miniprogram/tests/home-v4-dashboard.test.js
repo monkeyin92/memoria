@@ -145,17 +145,24 @@ test("home can show an account review without a child archive", async () => {
 test("home counts all recent summaries and today's conversations separately", async () => {
   const { data } = await loadHome();
   assert.equal(data.summaryCount, 4);
-  assert.equal(data.todayCount, 0);
+  assert.equal(data.todayCount, 3);
+  assert.equal(data.todayCountKnown, true);
   assert.deepEqual(
     data.memoryPreviews.map((item) => item.text),
     ["讲了《大熊和森林里的悄悄话》", "聊到了幼儿园的新朋友", "一起数了天上的星星"],
   );
   const homeText = visibleText(renderPage("pages/home/index", data));
   assert.match(homeText, /近期回顾/);
-  assert.match(homeText, /今天对话 0 次 近期摘要 4 条/);
-  const empty = await loadHome({ api: { getChildSessionSummaries: async () => ({ items: [] }), getMemoryDays: async () => ({ items: [] }) } });
+  assert.match(homeText, /今天对话 3 次 近期摘要 4 条/);
+  const empty = await loadHome({
+    api: {
+      getChildSessionSummaries: async () => ({ items: [] }),
+      getGuardianChildDays: async () => ({ items: [] }),
+    },
+  });
   assert.equal(empty.data.summaryCount, 0);
   assert.equal(empty.data.todayCount, 0);
+  assert.equal(empty.data.todayCountKnown, true);
 });
 
 test("home pins the attention card with its time and the open-to-pin meta", async () => {

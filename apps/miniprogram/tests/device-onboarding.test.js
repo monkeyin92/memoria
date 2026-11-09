@@ -456,6 +456,68 @@ test("resume fences the second getDeviceClaim await after pause/dispose", async 
   else global.wx = previousWx;
 });
 
+test("pausing BLE connection clears the busy state and fences the late result", async () => {
+  let resolveOpen;
+  let disposed = false;
+  const controller = new OnboardingController({
+    bleAdapterFactory: () => ({
+      open: () => new Promise((resolve) => {
+        resolveOpen = resolve;
+      }),
+      dispose: () => {
+        disposed = true;
+      },
+    }),
+  });
+  controller._session = makeSession({ state: "qr_verified" });
+
+  const pending = controller.connectBle();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(controller.snapshot().busy, true);
+
+  controller.pause();
+  assert.equal(controller.snapshot().busy, false);
+  assert.equal(disposed, true);
+
+  resolveOpen(1);
+  assert.equal(await pending, null);
+  assert.equal(controller.snapshot().busy, false);
+  controller.dispose();
+});
+
+test("pausing network watch clears its stale state so a later watch can poll again", async () => {
+  const sleepers = [];
+  const controller = new OnboardingController({
+    mode: "reprovision",
+    sleep: () => new Promise((resolve) => sleepers.push(resolve)),
+    apiClient: {
+      getOnboardingSession: async () => makeSession({
+        purpose: "reprovision",
+        state: "device_online",
+      }),
+    },
+  });
+  controller._session = makeSession({ purpose: "reprovision", state: "wifi_connected" });
+  controller._setState("progress", { force: true });
+
+  const firstWatch = controller.watchNetwork();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(controller.snapshot().network.phase, "joining");
+
+  controller.pause();
+  assert.equal(controller.snapshot().network, null);
+  sleepers.shift()();
+  assert.equal(await firstWatch, false);
+
+  const resumedWatch = controller.watchNetwork();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(sleepers.length, 1);
+  sleepers.shift()();
+  assert.equal(await resumedWatch, true);
+  assert.equal(controller.snapshot().state, "complete");
+  controller.dispose();
+});
+
 test("rescanning a QR whose robot is already online resumes instead of redoing BLE", async () => {
   const previousWx = global.wx;
   global.wx = {
@@ -914,6 +976,33 @@ test("the onboarding page shows networks by signal and the claim deadline as a c
     if (previousGetApp === undefined) delete global.getApp;
     else global.getApp = previousGetApp;
   }
+});
+
+test("onboarding onShow resumes unfinished BLE and network observation", async () => {
+  const { loadPage } = require("../scripts/mp-harness/runtime");
+  const { CHILD_INFO_CONSENT_KEY, consentStamp } = require("../utils/child-consent");
+  const calls = [];
+  const harness = loadPage("pages/device-onboarding/index", {
+    api: { hasAuthenticatedSession: () => true },
+    storage: { [CHILD_INFO_CONSENT_KEY]: consentStamp() },
+  });
+  await harness.page.onLoad({ q: encodeURIComponent("memoria-device-bootstrap:v1:test") });
+  harness.page._controller = {
+    introspectQr: async () => calls.push("introspectQr"),
+    connectBle: async () => calls.push("connectBle"),
+    watchNetwork: async () => calls.push("watchNetwork"),
+  };
+
+  harness.page.data.state = "ble";
+  await harness.page.onShow();
+  assert.deepEqual(calls, ["introspectQr", "connectBle"]);
+
+  calls.length = 0;
+  harness.page.data.state = "progress";
+  harness.page.data.network = null;
+  await harness.page.onShow();
+  assert.deepEqual(calls, ["watchNetwork"]);
+  harness.restore();
 });
 
 test("onboarding API sends raw QR and uses the planned paths with strict responses", async () => {

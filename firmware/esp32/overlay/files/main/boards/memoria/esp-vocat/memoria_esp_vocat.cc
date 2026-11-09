@@ -28,6 +28,7 @@
 #include "touch.h"
 #include "memoria_bootstrap.h"
 #include "memoria_display_hooks.h"
+#include "memoria_activation_error_page.h"
 #include "memoria_imu_poll.h"
 #include "memoria_mascot_display.h"
 #include "memoria_offline_menu.h"
@@ -986,11 +987,16 @@ private:
         const auto state = app.GetDeviceState();
         ESP_LOGI(kScreenTapTag, "touch release hold_ms=%u state=%d", hold_ms,
                  static_cast<int>(state));
+        if (memoria::ActivationNetworkErrorPageVisible()) {
+            ESP_LOGI(kScreenTapTag, "screen tap ignored while activation error page is shown; retry is automatic");
+            return;
+        }
         if (memoria::MemoriaBootstrap::GetInstance().active()) {
             // The Mini Program asks for this when a QR expired or a claim was
             // refused ("轻点机器人屏幕换一张新二维码"). One refresh per 3 s.
             const int64_t now_us = esp_timer_get_time();
             if (now_us - last_qr_refresh_us_ < 3 * 1000 * 1000) {
+                GetDisplay()->ShowNotification("二维码刚换新，请稍候", 1200);
                 return;
             }
             last_qr_refresh_us_ = now_us;

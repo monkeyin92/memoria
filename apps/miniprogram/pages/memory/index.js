@@ -1,6 +1,6 @@
 const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
-const { requireLogin } = require("../../utils/auth-gate");
+const { openLogin, requireLogin } = require("../../utils/auth-gate");
 const guardianPush = require("../../utils/guardian-push");
 const { attentionUrl, loadUnreadSafetyAlerts, moreUnreadLabel } = require("../../utils/crisis-alerts");
 const { alertTimeLabel } = require("../../utils/trial-device-card");
@@ -59,7 +59,7 @@ function normalizeGuardianDay(item) {
     date: item.day || "",
     count,
     title: `孩子聊了 ${count} 次`,
-    overview: `孩子聊了 ${count} 次，还没整理`,
+    overview: `孩子聊了 ${count} 次。`,
     highlights: [],
     suggestion: "",
   };
@@ -167,6 +167,7 @@ function privatePartitionsClear() {
     selectedConversationSessionId: "",
     conversationTurns: [],
     conversationLoading: false,
+    guardianDataUnavailable: false,
   };
 }
 
@@ -195,7 +196,10 @@ Page({
     guardianMode: false,
     guardianSubjectId: "",
     guardianError: "",
+    guardianDataUnavailable: false,
     safetyBanner: null,
+    safetyReadStatus: "not_found",
+    safetyReadErrorKind: "",
     crisisPush: { enabled: false, templateId: "", explanation: "" },
     subscriptionPushEnabled: require("../../config").SUBSCRIPTION_PUSH_ENABLED,
   },
@@ -237,6 +241,8 @@ Page({
     if (!this._guardianSubject()) {
       this.setData({
         safetyBanner: null,
+        safetyReadStatus: "not_found",
+        safetyReadErrorKind: "",
         crisisPush: { enabled: false, templateId: "", explanation: "" },
       });
       return;
@@ -248,14 +254,27 @@ Page({
     ]);
     if (!api.isAuthEpochCurrent(authEpoch)) return;
     this.setData({
-      safetyBanner: unread && {
-        notificationId: unread.newest.notificationId,
-        message: unread.newest.message,
-        timeLabel: alertTimeLabel(unread.newest.occurredAt),
-        moreLabel: moreUnreadLabel(unread.othersCount),
-      },
+      safetyBanner:
+        unread.status === "ok"
+          ? {
+              notificationId: unread.newest.notificationId,
+              message: unread.newest.message,
+              timeLabel: alertTimeLabel(unread.newest.occurredAt),
+              moreLabel: moreUnreadLabel(unread.othersCount),
+            }
+          : null,
+      safetyReadStatus: unread.status,
+      safetyReadErrorKind: unread.errorKind || "",
       crisisPush,
     });
+  },
+
+  retrySafetyRead() {
+    return this._loadCrisisSafety();
+  },
+
+  openSafetyLogin() {
+    openLogin({ reason: "view_attention" });
   },
 
   /* 必须直接绑定在按钮 tap 上：订阅框只能由用户点击调起。 */
@@ -298,7 +317,10 @@ Page({
       guardianMode: false,
       guardianSubjectId: "",
       guardianError: "",
+      guardianDataUnavailable: false,
       safetyBanner: null,
+      safetyReadStatus: "not_found",
+      safetyReadErrorKind: "",
       crisisPush: { enabled: false, templateId: "", explanation: "" },
       loading: false,
       error: "",
@@ -317,10 +339,10 @@ Page({
    * 旧 daily_summaries 读接口关闭后，改用两层记录里的近期摘要。先看当前设备绑定
    * 的孩子，再看账号的监护关系；两处都没有就走空状态，不把失败变成错误文案。
    */
-  async _recentChildSummaries(authEpoch) {
+  async _recentChildSummaries(authEpoch, requestedMinorId = "") {
     if (typeof api.getChildSessionSummaries !== "function") return [];
     const boundChild = boundChildFromManifest(api.readBindingManifest?.() || null);
-    let minorId = this.data.guardianSubjectId || boundChild?.personId || "";
+    let minorId = requestedMinorId || this.data.guardianSubjectId || boundChild?.personId || "";
     if (!minorId && typeof api.getGuardianLinks === "function") {
       try {
         const links = await api.getGuardianLinks();
@@ -357,6 +379,7 @@ Page({
       const guardianSubject = this._guardianSubject();
       let guardianDays = null;
       let childMemories = null;
+      let recentChildSummaries = [];
       let guardianError = "";
       if (guardianSubject) {
         try {
@@ -369,7 +392,10 @@ Page({
         } catch (error) {
           guardianError = guardianError || guardianErrorMessage(error);
         }
+        recentChildSummaries = await this._recentChildSummaries(authEpoch, guardianSubject);
+        if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
       }
+      const guardianDataUnavailable = Boolean(guardianSubject && guardianDays === null);
       let daysUnavailable = false;
       const daysPromise = guardianSubject
         ? Promise.resolve({ items: [] })
@@ -381,7 +407,9 @@ Page({
             });
       const [daysResult, reviewResult] = await Promise.all([
         daysPromise,
-        api.getConversationReview(),
+        guardianSubject
+          ? Promise.resolve({})
+          : api.getConversationReview(),
       ]);
       if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
       const review = normalizeConversationReview(reviewResult);
@@ -389,7 +417,7 @@ Page({
       const memories = guardianSubject ? normalizeChildMemories(childMemories) : review;
       let sessionsResult = { items: [] };
       let conversationSessionsUnavailable = false;
-      if (typeof api.getConversationSessions === "function") {
+      if (!guardianSubject && typeof api.getConversationSessions === "function") {
         try {
           sessionsResult = await api.getConversationSessions(10);
         } catch (error) {
@@ -410,8 +438,12 @@ Page({
         guardianMode: Boolean(guardianSubject),
         guardianSubjectId: guardianSubject,
         guardianError,
+        guardianDataUnavailable,
         days: guardianSubject
-          ? (guardianDays || []).map(normalizeGuardianDay)
+          ? [
+              ...(guardianDays || []).map(normalizeGuardianDay),
+              ...recentChildSummaries.map(normalizeRecentSummary),
+            ]
           : (daysResult.items || []).length
             ? (daysResult.items || []).map(normalizeDay)
             : recentDays,

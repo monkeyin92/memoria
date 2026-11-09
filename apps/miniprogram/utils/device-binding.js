@@ -7,11 +7,12 @@
  *   由 buildBindingRequest 在发送前 fail-closed。
  * - 首次绑定的“最小必要信息”按场景采集；年龄带只用于默认体验文案与展示，
  *   不写入绑定请求（正式年龄证据由服务端验证，见 PR-02）。
- * - 数字自我 / 传承等敏感授权默认不勾选；“父母本人接受”类
+ * - 数字自我 / 传承等敏感授权默认不勾选；各模式的长期记忆默认状态
+ *   由对应的 consent offer 目录决定；“父母本人接受”类
  *   consent 只能由父母本人确认，客户端不得代为提交。
  * - 每台设备只服务一位使用人，身份来自绑定而不是声纹；客户端不再提供
- *   声纹档案授权。长期记忆（孩子 / 父母）默认不勾选、不是完成绑定的
- *   前提，memory_level 必须与该项勾选一致（见 MEMORY_OFFER_BY_MODE）。
+ *   声纹档案授权。长期记忆不是完成绑定的前提，memory_level 必须与该项
+ *   勾选一致（见 MEMORY_OFFER_BY_MODE）。
  * - Runtime Profile（§9.3）与服务端主体解析（§9.2）的响应统一在此做
  *   fail-closed 规范化：未知 service_mode 一律落到 unknown_safe，未知
  *   speaker_state 一律 unknown，缺失 capabilities 一律空集。
@@ -32,7 +33,7 @@ const MODE_META = Object.freeze({
     title: "给自己使用",
     tagline: "专属你的私人陪伴",
     description:
-      "建立本人主体；记忆、声音、数字自我等能力分别授权，敏感能力默认关闭。",
+      "建立本人主体；长期记忆默认开启，可取消；数字自我、传承、原始音频分别授权，默认关闭。",
   },
   child_for_parent: {
     title: "给父母使用",
@@ -108,7 +109,7 @@ const CONSENT_OFFERS = Object.freeze([
     id: "offer_self_memory_retention_v1",
     modes: ["self_use"],
     label: "长期记忆",
-    description: "让角色记住你们聊过的事，形成你自己的回忆",
+    description: "让角色记住你们聊过的事，形成你自己的回忆；取消勾选也能完成绑定，只保留当次对话",
     defaultChecked: true,
     requiresParentSelfAcceptance: false,
   },
@@ -186,6 +187,7 @@ const CONSENT_OFFERS = Object.freeze([
     description: "每位成员拥有独立主体档案",
     defaultChecked: true,
     requiresParentSelfAcceptance: false,
+    requiredForSubmit: true,
   },
   {
     id: "offer_family_shared_memory_v1",
@@ -206,11 +208,12 @@ const CONSENT_OFFERS = Object.freeze([
 ]);
 
 /*
- * 需要监护人 / 子女单独勾选的长期记忆 offer，以及勾选后对应的
+ * 各模式需要单独勾选的长期记忆 offer，以及勾选后对应的
  * memory_level。未勾选时 memory_level 必须是 none；服务端按同一规则校验。
  */
 const MEMORY_OFFER_BY_MODE = Object.freeze({
   parent_for_child: { offerId: "offer_minor_memory_retention_v1", enabledLevel: "growth_summary" },
+  self_use: { offerId: "offer_self_memory_retention_v1", enabledLevel: "personal" },
   child_for_parent: { offerId: "offer_senior_memory_retention_v1", enabledLevel: "personal" },
 });
 
@@ -248,24 +251,23 @@ const MODE_PREFERENCE_SCHEMAS = Object.freeze({
   parent_for_child: {
     tutor_enabled: "boolean",
     english_practice_enabled: "boolean",
-    memory_level: { enum: ["none", "growth_summary"], default: "none" },
+    memory_level: { enum: ["none", "growth_summary"] },
     max_session_minutes: "minutes",
     quiet_hours: "quiet_hours",
   },
   self_use: {
-    memory_level: { enum: ["none", "personal"], default: "personal" },
-    interview_frequency: { enum: ["off", "low", "medium"], default: "low" },
+    memory_level: { enum: ["none", "personal"] },
+    interview_frequency: { enum: ["off", "low", "medium"] },
   },
   child_for_parent: {
-    speech_speed: { enum: ["normal", "slow"], default: "slow" },
-    memory_level: { enum: ["none", "personal"], default: "none" },
+    speech_speed: { enum: ["normal", "slow"] },
+    memory_level: { enum: ["none", "personal"] },
     admin_visibility: {
       enum: ["device_status", "device_status_and_reminders"],
-      default: "device_status",
     },
   },
   family_shared: {
-    memory_level: { enum: ["family_shared"], default: "family_shared" },
+    memory_level: { enum: ["family_shared"] },
     shared_persona_enabled: "boolean",
   },
 });

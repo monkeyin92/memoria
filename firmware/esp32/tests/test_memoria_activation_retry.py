@@ -136,8 +136,8 @@ def test_409_after_the_page_restores_the_qr(tool: pathlib.Path) -> None:
 def test_copy_is_the_final_product_wording(tool: pathlib.Path) -> None:
     assert _run(tool, "copy") == [
         "title 网络没连上",
-        "body 请检查家里的无线网，网好了会自动连上",
-        "detail %s (%d)  HTTP %d  TLS 0x%x",
+        "body 请检查家里的无线网，恢复后会自动重试",
+        "detail 支持码 %s",
     ]
 
 

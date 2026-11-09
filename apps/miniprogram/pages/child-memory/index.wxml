@@ -9,6 +9,7 @@
   <view wx:if="{{!authenticated}}" class="trial-card cm-empty">
     <text class="cm-empty-title">请先登录</text>
     <text class="cm-empty-copy">登录后即可打开孩子的记忆档案。</text>
+    <button class="trial-primary" bindtap="openChildMemoryLogin">重新登录</button>
   </view>
 
   <view wx:elif="{{loadState === 'loading' || loading}}" class="trial-card cm-first">
@@ -48,7 +49,7 @@
                     bindtap="askCorrectArchive"
                   >这条不对</text>
                   <text
-                    wx:if="{{fact.displayLifecycle === 'parent_confirmed' || fact.displayLifecycle === 'withdrawn'}}"
+                    wx:if="{{fact.field === 'preference' && (fact.displayLifecycle === 'parent_confirmed' || fact.displayLifecycle === 'withdrawn')}}"
                     class="cm-action"
                     data-record-id="{{fact.recordId}}"
                     bindtap="askHistoryChange"
@@ -154,6 +155,21 @@
     <text class="mp-sheet-title">{{confirm.title}}</text>
     <view wx:if="{{confirm.quote}}" class="mp-sheet-quote">{{confirm.quote}}</view>
     <text wx:if="{{confirm.body}}" class="cm-sheet-body">{{confirm.body}}</text>
+    <block wx:if="{{confirm.kind === 'correct-archive'}}">
+      <text class="cm-sheet-input-label">正确内容</text>
+      <textarea
+        class="cm-sheet-input"
+        value="{{confirm.draftText}}"
+        maxlength="40"
+        placeholder="请家长输入正确内容"
+        placeholder-class="cm-sheet-input-placeholder"
+        bindinput="onConfirmInput"
+        aria-label="正确内容"
+        auto-height
+        cursor-spacing="120"
+      ></textarea>
+    </block>
+    <text wx:if="{{confirm.error}}" class="cm-sheet-error">{{confirm.error}}</text>
     <view class="mp-sheet-actions">
       <button class="trial-danger" bindtap="runConfirm" disabled="{{working}}">{{confirm.confirmLabel}}</button>
       <button class="trial-secondary" bindtap="closeConfirm" disabled="{{working}}">{{deleteKeepLabel}}</button>

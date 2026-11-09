@@ -98,7 +98,7 @@ test("archive lifecycle rows bind status and the review action set", async () =>
     assert.match(html, /data-handler="askConfirmArchive"[^>]*data-record-id="auto-1"|data-record-id="auto-1"[^>]*data-handler="askConfirmArchive"/);
     assert.match(html, /data-handler="askConfirmArchive"[^>]*data-record-id="pend-1"|data-record-id="pend-1"[^>]*data-handler="askConfirmArchive"/);
     assert.match(html, /data-handler="askCorrectArchive"[^>]*data-record-id="ok-1"|data-record-id="ok-1"[^>]*data-handler="askCorrectArchive"/);
-    assert.match(html, /data-handler="askHistoryChange"[^>]*data-record-id="ok-1"|data-record-id="ok-1"[^>]*data-handler="askHistoryChange"/);
+    assert.doesNotMatch(html, /data-handler="askHistoryChange"[^>]*data-record-id="ok-1"|data-record-id="ok-1"[^>]*data-handler="askHistoryChange"/);
     assert.match(html, /data-handler="askWithdrawArchive"[^>]*data-record-id="ok-1"|data-record-id="ok-1"[^>]*data-handler="askWithdrawArchive"/);
     assert.match(html, /data-handler="askDeleteArchive"[^>]*data-record-id="ok-1"|data-record-id="ok-1"[^>]*data-handler="askDeleteArchive"/);
     assert.match(html, /data-handler="askHistoryChange"[^>]*data-record-id="out-1"|data-record-id="out-1"[^>]*data-handler="askHistoryChange"/);
@@ -115,6 +115,127 @@ test("archive lifecycle rows bind status and the review action set", async () =>
     harness.page.askHistoryChange({ currentTarget: { dataset: { recordId: "out-1" } } });
     assert.equal(harness.page.data.confirm.kind, "correct-archive");
     assert.equal(harness.page.data.confirm.historyChange, true);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("correction sheet accepts edited text and sends it to the review API", async () => {
+  const reviews = [];
+  const harness = await openChildMemory({
+    ...fx.archiveApi,
+    getChildArchive: async () => ({
+      items: [{ record_id: "pref-1", field: "preference", text: "恐龙", display_lifecycle: "parent_confirmed" }],
+    }),
+    reviewChildArchiveFact: async (minorId, recordId, body) => {
+      reviews.push({ minorId, recordId, body });
+      return { new_record_id: "pref-2", audit_event_id: "audit-1" };
+    },
+  });
+  try {
+    harness.page.askCorrectArchive({ currentTarget: { dataset: { recordId: "pref-1" } } });
+    assert.equal(harness.page.data.confirm.draftText, "恐龙");
+    const html = renderPage("pages/child-memory/index", harness.page.data, {
+      tabBar: false,
+      eventHandlers: true,
+    });
+    assert.match(html, /<textarea[^>]*class="cm-sheet-input"/);
+    assert.match(html, /placeholder="请家长输入正确内容"/);
+    harness.page.onConfirmInput({ detail: { value: "喜欢恐龙" } });
+    await harness.page.runConfirm();
+
+    assert.deepEqual(reviews, [
+      {
+        minorId: "p_child",
+        recordId: "pref-1",
+        body: {
+          action: "correct",
+          text: "喜欢恐龙",
+          polarity: undefined,
+          history_change: false,
+        },
+      },
+    ]);
+    assert.equal(harness.page.data.confirm, null);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("correction blocks empty and unchanged drafts without calling the API", async () => {
+  const reviews = [];
+  const harness = await openChildMemory({
+    ...fx.archiveApi,
+    getChildArchive: async () => ({
+      items: [{ record_id: "pet-1", field: "pet_name", text: "小乐宝", display_lifecycle: "parent_confirmed" }],
+    }),
+    reviewChildArchiveFact: async (...args) => {
+      reviews.push(args);
+      return {};
+    },
+  });
+  try {
+    harness.page.askCorrectArchive({ currentTarget: { dataset: { recordId: "pet-1" } } });
+    harness.page.onConfirmInput({ detail: { value: "   " } });
+    await harness.page.runConfirm();
+    assert.equal(reviews.length, 0);
+    assert.equal(harness.page.data.confirm.error, "请输入正确内容后再提交。");
+
+    harness.page.onConfirmInput({ detail: { value: "小乐宝" } });
+    await harness.page.runConfirm();
+    assert.equal(reviews.length, 0);
+    assert.equal(harness.page.data.confirm.error, "请修改内容后再提交。");
+    assert.equal(harness.page.data.working, false);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("history change auto-drafts only preference semantics and keeps API errors in the sheet", async () => {
+  let shouldFail = true;
+  const reviews = [];
+  const harness = await openChildMemory({
+    ...fx.archiveApi,
+    getChildArchive: async () => ({
+      items: [
+        { record_id: "pref-1", field: "preference", text: "喜欢恐龙", display_lifecycle: "parent_confirmed" },
+        { record_id: "app-1", field: "appellation", text: "乐乐", display_lifecycle: "parent_confirmed" },
+        { record_id: "pet-1", field: "pet_name", text: "小乐宝", display_lifecycle: "parent_confirmed" },
+      ],
+    }),
+    reviewChildArchiveFact: async (minorId, recordId, body) => {
+      reviews.push({ minorId, recordId, body });
+      if (shouldFail) throw new Error("保存失败，请稍后重试。");
+      return { new_record_id: "pref-2", audit_event_id: "audit-2" };
+    },
+  });
+  try {
+    const html = renderPage("pages/child-memory/index", harness.page.data, {
+      tabBar: false,
+      eventHandlers: true,
+    });
+    assert.match(html, /data-handler="askHistoryChange"[^>]*data-record-id="pref-1"|data-record-id="pref-1"[^>]*data-handler="askHistoryChange"/);
+    assert.doesNotMatch(html, /data-handler="askHistoryChange"[^>]*data-record-id="app-1"|data-record-id="app-1"[^>]*data-handler="askHistoryChange"/);
+    assert.doesNotMatch(html, /data-handler="askHistoryChange"[^>]*data-record-id="pet-1"|data-record-id="pet-1"[^>]*data-handler="askHistoryChange"/);
+
+    harness.page.askHistoryChange({ currentTarget: { dataset: { recordId: "pref-1" } } });
+    assert.equal(harness.page.data.confirm.draftText, "不喜欢恐龙");
+    harness.page.onConfirmInput({ detail: { value: "喜欢海苔" } });
+    await harness.page.runConfirm();
+    assert.equal(harness.page.data.confirm.error, "保存失败，请稍后重试。");
+    assert.equal(harness.page.data.error, "");
+    assert.match(visibleText(renderPage("pages/child-memory/index", harness.page.data, { tabBar: false })), /保存失败，请稍后重试。/);
+
+    shouldFail = false;
+    await harness.page.runConfirm();
+    assert.equal(harness.page.data.confirm, null);
+    assert.equal(reviews.length, 2);
+    assert.equal(reviews[1].body.text, "喜欢海苔");
+    assert.equal(reviews[1].body.polarity, "positive");
+
+    harness.page.askHistoryChange({ currentTarget: { dataset: { recordId: "pet-1" } } });
+    assert.equal(harness.page.data.confirm.historyChange, false);
+    assert.equal(harness.page.data.confirm.draftText, "小乐宝");
   } finally {
     harness.restore();
   }

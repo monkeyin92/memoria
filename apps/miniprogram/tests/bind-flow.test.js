@@ -10,6 +10,7 @@ const { canonicalManifest } = require("./manifest-fixtures");
 const { readSubjectLabel } = require("../utils/subject-label");
 const { defaultCompanionId } = require("../utils/companions");
 const { consentStamp } = require("../utils/child-consent");
+const { renderPage } = require("../scripts/mp-harness/render");
 
 const storage = { "memoria:miniprogram:child-info-consent": consentStamp() };
 let lastWxRequest = null;
@@ -184,7 +185,7 @@ async function bootToMode(mode, { acceptRequiredOffers = true } = {}) {
   assert.equal(page.data.step, "form");
   if (acceptRequiredOffers) {
     for (const offer of binding.consentOffersFor(mode)) {
-      if (!offer.requiredForSubmit) continue;
+      if (!offer.requiredForSubmit || offer.defaultChecked) continue;
       page.toggleOffer({ currentTarget: { dataset: { id: offer.id } } });
     }
   }
@@ -301,6 +302,64 @@ test("self_use flow keeps sensitive offers off by default and submits clean payl
   assert.deepEqual(payload.consent_offer_ids, ["offer_self_memory_retention_v1"]);
   assert.ok(!Object.prototype.hasOwnProperty.call(payload, "policy_version"));
   assert.equal(readSubjectLabel(page.data.manifest), "阿宁");
+});
+
+test("self_use keeps memory consent in review across form round trips", async () => {
+  nextResponse = successResponse(defaultManifestResponse("self_use"));
+  const page = await bootSelfUseReady();
+  const formHtml = renderPage("pages/bind/index", page.data);
+  assert.doesNotMatch(formHtml, /记忆深度|memoryLevelOptions/);
+  assert.match(formHtml, /长期记忆会在下一步单独授权/);
+
+  await page.goToReview();
+  let reviewHtml = renderPage("pages/bind/index", page.data);
+  assert.match(reviewHtml, /长期记忆默认已勾选/);
+  assert.equal(
+    page.data.offers.find((offer) => offer.id === "offer_self_memory_retention_v1").checked,
+    true,
+  );
+  page.toggleOffer({ currentTarget: { dataset: { id: "offer_self_memory_retention_v1" } } });
+  assert.equal(
+    page.data.offers.find((offer) => offer.id === "offer_self_memory_retention_v1").checked,
+    false,
+  );
+  page.backToForm();
+  await page.goToReview();
+  reviewHtml = renderPage("pages/bind/index", page.data);
+  assert.match(reviewHtml, /取消勾选也能完成绑定/);
+  assert.equal(
+    page.data.offers.find((offer) => offer.id === "offer_self_memory_retention_v1").checked,
+    false,
+  );
+  await page.submitBinding();
+  assert.equal(lastWxRequest.data.service_preferences.memory_level, "none");
+  assert.ok(!lastWxRequest.data.consent_offer_ids.includes("offer_self_memory_retention_v1"));
+
+  nextResponse = successResponse(defaultManifestResponse("self_use"));
+  const enabledPage = await bootSelfUseReady();
+  await enabledPage.goToReview();
+  enabledPage.toggleOffer({ currentTarget: { dataset: { id: "offer_self_memory_retention_v1" } } });
+  enabledPage.backToForm();
+  await enabledPage.goToReview();
+  assert.equal(
+    enabledPage.data.offers.find((offer) => offer.id === "offer_self_memory_retention_v1").checked,
+    false,
+  );
+  enabledPage.toggleOffer({ currentTarget: { dataset: { id: "offer_self_memory_retention_v1" } } });
+  assert.equal(
+    enabledPage.data.offers.find((offer) => offer.id === "offer_self_memory_retention_v1").checked,
+    true,
+  );
+  enabledPage.backToForm();
+  await enabledPage.goToReview();
+  assert.equal(
+    enabledPage.data.offers.find((offer) => offer.id === "offer_self_memory_retention_v1").checked,
+    true,
+  );
+  await enabledPage.submitBinding();
+
+  assert.equal(lastWxRequest.data.service_preferences.memory_level, "personal");
+  assert.ok(lastWxRequest.data.consent_offer_ids.includes("offer_self_memory_retention_v1"));
 });
 
 test("checking digital self includes it in the submitted consent offers", async () => {

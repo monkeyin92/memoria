@@ -197,6 +197,7 @@ test("a stale or missing link says nothing needs attention instead of showing an
     const harness = await openAttention(query, fx.safetyAlertApi([fx.SAFETY_ALERT]));
     try {
       assert.equal(harness.page.data.alert, null);
+      assert.equal(harness.page.data.alertResult.status, "not_found");
       assert.equal(
         visibleText(renderPage("pages/attention/index", harness.page.data)),
         "现在没有需要关注的对话 有新的提醒时，首页会置顶显示。 我知道了",
@@ -204,6 +205,54 @@ test("a stale or missing link says nothing needs attention instead of showing an
     } finally {
       harness.restore();
     }
+  }
+});
+
+test("attention keeps network and server read failures visible and retries into the alert", async () => {
+  for (const [error, errorKind] of [
+    [Object.assign(new Error("server"), { status: 503 }), "server"],
+    [new Error("request:fail timeout"), "network"],
+  ]) {
+    let reads = 0;
+    const store = fx.safetyAlertApi([fx.SAFETY_ALERT]);
+    const harness = await openAttention({ id: "n1" }, {
+      ...store,
+      getGuardianNotification: async (id) => {
+        reads += 1;
+        if (reads === 1) throw error;
+        return store.getGuardianNotification(id);
+      },
+    });
+    try {
+      assert.equal(harness.page.data.alert, null);
+      assert.deepEqual(harness.page.data.alertResult, { status: "failed", errorKind });
+      assert.match(visibleText(renderPage("pages/attention/index", harness.page.data)), /暂时没能读取，点击重试/);
+      await harness.page.retryLoadAlert();
+      assert.equal(harness.page.data.alertResult.status, "ok");
+      assert.equal(harness.page.data.alert.notificationId, "n1");
+      assert.match(visibleText(renderPage("pages/attention/index", harness.page.data)), /有一条需要你关注的对话/);
+    } finally {
+      harness.restore();
+    }
+  }
+});
+
+test("attention gives an expired login an explicit login action", async () => {
+  const harness = await openAttention({ id: "n1" }, {
+    getGuardianNotification: async () => {
+      throw Object.assign(new Error("expired"), { status: 401 });
+    },
+  });
+  try {
+    assert.deepEqual(harness.page.data.alertResult, { status: "failed", errorKind: "auth" });
+    assert.match(visibleText(renderPage("pages/attention/index", harness.page.data)), /登录状态已失效/);
+    harness.page.openAttentionLogin();
+    assert.deepEqual(
+      harness.wxCalls.filter((call) => call.name === "navigateTo").map((call) => call.args[0].url),
+      ["/pages/auth/index?redirect=%2Fpages%2Fattention%2Findex%3Fid%3Dn1&reason=view_attention"],
+    );
+  } finally {
+    harness.restore();
   }
 });
 

@@ -1,6 +1,7 @@
 const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
+const { openLogin } = require("../../utils/auth-gate");
 const { acknowledgeSafetyAlert, loadSafetyAlert } = require("../../utils/crisis-alerts");
 
 const ACK_FAILED = "还没记下，请再点一次。";
@@ -10,6 +11,7 @@ Page({
     statusBarStyle: statusBarStyle(),
     loading: true,
     alert: null,
+    alertResult: { status: "not_found" },
     acknowledging: false,
     ackError: "",
   },
@@ -20,7 +22,30 @@ Page({
   },
 
   async loadAlert() {
-    this.setData({ loading: false, alert: await loadSafetyAlert(api, this._notificationId) });
+    if (this._loadingAlert) return;
+    this._loadingAlert = true;
+    this.setData({ loading: true, alert: null });
+    try {
+      const alertResult = await loadSafetyAlert(api, this._notificationId);
+      this.setData({
+        loading: false,
+        alert: alertResult.status === "ok" ? alertResult.alert : null,
+        alertResult,
+      });
+    } finally {
+      this._loadingAlert = false;
+    }
+  },
+
+  retryLoadAlert() {
+    return this.loadAlert();
+  },
+
+  openAttentionLogin() {
+    openLogin({
+      reason: "view_attention",
+      redirect: `/pages/attention/index?id=${encodeURIComponent(this._notificationId || "")}`,
+    });
   },
 
   async acknowledge() {

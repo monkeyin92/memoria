@@ -123,3 +123,34 @@ test("coming back to 回顾 after 我知道了 drops the acknowledged alert", as
     harness.restore();
   }
 });
+
+test("home and 回顾 keep a failed safety read visible instead of showing empty data", async () => {
+  const failed = {
+    getUnreadGuardianNotifications: async () => {
+      throw Object.assign(new Error("server"), { status: 503 });
+    },
+  };
+  const home = loadPage("pages/home/index", fx.authed(failed));
+  try {
+    await home.run();
+    const homeText = visibleText(renderPage("pages/home/index", home.page.data));
+    assert.equal(home.page.data.unreadSafetyReadStatus, "failed");
+    assert.match(homeText, /安全提醒暂时没能读取/);
+    assert.match(homeText, /暂时没能读取，点击重试/);
+    assert.doesNotMatch(homeText, /现在没有需要关注的对话/);
+  } finally {
+    home.restore();
+  }
+
+  const memory = loadPage("pages/memory/index", fx.authed(failed));
+  try {
+    await memory.run();
+    const memoryText = visibleText(renderPage("pages/memory/index", memory.page.data, { tabBar: false }));
+    assert.equal(memory.page.data.safetyReadStatus, "failed");
+    assert.match(memoryText, /安全提醒暂时没能读取/);
+    assert.match(memoryText, /暂时没能读取，点击重试/);
+    assert.doesNotMatch(memoryText, /现在没有需要关注的对话/);
+  } finally {
+    memory.restore();
+  }
+});

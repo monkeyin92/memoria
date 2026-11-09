@@ -467,7 +467,7 @@ test("rebinding to a new manifest version clears in-memory guards", async () => 
     account_owner_person_id: "person_owner",
     primary_subject: { person_id: "person_owner", relationship: "self" },
     persona_selection: "starlight",
-    service_preferences: {},
+    service_preferences: { memory_level: "none" },
     consent_offer_ids: [],
   });
   resolveRequest(

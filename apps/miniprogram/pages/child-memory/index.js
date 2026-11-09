@@ -1,6 +1,6 @@
 const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
-const { requireLogin } = require("../../utils/auth-gate");
+const { isAuthError, openLogin, requireLogin } = require("../../utils/auth-gate");
 const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { readBindingManifest } = require("../../utils/device-binding");
 const {
@@ -41,7 +41,7 @@ function pageError(error, fallback) {
 }
 
 function loginRequired(error) {
-  return error?.message === "请先使用微信登录。";
+  return isAuthError(error);
 }
 
 function guestMemoryPatch() {
@@ -53,6 +53,7 @@ function guestMemoryPatch() {
     archiveFlat: [],
     loadState: "idle",
     loading: false,
+    working: false,
     error: "",
     statusBanner: "",
     confirm: null,
@@ -79,6 +80,25 @@ function resolveMinor(query) {
 function quoteForRecord(list, recordId) {
   const hit = (list || []).find((item) => item.recordId === recordId);
   return hit?.text || "";
+}
+
+function archiveFactForRecord(list, recordId) {
+  return (list || []).find((item) => item.recordId === recordId) || null;
+}
+
+function historyChangeDraft(text) {
+  const normalized = typeof text === "string" ? text.trim() : "";
+  if (!normalized) return "";
+  if (normalized.startsWith("不喜欢")) return normalized;
+  if (normalized.startsWith("喜欢")) return `不喜欢${normalized.slice(2)}`;
+  return `不喜欢${normalized}`;
+}
+
+function polarityForArchiveText(text) {
+  const normalized = typeof text === "string" ? text.trim() : "";
+  if (normalized.startsWith("不喜欢")) return "negative";
+  if (normalized.startsWith("喜欢")) return "positive";
+  return undefined;
 }
 
 Page({
@@ -151,6 +171,10 @@ Page({
       });
     }
     await this.refresh();
+  },
+
+  openChildMemoryLogin() {
+    openLogin({ reason: "view_child_memory" });
   },
 
   async onPullDownRefresh() {
@@ -292,6 +316,7 @@ Page({
         confirmLabel: "更正",
         draftText: current,
         historyChange: false,
+        error: "",
       },
     });
   },
@@ -299,21 +324,23 @@ Page({
   askHistoryChange(event) {
     const recordId = event.currentTarget.dataset.recordId;
     if (!recordId) return;
-    const current = quoteForRecord(this.data.archiveFlat, recordId);
-    const draft = current.includes("喜欢")
-      ? current.replace("喜欢", "不喜欢")
-      : `不喜欢${current}`;
+    const fact = archiveFactForRecord(this.data.archiveFlat, recordId);
+    if (!fact || fact.field !== "preference") {
+      this.askCorrectArchive(event);
+      return;
+    }
+    const current = fact.text || "";
     this.setData({
       confirm: {
         kind: "correct-archive",
         recordId,
         title: "更新为现在不喜欢？",
-        body: "会撤回旧版本并写入新版本，不会并列两条冲突事实。",
+        body: "请确认并按需修改正确内容。提交后会撤回旧版本并写入新版本，不会并列两条冲突事实。",
         quote: current,
         confirmLabel: "更新",
-        draftText: draft,
+        draftText: historyChangeDraft(current),
         historyChange: true,
-        polarity: "negative",
+        error: "",
       },
     });
   },
@@ -413,10 +440,30 @@ Page({
 
   noop() {},
 
+  onConfirmInput(event) {
+    if (!this.data.confirm) return;
+    this.setData({
+      "confirm.draftText": event.detail?.value || "",
+      "confirm.error": "",
+    });
+  },
+
   async runConfirm() {
     const confirm = this.data.confirm;
     const minorId = this.data.minorId;
     if (!confirm || !minorId || this.data.working) return;
+    if (confirm.kind === "correct-archive") {
+      const originalText = String(confirm.quote || "").trim();
+      const draftText = String(confirm.draftText || "").trim();
+      if (!draftText) {
+        this.setData({ "confirm.error": "请输入正确内容后再提交。" });
+        return;
+      }
+      if (draftText === originalText) {
+        this.setData({ "confirm.error": "请修改内容后再提交。" });
+        return;
+      }
+    }
     this.setData({ working: true, error: "", statusBanner: "" });
     try {
       if (confirm.kind === "delete-summary") {
@@ -439,10 +486,13 @@ Page({
         });
         await this.refresh();
       } else if (confirm.kind === "correct-archive") {
+        const draftText = String(confirm.draftText || "").trim();
         const receipt = await api.reviewChildArchiveFact(minorId, confirm.recordId, {
           action: "correct",
-          text: confirm.draftText || quoteForRecord(this.data.archiveFlat, confirm.recordId),
-          polarity: confirm.polarity || undefined,
+          text: draftText,
+          polarity: confirm.historyChange
+            ? polarityForArchiveText(draftText)
+            : confirm.polarity || undefined,
           history_change: Boolean(confirm.historyChange),
         });
         this.setData({
@@ -488,7 +538,12 @@ Page({
         this.setData(guestMemoryPatch());
         return;
       }
-      this.setData({ error: pageError(error, "操作失败，请稍后再试。") });
+      const message = pageError(error, "操作失败，请稍后再试。");
+      if (this.data.confirm) {
+        this.setData({ "confirm.error": message });
+      } else {
+        this.setData({ error: message });
+      }
     } finally {
       this.setData({ working: false });
     }

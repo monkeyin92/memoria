@@ -5,9 +5,13 @@
   <text class="page-title">{{role === 'minor' ? '学生模式与监护授权' : '家庭与监护'}}</text>
   <text class="page-lede">{{role === 'minor' ? '绑定由孩子本人确认，授权变化会立即生效。' : '只看聚合趋势，不展示孩子与角色的对话原文。'}}</text>
 
-  <text wx:if="{{error}}" class="error-text">{{error}}</text>
+  <view wx:if="{{authRequired}}" class="notice">
+    <text class="notice-title">请先登录</text>
+    <text class="notice-copy">登录后才能查看和管理家庭监护信息。</text>
+    <button class="primary-button empty-button" bindtap="openGuardianLogin">重新登录</button>
+  </view>
 
-  <block wx:if="{{role === 'minor'}}">
+  <block wx:elif="{{role === 'minor'}}">
     <view class="l2-card">
       <text class="l2-card-title">你会知道分享了什么</text>
       <text class="l2-card-sub">每周成长小结只包含情绪趋势、学习时长和话题分布，不包含具体对话。原始语音默认不保存。</text>
@@ -180,7 +184,8 @@
     </block>
   </block>
 
-  <view wx:if="{{role === 'unknown' && !loading}}" class="notice">账号资料尚未加载完成。</view>
+  <text wx:if="{{error && !authRequired}}" class="error-text">{{error}}</text>
+  <view wx:if="{{role === 'unknown' && !loading && !authRequired}}" class="notice">账号资料尚未加载完成。</view>
 
   <!-- 删除无账号孩子数据的二次确认：完整输入确认文本才可删除 -->
   <view wx:if="{{showMinorDelete}}" class="modal-wrap" bindtap="closeMinorDelete">

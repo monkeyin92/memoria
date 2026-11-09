@@ -84,6 +84,7 @@ function emptyDashboard() {
     heroFoot: "在设备上使用，手机不录音",
     pendingCount: 0,
     todayCount: 0,
+    todayCountKnown: false,
     todayMeta: "",
     todayTitle: "",
     todayOverview: "",
@@ -111,6 +112,8 @@ function emptyDashboard() {
     unreadSafetyAlert: false,
     unreadSafetyCopy: UNREAD_SAFETY_COPY,
     unreadSafetyMeta: pinnedAlertMeta(),
+    unreadSafetyReadStatus: "not_found",
+    unreadSafetyErrorKind: "",
     safetySubscribeOn: false,
     safetySubscribeKnown: false,
     safetySubscribeBusy: false,
@@ -284,6 +287,14 @@ Page({
 
   openUnreadSafety() {
     wx.navigateTo({ url: attentionUrl(this.data.safetyAlertId) });
+  },
+
+  retrySafetyAlerts() {
+    return this.loadHome();
+  },
+
+  openSafetyLogin() {
+    openLogin({ reason: "view_attention" });
   },
 
   async onSafetySubscribeChange(event) {
@@ -477,7 +488,7 @@ Page({
       api.getRuntimeProfile(binding.device_id),
       api.getDeviceSettings(binding.device_id),
       identity ? api.getProfile(identity.user_id) : Promise.resolve(null),
-      this._loadToday(identity),
+      this._loadToday(identity, binding),
       api.getDeviceDiagnostics(binding.device_id),
       api.getSessionLimits(binding.device_id),
     ]);
@@ -497,7 +508,10 @@ Page({
       profileResult.status === "fulfilled" && profileResult.value !== null
         ? profileResult.value
         : null;
-    const today = todayResult.status === "fulfilled" ? todayResult.value : {};
+    const today =
+      todayResult.status === "fulfilled"
+        ? todayResult.value
+        : { todayCount: null, todayCountKnown: false, daysUnavailable: true };
     const diagnostics =
       diagnosticsResult.status === "fulfilled" && diagnosticsResult.value !== null
         ? diagnosticsResult.value
@@ -517,7 +531,9 @@ Page({
     const online = summary.online;
     const boundChild = boundChildFromManifest(binding);
     const offerSafety = shouldOfferCrisisSubscription(binding);
-    const unread = offerSafety ? await loadUnreadSafetyAlerts(api) : null;
+    const unread = offerSafety
+      ? await loadUnreadSafetyAlerts(api)
+      : { status: "not_found" };
     if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
 
     let safetyView = {
@@ -563,12 +579,13 @@ Page({
       runtimeProfile: runtime,
       usedMinutes: limitsResult.status === "fulfilled" ? limitsResult.value?.today_used_minutes : null,
     });
-    const unreadSafetyMeta = pinnedAlertMeta({
-      occurredAt: alertTimeLabel(unread?.newest.occurredAt),
-    });
+    const unreadSafetyMeta =
+      unread.status === "ok"
+        ? pinnedAlertMeta({ occurredAt: alertTimeLabel(unread.newest.occurredAt) })
+        : "暂时没能读取，点击重试";
     const placeName = devicePlaceName(binding);
     const childName = boundChild?.displayName || "";
-    const todayCount = today.todayCount || 0;
+    const todayCount = today.todayCount;
 
     this.setData({
       loading: false,
@@ -600,6 +617,7 @@ Page({
       heroFoot: online ? "在设备上使用，手机不录音" : "绑定关系不受影响",
       pendingCount: todayView.pendingCount || 0,
       todayCount,
+      todayCountKnown: todayView.todayCountKnown === true,
       todayMeta: todayView.todayMeta || "",
       todayTitle: todayView.todayTitle || "",
       todayOverview: todayView.todayOverview || "",
@@ -611,7 +629,7 @@ Page({
       childMemoryMinorId: boundChild?.personId || "",
       childMemoryName: childName,
       memoryPreviews,
-      safetyAlertId: unread?.newest.notificationId || "",
+      safetyAlertId: unread.status === "ok" ? unread.newest.notificationId : "",
       statusPill: trialCard.statusPill,
       statusLine: trialCard.statusLine,
       usageKnown: trialCard.usageKnown,
@@ -624,9 +642,11 @@ Page({
       quietHoursLabel: trialCard.quietHoursLabel,
       nightModeOn: trialCard.nightModeOn,
       showSafetyNightCard: offerSafety,
-      unreadSafetyAlert: unread !== null,
+      unreadSafetyAlert: unread.status === "ok",
       unreadSafetyCopy: UNREAD_SAFETY_COPY,
       unreadSafetyMeta,
+      unreadSafetyReadStatus: unread.status,
+      unreadSafetyErrorKind: unread.errorKind || "",
       safetySubscribeHelper: SAFETY_SUBSCRIBE_HELPER,
       ...safetyView,
       error: failures.length ? "部分状态暂时无法同步。" : "",
@@ -647,10 +667,13 @@ Page({
     }
   },
 
-  async _loadToday(identity) {
+  async _loadToday(identity, binding) {
+    const boundChild = boundChildFromManifest(binding);
+    const guardianMode = Boolean(boundChild?.personId);
     const empty = {
       pendingCount: 0,
-      todayCount: 0,
+      todayCount: guardianMode ? null : 0,
+      todayCountKnown: !guardianMode,
       todayMeta: "",
       todayTitle: "",
       todayOverview: "",
@@ -658,27 +681,39 @@ Page({
       daysUnavailable: false,
     };
     if (!identity) return empty;
-    // A closed daily-summary read is a normal state in production: count today
-    // from conversation sessions, never from the legacy day rows.
+    const daysPromise = guardianMode
+      ? api.getGuardianChildDays(boundChild.personId, 30).catch(() => null)
+      : Promise.resolve().then(() => api.getMemoryDays(identity.user_id, 7)).catch(() => null);
+    const sessionsPromise =
+      guardianMode || typeof api.getConversationSessions !== "function"
+        ? Promise.resolve(null)
+        : api.getConversationSessions(20).catch(() => null);
     const [daysResult, reviewResult, sessionsResult] = await Promise.all([
-      Promise.resolve().then(() => api.getMemoryDays(identity.user_id, 7)).catch(() => null),
+      daysPromise,
       api.getConversationReview(),
-      typeof api.getConversationSessions === "function"
-        ? api.getConversationSessions(20).catch(() => null)
-        : Promise.resolve(null),
+      sessionsPromise,
     ]);
-    const daysUnavailable = daysResult === null;
+    const dayItems = Array.isArray(daysResult?.items) ? daysResult.items : [];
+    const daysUnavailable = guardianMode ? !Array.isArray(daysResult?.items) : daysResult === null;
     const today = todayKey();
-    const day = (daysResult?.items || []).find((item) => (item.day || item.date) === today);
+    const day = dayItems.find((item) => (item.day || item.date) === today);
     const sessionsToday = ((sessionsResult && sessionsResult.items) || []).filter(
       (item) => item.occurred_at && todayKey(new Date(item.occurred_at)) === today,
     ).length;
-    const count = sessionsToday;
+    const count = guardianMode ? Number(day?.message_count) || 0 : sessionsToday;
+    const todayCountKnown = !guardianMode || !daysUnavailable;
     const pending = (reviewResult?.memory_candidates || []).length;
     const overview =
       day?.summary?.overview || day?.overview || day?.summary_text || "";
     const title = day?.summary?.title || day?.title || "";
-    if (!count && !pending) return { ...empty, daysUnavailable };
+    if (!count && !pending) {
+      return {
+        ...empty,
+        todayCount: todayCountKnown ? count : null,
+        todayCountKnown,
+        daysUnavailable,
+      };
+    }
     const dailySummaryText = count
       ? overview
         ? `今天和 Memoria 聊了 ${count} 次。${overview}`
@@ -687,6 +722,7 @@ Page({
     return {
       pendingCount: pending,
       todayCount: count,
+      todayCountKnown,
       todayMeta: count ? `今天 · ${count} 次对话` : "今天",
       todayTitle: title || (pending ? "有内容等你确认" : ""),
       todayOverview: overview || "具体内容在回顾里。",

@@ -14,7 +14,16 @@
     <view class="dot {{step === 'done' ? 'dot-done' : ''}}"></view>
   </view>
 
-  <block wx:if="{{step === 'loading'}}">
+  <view wx:if="{{authRequired}}" class="l2-card">
+    <text class="l2-card-title">需要登录才能继续</text>
+    <text class="l2-card-sub">这次设备启用信息还保留着。登录后会回到这里继续确认。</text>
+    <view class="button-row">
+      <button class="primary-button" bindtap="openBindLogin">去登录</button>
+      <button class="secondary-button" bindtap="openDevicePage">返回设备管理</button>
+    </view>
+  </view>
+
+  <block wx:elif="{{step === 'loading'}}">
     <view class="l2-card">
       <text class="l2-card-title">正在准备</text>
       <text class="l2-card-sub">马上就好，请稍等。</text>
@@ -22,7 +31,7 @@
     </view>
   </block>
 
-  <block wx:if="{{step === 'error'}}">
+  <block wx:elif="{{step === 'error'}}">
     <view class="l2-card">
       <text class="l2-card-title">无法继续绑定</text>
       <text class="l2-card-sub">{{error}}</text>
@@ -32,7 +41,7 @@
   </block>
 
   <!-- 步骤 1：绑定方式二选一 -->
-  <block wx:if="{{step === 'mode'}}">
+  <block wx:elif="{{step === 'mode'}}">
     <view class="bind-mode-list">
       <view wx:for="{{modeCards}}" wx:key="id" class="choice-card" data-mode="{{item.id}}" bindtap="chooseMode">
         <view class="choice-radio"></view>
@@ -46,7 +55,7 @@
   </block>
 
   <!-- 步骤 2：机器人尾号只读 + 使用者备注 -->
-  <block wx:if="{{step === 'form'}}">
+  <block wx:elif="{{step === 'form'}}">
     <view class="l2-card">
       <text class="l2-card-title">{{modeMeta.title}} · 基本信息</text>
       <view wx:if="{{deviceTail}}" class="field">
@@ -100,13 +109,10 @@
       <block wx:if="{{declaredMode === 'self_use'}}">
         <text class="field-label">使用者备注 *</text>
         <input class="field-input" value="{{form.selfNickname}}" placeholder="例如：我自己、阿宁" placeholder-class="field-placeholder" maxlength="{{maxSubjectLabel}}" data-key="selfNickname" bindinput="onFieldInput" />
-        <picker range="{{memoryLevelOptions}}" range-key="label" value="{{form.memoryLevelIndex}}" data-key="memoryLevelIndex" bindchange="onPickerChange">
-          <view class="picker-row"><text class="picker-label">记忆深度</text><text class="picker-value">{{memoryLevelOptions[form.memoryLevelIndex].label}}</text></view>
-        </picker>
         <picker range="{{interviewFrequencyOptions}}" range-key="label" value="{{form.interviewFrequencyIndex}}" data-key="interviewFrequencyIndex" bindchange="onPickerChange">
           <view class="picker-row"><text class="picker-label">主动采访</text><text class="picker-value">{{interviewFrequencyOptions[form.interviewFrequencyIndex].label}}</text></view>
         </picker>
-        <text class="form-note">首页的当前使用者会显示这条备注，不是微信昵称。年龄以系统核实的为准；数字自我与传承等能力默认关闭，需要单独开启。</text>
+        <text class="form-note">长期记忆会在下一步单独授权；数字自我与传承等能力默认关闭，需要单独开启。首页的当前使用者会显示这条备注，不是微信昵称。</text>
       </block>
 
       <!-- C. 给父母使用 -->
@@ -162,7 +168,7 @@
   </block>
 
   <!-- 步骤 3/4：协议勾选与汇总确认 -->
-  <block wx:if="{{step === 'review'}}">
+  <block wx:elif="{{step === 'review'}}">
     <view class="l2-card">
       <text class="l2-card-title">确认一下</text>
       <text class="l2-card-sub">核对下面的信息，勾选需要的授权后提交</text>
@@ -183,7 +189,10 @@
           <text wx:if="{{item.requiredForSubmit}}" class="offer-note">完成绑定前必须勾选</text>
         </view>
       </view>
-      <text class="form-note">敏感能力（长期记忆、数字自我、传承、原始音频等）只有明确勾选才会申请；孩子和父母的长期记忆默认不勾选，不勾选也能完成绑定。</text>
+      <text wx:if="{{declaredMode === 'self_use'}}" class="form-note">长期记忆默认已勾选，取消勾选也能完成绑定并只保留当次对话；数字自我、传承、原始音频默认不勾选，勾选后才会开启。</text>
+      <text wx:elif="{{declaredMode === 'parent_for_child'}}" class="form-note">孩子的长期记忆默认不勾选；勾选后会记录学习与成长，并开通每周成长小结；未勾选也能完成绑定，只保留当次对话。</text>
+      <text wx:elif="{{declaredMode === 'child_for_parent'}}" class="form-note">父母的长期记忆默认不勾选；勾选后由你代父母同意；未勾选也能完成绑定，只保留当次对话。</text>
+      <text wx:else class="form-note">家庭空间与共享记忆用于共同使用；成员加入后再分别管理各自的私人记忆。</text>
       <view wx:if="{{subscriptionPushEnabled && crisisSubscribeRequired}}" class="notice notice-warn">
         <text class="l2-card-title">安全提醒是完成绑定的前提</text>
         <text class="l2-card-sub">{{crisisPush.enabled ? crisisPush.explanation : '安全提醒尚未开通，暂时不能完成这类绑定。'}}</text>
@@ -199,7 +208,7 @@
   </block>
 
   <!-- 步骤 5：完成徽章 -->
-  <block wx:if="{{step === 'done'}}">
+  <block wx:elif="{{step === 'done'}}">
     <view class="l2-card done-card">
       <view class="done-device">
         <device-screen online="{{true}}" size="220"></device-screen>

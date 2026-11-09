@@ -96,10 +96,15 @@ bool ActivationAwaitingBinding() {
 
 std::string ActivationFailureDetail(esp_err_t result,
                                     const MemoriaActivationClient& client) {
+    const uint32_t value =
+        (static_cast<uint32_t>(result) * 2654435761u) ^
+        (static_cast<uint32_t>(client.last_http_status()) * 40503u) ^
+        static_cast<uint32_t>(client.last_transport_error());
+    char support_code[7];
+    std::snprintf(support_code, sizeof(support_code), "%04X",
+                  static_cast<unsigned>(value & 0xFFFFu));
     char detail[160];
-    std::snprintf(detail, sizeof(detail), kActivationNetworkErrorDetailFormat,
-                  esp_err_to_name(result), static_cast<int>(result),
-                  client.last_http_status(), client.last_transport_error());
+    std::snprintf(detail, sizeof(detail), kActivationNetworkErrorDetailFormat, support_code);
     return detail;
 }
 
@@ -560,6 +565,7 @@ void MemoriaProtocol::RunActivationRetry() {
                 // Free the QR canvas before the next TLS attempt and replace it
                 // with the product's network-error page.
                 display->ClearQrCode();
+                MemoriaBootstrap::GetInstance().Stop();
             }
             if (ShowActivationNetworkErrorPage(
                     display, ActivationFailureDetail(result, activation_client).c_str())) {

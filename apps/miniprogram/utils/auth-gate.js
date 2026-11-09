@@ -1,5 +1,16 @@
 const api = require("./api");
 const { LOGIN_REQUIRED_COPY } = require("./guest-access");
+const LOGIN_EXPIRED_COPY = "登录状态已失效，请重新登录后再试。";
+
+function isAuthError(error) {
+  return (
+    Number(error?.status || 0) === 401 ||
+    error?.code === "unauthorized" ||
+    error?.message === "请先使用微信登录。" ||
+    error?.message === LOGIN_EXPIRED_COPY ||
+    (typeof error?.message === "string" && error.message.startsWith("登录状态已失效"))
+  );
+}
 
 function currentRoute() {
   try {
@@ -48,6 +59,8 @@ function requireLogin({ reason = "protected_action", redirect } = {}) {
 
 module.exports = {
   currentRoute,
+  isAuthError,
+  LOGIN_EXPIRED_COPY,
   openLogin,
   requireLogin,
 };

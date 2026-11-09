@@ -5,6 +5,7 @@ const test = require("node:test");
 
 const api = require("../utils/api");
 const { CONTROL_API_BASE_URL } = require("../config");
+const { renderPage } = require("../scripts/mp-harness/render");
 
 const storage = {};
 let pageDefinition = null;
@@ -94,6 +95,10 @@ function stubApi(overrides) {
 
 function allowedGate() {
   return { allowed: true, reason: "allowed", profile: { valid: true } };
+}
+
+function visibleText(html) {
+  return html.replace(/<head>[\s\S]*?<\/head>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 }
 
 test("getConversationReview and reviewMemoryClaim use the canonical endpoints", async () => {
@@ -599,6 +604,41 @@ test("a parent who bound the device for a child sees the child's days and never 
         ],
       );
       assert.deepEqual(page.data.days[0].highlights, []);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test("guardian review shows the same child summaries that the home review card links to", async () => {
+  await withWx(async () => {
+    const page = instantiate(loadPage("../pages/memory/index"));
+    const restore = guardianStubs({
+      getChildSessionSummaries: async (minorId, limit) => {
+        assert.equal(minorId, "person_child");
+        assert.equal(limit, 3);
+        return {
+          items: [
+            {
+              record_id: "summary_child_1",
+              text: "最近在聊画画和幼儿园的新朋友。",
+              created_at: "2026-10-01T10:00:00Z",
+            },
+          ],
+        };
+      },
+    });
+    try {
+      await page.loadDays();
+      assert.equal(page.data.guardianMode, true);
+      assert.equal(page.data.days[0].title, "孩子聊了 8 次");
+      assert.equal(page.data.days[2].title, "近期摘要");
+      assert.equal(page.data.days[2].overview, "最近在聊画画和幼儿园的新朋友。");
+      page.setData({ authenticated: true });
+      const text = visibleText(renderPage("pages/memory/index", page.data));
+      assert.match(text, /最近在聊画画和幼儿园的新朋友。/);
+      assert.doesNotMatch(text, /还没整理/);
+      assert.doesNotMatch(text, /实际听到的回复|最近对话/);
     } finally {
       restore();
     }

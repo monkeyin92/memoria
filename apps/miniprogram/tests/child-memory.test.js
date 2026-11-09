@@ -118,6 +118,8 @@ test("page copy and structure match product acceptance", () => {
   assert.match(wxml, /askDeleteSummary/);
   assert.match(wxml, /mp-sheet/);
   assert.match(wxml, /confirm\.body/);
+  assert.match(wxml, /<textarea[\s\S]*bindinput="onConfirmInput"/);
+  assert.match(wxml, /confirm\.draftText/);
   assert.doesNotMatch(wxml, /wx:else[^>]*confirm\.body|confirm\.body[^>]*wx:else/);
   assert.match(wxml, /再想想|deleteKeepLabel/);
   assert.doesNotMatch(wxml, /onSummaryTouchStart/);

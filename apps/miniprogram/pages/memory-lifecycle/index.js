@@ -1,6 +1,7 @@
 const api = require("../../utils/api");
 const { guardianSubjectFromBinding } = require("../../utils/guardian");
 const { formatBeijingTime } = require("../../utils/memory-lifecycle");
+const { isAuthError, openLogin } = require("../../utils/auth-gate");
 
 const MEMORY_REASON_TEXT = Object.freeze({
   pending_confirmation: "确认后才会加入记忆档案。",
@@ -78,6 +79,7 @@ Page({
   data: {
     minorUserId: "",
     guardianMode: false,
+    authRequired: false,
     loading: false,
     error: "",
     unavailable: "",
@@ -91,7 +93,7 @@ Page({
   onLoad() {
     const app = getApp();
     if (app && typeof app.subscribeAuthCleared === "function") {
-      this._unsubscribeAuthCleared = app.subscribeAuthCleared(() => this.loadMemories());
+      this._unsubscribeAuthCleared = app.subscribeAuthCleared(() => this._enterAuthState());
     }
   },
 
@@ -123,32 +125,42 @@ Page({
     });
   },
 
+  _enterAuthState(minorUserId = this.data.minorUserId) {
+    this.setData({
+      minorUserId,
+      guardianMode: Boolean(minorUserId),
+      authRequired: true,
+      loading: false,
+    });
+    this._clearActive("登录后可以在这里管理孩子的记忆。");
+  },
+
+  openLifecycleLogin() {
+    openLogin({ reason: "view_memory_lifecycle" });
+  },
+
   async loadMemories() {
     const seq = (this._loadSeq = (this._loadSeq || 0) + 1);
+    if (!api.hasAuthenticatedSession()) {
+      this._enterAuthState();
+      return "unavailable";
+    }
     const minorUserId = guardianSubjectFromBinding(api.readBindingManifest?.() || null);
     if (!minorUserId) {
       this.setData({
         minorUserId: "",
         guardianMode: false,
+        authRequired: false,
         loading: false,
       });
       this._clearActive("绑定设备后可以在这里管理孩子的记忆");
       return "unavailable";
     }
-    if (!api.hasAuthenticatedSession()) {
-      this.setData({
-        minorUserId,
-        guardianMode: true,
-        loading: false,
-      });
-      this._clearActive("登录后可以在这里管理孩子的记忆。");
-      return "unavailable";
-    }
-
     const authEpoch = api.currentAuthEpoch();
     this.setData({
       minorUserId,
       guardianMode: true,
+      authRequired: false,
       loading: true,
       error: "",
       unavailable: "",
@@ -187,6 +199,10 @@ Page({
       });
       return "ok";
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterAuthState(minorUserId);
+        return "auth";
+      }
       if (seq !== this._loadSeq || !api.isAuthEpochCurrent(authEpoch)) return "stale";
       this.setData({
         pendingItems: [],
@@ -220,6 +236,10 @@ Page({
       const refreshed = await this.loadMemories();
       if (refreshed === "ok") wx.showToast({ title: "已确认，会记住", icon: "success" });
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterAuthState(this.data.minorUserId);
+        return;
+      }
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ error: friendlyError(error) });
     } finally {
@@ -263,6 +283,10 @@ Page({
       const refreshed = await this.loadMemories();
       if (refreshed === "ok") wx.showToast({ title: "已撤回", icon: "success" });
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterAuthState(this.data.minorUserId);
+        return;
+      }
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ error: friendlyError(error) });
     } finally {
@@ -304,6 +328,10 @@ Page({
       const refreshed = await this.loadMemories();
       if (refreshed === "ok") wx.showToast({ title: "已恢复", icon: "success" });
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterAuthState(this.data.minorUserId);
+        return;
+      }
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ error: friendlyError(error) });
     } finally {

@@ -26,6 +26,32 @@
       <image class="memory-chev" src="/assets/ui/v4/chev-rust.svg" />
     </view>
 
+    <view
+      wx:elif="{{safetyReadStatus === 'failed' && safetyReadErrorKind === 'auth'}}"
+      class="trial-banner"
+      bindtap="openSafetyLogin"
+    >
+      <view class="trial-banner-icon"><image src="/assets/ui/v4/heart-rust.svg" /></view>
+      <view class="trial-banner-copy">
+        <text class="trial-banner-title">安全提醒暂时没能读取</text>
+        <text class="trial-banner-meta">登录状态已失效，点击登录</text>
+      </view>
+      <image class="memory-chev" src="/assets/ui/v4/chev-rust.svg" />
+    </view>
+
+    <view
+      wx:elif="{{safetyReadStatus === 'failed'}}"
+      class="trial-banner"
+      bindtap="retrySafetyRead"
+    >
+      <view class="trial-banner-icon"><image src="/assets/ui/v4/heart-rust.svg" /></view>
+      <view class="trial-banner-copy">
+        <text class="trial-banner-title">安全提醒暂时没能读取</text>
+        <text class="trial-banner-meta">暂时没能读取，点击重试</text>
+      </view>
+      <image class="memory-chev" src="/assets/ui/v4/chev-rust.svg" />
+    </view>
+
     <view wx:if="{{subscriptionPushEnabled && crisisPush.enabled}}" class="card memory-card">
       <view class="card-lead">
         <mp-icon name="bell"></mp-icon>
@@ -43,8 +69,10 @@
       <view wx:if="{{!days.length}}" class="card memory-card memory-empty">
         <mp-icon name="note" size="112"></mp-icon>
         <text class="l2-card-title">还没有可回顾的内容</text>
-        <text class="l2-card-sub">{{guardianMode ? '孩子还没有聊过天，或者还没有开启孩子的长期记忆。' : '这里还空空的，没关系。需要时再来看看，一切由你决定。'}}</text>
-        <text class="caption">{{guardianMode ? '孩子和机器人聊几句后，再回来看看。' : '在设备上说几句后，再回来看看。'}}</text>
+        <text wx:if="{{guardianMode && guardianDataUnavailable}}" class="l2-card-sub">孩子的回顾暂时无法加载，请稍后重试。</text>
+        <text wx:elif="{{guardianMode}}" class="l2-card-sub">孩子还没有聊过天，或者还没有开启孩子的长期记忆。</text>
+        <text wx:else class="l2-card-sub">这里还空空的，没关系。需要时再来看看，一切由你决定。</text>
+        <text wx:if="{{!guardianMode || !guardianDataUnavailable}}" class="caption">{{guardianMode ? '孩子和机器人聊几句后，再回来看看。' : '在设备上说几句后，再回来看看。'}}</text>
         <view class="button-row">
           <button class="secondary-button btn-sm" bindtap="goCompanion">设置声音与表达</button>
         </view>

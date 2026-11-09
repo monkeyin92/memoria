@@ -1,6 +1,7 @@
 const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
+const { openLogin } = require("../../utils/auth-gate");
 
 Page({
   data: {
@@ -31,6 +32,10 @@ Page({
     this.setData({
       guest: true,
     });
+  },
+
+  openPrivacyLogin() {
+    openLogin({ reason: "view_privacy" });
   },
 
   onUnload() {

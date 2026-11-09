@@ -78,7 +78,7 @@
 
     <block wx:else>
       <view
-        wx:if="{{unreadSafetyAlert}}"
+        wx:if="{{unreadSafetyAlert && unreadSafetyReadStatus === 'ok'}}"
         class="trial-banner home-attention"
         bindtap="openUnreadSafety"
       >
@@ -86,6 +86,32 @@
         <view class="trial-banner-copy">
           <text class="trial-banner-title">{{unreadSafetyCopy}}</text>
           <text class="trial-banner-meta">{{unreadSafetyMeta}}</text>
+        </view>
+        <image class="home-chev" src="/assets/ui/v4/chev-rust.svg" />
+      </view>
+
+      <view
+        wx:elif="{{unreadSafetyReadStatus === 'failed' && unreadSafetyErrorKind === 'auth'}}"
+        class="trial-banner home-attention"
+        bindtap="openSafetyLogin"
+      >
+        <view class="trial-banner-icon"><image src="/assets/ui/v4/heart-rust.svg" /></view>
+        <view class="trial-banner-copy">
+          <text class="trial-banner-title">安全提醒暂时没能读取</text>
+          <text class="trial-banner-meta">登录状态已失效，点击登录</text>
+        </view>
+        <image class="home-chev" src="/assets/ui/v4/chev-rust.svg" />
+      </view>
+
+      <view
+        wx:elif="{{unreadSafetyReadStatus === 'failed'}}"
+        class="trial-banner home-attention"
+        bindtap="retrySafetyAlerts"
+      >
+        <view class="trial-banner-icon"><image src="/assets/ui/v4/heart-rust.svg" /></view>
+        <view class="trial-banner-copy">
+          <text class="trial-banner-title">安全提醒暂时没能读取</text>
+          <text class="trial-banner-meta">暂时没能读取，点击重试</text>
         </view>
         <image class="home-chev" src="/assets/ui/v4/chev-rust.svg" />
       </view>
@@ -103,7 +129,8 @@
           <view class="home-review-art"><face-badge role="starlight" size="review" plain="{{true}}"></face-badge></view>
         </view>
         <view class="home-review-meta">
-          <text class="home-review-stat">今天对话 {{todayCount}} 次</text>
+          <text wx:if="{{todayCountKnown}}" class="home-review-stat">今天对话 {{todayCount}} 次</text>
+          <text wx:else class="home-review-stat">今天对话暂时无法读取</text>
           <text wx:if="{{showChildMemory}}" class="home-review-stat">近期摘要 {{summaryCount}} 条</text>
           <text class="home-review-open">打开回顾 ↗</text>
         </view>
@@ -115,7 +142,7 @@
         <view class="home-device-copy">
           <view class="trial-status-pill {{online ? '' : 'is-off'}}">
             <view class="trial-status-dot"></view>
-            <text>{{devicePlaceName}} · {{online ? '在线' : '离线'}}</text>
+            <text>{{devicePlaceName}} · {{onlineLabel}}</text>
           </view>
           <text class="home-lbl">今日聊天用量</text>
           <view wx:if="{{usageKnown}}" class="home-usage-compact">
