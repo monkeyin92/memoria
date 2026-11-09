@@ -303,6 +303,36 @@ test("self_use flow keeps sensitive offers off by default and submits clean payl
   assert.equal(readSubjectLabel(page.data.manifest), "阿宁");
 });
 
+test("self_use keeps memory consent in review across form round trips", async () => {
+  const template = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
+  const selfUseForm = template.slice(
+    template.indexOf("<!-- B. 给自己使用 -->"),
+    template.indexOf("<!-- C. 给父母使用 -->"),
+  );
+  assert.doesNotMatch(selfUseForm, /记忆深度|memoryLevelOptions/);
+  assert.match(selfUseForm, /长期记忆.*下一步.*授权/);
+
+  nextResponse = successResponse(defaultManifestResponse("self_use"));
+  const page = await bootSelfUseReady();
+  assert.equal(page.data.form.memoryLevelIndex, undefined);
+  await page.goToReview();
+  assert.equal(
+    page.data.offers.find((offer) => offer.id === "offer_self_memory_retention_v1").checked,
+    true,
+  );
+  page.toggleOffer({ currentTarget: { dataset: { id: "offer_self_memory_retention_v1" } } });
+  page.backToForm();
+  await page.goToReview();
+  page.toggleOffer({ currentTarget: { dataset: { id: "offer_self_memory_retention_v1" } } });
+  page.backToForm();
+  await page.goToReview();
+  page.toggleOffer({ currentTarget: { dataset: { id: "offer_self_memory_retention_v1" } } });
+  await page.submitBinding();
+
+  assert.equal(lastWxRequest.data.service_preferences.memory_level, "none");
+  assert.ok(!lastWxRequest.data.consent_offer_ids.includes("offer_self_memory_retention_v1"));
+});
+
 test("checking digital self includes it in the submitted consent offers", async () => {
   nextResponse = successResponse(defaultManifestResponse("self_use"));
   const page = await bootSelfUseReady();

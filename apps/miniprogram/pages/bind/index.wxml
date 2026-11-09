@@ -109,13 +109,10 @@
       <block wx:if="{{declaredMode === 'self_use'}}">
         <text class="field-label">使用者备注 *</text>
         <input class="field-input" value="{{form.selfNickname}}" placeholder="例如：我自己、阿宁" placeholder-class="field-placeholder" maxlength="{{maxSubjectLabel}}" data-key="selfNickname" bindinput="onFieldInput" />
-        <picker range="{{memoryLevelOptions}}" range-key="label" value="{{form.memoryLevelIndex}}" data-key="memoryLevelIndex" bindchange="onPickerChange">
-          <view class="picker-row"><text class="picker-label">记忆深度</text><text class="picker-value">{{memoryLevelOptions[form.memoryLevelIndex].label}}</text></view>
-        </picker>
         <picker range="{{interviewFrequencyOptions}}" range-key="label" value="{{form.interviewFrequencyIndex}}" data-key="interviewFrequencyIndex" bindchange="onPickerChange">
           <view class="picker-row"><text class="picker-label">主动采访</text><text class="picker-value">{{interviewFrequencyOptions[form.interviewFrequencyIndex].label}}</text></view>
         </picker>
-        <text class="form-note">首页的当前使用者会显示这条备注，不是微信昵称。年龄以系统核实的为准；数字自我与传承等能力默认关闭，需要单独开启。</text>
+        <text class="form-note">长期记忆会在下一步单独授权；数字自我与传承等能力默认关闭，需要单独开启。首页的当前使用者会显示这条备注，不是微信昵称。</text>
       </block>
 
       <!-- C. 给父母使用 -->

@@ -243,6 +243,32 @@ test("memory_level must follow the long-term memory offer selection", () => {
     /memory_level 必须与长期记忆授权一致/,
   );
 
+  const selfRequest = (memoryLevel, offerIds) =>
+    validRequest({
+      declared_mode: "self_use",
+      primary_subject: { person_id: "person_owner", relationship: "self" },
+      service_preferences: { memory_level: memoryLevel, interview_frequency: "low" },
+      consent_offer_ids: offerIds,
+    });
+  assert.throws(
+    () => binding.buildBindingRequest(selfRequest("personal", [])),
+    /memory_level 必须与长期记忆授权一致/,
+  );
+  assert.throws(
+    () => binding.buildBindingRequest(selfRequest("none", ["offer_self_memory_retention_v1"])),
+    /memory_level 必须与长期记忆授权一致/,
+  );
+  assert.equal(
+    binding.buildBindingRequest(selfRequest("none", [])).service_preferences.memory_level,
+    "none",
+  );
+  assert.equal(
+    binding.buildBindingRequest(
+      selfRequest("personal", ["offer_self_memory_retention_v1"]),
+    ).service_preferences.memory_level,
+    "personal",
+  );
+
   assert.equal(binding.memoryLevelForOffers("parent_for_child", []), "none");
   assert.equal(
     binding.memoryLevelForOffers("parent_for_child", ["offer_minor_memory_retention_v1"]),
@@ -252,7 +278,11 @@ test("memory_level must follow the long-term memory offer selection", () => {
     binding.memoryLevelForOffers("child_for_parent", ["offer_senior_memory_retention_v1"]),
     "personal",
   );
-  assert.equal(binding.memoryLevelForOffers("self_use", []), null);
+  assert.equal(binding.memoryLevelForOffers("self_use", []), "none");
+  assert.equal(
+    binding.memoryLevelForOffers("self_use", ["offer_self_memory_retention_v1"]),
+    "personal",
+  );
 });
 
 function parentPreferences(minutes) {

@@ -32,10 +32,6 @@ const {
 } = require("../../utils/crisis-alerts");
 const { SESSION_MINUTE_OPTIONS, SESSION_MINUTES_DEFAULT } = require("../../utils/session-length");
 const FAMILY_MEMBER_AGE_BANDS = ["under_14", "14_17", "adult"];
-const MEMORY_LEVEL_OPTIONS = [
-  { value: "personal", label: "完整个人记忆" },
-  { value: "none", label: "仅当前对话，不长期记忆" },
-];
 const INTERVIEW_FREQUENCY_OPTIONS = [
   { value: "low", label: "偶尔主动问候" },
   { value: "medium", label: "适度主动采访" },
@@ -94,7 +90,6 @@ function defaultForm(mode, identity) {
   if (mode === "self_use") {
     return {
       selfNickname: "",
-      memoryLevelIndex: 0,
       interviewFrequencyIndex: 0,
     };
   }
@@ -141,7 +136,6 @@ Page({
     sessionMinuteOptions: SESSION_MINUTE_OPTIONS,
     sessionMinuteIndex: SESSION_MINUTE_OPTIONS.indexOf(SESSION_MINUTES_DEFAULT),
     quietHoursLabel: nightModeQuietHoursLabel(DEFAULT_QUIET_HOURS),
-    memoryLevelOptions: MEMORY_LEVEL_OPTIONS,
     interviewFrequencyOptions: INTERVIEW_FREQUENCY_OPTIONS,
     speechSpeedOptions: SPEECH_SPEED_OPTIONS,
     adminVisibilityOptions: ADMIN_VISIBILITY_OPTIONS,
@@ -581,8 +575,7 @@ Page({
       };
     } else if (mode === "self_use") {
       subjectPersonId = identity.user_id;
-      preferences.memory_level =
-        MEMORY_LEVEL_OPTIONS[form.memoryLevelIndex]?.value || "personal";
+      preferences.memory_level = memoryLevelForOffers(mode, this.data.acceptedOfferIds);
       preferences.interview_frequency =
         INTERVIEW_FREQUENCY_OPTIONS[form.interviewFrequencyIndex]?.value || "low";
     } else if (mode === "child_for_parent") {

@@ -10,7 +10,7 @@
  * - 数字自我 / 传承等敏感授权默认不勾选；“父母本人接受”类
  *   consent 只能由父母本人确认，客户端不得代为提交。
  * - 每台设备只服务一位使用人，身份来自绑定而不是声纹；客户端不再提供
- *   声纹档案授权。长期记忆（孩子 / 父母）默认不勾选、不是完成绑定的
+ *   声纹档案授权。长期记忆默认不勾选、不是完成绑定的
  *   前提，memory_level 必须与该项勾选一致（见 MEMORY_OFFER_BY_MODE）。
  * - Runtime Profile（§9.3）与服务端主体解析（§9.2）的响应统一在此做
  *   fail-closed 规范化：未知 service_mode 一律落到 unknown_safe，未知
@@ -206,11 +206,12 @@ const CONSENT_OFFERS = Object.freeze([
 ]);
 
 /*
- * 需要监护人 / 子女单独勾选的长期记忆 offer，以及勾选后对应的
+ * 各模式需要单独勾选的长期记忆 offer，以及勾选后对应的
  * memory_level。未勾选时 memory_level 必须是 none；服务端按同一规则校验。
  */
 const MEMORY_OFFER_BY_MODE = Object.freeze({
   parent_for_child: { offerId: "offer_minor_memory_retention_v1", enabledLevel: "growth_summary" },
+  self_use: { offerId: "offer_self_memory_retention_v1", enabledLevel: "personal" },
   child_for_parent: { offerId: "offer_senior_memory_retention_v1", enabledLevel: "personal" },
 });
 
@@ -223,6 +224,7 @@ function memoryLevelForOffers(mode, offerIds) {
 function assertMemoryMatchesOffer(mode, preferences, offerIds) {
   const rule = MEMORY_OFFER_BY_MODE[mode];
   if (!rule) return;
+  if (preferences.memory_level === undefined) return;
   const expected = memoryLevelForOffers(mode, offerIds);
   if (preferences.memory_level !== expected) {
     throw new TypeError(
