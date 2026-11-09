@@ -1162,6 +1162,27 @@ def test_personal_voice_forces_the_doubao_backup() -> None:
     assert wrapper.degrade_reason == "personal_voice"
 
 
+def test_designed_doubao_voice_forces_the_doubao_backup() -> None:
+    wrapper = StepFunPrimaryTTS(
+        primary=FakePrimary(lambda: None),
+        backup=FakeBackupTTS(),
+        breaker=TTSFailoverBreaker(failures=3, open_s=30),
+    )
+
+    wrapper.apply_voice_profile(
+        model="seed-tts-2.0",
+        voice=DOUBAO_TTS_FALLBACK_SPEAKER,
+        profile_id="companion-profile",
+        provider="volcengine_doubao",
+        voice_kind="designed",
+        resource_id="seed-tts-2.0",
+    )
+
+    assert wrapper.degraded is True
+    assert wrapper.degrade_reason == "designed_voice"
+    assert wrapper.bound_engine() is wrapper.backup
+
+
 class _ProvenanceRuntime(DuplexRuntimeProvenanceMixin):
     def __init__(self, fence: GenerationFence) -> None:
         from services.agent.src.generation_records import GenerationRecords

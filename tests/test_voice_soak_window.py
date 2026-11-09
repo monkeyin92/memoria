@@ -61,12 +61,14 @@ def _manifest(
     required_logs: tuple[str, ...] = (),
     min_valid_interrupt_samples: int = 0,
     scenario_hash: str = "test-fixture",
+    require_post_stop_silence: bool = False,
 ) -> dict[str, object]:
     return voice_soak_verdict.manifest_dict(
         scenario_hash=scenario_hash,
         expected_step_tags=tags,
         required_logs=required_logs,
         min_valid_interrupt_samples=min_valid_interrupt_samples,
+        require_post_stop_silence=require_post_stop_silence,
     )
 
 
@@ -163,6 +165,29 @@ def test_a_claimed_stop_without_log_evidence_fails(tmp_path: Path, capsys: pytes
     report = json.loads(capsys.readouterr().out)
     assert report["status"] == "fail"
     assert report["failures"] == ["stop_not_confirmed: t001 unverified"]
+
+
+def test_r02_opt_in_rejects_a_stop_without_a_silence_fence(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bridge, serial = _confirmed_stop_logs()
+    run = tmp_path / "run-silence-unverified"
+    _write(
+        run,
+        _passing_rows(),
+        bridge,
+        serial,
+        manifest=_manifest(
+            "t001",
+            "t002",
+            required_logs=("bridge.log", "serial.log"),
+            min_valid_interrupt_samples=1,
+            require_post_stop_silence=True,
+        ),
+    )
+    assert voice_soak_verdict.main([str(run)]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["failures"] == ["silence_unverified: t001 no_next_clip_fence"]
 
 
 def test_required_logs_missing_is_incomplete(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

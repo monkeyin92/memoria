@@ -22,6 +22,7 @@ def _stop_rows(delay: float = 0.4) -> list[dict]:
                     "kind": "reply",
                     "tag": f"stop{index:02d}-{slug}-{trial:02d}",
                     "stop_verdict": "stopped",
+                    "silence_verdict": "silent",
                     "stop_delay_from_speech_end_s": delay,
                     "stop_reason": "spoken_stop_and_device_playout",
                 }
@@ -68,6 +69,15 @@ def test_stop_suite_passes_at_ten_of_ten_under_the_p90(tmp_path: Path) -> None:
     assert all(row["stopped"] == 10 and row["scorable"] == 10 for row in summary["rows"])
 
 
+def test_stop_suite_accepts_driver_turn_prefixed_tags(tmp_path: Path) -> None:
+    rows = _stop_rows(0.4)
+    for row in rows:
+        row["tag"] = f"t001-{row['tag']}"
+    summary = r02_gates.reduce_stop(r02_gates._rows(_write(tmp_path, rows)))
+    assert summary["pass"] is True
+    assert all(row["trials"] == 10 for row in summary["rows"])
+
+
 def test_stop_suite_fails_when_a_word_lands_a_stop_too_late(tmp_path: Path) -> None:
     rows = _stop_rows(0.4)
     rows[0]["stop_delay_from_speech_end_s"] = 0.95
@@ -85,6 +95,32 @@ def test_stop_suite_reports_unscorable_attempts_instead_of_passing(tmp_path: Pat
     assert summary["pass"] is False
     assert summary["rows"][0]["too_late"] == 1
     assert summary["rows"][0]["scorable"] == 9
+
+
+def test_stop_suite_requires_post_stop_silence(tmp_path: Path) -> None:
+    rows = _stop_rows(0.4)
+    rows[0]["silence_verdict"] = "reply_resumed"
+    summary = r02_gates.reduce_stop(r02_gates._rows(_write(tmp_path, rows)))
+    assert summary["pass"] is False
+    assert summary["rows"][0]["silent"] == 9
+    assert summary["rows"][0]["reply_resumed"] == 1
+
+
+def test_stop_suite_fails_closed_when_silence_assessment_is_missing(tmp_path: Path) -> None:
+    rows = _stop_rows(0.4)
+    del rows[0]["silence_verdict"]
+    summary = r02_gates.reduce_stop(r02_gates._rows(_write(tmp_path, rows)))
+    assert summary["pass"] is False
+    assert summary["rows"][0]["silence_unverified"] == 1
+
+
+def test_stop_suite_does_not_count_not_applicable_as_silence_unverified(tmp_path: Path) -> None:
+    rows = _stop_rows(0.4)
+    rows[0]["silence_verdict"] = "not_applicable"
+    summary = r02_gates.reduce_stop(r02_gates._rows(_write(tmp_path, rows)))
+    assert summary["pass"] is False
+    assert summary["rows"][0]["silent"] == 9
+    assert summary["rows"][0]["silence_unverified"] == 0
 
 
 def test_backchannel_suite_fails_on_any_false_stop(tmp_path: Path) -> None:

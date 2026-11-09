@@ -2,10 +2,10 @@
 """Reduce one R02 suite run to the per-word gate tables with explicit denominators.
 
 Gates come from the Notion R02 card and the 内测准入门禁 v1 page: stop words 8 x 10
-with per-word 10/10 and P90(speech end -> stop) <= 0.8 s; backchannel 6 x 10 with
-zero false stops; content barge-in >= 9/10, stop <= 1.0 s and the new answer's first
-syllable <= 2.0 s. An attempt the evidence script marks unscorable (too late to stop)
-is reported, never counted as a pass.
+with per-word 10/10 clean silences and P90(speech end -> stop) <= 0.8 s; backchannel
+6 x 10 with zero false stops; content barge-in >= 9/10, stop <= 1.0 s and the new
+answer's first syllable <= 2.0 s. An attempt the evidence script marks unscorable
+(too late to stop) is reported, never counted as a pass.
 """
 
 from __future__ import annotations
@@ -19,9 +19,10 @@ from pathlib import Path
 from typing import Any
 
 from devicetest.build_r02_scenarios import BACKCHANNEL_WORDS, STOP_WORDS
+from scripts.voice_soak_evidence import audit_interruptions
 
-TAG_RE = re.compile(r"^(stop|back)(\d{2})-([a-z0-9-]+)-(\d{2})$")
-CONTENT_RE = re.compile(r"^content-(\d{2})$")
+TAG_RE = re.compile(r"^(?:t\d{3}-)?(stop|back)(\d{2})-([a-z0-9-]+)-(\d{2})$")
+CONTENT_RE = re.compile(r"^(?:t\d{3}-)?content-(\d{2})$")
 UNSCORABLE_REASONS = frozenset({"interrupt_too_late_to_stop", "interrupt_started_after_playback"})
 STOP_P90_LIMIT_S = 0.8
 CONTENT_STOP_LIMIT_S = 1.0
@@ -42,6 +43,16 @@ def _rows(run: Path) -> list[dict[str, Any]]:
     if not path.is_file():
         raise SystemExit(f"missing {path}")
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def _audited_rows(run: Path) -> list[dict[str, Any]]:
+    rows = _rows(run)
+    bridge_path = run / "bridge.log"
+    serial_path = run / "serial.log"
+    bridge = bridge_path.read_text(encoding="utf-8", errors="replace") if bridge_path.is_file() else ""
+    serial = serial_path.read_text(encoding="utf-8", errors="replace") if serial_path.is_file() else ""
+    assessed = audit_interruptions(rows, bridge, serial)
+    return [{**row, **assessed[row["tag"]]} if row.get("tag") in assessed else row for row in rows]
 
 
 def _word_groups(rows: list[dict[str, Any]], prefix: str) -> dict[str, list[dict[str, Any]]]:
@@ -68,12 +79,18 @@ def reduce_stop(rows: list[dict[str, Any]]) -> dict[str, Any]:
         too_late = len(trials) - len(scorable)
         stopped = [r for r in scorable if r.get("stop_verdict") == "stopped"]
         unverified = [r for r in scorable if r.get("stop_verdict") == "unverified"]
+        silent = [r for r in scorable if r.get("silence_verdict") == "silent"]
+        reply_resumed = [r for r in scorable if r.get("silence_verdict") == "reply_resumed"]
+        silence_unverified = [
+            r for r in scorable if r.get("silence_verdict", "unverified") == "unverified"
+        ]
         delays = [r["stop_delay_from_speech_end_s"] for r in stopped if isinstance(r.get("stop_delay_from_speech_end_s"), int | float)]
         p90 = nearest_rank_p90([float(value) for value in delays])
         passed = (
             len(scorable) == TRIALS_PER_WORD
             and len(stopped) == TRIALS_PER_WORD
             and not unverified
+            and len(silent) == TRIALS_PER_WORD
             and p90 is not None
             and p90 <= STOP_P90_LIMIT_S
         )
@@ -86,6 +103,9 @@ def reduce_stop(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 "too_late": too_late,
                 "stopped": len(stopped),
                 "unverified": len(unverified),
+                "silent": len(silent),
+                "reply_resumed": len(reply_resumed),
+                "silence_unverified": len(silence_unverified),
                 "p90_speech_end_s": p90,
                 "pass": passed,
             }
@@ -151,11 +171,16 @@ def reduce_content(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+CRISIS_TAG_RE = re.compile(r"^(?:t\d{3}-)?crisis-(\d{2})$")
 CRISIS_TRIALS = 5
 
 
 def reduce_crisis(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    trials = [r for r in rows if r.get("kind") == "reply" and str(r.get("tag", "")).startswith("crisis-")]
+    trials = [
+        r
+        for r in rows
+        if r.get("kind") == "reply" and CRISIS_TAG_RE.match(str(r.get("tag", ""))) is not None
+    ]
     stopped = [r for r in trials if r.get("stop_verdict") == "stopped"]
     keeping = [r for r in trials if r.get("still_speaking_after_interrupt") is True and r.get("stop_verdict") != "stopped"]
     quiet = [r for r in trials if r.get("quiet_after_reply") is True]
@@ -180,16 +205,21 @@ def render_markdown(suite: str, summary: dict[str, Any], run: Path) -> str:
     lines = [f"# R02 suite {suite} ({SUITE_NAMES[suite]}) — run {run}", ""]
     if suite == "a":
         lines += [
-            "| word | trials | scorable | too_late | stopped | unverified | P90 speech end | pass |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| word | trials | scorable | too_late | stopped | unverified | silent | reply_resumed | silence_unverified | P90 speech end | pass |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ]
         for row in summary["rows"]:
             p90 = "n/a" if row["p90_speech_end_s"] is None else f"{row['p90_speech_end_s']:.2f} s"
             lines.append(
                 f"| {row['word']} | {row['trials']} | {row['scorable']} | {row['too_late']} | "
-                f"{row['stopped']} | {row['unverified']} | {p90} | {'PASS' if row['pass'] else 'FAIL'} |"
+                f"{row['stopped']} | {row['unverified']} | {row['silent']} | {row['reply_resumed']} | "
+                f"{row['silence_unverified']} | {p90} | {'PASS' if row['pass'] else 'FAIL'} |"
             )
-        lines += ["", f"Gate: each word 10/10 scorable stops and P90(speech end -> stop) <= {STOP_P90_LIMIT_S:.1f} s."]
+        lines += [
+            "",
+            f"Gate: each word 10/10 scorable stops, 10/10 clean silences, and "
+            f"P90(speech end -> stop) <= {STOP_P90_LIMIT_S:.1f} s.",
+        ]
     elif suite == "b":
         lines += [
             "| word | trials | false stops | still playing | unverified | pass |",
@@ -227,7 +257,7 @@ def main() -> int:
     ap.add_argument("--out", type=Path, default=None, help="markdown output path")
     ap.add_argument("--json-out", type=Path, default=None)
     args = ap.parse_args()
-    rows = _rows(args.run)
+    rows = _audited_rows(args.run)
     suites = ("a", "b", "c", "d") if args.suite == "all" else (args.suite,)
     summaries = [REDUCERS[suite](rows) for suite in suites]
     markdown = "\n".join(render_markdown(suite, summary, args.run) for suite, summary in zip(suites, summaries, strict=True))

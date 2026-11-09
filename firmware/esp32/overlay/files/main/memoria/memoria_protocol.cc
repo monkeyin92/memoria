@@ -367,7 +367,12 @@ void LogVadStartSuppressed(float rms, float peak, float floor) {
 namespace {
 MemoriaProtocol* g_active_protocol = nullptr;
 std::function<void(bool)> g_listening_closed_handler;
+std::function<void(bool)> g_voice_activity_handler;
 }  // namespace
+
+void SetVoiceActivityHandler(std::function<void(bool speaking)> handler) {
+    g_voice_activity_handler = std::move(handler);
+}
 
 void SetListeningClosedHandler(std::function<void(bool closed)> handler) {
     g_listening_closed_handler = std::move(handler);
@@ -384,6 +389,12 @@ namespace {
 void NotifyListeningClosed(bool closed) {
     if (g_listening_closed_handler) {
         g_listening_closed_handler(closed);
+    }
+}
+
+void NotifyVoiceActivity(bool speaking) {
+    if (g_voice_activity_handler) {
+        g_voice_activity_handler(speaking);
     }
 }
 }  // namespace
@@ -2728,6 +2739,7 @@ void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms) {
                          speaking ? "start" : "end",
                          static_cast<unsigned long long>(edge_sample),
                          static_cast<double>(near_end_rms));
+                NotifyVoiceActivity(speaking);
             }
             return;
         }
@@ -2758,6 +2770,7 @@ void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms) {
                      speaking ? "start" : "end",
                      static_cast<unsigned long long>(legacy_sample_position),
                      static_cast<double>(near_end_rms));
+            NotifyVoiceActivity(speaking);
         }
     }
 }

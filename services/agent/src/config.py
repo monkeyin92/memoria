@@ -605,6 +605,10 @@ class AgentSettings(BaseSettings):
         default=True,
         alias="MEMORIA_SPECULATIVE_REPLY_ENABLED",
     )
+    speculative_speech_enabled: bool = Field(
+        default=True,
+        alias="MEMORIA_SPECULATIVE_SPEECH_ENABLED",
+    )
     archive_spool_key: SecretStr = Field(
         default=SecretStr(""),
         alias="MEMORIA_ARCHIVE_SPOOL_KEY",

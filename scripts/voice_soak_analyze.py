@@ -17,6 +17,7 @@ import statistics
 import subprocess
 import sys
 import uuid
+from collections import Counter
 from pathlib import Path
 
 if __package__:
@@ -148,6 +149,12 @@ def main() -> int:
             f"- 打断 {len(interrupted)} 次，确认停止 {len(ok)} 次，未停止 {failed} 次，证据不足 {unknown} 次"
             + delay_note
         )
+        silence_counts = Counter(r.get("silence_verdict", "missing") for r in interrupted)
+        print(
+            "- 停止后的用户可见结果："
+            + "，".join(f"{verdict} {count} 次" for verdict, count in sorted(silence_counts.items()))
+            + "；该字段只表示在可观测窗口内是否重新开口"
+        )
 
     print("\n## 逐句\n")
     print("| # | 场景 | 我说的 | 服务器听到的 | 字符相似度 | 说完到开口 | 回复时长 | 备注 |")
@@ -174,6 +181,8 @@ def main() -> int:
         reply = replies.get(tag, {})
         note = "无回复" if tag in no_reply else ("；".join(filter(None, [
             (f"打断{'成功' if reply.get('stopped') is True else ('未停' if reply.get('stopped') is False else '未验证')}（{reply.get('stop_reason')}）"
+             if reply.get("interrupted") else ""),
+            (f"停止后{'重新回复' if reply.get('silence_verdict') == 'reply_resumed' else ('保持静默' if reply.get('silence_verdict') == 'silent' else '静默未验证')}（{reply.get('silence_reason')}）"
              if reply.get("interrupted") else ""),
             f"结束于 {reply.get('end_state')}" if reply.get("end_state") and reply.get("end_state") != "listening" else "",
         ])))

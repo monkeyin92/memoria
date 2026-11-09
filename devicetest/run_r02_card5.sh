@@ -75,10 +75,10 @@ for suite in $SUITES; do
 
   [[ -f "$scen" ]] || { echo "FAIL: missing scenario $scen" >&2; FAILED+=" $suite(scenario)"; continue; }
 
-  uv run --no-project python - "$scen" "$manifest" <<'PYMANIFEST'
+  uv run --no-project python - "$scen" "$manifest" "$suite" <<'PYMANIFEST'
 import hashlib, json, sys
 from pathlib import Path
-scenario, manifest_path = Path(sys.argv[1]), Path(sys.argv[2])
+scenario, manifest_path, suite = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 raw = json.loads(scenario.read_text(encoding="utf-8"))
 steps = raw if isinstance(raw, list) else raw["steps"]
 tags = [f"t{i:03d}-{step['tag']}" for i, step in enumerate(steps, 1)]
@@ -89,6 +89,7 @@ manifest = {
     "min_valid_interrupt_samples": 0,
     "require_started": True,
     "require_completed": True,
+    "require_post_stop_silence": suite == "a",
 }
 manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 print(f"manifest={manifest_path} steps={len(tags)}")
