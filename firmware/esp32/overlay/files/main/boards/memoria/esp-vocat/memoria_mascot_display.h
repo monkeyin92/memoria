@@ -4,6 +4,7 @@
 #include "display/lcd_display.h"
 #include "lvgl_image.h"
 #include "memoria_dot_face.h"
+#include "memoria_pill_face.h"
 #include "memoria_mascot_pack.h"
 #include "memoria_mascot_scene.h"
 #include "sdkconfig.h"
@@ -25,12 +26,12 @@ extern "C" const char memoria_bench_build_marker[];
 
 class Backlight;
 
-// LCD display for the Memoria ESP-VoCat. The 360x360 panel shows the yellow
-// dot face from memoria_dot_face.h. The mascot scene still times the boot
-// beat, the caption band, and the chrome. While the dot face is on screen the
-// scene does not draw. LVGL keeps the text and the binding QR card. A server
-// emotion name picks the face only while the device speaks. While the device is
-// getting online the face lifts and the status text sits on the band below it.
+// LCD display for the Memoria ESP-VoCat. The 360x360 panel can show the
+// experimental state-driven pill face or the dot face fallback. The scene still
+// times the boot beat, the caption band, and the chrome. LVGL keeps the text
+// and the binding QR card. A server emotion name picks the face only while the
+// device speaks. While the device is getting online the face lifts and the
+// status text sits on the band below it.
 // The QR card is a screen of its own; no other text is drawn over it. Frames
 // whose inputs all match the last painted frame skip the rebuild and the
 // invalidate.
@@ -164,6 +165,7 @@ private:
     std::string pending_companion_;
     // The last painted frame's inputs: an equal frame is already on the panel.
     memoria::FaceFrame shown_frame_{};
+    memoria::PillExpression shown_pill_expression_ = memoria::PillExpression::kNeutral;
     bool frame_shown_ = false;
     // The blink, the speaking mouth, and the face held around speaking (memoria_dot_face.h).
     memoria::FaceAnimator face_animator_;
