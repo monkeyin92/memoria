@@ -8,7 +8,7 @@ const OUTPUT = process.env.MP_SCREENSHOT_OUTPUT
   ? path.resolve(process.env.MP_SCREENSHOT_OUTPUT)
   : path.resolve(__dirname, "../../../docs/design/parent-ui-20261103");
 const PAGE_SLUGS = new Set([
-  "home", "home-guest", "memory", "memory-empty", "companion", "device",
+  "home", "home-guest", "memory", "memory-empty", "device",
   "profile", "bind-form", "bind-review", "attention", "child-memory",
   "child-memory-archive", "device-onboarding", "device-onboarding-complete",
   "persona-custom",
