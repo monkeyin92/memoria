@@ -22,6 +22,15 @@
     </view>
   </block>
 
+  <view wx:elif="{{alertResult.status === 'failed'}}" class="card attention-card">
+    <text class="attention-title">暂时没能读取，点击重试</text>
+    <text class="attention-time">{{alertResult.errorKind === 'auth' ? '登录状态已失效，请重新登录后再试。' : '网络或服务暂时不可用，请稍后再试。'}}</text>
+    <view class="button-row attention-retry-row">
+      <button class="secondary-button btn-sm" bindtap="retryLoadAlert" disabled="{{loading}}">重试</button>
+      <button wx:if="{{alertResult.errorKind === 'auth'}}" class="secondary-button btn-sm" bindtap="openAttentionLogin">去登录</button>
+    </view>
+  </view>
+
   <view wx:else class="card attention-card">
     <text class="attention-title">现在没有需要关注的对话</text>
     <text class="attention-time">有新的提醒时，首页会置顶显示。</text>

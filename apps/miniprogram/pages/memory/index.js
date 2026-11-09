@@ -1,6 +1,6 @@
 const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
-const { requireLogin } = require("../../utils/auth-gate");
+const { openLogin, requireLogin } = require("../../utils/auth-gate");
 const guardianPush = require("../../utils/guardian-push");
 const { attentionUrl, loadUnreadSafetyAlerts, moreUnreadLabel } = require("../../utils/crisis-alerts");
 const { alertTimeLabel } = require("../../utils/trial-device-card");
@@ -196,6 +196,8 @@ Page({
     guardianSubjectId: "",
     guardianError: "",
     safetyBanner: null,
+    safetyReadStatus: "not_found",
+    safetyReadErrorKind: "",
     crisisPush: { enabled: false, templateId: "", explanation: "" },
     subscriptionPushEnabled: require("../../config").SUBSCRIPTION_PUSH_ENABLED,
   },
@@ -237,6 +239,8 @@ Page({
     if (!this._guardianSubject()) {
       this.setData({
         safetyBanner: null,
+        safetyReadStatus: "not_found",
+        safetyReadErrorKind: "",
         crisisPush: { enabled: false, templateId: "", explanation: "" },
       });
       return;
@@ -248,14 +252,27 @@ Page({
     ]);
     if (!api.isAuthEpochCurrent(authEpoch)) return;
     this.setData({
-      safetyBanner: unread && {
-        notificationId: unread.newest.notificationId,
-        message: unread.newest.message,
-        timeLabel: alertTimeLabel(unread.newest.occurredAt),
-        moreLabel: moreUnreadLabel(unread.othersCount),
-      },
+      safetyBanner:
+        unread.status === "ok"
+          ? {
+              notificationId: unread.newest.notificationId,
+              message: unread.newest.message,
+              timeLabel: alertTimeLabel(unread.newest.occurredAt),
+              moreLabel: moreUnreadLabel(unread.othersCount),
+            }
+          : null,
+      safetyReadStatus: unread.status,
+      safetyReadErrorKind: unread.errorKind || "",
       crisisPush,
     });
+  },
+
+  retrySafetyRead() {
+    return this._loadCrisisSafety();
+  },
+
+  openSafetyLogin() {
+    openLogin({ reason: "view_attention" });
   },
 
   /* 必须直接绑定在按钮 tap 上：订阅框只能由用户点击调起。 */
@@ -299,6 +316,8 @@ Page({
       guardianSubjectId: "",
       guardianError: "",
       safetyBanner: null,
+      safetyReadStatus: "not_found",
+      safetyReadErrorKind: "",
       crisisPush: { enabled: false, templateId: "", explanation: "" },
       loading: false,
       error: "",

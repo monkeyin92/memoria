@@ -166,19 +166,36 @@ test("parseSafetyAlert keeps delivery_receipt and maps #543 stage labels", () =>
   );
 });
 
-test("loadUnreadSafetyAlerts gives the newest and how many more, and none on empty or error", async () => {
+test("loadUnreadSafetyAlerts distinguishes empty reads from auth, network, and server failures", async () => {
   const load = (getUnreadGuardianNotifications) => crisisAlerts.loadUnreadSafetyAlerts({ getUnreadGuardianNotifications });
-  assert.equal(await load(async () => ({ newest: null, others_count: 0 })), null);
-  assert.equal(await load(async () => ({ newest: { category_label: "人身安全" }, others_count: 1 })), null);
-  assert.equal(await load(async () => { throw new Error("offline"); }), null);
+  assert.deepEqual(await load(async () => ({ newest: null, others_count: 0 })), { status: "not_found" });
+  assert.deepEqual(
+    await load(async () => {
+      throw Object.assign(new Error("expired"), { status: 401 });
+    }),
+    { status: "failed", errorKind: "auth" },
+  );
+  assert.deepEqual(
+    await load(async () => {
+      throw new Error("offline");
+    }),
+    { status: "failed", errorKind: "network" },
+  );
+  assert.deepEqual(
+    await load(async () => {
+      throw Object.assign(new Error("server"), { status: 503 });
+    }),
+    { status: "failed", errorKind: "server" },
+  );
   const unread = await load(async () => ({ newest: { notification_id: "n3", category_label: "人身安全" }, others_count: 2 }));
+  assert.equal(unread.status, "ok");
   assert.equal(unread.newest.notificationId, "n3");
   assert.equal(unread.newest.categoryLabel, "人身安全");
   assert.equal(unread.othersCount, 2);
   assert.equal((await load(async () => ({ newest: { notification_id: "n3" }, others_count: "2" }))).othersCount, 0);
 });
 
-test("loadSafetyAlert returns only the alert it was asked for", async () => {
+test("loadSafetyAlert preserves a real 404 as not_found and distinguishes other failures", async () => {
   const asked = [];
   const api = {
     async getGuardianNotification(id) {
@@ -187,10 +204,27 @@ test("loadSafetyAlert returns only the alert it was asked for", async () => {
       return { notification_id: "n1", summary: "孩子说到了自己可能受到伤害" };
     },
   };
-  assert.equal(await crisisAlerts.loadSafetyAlert(api, ""), null);
-  assert.equal(await crisisAlerts.loadSafetyAlert(api, "n9"), null);
-  assert.equal((await crisisAlerts.loadSafetyAlert(api, "n1")).summary, "孩子说到了自己可能受到伤害");
+  assert.deepEqual(await crisisAlerts.loadSafetyAlert(api, ""), { status: "not_found" });
+  assert.deepEqual(await crisisAlerts.loadSafetyAlert(api, "n9"), { status: "not_found" });
+  const loaded = await crisisAlerts.loadSafetyAlert(api, "n1");
+  assert.equal(loaded.status, "ok");
+  assert.equal(loaded.alert.summary, "孩子说到了自己可能受到伤害");
   assert.deepEqual(asked, ["n9", "n1"]);
+
+  assert.deepEqual(
+    await crisisAlerts.loadSafetyAlert(
+      { getGuardianNotification: async () => { throw Object.assign(new Error("expired"), { status: 401 }); } },
+      "n1",
+    ),
+    { status: "failed", errorKind: "auth" },
+  );
+  assert.deepEqual(
+    await crisisAlerts.loadSafetyAlert(
+      { getGuardianNotification: async () => { throw new Error("request:fail timeout"); } },
+      "n1",
+    ),
+    { status: "failed", errorKind: "network" },
+  );
 });
 
 test("acknowledgeSafetyAlert PUTs the receipt and says saved, gone, or failed", async () => {

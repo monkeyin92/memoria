@@ -14,6 +14,18 @@ const BIND_SUBSCRIBE_REQUIRED =
 const BIND_SUBSCRIBE_REJECTED =
   "未完成安全提醒订阅，绑定未提交。请再次点击并选择允许。";
 
+const SAFETY_ALERT_READ_STATUS = Object.freeze({
+  OK: "ok",
+  NOT_FOUND: "not_found",
+  FAILED: "failed",
+});
+
+const SAFETY_ALERT_READ_ERROR_KINDS = Object.freeze({
+  AUTH: "auth",
+  NETWORK: "network",
+  SERVER: "server",
+});
+
 function text(value) {
   return typeof value === "string" ? value : "";
 }
@@ -100,24 +112,55 @@ function parseSafetyAlert(item) {
   return alert;
 }
 
+function safetyAlertReadErrorKind(error) {
+  const status = Number(error?.status || 0);
+  if (status === 401 || status === 403) return SAFETY_ALERT_READ_ERROR_KINDS.AUTH;
+  if (
+    status === 0 &&
+    /network|网络|offline|request:fail|timeout|连接/i.test(
+      `${error?.message || ""} ${error?.errMsg || ""}`,
+    )
+  ) {
+    return SAFETY_ALERT_READ_ERROR_KINDS.NETWORK;
+  }
+  return SAFETY_ALERT_READ_ERROR_KINDS.SERVER;
+}
+
+function safetyAlertReadFailure(error) {
+  if (Number(error?.status || 0) === 404) {
+    return { status: SAFETY_ALERT_READ_STATUS.NOT_FOUND };
+  }
+  return {
+    status: SAFETY_ALERT_READ_STATUS.FAILED,
+    errorKind: safetyAlertReadErrorKind(error),
+  };
+}
+
 async function loadUnreadSafetyAlerts(api) {
   try {
     const payload = await api.getUnreadGuardianNotifications();
     const newest = parseSafetyAlert(payload?.newest);
-    if (!newest) return null;
+    if (!newest) return { status: SAFETY_ALERT_READ_STATUS.NOT_FOUND };
     const others = payload.others_count;
-    return { newest, othersCount: Number.isInteger(others) && others > 0 ? others : 0 };
-  } catch (_error) {
-    return null;
+    return {
+      status: SAFETY_ALERT_READ_STATUS.OK,
+      newest,
+      othersCount: Number.isInteger(others) && others > 0 ? others : 0,
+    };
+  } catch (error) {
+    return safetyAlertReadFailure(error);
   }
 }
 
 async function loadSafetyAlert(api, notificationId) {
-  if (!notificationId) return null;
+  if (!notificationId) return { status: SAFETY_ALERT_READ_STATUS.NOT_FOUND };
   try {
-    return parseSafetyAlert(await api.getGuardianNotification(notificationId));
-  } catch (_error) {
-    return null;
+    const alert = parseSafetyAlert(await api.getGuardianNotification(notificationId));
+    return alert
+      ? { status: SAFETY_ALERT_READ_STATUS.OK, alert }
+      : { status: SAFETY_ALERT_READ_STATUS.NOT_FOUND };
+  } catch (error) {
+    return safetyAlertReadFailure(error);
   }
 }
 
@@ -187,6 +230,8 @@ module.exports = {
   BIND_SUBSCRIBE_REJECTED,
   BIND_SUBSCRIBE_REQUIRED,
   BIND_SUBSCRIBE_UNAVAILABLE,
+  SAFETY_ALERT_READ_ERROR_KINDS,
+  SAFETY_ALERT_READ_STATUS,
   acknowledgeSafetyAlert,
   attentionUrl,
   deliveryStageLabel,
@@ -197,5 +242,6 @@ module.exports = {
   parseSafetyAlert,
   requireCrisisSubscribeBeforeBind,
   requiresCrisisSubscribeBeforeBind,
+  safetyAlertReadErrorKind,
   shouldOfferCrisisSubscription,
 };

@@ -111,6 +111,8 @@ function emptyDashboard() {
     unreadSafetyAlert: false,
     unreadSafetyCopy: UNREAD_SAFETY_COPY,
     unreadSafetyMeta: pinnedAlertMeta(),
+    unreadSafetyReadStatus: "not_found",
+    unreadSafetyErrorKind: "",
     safetySubscribeOn: false,
     safetySubscribeKnown: false,
     safetySubscribeBusy: false,
@@ -284,6 +286,14 @@ Page({
 
   openUnreadSafety() {
     wx.navigateTo({ url: attentionUrl(this.data.safetyAlertId) });
+  },
+
+  retrySafetyAlerts() {
+    return this.loadHome();
+  },
+
+  openSafetyLogin() {
+    openLogin({ reason: "view_attention" });
   },
 
   async onSafetySubscribeChange(event) {
@@ -517,7 +527,9 @@ Page({
     const online = summary.online;
     const boundChild = boundChildFromManifest(binding);
     const offerSafety = shouldOfferCrisisSubscription(binding);
-    const unread = offerSafety ? await loadUnreadSafetyAlerts(api) : null;
+    const unread = offerSafety
+      ? await loadUnreadSafetyAlerts(api)
+      : { status: "not_found" };
     if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
 
     let safetyView = {
@@ -563,9 +575,10 @@ Page({
       runtimeProfile: runtime,
       usedMinutes: limitsResult.status === "fulfilled" ? limitsResult.value?.today_used_minutes : null,
     });
-    const unreadSafetyMeta = pinnedAlertMeta({
-      occurredAt: alertTimeLabel(unread?.newest.occurredAt),
-    });
+    const unreadSafetyMeta =
+      unread.status === "ok"
+        ? pinnedAlertMeta({ occurredAt: alertTimeLabel(unread.newest.occurredAt) })
+        : "暂时没能读取，点击重试";
     const placeName = devicePlaceName(binding);
     const childName = boundChild?.displayName || "";
     const todayCount = today.todayCount || 0;
@@ -611,7 +624,7 @@ Page({
       childMemoryMinorId: boundChild?.personId || "",
       childMemoryName: childName,
       memoryPreviews,
-      safetyAlertId: unread?.newest.notificationId || "",
+      safetyAlertId: unread.status === "ok" ? unread.newest.notificationId : "",
       statusPill: trialCard.statusPill,
       statusLine: trialCard.statusLine,
       usageKnown: trialCard.usageKnown,
@@ -624,9 +637,11 @@ Page({
       quietHoursLabel: trialCard.quietHoursLabel,
       nightModeOn: trialCard.nightModeOn,
       showSafetyNightCard: offerSafety,
-      unreadSafetyAlert: unread !== null,
+      unreadSafetyAlert: unread.status === "ok",
       unreadSafetyCopy: UNREAD_SAFETY_COPY,
       unreadSafetyMeta,
+      unreadSafetyReadStatus: unread.status,
+      unreadSafetyErrorKind: unread.errorKind || "",
       safetySubscribeHelper: SAFETY_SUBSCRIBE_HELPER,
       ...safetyView,
       error: failures.length ? "部分状态暂时无法同步。" : "",
