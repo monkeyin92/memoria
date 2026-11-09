@@ -54,8 +54,30 @@ constexpr const char* kSettingsNamespace = "memoria_ui";
 constexpr const char* kCompanionKey = "companion";
 constexpr uint32_t kErrorHoldMs = 8000;
 constexpr int kPillRadius = 18;
+constexpr uint32_t kScreenBackgroundColor = memoria::kPillBackgroundRgb;
+constexpr uint32_t kScreenTextColor = 0xF7F8FC;
+constexpr uint32_t kScreenMutedColor = 0xAEB8CF;
+// This is the reversible video-style experiment. Set false to return to the
+// pre-rasterized dot face without changing the state mapper.
+constexpr bool kPillAnimationExperiment = true;
+constexpr uint8_t kPillCaptionLift = 32;
 // The Wi-Fi connecting line shows no SSID.
 constexpr const char* kConnectingNetworkText = "正在连接网络…";
+constexpr const char* kConnectedNetworkText = "网络已连接";
+
+bool IsCaptionedDeviceState(DeviceState state) {
+    switch (state) {
+        case kDeviceStateStarting:
+        case kDeviceStateWifiConfiguring:
+        case kDeviceStateConnecting:
+        case kDeviceStateRecovering:
+        case kDeviceStateUpgrading:
+        case kDeviceStateActivating:
+            return true;
+        default:
+            return false;
+    }
+}
 
 struct CompanionName {
     const char* id;
@@ -99,14 +121,6 @@ bool IsClockText(const char* text) {
     return text != nullptr && std::strlen(text) == 5 && std::isdigit(static_cast<unsigned char>(text[0])) &&
            std::isdigit(static_cast<unsigned char>(text[1])) && text[2] == ':' &&
            std::isdigit(static_cast<unsigned char>(text[3])) && std::isdigit(static_cast<unsigned char>(text[4]));
-}
-
-void StylePill(lv_obj_t* obj, uint32_t ink) {
-    lv_obj_set_style_bg_color(obj, lv_color_white(), 0);
-    lv_obj_set_style_bg_opa(obj, LV_OPA_70, 0);
-    lv_obj_set_style_radius(obj, kPillRadius, 0);
-    lv_obj_set_style_border_width(obj, 0, 0);
-    lv_obj_set_style_text_color(obj, Color(ink), 0);
 }
 
 }  // namespace
@@ -233,8 +247,7 @@ void MemoriaMascotDisplay::ApplyChrome() {
     if (container_ == nullptr) {
         return;
     }
-    const uint32_t ink = scene_ != nullptr ? scene_->theme().ink : 0x22344D;
-    lv_obj_set_style_bg_color(container_, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(container_, Color(kScreenBackgroundColor), 0);
     if (frame_image_ != nullptr) {
         lv_obj_set_style_bg_image_src(container_, frame_image_->image_dsc(), 0);
         lv_obj_set_style_bg_image_opa(container_, LV_OPA_COVER, 0);
@@ -248,35 +261,35 @@ void MemoriaMascotDisplay::ApplyChrome() {
         lv_obj_add_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
     }
     if (caption_layout_) {
-        // Caption band under the shrunken mascot: plain ink text, the status
-        // or network notice first, then up to two lines of detail.
+        // The caption band starts below the face's captioned bounds. Status
+        // and network notices share one slot, then chat detail follows below.
         constexpr int kLineY = memoria::MascotScene::kCaptionTextY;
         if (status_bar_ != nullptr) {
             lv_obj_set_style_bg_opa(status_bar_, LV_OPA_TRANSP, 0);
-            lv_obj_align(status_bar_, LV_ALIGN_TOP_MID, 0, kLineY - 4);
+            lv_obj_align(status_bar_, LV_ALIGN_TOP_MID, 0, kLineY + 8);
         }
         if (status_label_ != nullptr) {
-            lv_obj_set_width(status_label_, 250);
-            lv_obj_set_style_text_color(status_label_, Color(ink), 0);
+            lv_obj_set_width(status_label_, 252);
+            lv_obj_set_style_text_color(status_label_, Color(kScreenTextColor), 0);
             lv_obj_set_style_text_opa(status_label_, LV_OPA_COVER, 0);
         }
         if (notification_label_ != nullptr) {
-            lv_obj_set_width(notification_label_, 250);
+            lv_obj_set_width(notification_label_, 252);
             lv_obj_set_style_bg_opa(notification_label_, LV_OPA_TRANSP, 0);
             lv_obj_set_style_pad_all(notification_label_, 0, 0);
-            lv_obj_set_style_text_color(notification_label_, Color(ink), 0);
+            lv_obj_set_style_text_color(notification_label_, Color(kScreenTextColor), 0);
         }
         if (bottom_bar_ != nullptr) {
-            lv_obj_set_size(bottom_bar_, 244, LV_SIZE_CONTENT);
+            lv_obj_set_size(bottom_bar_, 252, LV_SIZE_CONTENT);
             lv_obj_set_style_bg_opa(bottom_bar_, LV_OPA_TRANSP, 0);
             lv_obj_set_style_pad_all(bottom_bar_, 0, 0);
-            lv_obj_align(bottom_bar_, LV_ALIGN_TOP_MID, 0, kLineY + 32);
+            lv_obj_align(bottom_bar_, LV_ALIGN_TOP_MID, 0, kLineY + 42);
         }
         if (chat_message_label_ != nullptr) {
             lv_obj_set_width(chat_message_label_, 236);
             lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_WRAP);
             lv_obj_align(chat_message_label_, LV_ALIGN_TOP_MID, 0, 0);
-            lv_obj_set_style_text_color(chat_message_label_, Color(ink), 0);
+            lv_obj_set_style_text_color(chat_message_label_, Color(kScreenMutedColor), 0);
             lv_obj_set_style_text_opa(chat_message_label_, LV_OPA_80, 0);
         }
     } else {
@@ -286,21 +299,22 @@ void MemoriaMascotDisplay::ApplyChrome() {
         }
         if (status_label_ != nullptr) {
             lv_obj_set_width(status_label_, 200);
-            lv_obj_set_style_text_color(status_label_, Color(ink), 0);
-            lv_obj_set_style_text_opa(status_label_, LV_OPA_80, 0);
+            lv_obj_set_style_text_color(status_label_, Color(kScreenTextColor), 0);
+            lv_obj_set_style_text_opa(status_label_, LV_OPA_COVER, 0);
         }
         if (notification_label_ != nullptr) {
             lv_obj_set_width(notification_label_, 208);
-            StylePill(notification_label_, ink);
-            lv_obj_set_style_pad_ver(notification_label_, 4, 0);
-            lv_obj_set_style_pad_hor(notification_label_, 12, 0);
+            lv_obj_set_style_bg_opa(notification_label_, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_text_color(notification_label_, Color(kScreenTextColor), 0);
+            lv_obj_set_style_pad_all(notification_label_, 0, 0);
         }
         if (bottom_bar_ != nullptr) {
             if (bottom_bar_height_ > 0) {
                 lv_obj_set_height(bottom_bar_, bottom_bar_height_);
             }
             lv_obj_set_width(bottom_bar_, 256);
-            StylePill(bottom_bar_, ink);
+            lv_obj_set_style_bg_opa(bottom_bar_, LV_OPA_TRANSP, 0);
+            lv_obj_set_style_text_color(bottom_bar_, Color(kScreenMutedColor), 0);
             lv_obj_set_style_pad_all(bottom_bar_, 0, 0);
             lv_obj_align(bottom_bar_, LV_ALIGN_BOTTOM_MID, 0, -28);
         }
@@ -308,7 +322,7 @@ void MemoriaMascotDisplay::ApplyChrome() {
             lv_obj_set_width(chat_message_label_, 228);
             lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
             lv_obj_align(chat_message_label_, LV_ALIGN_CENTER, 0, 0);
-            lv_obj_set_style_text_color(chat_message_label_, Color(ink), 0);
+            lv_obj_set_style_text_color(chat_message_label_, Color(kScreenMutedColor), 0);
             lv_obj_set_style_text_opa(chat_message_label_, LV_OPA_COVER, 0);
         }
     }
@@ -330,7 +344,11 @@ void MemoriaMascotDisplay::SetOfflineMenuActive(bool active) {
 void MemoriaMascotDisplay::ApplyChromeOpacity(uint8_t opa) {
     chrome_opa_ = opa;
     if (qr_overlay_ != nullptr) {
-        lv_obj_set_style_opa(qr_overlay_, opa, 0);
+        // QR is a separate page. It must remain opaque even if it appears
+        // while the boot chrome is still fading in, otherwise the face leaks
+        // through the card and competes with the code.
+        lv_obj_set_style_opa(qr_overlay_,
+                             qr_visible_.load() ? static_cast<uint8_t>(LV_OPA_COVER) : opa, 0);
     }
     // The QR card is a screen of its own: status and subtitle text would sit
     // on the code and its caption. On the caption band the text fades in only
@@ -355,34 +373,40 @@ void MemoriaMascotDisplay::StyleQrCard() {
         return;
     }
     const uint32_t ink = scene_ != nullptr ? scene_->theme().ink : 0x22344D;
-    // Let the scene show through; the QR sits on a white card in the middle.
-    lv_obj_set_style_bg_opa(qr_overlay_, LV_OPA_TRANSP, 0);
+    // QR owns the whole page. Keep the panel's dark corners while the card
+    // provides a quiet, high-contrast scan area; no face can show behind it.
+    lv_obj_set_style_bg_color(qr_overlay_, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(qr_overlay_, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(qr_overlay_, 0, 0);
+    lv_obj_set_style_pad_all(qr_overlay_, 0, 0);
     lv_obj_remove_flag(qr_overlay_, LV_OBJ_FLAG_SCROLLABLE);
     if (qr_card_ == nullptr) {
         qr_card_ = lv_obj_create(qr_overlay_);
         lv_obj_remove_flag(qr_card_, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_move_background(qr_card_);
     }
-    lv_obj_set_size(qr_card_, 238, 238);
-    lv_obj_set_style_bg_color(qr_card_, lv_color_white(), 0);
+    lv_obj_set_size(qr_card_, 252, 302);
+    lv_obj_set_style_bg_color(qr_card_, Color(0xF7F8FC), 0);
     lv_obj_set_style_bg_opa(qr_card_, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(qr_card_, 28, 0);
+    lv_obj_set_style_radius(qr_card_, 30, 0);
     lv_obj_set_style_border_width(qr_card_, 1, 0);
     lv_obj_set_style_border_color(qr_card_, Color(ink), 0);
     lv_obj_set_style_border_opa(qr_card_, LV_OPA_10, 0);
     lv_obj_set_style_pad_all(qr_card_, 0, 0);
-    lv_obj_align(qr_card_, LV_ALIGN_CENTER, 0, -6);
-    lv_obj_align(qr_code_, LV_ALIGN_CENTER, 0, -6);
+    lv_obj_align(qr_card_, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_align(qr_code_, LV_ALIGN_CENTER, 0, 0);
     if (qr_title_ == nullptr) {
         qr_title_ = lv_label_create(qr_overlay_);
     }
+    // The caption identifies whether this QR starts or repeats provisioning.
     lv_label_set_text(qr_title_, qr_reprovision_ ? "重新配网" : "扫码绑定");
     lv_obj_set_style_text_color(qr_title_, Color(ink), 0);
-    lv_obj_align(qr_title_, LV_ALIGN_TOP_MID, 0, 30);
+    lv_obj_align(qr_title_, LV_ALIGN_TOP_MID, 0, 42);
     if (qr_caption_ != nullptr) {
+        lv_label_set_text(qr_caption_, qr_caption_text_.c_str());
         lv_obj_set_style_text_color(qr_caption_, Color(ink), 0);
         lv_obj_set_style_text_opa(qr_caption_, LV_OPA_80, 0);
-        lv_obj_align(qr_caption_, LV_ALIGN_BOTTOM_MID, 0, -34);
+        lv_obj_align(qr_caption_, LV_ALIGN_BOTTOM_MID, 0, -28);
     }
 }
 
@@ -445,20 +469,13 @@ void MemoriaMascotDisplay::ShowQrStatus(const char* status, int duration_ms) {
 }
 
 bool MemoriaMascotDisplay::WantsCaption(uint32_t now_ms) {
-    if (qr_visible_.load() || scene_->intro_active(now_ms)) {
+    if (qr_visible_.load() || scene_->chrome_opa(now_ms) == 0) {
         return false;
     }
-    // Getting online: the network notices, the hotspot hint and activation
-    // text need a place of their own. Conversation states keep the full-size
-    // companion and show no status text.
-    switch (Application::GetInstance().GetDeviceState()) {
-        case kDeviceStateStarting:
-        case kDeviceStateWifiConfiguring:
-        case kDeviceStateActivating:
-            return true;
-        default:
-            return false;
-    }
+    // Every boot-to-online state gets the same face/text contract. This keeps
+    // reconnect and OTA transitions from jumping back to the full face while
+    // a status line is still visible.
+    return IsCaptionedDeviceState(Application::GetInstance().GetDeviceState());
 }
 
 void MemoriaMascotDisplay::SetEmotion(const char* emotion) {
@@ -507,9 +524,9 @@ void MemoriaMascotDisplay::SetStatus(const char* status) {
         return;
     }
     if (Equals(status, Lang::Strings::CONNECTING)) {
-        // A conversation (re)opening: the comet ring already says so, and a
-        // line at the top would sit on the full-size companion's head.
-        LvglDisplay::SetStatus("");
+        // The connecting state owns the lower caption slot. The face moves up
+        // with WantsCaption(), so this line no longer competes with it.
+        LvglDisplay::SetStatus("正在连接");
         return;
     }
     LvglDisplay::SetStatus(status);
@@ -528,6 +545,11 @@ void MemoriaMascotDisplay::ShowNotification(const char* notification, int durati
     const std::string connect_prefix = Lang::Strings::CONNECT_TO;
     if (std::strncmp(notification, connect_prefix.c_str(), connect_prefix.size()) == 0) {
         LvglDisplay::ShowNotification(kConnectingNetworkText, duration_ms);
+        return;
+    }
+    const std::string connected_prefix = Lang::Strings::CONNECTED_TO;
+    if (std::strncmp(notification, connected_prefix.c_str(), connected_prefix.size()) == 0) {
+        LvglDisplay::ShowNotification(kConnectedNetworkText, duration_ms);
         return;
     }
     // The boot animation carries the brand, and version numbers are for logs.
@@ -793,8 +815,15 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 // panel, so it needs no rebuild and no invalidate. Blink
                 // windows, the caption lift, and state changes all flow
                 // through the frame's fields, so they keep repainting.
-                if (!frame_shown_ || frame != shown_frame_) {
-                    memoria::PaintDotFace(framebuffer_, width_, height_, frame);
+                if (kPillAnimationExperiment || !frame_shown_ || frame != shown_frame_) {
+                    if (kPillAnimationExperiment) {
+                        const memoria::PillFaceFrame pill = memoria::MakePillFaceFrame(
+                            frame.face, frame.eyes_closed,
+                            frame.captioned ? kPillCaptionLift : static_cast<uint8_t>(0), frame_now);
+                        memoria::PaintPillFace(framebuffer_, width_, height_, pill);
+                    } else {
+                        memoria::PaintDotFace(framebuffer_, width_, height_, frame);
+                    }
                     if (!frame_shown_ || frame.face != shown_frame_.face) {
                         ESP_LOGI(TAG, "face=%s", memoria::FaceName(frame.face));
                     }
