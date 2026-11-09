@@ -190,6 +190,7 @@ function archiveFactCards(groups) {
       .filter((item) => item && item.recordId && item.text)
       .map((item) => ({
         recordId: item.recordId,
+        field: group.field,
         text: item.text,
         statusLabel: item.statusLabel,
         displayLifecycle: item.displayLifecycle,

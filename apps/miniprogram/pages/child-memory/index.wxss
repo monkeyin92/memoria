@@ -330,3 +330,39 @@
   font-size: var(--mp-type-caption);
   line-height: var(--mp-lh-caption);
 }
+
+.cm-sheet-input-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--mp-ink);
+  font-size: var(--mp-type-caption);
+  font-weight: 700;
+  line-height: var(--mp-lh-caption);
+}
+
+.cm-sheet-input {
+  display: block;
+  width: 100%;
+  min-height: 88px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--mp-line);
+  border-radius: var(--mp-radius-inset);
+  box-sizing: border-box;
+  background: var(--mp-bg);
+  color: var(--mp-ink);
+  font-size: var(--mp-type-body);
+  line-height: var(--mp-lh-body);
+}
+
+.cm-sheet-input-placeholder {
+  color: var(--mp-ink-3);
+}
+
+.cm-sheet-error {
+  display: block;
+  margin-bottom: 12px;
+  color: var(--mp-rust);
+  font-size: var(--mp-type-meta);
+  line-height: var(--mp-lh-caption);
+}
