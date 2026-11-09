@@ -36,7 +36,7 @@ from services.agent.src.contracts.ids import GenerationFence, same_turn_generati
 from services.agent.src.duplex_runtime import (
     DuplexRuntime,
 )
-from services.agent.src.llm_types import ChatContext, StopResponse
+from services.agent.src.llm_types import ChatContext, StopResponse, chunk_text
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.orchestration.context_manager import ChatMessage
 from services.agent.src.orchestration.context_snapshot_manager import ContextSnapshot
@@ -157,18 +157,6 @@ def reply_limits_for(
     return chars, sentences
 
 
-def _chunk_text(chunk: Any) -> str:
-    """Extract plain text from LLM stream items for fence gating."""
-    if isinstance(chunk, str):
-        return chunk
-    delta = getattr(chunk, "delta", None)
-    if delta is not None:
-        content = getattr(delta, "content", None)
-        if isinstance(content, str):
-            return content
-    return ""
-
-
 class ReplyPipeline(
     ReplyWarmupMixin,
     ReplyCrisisMixin,
@@ -197,9 +185,11 @@ class ReplyPipeline(
         speculative_reply: bool = True,
         speculative_speech: bool = True,
     ) -> None:
-        self._runtime = runtime
-        self._speculative_reply = speculative_reply
-        self._speculative_speech = speculative_speech
+        self._runtime, self._speculative_reply, self._speculative_speech = (
+            runtime,
+            speculative_reply,
+            speculative_speech,
+        )
         self._instructions = instructions
         self._voice_profile_client = voice_profile_client
         self._response_planner_client = response_planner_client
@@ -796,7 +786,10 @@ class ReplyPipeline(
         if resume_interrupted_reply or script is not None:
             realtime_request, resume_realtime_request = None, False
         else:
-            realtime_request, resume_realtime_request = await self._runtime.resolve_realtime_request(
+            (
+                realtime_request,
+                resume_realtime_request,
+            ) = await self._runtime.resolve_realtime_request(
                 fence=fence,
                 direct_text=response_plan.direct_text,
             )
@@ -979,9 +972,7 @@ class ReplyPipeline(
 
             if script is not None or not self._runtime.fixed_safety_heard:
                 return text, False
-            allowed = (
-                strip_soothing_from_follow_up(text) if block_soothing else text
-            )
+            allowed = strip_soothing_from_follow_up(text) if block_soothing else text
             if not assistant_text_repeats_or_dilutes_safety(allowed):
                 return allowed, False
             logger.info(
@@ -1165,13 +1156,18 @@ class ReplyPipeline(
                             pass
                     finally:
                         async with self._realtime_delegation_lock:
-                            if self._realtime_delegations.get(fence) == (delegated_search_query, handle):
+                            if self._realtime_delegations.get(fence) == (
+                                delegated_search_query,
+                                handle,
+                            ):
                                 self._realtime_delegations.pop(fence, None)
                     intent = coordinator.output_intent(
                         handle,
                         current_fence=self._runtime.fence,
                         current_task_epoch=handle.request.task_epoch,
-                        current_context_version=coordinator.current_context_version(fence.session_id),
+                        current_context_version=coordinator.current_context_version(
+                            fence.session_id
+                        ),
                         relevant=self._realtime_delegation_relevant(
                             query=delegated_search_query, fence=fence
                         ),
@@ -1210,7 +1206,7 @@ class ReplyPipeline(
                         break
                     if _late_crisis_now() is not None:
                         break
-                    text = _chunk_text(chunk)
+                    text = chunk_text(chunk)
                     if text:
                         if not first_content_marked:
                             self._runtime.mark_audio_event("llm_first_content_token")
@@ -1270,8 +1266,7 @@ class ReplyPipeline(
                 if realtime_request is not None:
                     raise
                 logger.warning(
-                    "llm unavailable session_id=%s turn_id=%s generation_id=%s "
-                    "partial_content=%s",
+                    "llm unavailable session_id=%s turn_id=%s generation_id=%s partial_content=%s",
                     fence.session_id,
                     fence.turn_id,
                     fence.generation_id,

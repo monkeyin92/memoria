@@ -17,15 +17,26 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 from services.agent.src.contracts.ids import GenerationFence
+from services.agent.src.providers.provider_errors import (
+    DEFAULT_API_CONNECT_OPTIONS,
+    APIConnectOptions,
+)
+from services.common.story_grounding import DEFAULT_VOLUME_STEP
 
 if TYPE_CHECKING:
-    from services.agent.src.providers.doubao_tts import DoubaoSynthesizeStream, DoubaoTTSConfig
+    from services.agent.src.providers.doubao_tts import (
+        DoubaoSynthesizeStream,
+        DoubaoTTSConfig,
+        DoubaoTTSPoolRouter,
+    )
 
 logger = logging.getLogger(__name__)
+
+DOUBAO_PERSONAL_VOICE_MODEL = "seed-icl-2.0"
 
 Mismatch = Literal[
     "not_adopted",  # the speculative reply was not adopted, or not yet
@@ -172,3 +183,104 @@ class Presynthesis:
             int((now - self._started_at) * 1_000),
             int((now - first_pcm_at) * 1_000) if first_pcm_at is not None else "-",
         )
+
+
+class DoubaoPresynthesisMixin:
+    """Own the speech config and session lifecycle used by Doubao pre-synthesis."""
+
+    if TYPE_CHECKING:
+        _active_fence: GenerationFence | None
+        _config: DoubaoTTSConfig
+        _presynthesis: Presynthesis | None
+        _pools: DoubaoTTSPoolRouter
+        _speech_configs_by_fence: dict[GenerationFence, DoubaoTTSConfig]
+        _voice_kind: str
+
+        def _config_for_fence(self, fence: GenerationFence | None) -> DoubaoTTSConfig: ...
+
+        def _personal_fallback_or_baseline_config(self) -> DoubaoTTSConfig: ...
+
+    def _speech_config(
+        self, *, rate: float, instruction: str, pitch: int, reference_contexts: tuple[str, ...]
+    ) -> DoubaoTTSConfig:
+        """Build the session config for a turn with the current voice."""
+
+        config = replace(self._config)
+        if not config.style_control_enabled or self._voice_kind != "designed":
+            config.instruction = None
+            config.reference_contexts = ()
+            config.pitch = 0
+            clamped = min(1.05, max(0.95, rate))
+        else:
+            config.instruction = instruction.strip()[:240] or None
+            config.reference_contexts = tuple(reference_contexts[-2:])
+            config.pitch = min(3, max(-3, int(pitch)))
+            clamped = min(1.20, max(0.85, rate))
+        config.loudness_rate = min(100, max(-50, (int(pitch) // 16) * DEFAULT_VOLUME_STEP))
+        config.speech_rate = round((clamped - 1.0) * 100)
+        return config
+
+    def _stream_for(
+        self,
+        config: DoubaoTTSConfig,
+        fence: GenerationFence | None,
+        *,
+        conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
+        reports: SessionReports | None = None,
+    ) -> DoubaoSynthesizeStream:
+        from services.agent.src.providers.doubao_tts import DoubaoSynthesizeStream
+
+        personal = config.resource_id == DOUBAO_PERSONAL_VOICE_MODEL
+        fallback_config = self._personal_fallback_or_baseline_config() if personal else None
+        return DoubaoSynthesizeStream(
+            tts_instance=cast(Any, self),
+            config=config,
+            pool=self._pools.for_config(config),
+            fallback_config=fallback_config,
+            fallback_pool=(
+                self._pools.for_config(fallback_config) if fallback_config is not None else None
+            ),
+            conn_options=conn_options,
+            fence=fence,
+            reports=reports,
+        )
+
+    def presynthesize(
+        self,
+        fence: GenerationFence,
+        text: str,
+        *,
+        rate: float,
+        instruction: str,
+        pitch: int,
+        reference_contexts: tuple[str, ...],
+    ) -> Presynthesis | None:
+        """Open the predicted session and hold it until the committed turn decides."""
+
+        config = self._speech_config(
+            rate=rate, instruction=instruction, pitch=pitch, reference_contexts=reference_contexts
+        )
+        if not text.strip() or config.resource_id == DOUBAO_PERSONAL_VOICE_MODEL:
+            return None
+        self._discard_presynthesis("replaced")
+        reports = HeldReports(cast(SessionReports, self))
+        stream = self._stream_for(config, fence, reports=reports)
+        stream.push_text(text)
+        pending = Presynthesis(SpeechInputs(fence, replace(config), text), stream, reports)
+        self._presynthesis = pending
+        return pending
+
+    def take_presynthesis(self, fence: GenerationFence, text: str) -> DoubaoSynthesizeStream | None:
+        """Take the pending session only when the current turn matches it exactly."""
+
+        pending = self._presynthesis
+        if pending is None or pending.inputs.fence != fence:
+            return None
+        self._presynthesis = None
+        active = self._active_fence
+        return pending.take(SpeechInputs(active, replace(self._config_for_fence(active)), text))
+
+    def _discard_presynthesis(self, reason: str) -> None:
+        if self._presynthesis is not None:
+            self._presynthesis.discard(reason)
+            self._presynthesis = None

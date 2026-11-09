@@ -22,10 +22,10 @@ from services.agent.src.contracts.events import TimedWord
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.observability.metrics import GLOBAL_METRICS, MetricsRegistry
 from services.agent.src.providers.doubao_presynthesis import (
-    HeldReports,
+    DOUBAO_PERSONAL_VOICE_MODEL,
+    DoubaoPresynthesisMixin,
     Presynthesis,
     SessionReports,
-    SpeechInputs,
 )
 from services.agent.src.providers.doubao_protocol import (
     EventType,
@@ -74,11 +74,9 @@ from services.agent.src.providers.provider_errors import (
 )
 from services.agent.src.providers.reliability import CircuitBreaker
 from services.agent.src.providers.tts_stream import AudioEmitter, SynthesizeStream, TimedString
-from services.common.story_grounding import DEFAULT_VOLUME_STEP
 
 logger = logging.getLogger(__name__)
 DEFAULT_WS_URL = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
-DOUBAO_PERSONAL_VOICE_MODEL = "seed-icl-2.0"
 DOUBAO_PROVIDER = "volcengine_doubao"
 
 
@@ -928,7 +926,7 @@ class DoubaoSynthesizeStream(SynthesizeStream):
         return parse_server_message(raw)
 
 
-class DoubaoTTS:
+class DoubaoTTS(DoubaoPresynthesisMixin):
     def __init__(
         self,
         config: DoubaoTTSConfig,
@@ -1042,29 +1040,6 @@ class DoubaoTTS:
         self._speech_configs_by_fence[fence] = config
         while len(self._speech_configs_by_fence) > 16:
             self._speech_configs_by_fence.pop(next(iter(self._speech_configs_by_fence)))
-
-    def _speech_config(
-        self, *, rate: float, instruction: str, pitch: int, reference_contexts: tuple[str, ...]
-    ) -> DoubaoTTSConfig:
-        """The session config a turn with this speech plan gets in the current voice."""
-
-        config = replace(self._config)
-        if not config.style_control_enabled or self._voice_kind != "designed":
-            config.instruction = None
-            config.reference_contexts = ()
-            config.pitch = 0
-            clamped = min(1.05, max(0.95, rate))
-        else:
-            cleaned_instruction = instruction.strip()
-            config.instruction = cleaned_instruction[:240] or None
-            config.reference_contexts = tuple(reference_contexts[-2:])
-            config.pitch = min(3, max(-3, int(pitch)))
-            clamped = min(1.20, max(0.85, rate))
-        # Loudness is a session setting the child asks for by voice, not a per-turn style, so it
-        # rides in the unused high bits of ``pitch`` (one step per 16) and survives every turn.
-        config.loudness_rate = min(100, max(-50, (int(pitch) // 16) * DEFAULT_VOLUME_STEP))
-        config.speech_rate = round((clamped - 1.0) * 100)
-        return config
 
     def apply_voice_profile(
         self,
@@ -1203,71 +1178,6 @@ class DoubaoTTS:
             self._active_fence,
             conn_options=conn_options,
         )
-
-    def _stream_for(
-        self,
-        config: DoubaoTTSConfig,
-        fence: GenerationFence | None,
-        *,
-        conn_options: APIConnectOptions = DEFAULT_API_CONNECT_OPTIONS,
-        reports: SessionReports | None = None,
-    ) -> DoubaoSynthesizeStream:
-        personal = config.resource_id == DOUBAO_PERSONAL_VOICE_MODEL
-        fallback_config = self._personal_fallback_or_baseline_config() if personal else None
-        return DoubaoSynthesizeStream(
-            tts_instance=self,
-            config=config,
-            pool=self._pools.for_config(config),
-            fallback_config=fallback_config,
-            fallback_pool=(
-                self._pools.for_config(fallback_config) if fallback_config is not None else None
-            ),
-            conn_options=conn_options,
-            fence=fence,
-            reports=reports,
-        )
-
-    def presynthesize(
-        self,
-        fence: GenerationFence,
-        text: str,
-        *,
-        rate: float,
-        instruction: str,
-        pitch: int,
-        reference_contexts: tuple[str, ...],
-    ) -> Presynthesis | None:
-        """Open the session ``fence`` is predicted to open with this speech plan, and send ``text`` to it.
-
-        A personal voice is left out: its fallback to the designed voice reports to the turn the moment it
-        happens.  A newer pre-synthesis replaces the pending one.
-        """
-
-        config = self._speech_config(
-            rate=rate, instruction=instruction, pitch=pitch, reference_contexts=reference_contexts
-        )
-        if not text.strip() or config.resource_id == DOUBAO_PERSONAL_VOICE_MODEL:
-            return None
-        if self._presynthesis is not None:
-            self._presynthesis.discard("replaced")
-        reports = HeldReports(self)
-        stream = self._stream_for(config, fence, reports=reports)
-        stream.push_text(text)
-        self._presynthesis = Presynthesis(SpeechInputs(fence, replace(config), text), stream, reports)
-        return self._presynthesis
-
-    def take_presynthesis(self, fence: GenerationFence, text: str) -> DoubaoSynthesizeStream | None:
-        """The pre-synthesized session, when ``stream()`` would now open exactly it and send ``text`` first.
-
-        One for a later turn stays pending; one for this turn is used or discarded here.
-        """
-
-        pending = self._presynthesis
-        if pending is None or pending.inputs.fence != fence:
-            return None
-        self._presynthesis = None
-        active = self._active_fence
-        return pending.take(SpeechInputs(active, replace(self._config_for_fence(active)), text))
 
     def _baseline_config(self) -> DoubaoTTSConfig:
         return replace(
@@ -1528,7 +1438,5 @@ class DoubaoTTS:
             )
 
     async def aclose(self) -> None:
-        if self._presynthesis is not None:
-            self._presynthesis.discard("closed")
-            self._presynthesis = None
+        self._discard_presynthesis("closed")
         await self._pools.aclose()
