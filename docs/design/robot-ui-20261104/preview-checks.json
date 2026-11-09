@@ -1,0 +1,24 @@
+{
+  "date": "2026-11-04T04:47:12.378Z",
+  "checks": [
+    "side navigation home",
+    "side navigation memory",
+    "side navigation device",
+    "side navigation profile",
+    "bottom navigation home",
+    "bottom navigation memory",
+    "bottom navigation device",
+    "bottom navigation profile",
+    "expanded toggleUsage",
+    "expanded toggleManagement",
+    "expanded toggleStories",
+    "expanded toggleMemberSettings",
+    "expanded toggleDiag",
+    "collapsed management",
+    "default voice is a child page without a selector",
+    "default voice back",
+    "quiet hours sheet open",
+    "quiet hours sheet close"
+  ],
+  "errors": []
+}

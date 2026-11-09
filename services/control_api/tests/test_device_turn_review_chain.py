@@ -1,10 +1,9 @@
-"""A device turn travels Agent -> Archive -> 回顾 under the profile Control signs.
+"""A device turn travels Agent -> Archive under the profile Control signs.
 
-The Agent reads the real ``/v1/interaction/session-policy`` response, claims
-the device-bound owner, and hands its archive evidence to the real
-``/v1/archive/session-events`` route; the owner then reads it back through the
-review endpoints the mini program calls.  The profile never carries
-``memory_capture`` (an action-time capability), exactly as in production.
+The Agent reads the real ``/v1/interaction/session-policy`` response. A06: bind
+alone does not mint speaker owner, so the turn stays uncertain. Evidence may
+still be recorded, but owner 回顾 listing hides uncertain speakers (same rule as
+guest/uncertain archive tests). The profile never carries ``memory_capture``.
 """
 
 from __future__ import annotations
@@ -22,14 +21,13 @@ from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.media_agent_factory import ProductionMediaSessionFactory
 from services.agent.src.mode_policy_client import parse_mode_policy
 from services.agent.src.voice_core.media_protocol import SessionIdentity
-from services.control_api.app.bound_subject import DEVICE_BOUND_SUBJECT_REASON
 from services.control_api.app.main import create_app
-from services.control_api.tests.test_archive_api import (
+from services.control_api.tests.archive_api_test_support import (
     _configure,
     _register_minor,
     _register_verified_adult,
 )
-from services.control_api.tests.test_interaction_api import (
+from services.control_api.tests.interaction_api_test_support import (
     _RUNTIME_PROFILE_SIGNING_KEY,
     _attach_signed_runtime_profile,
 )
@@ -109,9 +107,11 @@ async def _agent_turn(
 
 
 @pytest.mark.asyncio
-async def test_device_bound_turn_reaches_the_owners_review(
+async def test_device_bound_turn_archives_uncertain_and_stays_off_owner_review(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """A06: bind+memory grant still archives, but not as owner 回顾 rows."""
+
     _configure(monkeypatch, tmp_path)
     monkeypatch.setenv("MEMORIA_INTERACTION_POLICY_TOKEN", _POLICY_TOKEN)
     app = create_app()
@@ -131,10 +131,9 @@ async def test_device_bound_turn_reaches_the_owners_review(
             "speech.utterance_finalized",
             "assistant.playout_stopped",
         ]
-        assert evidence[0]["speaker_class"] == "owner"
-        assert evidence[0]["payload"]["speaker_reason_code"] == DEVICE_BOUND_SUBJECT_REASON
-        # #282: no turn text reaches the archive, so the review lists the
-        # session without a preview and the history has no turns to pair.
+        assert evidence[0]["speaker_class"] == "uncertain"
+        assert evidence[0]["payload"]["speaker_reason_code"] == "authority_unconfigured"
+        # #282: no turn text reaches the archive.
         for event in evidence:
             assert "text" not in event["payload"]
         for event in evidence:
@@ -149,14 +148,8 @@ async def test_device_bound_turn_reaches_the_owners_review(
         )
 
     assert sessions.status_code == 200, sessions.text
-    assert sessions.json()["items"] == [
-        {
-            "session_id": session_id,
-            "occurred_at": sessions.json()["items"][0]["occurred_at"],
-            "turn_count": 1,
-            "preview": "",
-        }
-    ]
+    # Uncertain speakers are recorded but hidden from owner 回顾 listing.
+    assert sessions.json()["items"] == []
     assert history.status_code == 200, history.text
     assert history.json() == {"session_id": session_id, "turns": []}
 
@@ -261,7 +254,9 @@ async def test_consented_child_turn_is_kept_without_its_words(
     assert kept is not None
     assert kept.subject_id == account_id
     assert kept.payload.get("text") is None
-    assert kept.payload.get("history_eligible") is True
+    # A06: bind + memory consent does not make the turn history-eligible without
+    # a stronger-than-bind speaker confirm.
+    assert kept.payload.get("history_eligible") is False
     assert kept.payload.get("memory_retention") == "retained"
     assert history.status_code == 200, history.text
     assert history.json()["turns"] == []

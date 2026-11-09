@@ -8,11 +8,14 @@ ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "check_module_budget.py"
 
 
+def _write_lines(path: Path, count: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(f"line {index}\n" for index in range(count)), encoding="utf-8")
+
+
 def _workspace(tmp_path: Path, *, budget: int, actual: int) -> tuple[Path, Path]:
     root = tmp_path / "repo"
-    module = root / "services" / "example.py"
-    module.parent.mkdir(parents=True)
-    module.write_text("".join(f"line {index}\n" for index in range(actual)), encoding="utf-8")
+    _write_lines(root / "services" / "example.py", actual)
     config = root / "pyproject.toml"
     config.write_text(
         "[project]\n"
@@ -110,3 +113,65 @@ def test_check_rejects_a_budget_path_outside_the_repository(tmp_path: Path) -> N
 
     assert completed.returncode == 1
     assert "must stay inside the repository" in completed.stderr
+
+
+def test_check_rejects_unregistered_sources_over_the_discovery_threshold(
+    tmp_path: Path,
+) -> None:
+    root, config = _workspace(tmp_path, budget=3, actual=3)
+    before = config.read_bytes()
+    _write_lines(root / "services" / "orphan.py", 1501)
+
+    completed = _run(root, "check")
+
+    assert completed.returncode == 1
+    assert "services/orphan.py: 1501 lines exceeds discovery threshold 1500" in completed.stderr
+    assert "not registered" in completed.stderr
+    assert config.read_bytes() == before
+
+
+def test_check_allows_unregistered_sources_at_or_under_the_discovery_threshold(
+    tmp_path: Path,
+) -> None:
+    root, _config = _workspace(tmp_path, budget=3, actual=3)
+    _write_lines(root / "services" / "small.py", 1500)
+
+    completed = _run(root, "check")
+
+    assert completed.returncode == 0, completed.stderr
+    assert "module_budget_check=PASS count=1" in completed.stdout
+
+
+def test_check_excludes_tests_trees_from_discovery(tmp_path: Path) -> None:
+    root, _config = _workspace(tmp_path, budget=3, actual=3)
+    _write_lines(root / "services" / "example" / "tests" / "huge.py", 2000)
+
+    completed = _run(root, "check")
+
+    assert completed.returncode == 0, completed.stderr
+    assert "module_budget_check=PASS count=1" in completed.stdout
+
+
+def test_check_ignores_unregistered_oversize_outside_services(tmp_path: Path) -> None:
+    root, _config = _workspace(tmp_path, budget=3, actual=3)
+    _write_lines(root / "scripts" / "huge.py", 2000)
+
+    completed = _run(root, "check")
+
+    assert completed.returncode == 0, completed.stderr
+    assert "module_budget_check=PASS count=1" in completed.stdout
+
+
+def test_update_does_not_register_discovered_oversize_sources(tmp_path: Path) -> None:
+    root, config = _workspace(tmp_path, budget=3, actual=3)
+    _write_lines(root / "services" / "orphan.py", 1501)
+    before = config.read_bytes()
+
+    updated = _run(root, "update")
+    checked = _run(root, "check")
+
+    assert updated.returncode == 0, updated.stderr
+    assert config.read_bytes() == before
+    assert checked.returncode == 1
+    assert "services/orphan.py" in checked.stderr
+    assert "not registered" in checked.stderr

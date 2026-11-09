@@ -58,6 +58,7 @@ class FakeSession:
         *,
         text: str | None = None,
         interim: str | None = None,
+        final_on_send: bool = False,
         fail_connect: bool = False,
         fail_rotate: bool = False,
         fail_event_on_send: bool = False,
@@ -72,6 +73,7 @@ class FakeSession:
         self.rotation_pending = False
         self.text = text
         self.interim = interim
+        self.final_on_send = final_on_send
         self.fail_connect = fail_connect
         self.fail_rotate = fail_rotate
         self.fail_event_on_send = fail_event_on_send
@@ -89,7 +91,7 @@ class FakeSession:
     async def send_pcm(self, pcm: bytes, *, capture_start_sample: int | None = None) -> None:
         self.sent.append(pcm)
         if self.interim:
-            self.events.put_nowait(_sentence(self.interim, final=False))
+            self.events.put_nowait(_sentence(self.interim, final=self.final_on_send))
         if self.fail_event_on_send:
             self.events.put_nowait(
                 FunASRServerEvent(
@@ -309,6 +311,75 @@ async def test_finalize_timeout_switches_to_backup() -> None:
 
 
 @pytest.mark.asyncio
+async def test_backup_starts_before_the_primary_final_budget() -> None:
+    started: list[float] = []
+
+    class TimedSenseVoice(FakeSenseVoice):
+        async def transcribe(
+            self, pcm: bytes, *, sample_rate: int, language: str
+        ) -> str | None:
+            started.append(asyncio.get_running_loop().time())
+            return "慢句兜底"
+
+    session = FailoverASRSession(
+        config=_config(
+            final_result_timeout_s=0.3,
+            backup_start_delay_s=0.05,
+            rescue_budget_s=1.0,
+        ),
+        primary_factory=lambda: FakeSession(rotate_blocks=5.0),
+        sensevoice=TimedSenseVoice(),
+    )
+    await session.connect()
+    await session.send_pcm(_pcm())
+    before = asyncio.get_running_loop().time()
+    await session.rotate_task(require_consumed=False)
+    elapsed = asyncio.get_running_loop().time() - before
+
+    assert started
+    assert started[0] - before < 0.2
+    assert elapsed < 1.0
+    assert any(
+        event.sentence is not None and event.sentence.text == "慢句兜底"
+        for event in _drain(session.events)
+        if event.event == "result-generated"
+    )
+
+
+@pytest.mark.asyncio
+async def test_slow_backup_result_is_accepted_after_primary_timeout() -> None:
+    class SlowSenseVoice(FakeSenseVoice):
+        async def transcribe(
+            self, pcm: bytes, *, sample_rate: int, language: str
+        ) -> str | None:
+            await asyncio.sleep(0.4)
+            return "慢速兜底"
+
+    session = FailoverASRSession(
+        config=_config(
+            final_result_timeout_s=0.1,
+            backup_start_delay_s=0.05,
+            backup_timeout_s=1.0,
+            rescue_budget_s=2.0,
+        ),
+        primary_factory=lambda: FakeSession(rotate_blocks=5.0),
+        sensevoice=SlowSenseVoice(),
+    )
+    await session.connect()
+    await session.send_pcm(_pcm())
+    before = asyncio.get_running_loop().time()
+    await session.rotate_task(require_consumed=False)
+    elapsed = asyncio.get_running_loop().time() - before
+
+    assert elapsed < 1.0
+    assert any(
+        event.sentence is not None and event.sentence.text == "慢速兜底"
+        for event in _drain(session.events)
+        if event.event == "result-generated"
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_final_within_the_budget_is_forwarded_without_backup() -> None:
     sensevoice = FakeSenseVoice("不应调用")
     session = FailoverASRSession(
@@ -327,6 +398,27 @@ async def test_a_final_within_the_budget_is_forwarded_without_backup() -> None:
     assert any(
         event.sentence is not None and event.sentence.text == "准时结果"
         for event in events
+        if event.event == "result-generated"
+    )
+
+
+@pytest.mark.asyncio
+async def test_streaming_final_before_rotate_skips_backup() -> None:
+    primary = FakeSession(interim="先行终稿", final_on_send=True)
+    sensevoice = FakeSenseVoice("不应调用")
+    session = FailoverASRSession(
+        config=_config(),
+        primary_factory=lambda: primary,
+        sensevoice=sensevoice,
+    )
+    await session.connect()
+    await session.send_pcm(_pcm())
+    await session.rotate_task(require_consumed=False)
+
+    assert sensevoice.requests == []
+    assert any(
+        event.sentence is not None and event.sentence.text == "先行终稿"
+        for event in _drain(session.events)
         if event.event == "result-generated"
     )
 
@@ -455,8 +547,11 @@ async def test_healthy_primary_empty_retries_backup_with_the_same_pcm() -> None:
     await session.connect()
     await session.send_pcm(_pcm())
 
+    before = asyncio.get_running_loop().time()
     await session.rotate_task(require_consumed=False)
+    elapsed = asyncio.get_running_loop().time() - before
 
+    assert elapsed < 0.2
     events = _drain(session.events)
     assert any(
         event.sentence is not None and event.sentence.text == "重试听出的句子"
@@ -652,6 +747,7 @@ async def test_reset_for_gap_discards_the_old_task_and_arms_the_next() -> None:
     await session.send_pcm(_pcm(), capture_start_sample=0)
     await session.reset_for_gap()
     assert primaries[0].closed is True
+    assert len(primaries) == 2
     assert session.degraded is False
 
     await session.send_pcm(_pcm(), capture_start_sample=5 * 16_000)
@@ -831,6 +927,61 @@ async def test_empty_primary_result_is_not_a_failure() -> None:
     assert session.degraded is False
     assert sensevoice.requests == []
     assert [event.event for event in _drain(session.events)] == ["task-finished"]
+
+
+@pytest.mark.asyncio
+async def test_segment_evidence_survives_the_empty_final_reset() -> None:
+    from services.agent.src.providers.funasr_empty_accounting import (
+        classify_funasr_empty_outcome,
+    )
+
+    session = FailoverASRSession(
+        config=_config(),
+        primary_factory=lambda: FakeSession(),
+        sensevoice=FakeSenseVoice(None),
+    )
+    await session.connect()
+    await session.send_pcm(_pcm(amplitude=200))
+    await session.rotate_task(require_consumed=False)
+
+    evidence = session.last_segment_evidence
+    assert evidence is not None
+    assert evidence.had_speech is True
+    assert evidence.rms >= 190
+    assert evidence.peak_abs >= 200
+    assert evidence.samples == 1600
+    assert evidence.min_rms == 100
+    assert evidence.primary_final_seen is False
+    assert evidence.provider_failed is False
+    assert evidence.vendor_error is False
+    assert evidence.retried is True
+    assert (
+        classify_funasr_empty_outcome(
+            rms=evidence.rms,
+            min_rms=evidence.min_rms,
+            empty_audio_error=evidence.vendor_error,
+        )
+        == "empty+vendor_silent"
+    )
+
+
+@pytest.mark.asyncio
+async def test_new_segment_does_not_clear_the_previous_evidence() -> None:
+    session = FailoverASRSession(
+        config=_config(),
+        primary_factory=lambda: FakeSession(),
+        sensevoice=FakeSenseVoice(None),
+    )
+    await session.connect()
+    await session.send_pcm(_pcm(amplitude=200))
+    await session.rotate_task(require_consumed=False)
+    previous = session.last_segment_evidence
+    assert previous is not None
+    assert previous.samples == 1600
+
+    await session.send_pcm(_silence(1600), capture_start_sample=1600)
+
+    assert session.last_segment_evidence == previous
 
 
 @pytest.mark.asyncio

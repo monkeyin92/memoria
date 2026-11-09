@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -138,4 +139,100 @@ async def test_long_query_is_cut_to_the_search_limit() -> None:
     resolver, client = _resolver(handler)
     await resolver.resolve(query="天气" * 100)
     assert len(str(sent[0]["query"])) == 128
+    await client.aclose()
+
+
+_STALE_SHENZHOU = {
+    "results": [
+        {
+            "title": "神舟飞船动态",
+            "date": "2025-05-12T00:00:00Z",
+            "summary": "神舟飞船近日完成对接。",
+            "url": "https://news.example/shenzhou-may",
+        }
+    ]
+}
+_STALE_AS_FRESH_ANSWER = {
+    "choices": [{"message": {"content": "最近神舟飞船完成了对接。"}}]
+}
+
+
+@pytest.mark.asyncio
+async def test_stale_only_results_do_not_answer_a_recency_query() -> None:
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path == "/v1/tools/search":
+            return httpx.Response(200, json=_STALE_SHENZHOU)
+        return httpx.Response(200, json=_STALE_AS_FRESH_ANSWER)
+
+    resolver, client = _resolver(handler)
+    assert await resolver.resolve(query="神舟最近消息") is None
+    assert paths == ["/v1/tools/search"]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_fresh_hits_still_answer_a_recency_query() -> None:
+    fresh = {
+        "results": [
+            {
+                "title": "神舟飞船动态",
+                "date": "2026-10-28T00:00:00Z",
+                "summary": "神舟飞船今天完成对接。",
+                "url": "https://news.example/shenzhou-now",
+            }
+        ]
+    }
+    answer = {"choices": [{"message": {"content": "神舟飞船今天完成了对接。"}}]}
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(
+            200, json=fresh if request.url.path == "/v1/tools/search" else answer
+        )
+
+    resolver, client = _resolver(handler)
+    assert await resolver.resolve(query="神舟最近消息") == "神舟飞船今天完成了对接。"
+    assert paths == ["/v1/tools/search", "/chat/completions"]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_non_recency_queries_still_label_old_dates_for_the_model() -> None:
+    paths: list[str] = []
+    chat_bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path == "/chat/completions":
+            body = json.loads(request.content)
+            assert isinstance(body, dict)
+            chat_bodies.append(body)
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "那是二零二五年五月十二日的消息，神舟飞船完成了对接。"
+                            }
+                        }
+                    ]
+                },
+            )
+        return httpx.Response(200, json=_STALE_SHENZHOU)
+
+    resolver, client = _resolver(handler)
+    spoken = await resolver.resolve(query="神舟飞船什么时候对接的")
+    assert spoken is not None
+    assert "五月" in spoken or "2025" in spoken or "二零二五" in spoken
+    messages = chat_bodies[0]["messages"]
+    assert isinstance(messages, list) and len(messages) >= 2
+    system_msg, user_msg = messages[0], messages[1]
+    assert isinstance(system_msg, dict) and isinstance(user_msg, dict)
+    assert "不要说成最近" in str(system_msg["content"])
+    assert "（2025-05-12）" in str(user_msg["content"])
     await client.aclose()

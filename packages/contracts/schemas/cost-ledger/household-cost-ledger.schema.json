@@ -1,0 +1,282 @@
+{
+  "$id": "memoria://contracts/cost-ledger/household-cost-ledger.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Memoria household cost ledger sample",
+  "description": "Offline sample-period ledger for reconciling redacted per-household usage against vendor bills. Quantities are measured. Currency amounts appear only when copied from a real bill. Missing bills are 未验, never invented prices.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "observation_window",
+    "handling_rules",
+    "households",
+    "usage_events",
+    "vendor_bills",
+    "ops_lines",
+    "receipts"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "observation_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "string", "format": "date" },
+        "end": { "type": "string", "format": "date" }
+      }
+    },
+    "handling_rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "unallocated_fees",
+        "free_tiers",
+        "cancel_after_bill",
+        "human_rescue"
+      ],
+      "properties": {
+        "unallocated_fees": { "type": "string", "minLength": 1 },
+        "free_tiers": { "type": "string", "minLength": 1 },
+        "cancel_after_bill": { "type": "string", "minLength": 1 },
+        "human_rescue": { "type": "string", "minLength": 1 }
+      }
+    },
+    "households": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["household_id", "intensity_hint"],
+        "properties": {
+          "household_id": {
+            "type": "string",
+            "pattern": "^hh_[a-z0-9]{6,32}$",
+            "description": "Redacted aggregate household key. No child content or raw PII."
+          },
+          "intensity_hint": {
+            "type": "string",
+            "enum": ["low", "mid", "high", "auto"]
+          }
+        }
+      }
+    },
+    "usage_events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "event_id",
+          "household_id",
+          "category",
+          "vendor",
+          "unit",
+          "quantity",
+          "flags"
+        ],
+        "properties": {
+          "event_id": { "type": "string", "minLength": 1 },
+          "household_id": { "type": "string", "pattern": "^hh_[a-z0-9]{6,32}$" },
+          "category": {
+            "type": "string",
+            "enum": [
+              "asr",
+              "tts",
+              "chat",
+              "plan",
+              "end",
+              "safety",
+              "summary",
+              "memory",
+              "storage",
+              "backup",
+              "bandwidth",
+              "base_ops"
+            ]
+          },
+          "vendor": { "type": "string", "minLength": 1 },
+          "unit": {
+            "type": "string",
+            "enum": ["tokens", "characters", "seconds", "bytes", "requests"]
+          },
+          "quantity": { "type": "number", "minimum": 0 },
+          "flags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "retry",
+                "speculation",
+                "cancel_still_billed",
+                "generated_unplayed",
+                "free_tier"
+              ]
+            },
+            "uniqueItems": true
+          }
+        }
+      }
+    },
+    "vendor_bills": {
+      "type": "array",
+      "description": "Empty when bills are unavailable. Reconciler then emits 未验 gaps instead of inventing totals.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "bill_id",
+          "vendor",
+          "category",
+          "unit",
+          "quantity",
+          "amount_minor",
+          "currency",
+          "verification"
+        ],
+        "properties": {
+          "bill_id": { "type": "string", "minLength": 1 },
+          "vendor": { "type": "string", "minLength": 1 },
+          "category": {
+            "type": "string",
+            "enum": [
+              "asr",
+              "tts",
+              "chat",
+              "plan",
+              "end",
+              "safety",
+              "summary",
+              "memory",
+              "storage",
+              "backup",
+              "bandwidth",
+              "base_ops"
+            ]
+          },
+          "unit": {
+            "type": "string",
+            "enum": ["tokens", "characters", "seconds", "bytes", "requests"]
+          },
+          "quantity": { "type": "number", "minimum": 0 },
+          "amount_minor": {
+            "type": ["integer", "null"],
+            "description": "Invoice amount in minor units when present on the bill. Null means quantity-only bill line."
+          },
+          "currency": {
+            "type": ["string", "null"],
+            "enum": ["CNY", "USD", null]
+          },
+          "verification": {
+            "type": "string",
+            "enum": ["bill_matched", "未验"]
+          }
+        }
+      }
+    },
+    "ops_lines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "line_id",
+          "category",
+          "cost_class",
+          "household_id",
+          "unit",
+          "quantity",
+          "amount_minor",
+          "currency",
+          "flags",
+          "verification"
+        ],
+        "properties": {
+          "line_id": { "type": "string", "minLength": 1 },
+          "category": {
+            "type": "string",
+            "enum": [
+              "manufacturing",
+              "assembly_test",
+              "packaging_ship",
+              "returns_repairs",
+              "support",
+              "acquisition",
+              "rd_fixed"
+            ]
+          },
+          "cost_class": {
+            "type": "string",
+            "enum": ["variable", "fixed", "unallocated"]
+          },
+          "household_id": {
+            "type": ["string", "null"],
+            "pattern": "^hh_[a-z0-9]{6,32}$"
+          },
+          "unit": {
+            "type": "string",
+            "enum": ["units", "minutes", "cents", "shipments"]
+          },
+          "quantity": { "type": "number", "minimum": 0 },
+          "amount_minor": {
+            "type": ["integer", "null"],
+            "description": "Present only when copied from a real ops receipt or invoice."
+          },
+          "currency": {
+            "type": ["string", "null"],
+            "enum": ["CNY", "USD", null]
+          },
+          "flags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["human_rescue"]
+            },
+            "uniqueItems": true
+          },
+          "verification": {
+            "type": "string",
+            "enum": ["measured", "bill_matched", "未验"]
+          }
+        }
+      }
+    },
+    "receipts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["net_receipts"],
+      "properties": {
+        "net_receipts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "household_id",
+              "amount_minor",
+              "currency",
+              "verification"
+            ],
+            "properties": {
+              "household_id": {
+                "type": "string",
+                "pattern": "^hh_[a-z0-9]{6,32}$"
+              },
+              "amount_minor": { "type": ["integer", "null"] },
+              "currency": {
+                "type": ["string", "null"],
+                "enum": ["CNY", "USD", null]
+              },
+              "verification": {
+                "type": "string",
+                "enum": ["measured", "未验"]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

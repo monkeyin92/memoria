@@ -273,6 +273,8 @@ class SpeechTimeline:
             return False
         if segment.capture_end_sample <= self._committed_sample:
             return False
+        if segment.text.strip() and segment.capture_start_sample < self._committed_sample:
+            return False
         key = (segment.stream_epoch, segment.segment_id)
         previous_version = self._last_segment_revision.get(key)
         if previous_version is not None and segment.logical_version < previous_version:
@@ -331,7 +333,10 @@ class SpeechTimeline:
             for item in self._segments
             if not (
                 item.stream_epoch == stream_epoch
-                and item.capture_end_sample <= self._committed_sample
+                and (
+                    item.capture_end_sample <= self._committed_sample
+                    or (item.text.strip() and item.capture_start_sample < self._committed_sample)
+                )
             )
         ]
         return matched
@@ -380,6 +385,9 @@ class SpeechTimeline:
             raise ValueError("projection range must be a positive sample interval")
         if self._current_stream_epoch != stream_epoch:
             return ()
+        start_sample = max(start_sample, self._committed_sample)
+        if end_sample <= start_sample:
+            return ()
         return tuple(
             item
             for item in self._segments
@@ -409,16 +417,22 @@ class SpeechTimeline:
         stream_epoch: int,
         start_sample: int,
         end_sample: int,
+        exclude_cross_boundary: bool = False,
     ) -> str:
         """Project the current canonical text without committing the range."""
 
-        return self._canonical_text_from_segments(
-            self.segments_in_range(
-                stream_epoch=stream_epoch,
-                start_sample=start_sample,
-                end_sample=end_sample,
-            )
+        segments = self.segments_in_range(
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            end_sample=end_sample,
         )
+        if exclude_cross_boundary:
+            segments = tuple(
+                segment
+                for segment in segments
+                if segment.capture_start_sample >= start_sample
+            )
+        return self._canonical_text_from_segments(segments)
 
     def canonical_text(
         self,

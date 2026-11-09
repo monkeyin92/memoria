@@ -24,6 +24,6 @@ test("roles and custom personas live on the 角色 tab, not on the profile", () 
   assert.doesNotMatch(template, /class="persona-row/);
   assert.doesNotMatch(template, /companion-mascot-shell|companion-face|character-photo/);
   assert.doesNotMatch(template, /assets\/companions/);
-  assert.match(companionTemplate, /角色默认声音/);
+  assert.match(companionTemplate, /item\.tone/);
   assert.doesNotMatch(companionTemplate, /我的自定义声音/);
 });

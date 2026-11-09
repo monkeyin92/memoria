@@ -988,6 +988,13 @@ class MediaSessionProjectionMixin:
             terminal_kind: DelegationEventKind | None = None
             async for event in coordinator.events(handle):
                 terminal_kind = event.kind
+            logger.info(  # never the text: a robot round reads this to see where a lookup turn went
+                "media delegation finished session=%s generation=%s terminal=%s result=%s",
+                fence.session_id,
+                fence.generation_id,
+                terminal_kind.value if terminal_kind is not None else "none",
+                type(handle.record.result).__name__ if handle.record.result else "empty",
+            )
             if terminal_kind is not DelegationEventKind.RESULT_CANDIDATE or (
                 isinstance(handle.record.result, dict) and "error" in handle.record.result
             ):
@@ -1112,6 +1119,12 @@ class MediaSessionProjectionMixin:
                 )
                 return
             claim.complete()
+            logger.info(
+                "media delegation output queued session=%s generation=%s floor_allows_output=%s",
+                fence.session_id,
+                fence.generation_id,
+                floor_allows_output,
+            )
             _forget_live_lookup_filler(context)
         except asyncio.CancelledError:
             claim.release()

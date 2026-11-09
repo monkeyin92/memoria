@@ -9,7 +9,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const ROOT = path.join(__dirname, "..", "..");
-const TAB_PAGES = ["pages/home/index", "pages/memory/index", "pages/companion/index", "pages/device/index", "pages/profile/index"];
+const TAB_PAGES = ["pages/home/index", "pages/memory/index", "pages/device/index", "pages/profile/index"];
 
 function parseWxml(source) {
   const root = { type: "root", name: "#root", children: [] };
@@ -273,7 +273,11 @@ function htmlAttrs(attrs, scope, ctx, extraStyle = "") {
   style += extraStyle;
   if (style) out.push(`style="${escapeHtml(style)}"`);
   if (attrs.id) out.push(`id="${escapeHtml(interpolate(attrs.id, scope))}"`);
-  if (Object.keys(attrs).some((key) => /^(bind|catch):?tap$/.test(key))) out.push("data-tap");
+  const tapAttribute = Object.keys(attrs).find((key) => /^(bind|catch):?tap$/.test(key));
+  if (tapAttribute) {
+    out.push("data-tap");
+    if (ctx.eventHandlers) out.push(`data-handler="${escapeHtml(interpolate(attrs[tapAttribute], scope) || "")}"`);
+  }
   for (const [key, raw] of Object.entries(attrs)) {
     if (!key.startsWith("data-")) continue;
     const value = interpolate(raw, scope);
@@ -421,6 +425,7 @@ function renderPage(pagePath, data, options = {}) {
     safeBottom: options.safeBottom ?? 34,
     safeTop: options.safeTop ?? 0,
     fontScale: options.fontScale || 1,
+    eventHandlers: options.eventHandlers === true,
     components: new Map(),
     css: [],
     usingStack: [],

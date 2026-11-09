@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -26,7 +27,10 @@ from services.agent.src.voice_core.media_session import (
     MediaSessionResources,
     MediaVoiceCoreRegistry,
 )
-from services.agent.src.voice_core.media_session_types import ASREmptySegmentEvidence
+from services.agent.src.voice_core.media_session_types import (
+    ASREmptySegmentEvidence,
+    classify_empty_segment,
+)
 from services.agent.src.voice_core.playback_ledger import PlaybackSpan
 from services.agent.src.voice_core.reply_delivery import ReplyDeliveryEvent
 from services.agent.src.voice_core.speech_timeline import (
@@ -178,6 +182,71 @@ async def test_conversation_yield_proxy_resolves_only_on_matching_terminal() -> 
     await registry.finalize_session(identity.session_id)
 
 
+def test_empty_tail_classification_uses_captured_samples_for_gating() -> None:
+    assert (
+        classify_empty_segment(
+            evidence=ASREmptySegmentEvidence(
+                had_speech=False,
+                provider_failed=False,
+                retried=False,
+                rms=0,
+                samples=0,
+                min_rms=100,
+            ),
+            task_pcm_rms=None,
+            rescue_min_rms=None,
+            empty_audio_error=False,
+            turn_start_sample=None,
+        )
+        == "empty+gating"
+    )
+    assert (
+        classify_empty_segment(
+            evidence=ASREmptySegmentEvidence(
+                had_speech=False,
+                provider_failed=False,
+                retried=False,
+                rms=50,
+                samples=1600,
+                min_rms=100,
+            ),
+            task_pcm_rms=None,
+            rescue_min_rms=None,
+            empty_audio_error=False,
+            turn_start_sample=None,
+        )
+        == "low_rms"
+    )
+
+
+def test_empty_tail_classification_uses_preserved_segment_rms() -> None:
+    provider = _AckCapturingProvider()
+    provider.last_empty_segment_evidence = ASREmptySegmentEvidence(
+        had_speech=True,
+        provider_failed=True,
+        retried=True,
+        rms=398,
+        peak_abs=7641,
+        samples=22080,
+        min_rms=100,
+        primary_final_seen=False,
+        vendor_error=False,
+        degrade_reason="final_result_timeout",
+    )
+    registry = MediaVoiceCoreRegistry(
+        bridge=_CapturingMediaBridge(),
+        provider_factory=lambda _identity: provider,
+        metrics=MetricsRegistry(),
+    )
+    context = SimpleNamespace(
+        provider=provider,
+        pending=SimpleNamespace(turn_start_sample=0),
+        asr=None,
+    )
+
+    assert registry._classify_provider_final_missing(context) == "empty+vendor_silent"
+
+
 @pytest.mark.asyncio
 async def test_missed_hearing_nudge_cooldown_blocks_back_to_back_prompts() -> None:
     provider = _AckCapturingProvider()
@@ -267,6 +336,51 @@ async def test_empty_tail_discard_with_speech_gets_audible_fallback(
         else:
             await asyncio.sleep(0.05)
             assert provider.texts == []
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_stale_empty_tail_does_not_nudge_after_input_fence_advanced() -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = _device_identity("device-stale-empty-tail")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry.open_session(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        provider.texts.clear()
+        provider.last_empty_segment_evidence = ASREmptySegmentEvidence(
+            had_speech=True,
+            provider_failed=False,
+            retried=True,
+        )
+        context.pending.turn_start_sample = 0
+        context.pending.turn_endpoint_sample = 16_000
+        context.pending.turn_retire_sample = 16_640
+        context.pending.turn_endpoint_tail_deadline = None
+        context.pending.turn_input_fence = GenerationFence(
+            identity.session_id, 99, 1, 0
+        )
+
+        await registry._expire_endpoint_tail(
+            identity.session_id,
+            context.stream_epoch,
+            16_000,
+        )
+
+        assert context.missed_hearing_nudge_count == 0
+        await asyncio.sleep(0.05)
+        assert provider.texts == []
     finally:
         await registry.finalize_session(identity.session_id)
 

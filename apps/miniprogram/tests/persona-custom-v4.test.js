@@ -19,8 +19,8 @@ async function render(overrides) {
 
 test("my personas list the version and voice name, never the persona or voice id", async () => {
   const { text } = await render(fx.personaApi);
-  assert.match(text, /角色 自定义人格 写下名字和说话方式。/);
-  assert.match(text, /我的人格 小北 v1 · 音色 星澜 删除/);
+  assert.match(text, /声音与表达 自定义表达 写下名字和说话方式。/);
+  assert.match(text, /我的人格 小北 v1 · 音色 默认声音 删除/);
   assert.doesNotMatch(text, /cu_0123|回落|starlight|不落库/);
 });
 

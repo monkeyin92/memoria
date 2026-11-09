@@ -18,8 +18,11 @@ logger = logging.getLogger(__name__)
 async def gather_companion_context(
     memory_task: asyncio.Task[Any] | None,
     persona_task: asyncio.Task[Any] | None,
+    archive_task: asyncio.Task[Any] | None = None,
 ) -> list[Any] | None:
-    pending = [task for task in (memory_task, persona_task) if task is not None]
+    pending = [
+        task for task in (memory_task, persona_task, archive_task) if task is not None
+    ]
     if not pending:
         return []
     started = time.perf_counter()
@@ -42,7 +45,12 @@ async def gather_companion_context(
         return None
     if not any(ready(task) for task in pending):
         return None
-    return [_task_outcome(task) if ready(task) else TimeoutError() for task in pending]
+    ordered = (memory_task, persona_task, archive_task)
+    return [
+        _task_outcome(task) if task is not None and ready(task) else TimeoutError()
+        for task in ordered
+        if task is not None
+    ]
 
 
 def _task_outcome(task: asyncio.Task[Any]) -> Any:

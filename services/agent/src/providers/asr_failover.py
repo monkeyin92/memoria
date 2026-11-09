@@ -58,6 +58,27 @@ _FAILOVER_REASONS = frozenset(
 
 
 @dataclass(frozen=True, slots=True)
+class ASRSegmentEvidence:
+    """What the primary and backup saw on the segment that just ended.
+
+    The provider task evidence is reset before the media layer classifies an
+    empty turn. Keep this copy on the session so the RMS that was actually
+    accepted is not replaced by the next task's zeros.
+    """
+
+    rms: int
+    peak_abs: int
+    samples: int
+    min_rms: int
+    had_speech: bool
+    provider_failed: bool
+    retried: bool
+    primary_final_seen: bool
+    vendor_error: bool
+    degrade_reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class ASRFailoverConfig:
     """Environment-driven knobs for the Volcengine ASR chain.
 
@@ -73,6 +94,8 @@ class ASRFailoverConfig:
         "ASR_TERTIARY",
         "ASR_FAILOVER_FINAL_RESULT_TIMEOUT_MS",
         "ASR_FAILOVER_CONNECT_TIMEOUT_MS",
+        "ASR_FAILOVER_BACKUP_START_DELAY_MS",
+        "ASR_FAILOVER_RESCUE_BUDGET_MS",
         "ASR_BREAKER_FAILURES",
         "ASR_BREAKER_OPEN_S",
         "ASR_BACKUP_TIMEOUT_S",
@@ -87,6 +110,13 @@ class ASRFailoverConfig:
     # ``rotate_task`` saves nothing. Measured on the offline A/B: final p50
     # 0.09 s, p90 0.18 s, against a first partial p50 of 3.40 s.
     final_result_timeout_s: float = 1.0
+    # Let the backup start before the primary's final budget expires. The
+    # offline backup needs the whole segment, and starting it only after a
+    # timeout leaves less time than the media turn tail allows.
+    backup_start_delay_s: float = 0.25
+    # Ceiling for the whole degraded backup chain. The media turn tail is 6 s,
+    # so a rescue that runs longer than this cannot save the turn.
+    rescue_budget_s: float = 4.5
     connect_timeout_s: float = 2.0
     breaker_failures: int = 3
     breaker_open_s: float = 30.0
@@ -103,6 +133,10 @@ class ASRFailoverConfig:
             raise ValueError("ASR failover needs at least one backup or tertiary provider")
         if not 0 < self.final_result_timeout_s <= 30:
             raise ValueError("ASR final-result timeout must be within (0, 30] seconds")
+        if not 0 <= self.backup_start_delay_s <= 30:
+            raise ValueError("ASR backup start delay must be within [0, 30] seconds")
+        if not 0 < self.rescue_budget_s <= 30:
+            raise ValueError("ASR rescue budget must be within (0, 30] seconds")
         if not 0 < self.connect_timeout_s <= 30:
             raise ValueError("ASR connect timeout must be within (0, 30] seconds")
         if self.breaker_failures < 1:
@@ -127,8 +161,9 @@ class ASRFailoverConfig:
                 e.get("ASR_FAILOVER_FINAL_RESULT_TIMEOUT_MS", "1000")
             )
             / 1000.0,
-            connect_timeout_s=float(e.get("ASR_FAILOVER_CONNECT_TIMEOUT_MS", "2000"))
-            / 1000.0,
+            backup_start_delay_s=float(e.get("ASR_FAILOVER_BACKUP_START_DELAY_MS", "250")) / 1000.0,
+            rescue_budget_s=float(e.get("ASR_FAILOVER_RESCUE_BUDGET_MS", "4500")) / 1000.0,
+            connect_timeout_s=float(e.get("ASR_FAILOVER_CONNECT_TIMEOUT_MS", "2000")) / 1000.0,
             breaker_failures=int(e.get("ASR_BREAKER_FAILURES", "3")),
             breaker_open_s=float(e.get("ASR_BREAKER_OPEN_S", "30")),
             backup_timeout_s=float(e.get("ASR_BACKUP_TIMEOUT_S", "5")),
@@ -281,6 +316,7 @@ class FailoverASRSession:
         self._last_sent_sample = 0
         self._last_committed_sample = 0
         self._rotation_pending = False
+        self._gap_primary_ready = False
         self._segment_start: int | None = None
         self._segment_end: int | None = None
         self._segment_pcm = bytearray()
@@ -298,6 +334,14 @@ class FailoverASRSession:
         self._last_segment_had_speech = False
         self._last_segment_provider_failed = False
         self._last_segment_backup_retried = False
+        self._last_segment_rms = 0
+        self._last_segment_peak_abs = 0
+        self._last_segment_samples = 0
+        self._last_segment_min_rms = 100
+        self._last_segment_primary_final_seen = False
+        self._last_segment_vendor_error = False
+        self._last_segment_degrade_reason: str | None = None
+        self._last_segment_evidence_snapshot: ASRSegmentEvidence | None = None
 
     @property
     def task_epoch(self) -> int:
@@ -356,6 +400,12 @@ class FailoverASRSession:
     @property
     def last_segment_backup_retried(self) -> bool:
         return self._last_segment_backup_retried
+
+    @property
+    def last_segment_evidence(self) -> ASRSegmentEvidence | None:
+        """The completed segment's evidence, kept across the task reset."""
+
+        return self._last_segment_evidence_snapshot
 
     @property
     def degraded(self) -> bool:
@@ -609,6 +659,13 @@ class FailoverASRSession:
         self._segment_epoch += 1
         self._task_sample_origin = start
         self._reset_task_evidence()
+        if self._gap_primary_ready:
+            self._gap_primary_ready = False
+            primary = self._primary
+            if primary is not None:
+                self.task_id = primary.task_id or self.task_id
+                self._task_epoch = max(self._task_epoch, primary.task_epoch)
+            return
         if self._primary is not None and not self._degraded:
             self.task_id = self._primary.task_id or self.task_id
             self._task_epoch = max(self._task_epoch, self._primary.task_epoch)
@@ -690,82 +747,181 @@ class FailoverASRSession:
         if primary is not None and not self._degraded:
             await self._drain_primary()
             primary = self._primary
-        if primary is not None and not self._degraded:
-            # The budget runs from the negative packet, not from speech onset.
-            # The backup re-recognises the whole segment and cannot start until
-            # the audio ends, so judging a primary that is still streaming buys
-            # nothing. Cancelling the rotation is safe: the primary aborts its
-            # own task in a finally block.
-            self._finalize_at = self._clock()
-            try:
-                await asyncio.wait_for(
-                    primary.rotate_task(require_consumed=require_consumed),
-                    timeout=self.config.final_result_timeout_s,
-                )
-            except asyncio.CancelledError:
-                raise
-            except TimeoutError:
-                await self._degrade("final_result_timeout")
-            except Exception:
-                await self._degrade("provider_error")
-            else:
-                await self._drain_primary()
-                if not self._degraded:
-                    # A connected primary that returned a task boundary is a
-                    # healthy segment even when the transcript is empty.
-                    self._record_primary_success()
-        # A healthy primary that returns an empty transcript still has real
-        # audio.  Re-recognise it on the backup chain before dropping the
-        # segment, otherwise a silent vendor final becomes a turn with no
-        # reply while the PCM is discarded here.
-        pcm, _ = self._voiced_segment_pcm()
-        self._last_segment_had_speech = bool(pcm) and self._has_speech_energy(pcm)
-        self._last_segment_provider_failed = self._degraded
+        pcm, begin_ms = self._voiced_segment_pcm()
+        had_speech = bool(pcm) and self._has_speech_energy(pcm)
+        self._last_segment_had_speech = had_speech
+        self._last_segment_rms = audioop.rms(pcm, 2) if pcm else 0
+        self._last_segment_peak_abs = audioop.max(pcm, 2) if pcm else 0
+        self._last_segment_samples = len(pcm) // 2
+        self._last_segment_min_rms = int(getattr(self._sensevoice, "min_rms", 100))
         self._last_segment_backup_retried = False
-        if self._degraded or self._primary is None:
-            if self._primary_final_seen:
-                self._emit_task_finished()
+        backup_task: asyncio.Task[str | None] | None = None
+        primary_done = asyncio.Event()
+        if (
+            not self._primary_final_seen
+            and had_speech
+            and (self._sensevoice is not None or self._tertiary_factory is not None)
+        ):
+            if self._degraded or primary is None:
+                backup_task = asyncio.create_task(
+                    self._transcribe_backup(pcm),
+                    name="asr-failover-backup",
+                )
             else:
+                backup_task = asyncio.create_task(
+                    self._delayed_backup(pcm, primary_done=primary_done),
+                    name="asr-failover-backup",
+                )
+        try:
+            if primary is not None and not self._degraded:
+                # The budget runs from the negative packet, not from speech
+                # onset. The backup runs beside it, but it starts as soon as
+                # the primary returns without a final so a fast empty segment
+                # does not also pay the full start delay. Cancelling the
+                # rotation is safe: the primary aborts its own task in a
+                # finally block.
+                self._finalize_at = self._clock()
+                try:
+                    await asyncio.wait_for(
+                        primary.rotate_task(require_consumed=require_consumed),
+                        timeout=self.config.final_result_timeout_s,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except TimeoutError:
+                    await self._degrade("final_result_timeout")
+                except Exception:
+                    await self._degrade("provider_error")
+                # ``else`` runs before ``finally``: drain the primary first so
+                # ``_primary_final_seen`` is current before the backup starts.
+                else:
+                    await self._drain_primary()
+                    if not self._degraded:
+                        # A connected primary that returned a task boundary is
+                        # a healthy segment even when the transcript is empty.
+                        self._record_primary_success()
+                finally:
+                    if not self._primary_final_seen:
+                        primary_done.set()
+            self._last_segment_provider_failed = self._degraded
+            self._last_segment_primary_final_seen = self._primary_final_seen
+            self._last_segment_vendor_error = self._degrade_reason in {
+                "provider_error",
+                "connect_failed",
+                "breaker_open",
+            }
+            self._last_segment_degrade_reason = self._degrade_reason
+            if self._degraded or self._primary is None:
+                if self._primary_final_seen:
+                    await self._cancel_backup_task(backup_task)
+                    self._emit_task_finished()
+                else:
+                    self._last_segment_backup_retried = True
+                    await self._await_backup_and_emit(
+                        backup_task,
+                        pcm=pcm,
+                        begin_ms=begin_ms,
+                        emit_finished=True,
+                        budget_s=self.config.rescue_budget_s,
+                        timeout_message="asr failover rescue timed out budget_s=%s",
+                    )
+            elif not self._primary_final_seen:
                 self._last_segment_backup_retried = True
-                await self._emit_backup_result()
-        elif not self._primary_final_seen:
-            self._last_segment_backup_retried = True
-            budget_s = min(self.config.backup_timeout_s, _HEALTHY_EMPTY_RETRY_BUDGET_S)
-            try:
-                await asyncio.wait_for(
-                    self._emit_backup_result(emit_finished=False),
-                    timeout=budget_s,
+                budget_s = min(self.config.backup_timeout_s, _HEALTHY_EMPTY_RETRY_BUDGET_S)
+                await self._await_backup_and_emit(
+                    backup_task,
+                    pcm=pcm,
+                    begin_ms=begin_ms,
+                    emit_finished=False,
+                    budget_s=budget_s,
+                    timeout_message="asr failover empty retry timed out budget_s=%s",
                 )
-            except TimeoutError:
-                logger.info(
-                    "asr failover empty retry timed out budget_s=%s",
-                    budget_s,
-                )
+            else:
+                await self._cancel_backup_task(backup_task)
+        except asyncio.CancelledError:
+            await self._cancel_backup_task(backup_task)
+            raise
+        self._last_segment_evidence_snapshot = ASRSegmentEvidence(
+            rms=self._last_segment_rms,
+            peak_abs=self._last_segment_peak_abs,
+            samples=self._last_segment_samples,
+            min_rms=self._last_segment_min_rms,
+            had_speech=self._last_segment_had_speech,
+            provider_failed=self._last_segment_provider_failed,
+            retried=self._last_segment_backup_retried,
+            primary_final_seen=self._last_segment_primary_final_seen,
+            vendor_error=self._last_segment_vendor_error,
+            degrade_reason=self._last_segment_degrade_reason,
+        )
         self._rotation_pending = True
         self._finalize_at = None
         self._reset_segment_evidence()
 
-    async def _emit_backup_result(self, *, emit_finished: bool = True) -> bool:
-        pcm, begin_ms = self._voiced_segment_pcm()
-        samples = len(pcm) // 2
-        if not pcm or not self._has_speech_energy(pcm):
+    async def _delayed_backup(
+        self, pcm: bytes, *, primary_done: asyncio.Event
+    ) -> str | None:
+        delay = min(
+            self.config.backup_start_delay_s,
+            self.config.final_result_timeout_s,
+        )
+        if delay > 0:
+            try:
+                await asyncio.wait_for(primary_done.wait(), timeout=delay)
+            except TimeoutError:
+                pass
+        return await self._transcribe_backup(pcm)
+
+    @staticmethod
+    async def _cancel_backup_task(task: asyncio.Task[str | None] | None) -> None:
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await task
+
+    async def _await_backup_and_emit(
+        self,
+        task: asyncio.Task[str | None] | None,
+        *,
+        pcm: bytes,
+        begin_ms: int,
+        emit_finished: bool,
+        budget_s: float,
+        timeout_message: str,
+    ) -> bool:
+        if task is None:
             if emit_finished:
                 self._emit_task_finished()
             return False
-        text = await self._transcribe_backup(pcm)
+        try:
+            text = await asyncio.wait_for(task, timeout=budget_s)
+        except TimeoutError:
+            await self._cancel_backup_task(task)
+            logger.info(timeout_message, budget_s)
+            if emit_finished:
+                self._emit_task_finished()
+            return False
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("asr failover backup task failed", exc_info=True)
+            if emit_finished:
+                self._emit_task_finished()
+            return False
         if text is None:
-            if self.metrics is not None:
-                self.metrics.inc_media_metric("asr_both_failed_total")
-            logger.info(
-                "asr failover both providers failed segment_ms=%s reason=%s",
-                round(samples * 1000 / 16_000),
-                self._degrade_reason or "unknown",
-            )
+            self._record_backup_failure(len(pcm) // 2)
             if emit_finished:
                 self._emit_task_finished()
             return False
+        self._emit_backup_transcript(text, pcm=pcm, begin_ms=begin_ms)
+        if emit_finished:
+            self._emit_task_finished()
+        return True
+
+    def _emit_backup_transcript(self, text: str, *, pcm: bytes, begin_ms: int) -> None:
         self._backup_sentence_id += 1
-        duration_ms = round(samples * 1000 / 16_000)
+        duration_ms = round(len(pcm) // 2 * 1000 / 16_000)
         self.events.put_nowait(
             FunASRServerEvent(
                 event="result-generated",
@@ -782,14 +938,20 @@ class FailoverASRSession:
                 ),
             )
         )
-        if emit_finished:
-            self._emit_task_finished()
         if self.metrics is not None:
             self.metrics.inc_media_metric(
                 "asr_failover_total",
                 labels={"provider": "backup", "reason": "recovered"},
             )
-        return True
+
+    def _record_backup_failure(self, samples: int) -> None:
+        if self.metrics is not None:
+            self.metrics.inc_media_metric("asr_both_failed_total")
+        logger.info(
+            "asr failover both providers failed segment_ms=%s reason=%s",
+            round(samples * 1000 / 16_000),
+            self._degrade_reason or "unknown",
+        )
 
     def _voiced_segment_pcm(self) -> tuple[bytes, int]:
         """The utterance after VAD onset, capped to the backup budget.
@@ -925,6 +1087,7 @@ class FailoverASRSession:
         self._degraded = False
         self._degrade_reason = None
         self._rotation_pending = True
+        self._gap_primary_ready = await self._open_primary(segment_is_healthy=True)
         self._finalize_at = None
         self._reset_segment_evidence()
         logger.info("asr failover reset for upstream gap task_epoch=%s", self._task_epoch)
@@ -1021,6 +1184,7 @@ def build_asr_session_factory(
 
 __all__ = [
     "ASRFailoverConfig",
+    "ASRSegmentEvidence",
     "FailoverASRSession",
     "ProcessASRBreaker",
     "build_asr_session_factory",

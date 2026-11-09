@@ -41,6 +41,8 @@ def _session(name: str, resolver: object) -> tuple[DuplexRuntime, ReplyPipeline]
 
 async def _say(runtime: DuplexRuntime, pipeline: ReplyPipeline, text: str) -> str | None:
     fence = await runtime.on_turn_committed(text)
+    # Production's prepare_turn marks the turn's context frozen before the delegated answer is used.
+    pipeline._mark_context_ready(fence)
     return await pipeline.resolve_media_delegation(text, fence)
 
 
@@ -90,6 +92,22 @@ async def test_a_named_city_is_searched_and_remembered() -> None:
     assert await _say(runtime, pipeline, "今天天气怎么样") != ASK_WEATHER_CITY_REPLY
     assert len(search.queries) == 3
     assert _names(search.queries[2], "上海", "今天", "天气")
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_day_follow_up_before_a_city_is_inherited_when_the_city_arrives() -> None:
+    search = _Search()
+    runtime, pipeline = _session("weather-day-then-city", search)
+
+    assert await _say(runtime, pipeline, "今天天气怎么样？") == ASK_WEATHER_CITY_REPLY
+    assert await _say(runtime, pipeline, "那明天呢？") == ASK_WEATHER_CITY_REPLY
+    assert search.queries == []
+
+    answer = await _say(runtime, pipeline, "杭州")
+    assert len(search.queries) == 1
+    assert _names(search.queries[0], "杭州", "明天", "天气")
+    assert answer == f"查到了：{search.queries[0]}"
     await runtime.close()
 
 

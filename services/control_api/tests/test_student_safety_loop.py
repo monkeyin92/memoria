@@ -30,7 +30,7 @@ from services.common.fixed_safety_scripts import (
 )
 from services.control_api.app.device_binding_token import mint_device_binding_token
 from services.control_api.app.main import create_app
-from services.control_api.tests.test_interaction_api import (
+from services.control_api.tests.interaction_api_test_support import (
     _attach_signed_runtime_profile,
 )
 from services.guardian.crisis import minor_crisis_event_id

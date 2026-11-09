@@ -4,7 +4,12 @@ const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
 const { requireLogin } = require("../../utils/auth-gate");
-const { companions } = require("../../utils/companions");
+const { companions, defaultCompanionId } = require("../../utils/companions");
+
+function voiceNameForFallback(fallback) {
+  const match = companions.find((item) => item.id === fallback);
+  return match ? match.voiceName : "";
+}
 
 const ENUM_FIELDS = Object.freeze([
   {
@@ -80,7 +85,6 @@ const TEXT_FIELDS = Object.freeze([
   { key: "style_description", label: "一句话风格", placeholder: "例如：温和的陪伴者", maxlength: 60 },
   { key: "welcome_text", label: "打招呼", placeholder: "例如：嗨，我在。", maxlength: 60 },
   { key: "conversation_instruction", label: "说话方式", placeholder: "例如：说话短一点，像朋友。", maxlength: 200 },
-  { key: "voice_instruction", label: "声音提示", placeholder: "例如：轻松自然", maxlength: 120 },
 ]);
 
 function indexOfOption(options, value) {
@@ -104,12 +108,9 @@ Page({
     fields: { ...DEFAULT_FIELDS },
     enumFields: ENUM_FIELDS.map((field) => ({ ...field, index: 0 })),
     textFields: TEXT_FIELDS,
-    voiceOptions: companions.map((companion) => ({
-      id: companion.id,
-      name: companion.name,
-    })),
-    voiceIndex: 0,
     rateValue: 100,
+    voiceOptions: companions.map((item) => ({ id: item.id, name: item.voiceName })),
+    voiceIndex: 0,
   },
 
   goBack() {
@@ -134,13 +135,13 @@ Page({
     try {
       const payload = await api.listPersonas();
       if (!api.isAuthEpochCurrent(authEpoch)) return;
-      const personas = Array.isArray(payload?.custom_personas) ? payload.custom_personas : [];
-      this.setData({
-        personas: personas.map((item) => ({
-          ...item,
-          voiceName: companions.find((companion) => companion.id === item?.fallback_designed_voice)?.name || "",
-        })),
-      });
+      const personas = (Array.isArray(payload?.custom_personas) ? payload.custom_personas : []).map(
+        (persona) => ({
+          ...persona,
+          voiceName: voiceNameForFallback(persona?.fallback_designed_voice),
+        }),
+      );
+      this.setData({ personas });
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ loadingError: error?.message || "自定义人格列表读取失败。" });
@@ -181,7 +182,7 @@ Page({
   onVoiceChange(event) {
     const index = Number(event.detail.value);
     if (!Number.isInteger(index) || !this.data.voiceOptions[index]) return;
-    this.setData({ voiceIndex: index, error: "" });
+    this.setData({ voiceIndex: index });
   },
 
   onRateChange(event) {
@@ -249,8 +250,7 @@ Page({
       const record = await api.createCustomPersona({
         displayName: name,
         structured: { ...this.data.fields },
-        fallbackDesignedVoice:
-          this.data.voiceOptions[this.data.voiceIndex]?.id || "starlight",
+        fallbackDesignedVoice: this.data.voiceOptions[this.data.voiceIndex]?.id || defaultCompanionId,
       });
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({

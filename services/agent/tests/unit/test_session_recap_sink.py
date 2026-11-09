@@ -58,6 +58,7 @@ async def test_publish_posts_summary_and_facts_without_transcript() -> None:
     await sink.aclose()
     assert result is not None
     assert result["summary_record_id"] == "dlgsum:1"
+    assert result["info_state"] == "ready"
     assert posted[0]["subject_id"] == "child-1"
     assert posted[0]["summary_text"] == "聊了恐龙和小狗"
     assert "transcript" not in posted[0]
@@ -100,12 +101,12 @@ async def test_publish_skips_short_session_without_model_or_post() -> None:
         ],
     )
     await sink.aclose()
-    assert result == {
-        "skipped": True,
-        "reason": "fewer_than_two_turns",
-        "summary_record_id": None,
-        "archive_record_ids": [],
-    }
+    assert result is not None
+    assert result["skipped"] is True
+    assert result["reason"] == "fewer_than_two_turns"
+    assert result["info_state"] == "skipped_short"
+    assert result["summary_record_id"] is None
+    assert result["archive_record_ids"] == []
     assert calls == 0
     assert model_calls == 0
 
@@ -142,12 +143,12 @@ async def test_publish_skips_when_model_fails_without_raw_fallback() -> None:
         ],
     )
     await sink.aclose()
-    assert result == {
-        "skipped": True,
-        "reason": "summary_model_failed",
-        "summary_record_id": None,
-        "archive_record_ids": [],
-    }
+    assert result is not None
+    assert result["skipped"] is True
+    assert result["reason"] == "summary_model_failed"
+    assert result["info_state"] == "failed"
+    assert result["summary_record_id"] is None
+    assert result["archive_record_ids"] == []
     assert calls == 0
 
 
@@ -253,11 +254,11 @@ async def test_any_crisis_turn_posts_nothing_and_skips_the_model() -> None:
         ],
     )
     await sink.aclose()
-    assert result == {
-        "skipped": True,
-        "reason": "crisis_in_session",
-        "summary_record_id": None,
-        "archive_record_ids": [],
-    }
+    assert result is not None
+    assert result["skipped"] is True
+    assert result["reason"] == "crisis_in_session"
+    assert result["info_state"] == "crisis_skipped"
+    assert result["summary_record_id"] is None
+    assert result["archive_record_ids"] == []
     assert calls == 0
     assert model_calls == 0

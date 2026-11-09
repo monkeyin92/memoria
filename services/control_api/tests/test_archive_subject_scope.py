@@ -11,8 +11,9 @@ from unittest.mock import AsyncMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 from services.archive.domain import EvidenceEvent
+from services.control_api.app import persistent_runtime_profile
 from services.control_api.app.main import create_app
-from services.control_api.tests.test_archive_api import (
+from services.control_api.tests.archive_api_test_support import (
     PersonaObservationStub,
     _configure,
     _register_minor,
@@ -218,8 +219,6 @@ async def test_revoked_consent_blocks_every_private_read_exit(
 async def test_session_archive_checks_all_existing_runtime_identity_fences(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from services.control_api.app.routes import interaction
-
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -233,7 +232,9 @@ async def test_session_archive_checks_all_existing_runtime_identity_fences(
         }
         app.state.session_runtime_service = object()
         monkeypatch.setattr(
-            interaction, "_current_persistent_runtime_profile", AsyncMock(return_value=fences)
+            persistent_runtime_profile,
+            "current_persistent_runtime_profile",
+            AsyncMock(return_value=fences),
         )
         positive = await client.post(
             "/v1/archive/session-events", headers=INTERNAL,
@@ -485,7 +486,7 @@ async def _read_subject_memory(
 ) -> tuple[Any, Any]:
     """Read the two subject-scoped memory seams for one signed runtime profile."""
 
-    from services.control_api.tests.test_interaction_api import (
+    from services.control_api.tests.interaction_api_test_support import (
         _attach_signed_runtime_profile,
         _response_plan_body,
     )
@@ -528,8 +529,6 @@ async def test_same_account_self_claims_stay_on_their_own_subject(
     """
 
     from services.archive.domain import EvidenceEvent
-    from services.control_api.app.routes import interaction
-
     _configure(monkeypatch, tmp_path)
     monkeypatch.setenv(
         "MEMORIA_RESPONSE_PLAN_TOKEN", "response-plan-token-that-is-long-enough"
@@ -624,7 +623,6 @@ async def test_same_account_self_claims_stay_on_their_own_subject(
     assert "散步" in owner_plan.text
     assert seen_subjects
     assert set(seen_subjects) == {"person-other-adult", owner["user_id"]}
-    del interaction
 
 
 @pytest.mark.asyncio
@@ -859,8 +857,6 @@ async def test_stale_session_event_fence_creates_no_claim(
 ) -> None:
     """A stale subject fence is rejected before any claim is written."""
 
-    from services.control_api.app.routes import interaction
-
     _configure(monkeypatch, tmp_path)
     app = create_app()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -869,8 +865,8 @@ async def test_stale_session_event_fence_creates_no_claim(
         session = (await client.post("/v1/sessions", headers=headers, json={})).json()
         app.state.session_runtime_service = object()
         monkeypatch.setattr(
-            interaction,
-            "_current_persistent_runtime_profile",
+            persistent_runtime_profile,
+            "current_persistent_runtime_profile",
             AsyncMock(
                 return_value={
                     "active_subject_id": owner["user_id"],
@@ -966,12 +962,11 @@ def _one_trait_capsule(version_id: str, description: str) -> Any:
 async def test_response_plan_persona_follows_the_person_using_the_device(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """P1-03: the persona is the current user's own, learned per person.
+    """P1-03 / A06: account persona stays; other-subject persona needs more than bind.
 
-    The account holder gets the account holder's persona; another subject (a
-    child or elder on a one-to-one device) reads its own persona from the
-    engine, and only while the signed profile carries the binding's
-    long-term-memory grant.
+    The account holder still gets the account persona. Another subject on the
+    device used to open persona via bind+memory grant; A06 treats that as
+    private authority, so the grant alone no longer opens it.
     """
 
     from services.persona.domain import PersonaCapsule
@@ -1036,15 +1031,16 @@ async def test_response_plan_persona_follows_the_person_using_the_device(
     # The account holder is the user: the account holder's persona answers.
     assert _ACCOUNT_TRAIT in owner_plan.text
     assert owner_prefetch.json()["persona_version_id"] == "account-persona"
-    # Another person using the device gets their own persona, never the account's.
-    assert _SUBJECT_TRAIT in user_plan.text
+    # A06: another person on the device does not get private persona from bind+grant.
+    assert _SUBJECT_TRAIT not in user_plan.text
     assert _ACCOUNT_TRAIT not in user_plan.text
-    assert user_prefetch.json()["persona_version_id"] == "subject-persona"
-    # Without the long-term-memory grant the subject's persona is not read at all.
+    assert user_prefetch.json()["persona_version_id"] is None
+    # Without the long-term-memory grant the subject's persona stays closed too.
     assert _SUBJECT_TRAIT not in revoked_plan.text
     assert _ACCOUNT_TRAIT not in revoked_plan.text
     assert len(requests) == calls_before_revoke
-    assert {request.subject_id for request in requests} == {None, "person-device-user"}
+    # Only the account-holder read opens persona (subject_id None on the engine request).
+    assert {request.subject_id for request in requests} == {None}
 
 
 @pytest.mark.asyncio

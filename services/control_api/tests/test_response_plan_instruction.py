@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from services.agent.src.prompts import AI_IDENTITY_RULE_TRANSPARENT
-from services.control_api.app.routes.interaction import _instruction_text
+from services.control_api.app.response_plan_payload import _instruction_text
 from services.identity.domain import CustomPersonaRecord
 from services.persona.custom_persona_fields import custom_persona_definition
 

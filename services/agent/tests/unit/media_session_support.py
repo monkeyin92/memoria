@@ -688,8 +688,9 @@ async def _qa_commit_repeat_question(
     end_sample: int,
     retire_sample: int,
 ) -> tuple[GenerationFence | None, str | None]:
-    """Re-transcribe ``text`` over the contiguous range and commit it."""
+    """Commit a repeated question over the unconsumed capture range."""
 
+    start_sample = max(start_sample, context.runtime.speech_timeline.committed_sample)
     segment = SpeechSegment(
         session_id=identity.session_id,
         stream_epoch=identity.stream_epoch,
@@ -1176,3 +1177,12 @@ async def _start_speaking_reply(
     session.reset_downlink_generation(fence)  # type: ignore[attr-defined]
     session.generation_active = True  # type: ignore[attr-defined]
     return context, fence
+
+
+def _commit_timing_fields(caplog: pytest.LogCaptureFixture) -> list[dict[str, str]]:
+    prefix = "media turn commit timing "
+    return [
+        dict(part.split("=", 1) for part in record.getMessage()[len(prefix):].split())
+        for record in caplog.records
+        if record.getMessage().startswith(prefix)
+    ]

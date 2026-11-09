@@ -44,6 +44,48 @@ def test_revisions_replace_partials_without_fifo_assumptions() -> None:
     assert timeline.committed_sample == 320
 
 
+def test_consumed_text_is_not_reused_when_asr_extends_past_the_endpoint() -> None:
+    timeline = SpeechTimeline()
+    first = segment("first", start=0, end=640, text="我想伤害自己。")
+    future = segment("second", start=640, end=960, text="我爸爸打我，好疼。")
+    assert timeline.add(first)
+    assert timeline.add(future)
+
+    assert timeline.canonical_text(stream_epoch=1, start_sample=0, end_sample=320) == first.text
+
+    assert timeline.committed_sample == 320
+    assert timeline.projected_text(stream_epoch=1, start_sample=320, end_sample=960) == future.text
+    assert timeline.pending == (future,)
+
+
+def test_late_text_straddling_a_committed_turn_requires_a_normalized_tail() -> None:
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    timeline.commit_range(stream_epoch=1, start_sample=0, end_sample=320)
+    late = segment("late", start=0, end=640, text="旧文字 新文字")
+
+    assert not timeline.can_add(late)
+    assert not timeline.add(late)
+    assert timeline.projected_text(stream_epoch=1, start_sample=320, end_sample=640) == ""
+    tail = segment("late:tail", start=320, end=640, text="新文字")
+    assert timeline.add(tail)
+    assert timeline.projected_text(stream_epoch=1, start_sample=320, end_sample=640) == "新文字"
+
+
+def test_projected_text_can_drop_a_previous_segment_crossing_the_turn_start() -> None:
+    timeline = SpeechTimeline()
+    timeline.add(segment("old", start=0, end=640, text="旧受害文本"))
+    timeline.add(segment("current", start=320, end=960, text="我同学被别人打了"))
+
+    assert timeline.projected_text(stream_epoch=1, start_sample=320, end_sample=960) == "旧受害文本 我同学被别人打了"
+    assert timeline.projected_text(
+        stream_epoch=1,
+        start_sample=320,
+        end_sample=960,
+        exclude_cross_boundary=True,
+    ) == "我同学被别人打了"
+
+
 def test_same_logical_version_is_idempotent_except_for_final_upgrade() -> None:
     timeline = SpeechTimeline()
     partial = segment(

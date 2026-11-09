@@ -10,6 +10,7 @@ from services.common.companion_response_safety import (
     companion_safety_decision,
     fixed_companion_reply,
 )
+from services.common.crisis_policy import route_crisis
 from services.common.fixed_safety_scripts import (
     CRISIS_SELF_ESCALATION_SCRIPT,
     CRISIS_SELF_SCRIPT,
@@ -259,6 +260,36 @@ def test_victim_matching_tolerates_speaker_to_mic_asr_slips(query: str) -> None:
 def test_crisis_self_matching_tolerates_huo_homophone_asr_slips(query: str) -> None:
     assert companion_safety_decision(query) == "crisis_self"
     assert _fixed_reply(query) == CRISIS_SELF_SCRIPT.display
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "我想拿刀划自己",
+        "我想拿刀画自己",
+        "我想拿刀画自己。",
+    ),
+)
+def test_crisis_self_matching_tolerates_knife_hua_asr_slips(query: str) -> None:
+    """Live SenseVoice commits 划→画; tip 划 must stay crisis_self."""
+
+    assert companion_safety_decision(query) == "crisis_self"
+    assert _fixed_reply(query) == CRISIS_SELF_ESCALATION_SCRIPT.display
+
+
+@pytest.mark.parametrize(
+    "query",
+    (
+        "我想拿刀画自己",
+        "我想拿刀画自己。",
+    ),
+)
+def test_knife_hua_asr_sticky_escalation_with_prior_hits(query: str) -> None:
+    route = route_crisis(query, prior_self_crisis_hits=1)
+
+    assert companion_safety_decision(query) == "crisis_self"
+    assert route.script is not None
+    assert route.script.template_id == "crisis-self-escalation"
 
 
 @pytest.mark.parametrize(

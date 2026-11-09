@@ -1,7 +1,7 @@
 const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const compliance = require("../../utils/compliance");
-const { companionById, defaultCompanionId } = require("../../utils/companions");
+const { defaultCompanionId } = require("../../utils/companions");
 const { requireLogin } = require("../../utils/auth-gate");
 const { MODE_META, readBindingManifest, entryAllowed } = require("../../utils/device-binding");
 const { guardianSubjectFromBinding } = require("../../utils/guardian");
@@ -508,7 +508,7 @@ Page({
         profile,
         profileInitial: profileInitialFor(profile.display_name),
         isMinor: profile.subject_category === "minor",
-        deviceName: binding ? devicePlaceName(binding, companionById(profile.companion_id).name) : "",
+        deviceName: binding ? devicePlaceName(binding) : "",
         accountId: identity.user_id,
         ...capabilityState,
       });

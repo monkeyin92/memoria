@@ -189,6 +189,7 @@ class EffectiveCapabilities:
     history: bool
     learning: bool
     voice_profile: bool
+    child_archive_confirmed_only: bool
 
     def payload(self) -> dict[str, bool]:
         return asdict(self)
@@ -429,6 +430,9 @@ class ModePolicy:
                 or (self_preview and speaker_class == "owner")
                 or legacy_personal_voice
             ),
+            child_archive_confirmed_only=(
+                account_active and companion and speaker_class == "uncertain"
+            ),
         )
 
     @classmethod
@@ -492,6 +496,7 @@ class ModePolicy:
                 history=companion,
                 learning=companion,
                 voice_profile=companion or self_preview or legacy_personal_voice,
+                child_archive_confirmed_only=False,
             ).payload(),
         }
 

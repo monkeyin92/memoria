@@ -11,6 +11,7 @@ from typing import Final, Literal
 
 from services.agent.src.mode_policy_client import ModePolicy
 from services.agent.src.observability.metrics import MetricsRegistry
+from services.common.child_archive_claim_marker import is_child_archive_confirmed_claim
 
 ContextRole = Literal["user", "assistant"]
 SpeakerScope = Literal["owner", "public"]
@@ -95,12 +96,21 @@ def scope_context_snapshot_draft(draft: ContextSnapshotDraft) -> ContextSnapshot
 
     if draft.speaker_class == "owner":
         return draft
+    memory = MemoryCapsule()
+    if draft.speaker_class == "uncertain":
+        memory = MemoryCapsule(
+            entries=tuple(
+                entry
+                for entry in draft.memory_capsule.entries
+                if is_child_archive_confirmed_claim(entry.source_refs)
+            )
+        )
     return replace(
         draft,
         recent_committed_turns=tuple(
             turn for turn in draft.recent_committed_turns if turn.speaker_scope == "public"
         ),
-        memory_capsule=MemoryCapsule(),
+        memory_capsule=memory,
         persona_capsule=PersonaCapsule(),
         tool_permission=False,
         summary="",

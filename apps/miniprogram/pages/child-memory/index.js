@@ -6,6 +6,7 @@ const { readBindingManifest } = require("../../utils/device-binding");
 const {
   CHILD_ARCHIVE_CONSENT,
   CLEARED_TOAST,
+  CLEAR_CONFIRM,
   CONSENT_OFF_DIALOG,
   DELETE_CONFIRM,
   DELETE_KEEP,
@@ -255,9 +256,79 @@ Page({
       confirm: {
         kind: "clear-summaries",
         title: "清空全部摘要？",
-        body: DELETE_CONFIRM,
+        body: CLEAR_CONFIRM,
         quote: "",
         confirmLabel: "清空全部",
+      },
+    });
+  },
+
+  askConfirmArchive(event) {
+    const recordId = event.currentTarget.dataset.recordId;
+    if (!recordId) return;
+    this.setData({
+      confirm: {
+        kind: "confirm-archive",
+        recordId,
+        title: "确认这条记忆？",
+        body: "确认后，机器人可以在以后的聊天里使用这条记忆。",
+        quote: quoteForRecord(this.data.archiveFlat, recordId),
+        confirmLabel: "确认",
+      },
+    });
+  },
+
+  askCorrectArchive(event) {
+    const recordId = event.currentTarget.dataset.recordId;
+    if (!recordId) return;
+    const current = quoteForRecord(this.data.archiveFlat, recordId);
+    this.setData({
+      confirm: {
+        kind: "correct-archive",
+        recordId,
+        title: "更正这条记忆？",
+        body: "请输入正确内容。更正会生成新版本，旧版本不再用于展示和召回。",
+        quote: current,
+        confirmLabel: "更正",
+        draftText: current,
+        historyChange: false,
+      },
+    });
+  },
+
+  askHistoryChange(event) {
+    const recordId = event.currentTarget.dataset.recordId;
+    if (!recordId) return;
+    const current = quoteForRecord(this.data.archiveFlat, recordId);
+    const draft = current.includes("喜欢")
+      ? current.replace("喜欢", "不喜欢")
+      : `不喜欢${current}`;
+    this.setData({
+      confirm: {
+        kind: "correct-archive",
+        recordId,
+        title: "更新为现在不喜欢？",
+        body: "会撤回旧版本并写入新版本，不会并列两条冲突事实。",
+        quote: current,
+        confirmLabel: "更新",
+        draftText: draft,
+        historyChange: true,
+        polarity: "negative",
+      },
+    });
+  },
+
+  askWithdrawArchive(event) {
+    const recordId = event.currentTarget.dataset.recordId;
+    if (!recordId) return;
+    this.setData({
+      confirm: {
+        kind: "withdraw-archive",
+        recordId,
+        title: "撤回这条记忆？",
+        body: "撤回后不会再出现在默认列表，也不会进入对话召回。新会话与缓存行为由 A05 验收。",
+        quote: quoteForRecord(this.data.archiveFlat, recordId),
+        confirmLabel: "撤回",
       },
     });
   },
@@ -283,7 +354,7 @@ Page({
       confirm: {
         kind: "clear-archive",
         title: "清空长期记忆？",
-        body: DELETE_CONFIRM,
+        body: CLEAR_CONFIRM,
         quote: "",
         confirmLabel: "清空全部",
       },
@@ -356,9 +427,45 @@ Page({
         await api.clearChildSessionSummaries(minorId);
         this.setData({ confirm: null, statusBanner: CLEARED_TOAST });
         await this.refresh();
+      } else if (confirm.kind === "confirm-archive") {
+        const receipt = await api.reviewChildArchiveFact(minorId, confirm.recordId, {
+          action: "confirm",
+        });
+        this.setData({
+          confirm: null,
+          statusBanner: receipt?.display_label
+            ? `已确认（回执 ${receipt.audit_event_id || ""}）`
+            : "已确认",
+        });
+        await this.refresh();
+      } else if (confirm.kind === "correct-archive") {
+        const receipt = await api.reviewChildArchiveFact(minorId, confirm.recordId, {
+          action: "correct",
+          text: confirm.draftText || quoteForRecord(this.data.archiveFlat, confirm.recordId),
+          polarity: confirm.polarity || undefined,
+          history_change: Boolean(confirm.historyChange),
+        });
+        this.setData({
+          confirm: null,
+          statusBanner: receipt?.new_record_id
+            ? `已更新为新版本（回执 ${receipt.audit_event_id || ""}）`
+            : "已更正",
+        });
+        await this.refresh();
+      } else if (confirm.kind === "withdraw-archive") {
+        const receipt = await api.reviewChildArchiveFact(minorId, confirm.recordId, {
+          action: "withdraw",
+        });
+        this.setData({
+          confirm: null,
+          statusBanner: receipt?.audit_event_id
+            ? `已撤回（回执 ${receipt.audit_event_id}）`
+            : "已撤回",
+        });
+        await this.refresh();
       } else if (confirm.kind === "delete-archive") {
         await api.deleteChildArchiveFact(minorId, confirm.recordId);
-        this.setData({ confirm: null });
+        this.setData({ confirm: null, statusBanner: "已删除" });
         await this.refresh();
       } else if (confirm.kind === "clear-archive") {
         await api.clearChildArchive(minorId);

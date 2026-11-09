@@ -246,21 +246,18 @@ test("subscription-state query failure is unknown, not pretended off", async () 
   );
 });
 
-test("device settings toggle uses ledger state and real opt-out, not UI-only off", () => {
+test("home owns the ledger-backed safety toggle and device keeps hardware settings", () => {
   const script = fs.readFileSync(path.join(root, "pages/device/index.js"), "utf8");
   const template = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
-  assert.match(template, /subscriptionPushEnabled/);
-  assert.match(template, /安全提醒/);
-  assert.match(template, /safetySubscribeHelper|家长打开小程序时首页会置顶显示/);
-  assert.match(template, /safetySubscribeOffCaption/);
-  assert.match(template, /safetySubscribeKnown && safetySubscribeOn/);
-  assert.match(template, /disabled="\{\{!safetySubscribeKnown \|\| safetySubscribeBusy\}\}"/);
-  assert.match(template, /bindtap="retrySafetySubscribeState"/);
-  assert.match(template, /bindchange="onSafetySubscribeChange"/);
+  const home = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
+  assert.match(home, /subscriptionPushEnabled/);
+  assert.match(home, /safetySubscribeHelper/);
+  assert.match(home, /safetySubscribeKnown && safetySubscribeOn/);
+  assert.match(home, /disabled="\{\{!safetySubscribeKnown \|\| safetySubscribeBusy\}\}"/);
+  assert.match(home, /bindchange="onSafetySubscribeChange"/);
+  assert.doesNotMatch(template, /bindchange="onSafetySubscribeChange"/);
   assert.match(template, /bindchange="onLimitsMinutesSlider"/);
-  assert.match(template, /隐私说明/);
-  assert.match(template, /解绑设备/);
-  assert.match(template, /mp-privacy-well|privacyNote/);
+  assert.match(template, /解除绑定/);
   assert.match(script, /loadSafetySubscribeState/);
   assert.match(script, /safetySubscribeView/);
   assert.match(script, /retrySafetySubscribeState/);

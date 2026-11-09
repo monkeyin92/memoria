@@ -1,4 +1,4 @@
-"""A device-bound owner claim is honoured only on its own confirming profile."""
+"""Device-bound owner claims never unlock private authority from profile alone (A06)."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from services.control_api.app.bound_subject import (
     claims_device_bound_subject,
     runtime_profile_trusts_bound_subject,
 )
+from services.control_api.app.response_plan_contract import ResponsePlanSpeakerDecision
 from services.control_api.app.routes.interaction import (
-    ResponsePlanSpeakerDecision,
     _SubjectMemoryScope,
     _trusted_speaker_decision,
 )
@@ -29,9 +29,9 @@ def _profile(**overrides: Any) -> dict[str, Any]:
     return profile
 
 
-def test_confirmed_bound_subject_with_private_recall_is_trusted() -> None:
-    assert runtime_profile_trusts_bound_subject(_profile()) is True
-    assert runtime_profile_trusts_bound_subject(_profile(), subject_id="person-child") is True
+def test_signed_profile_never_trusts_bind_as_speaker() -> None:
+    assert runtime_profile_trusts_bound_subject(_profile()) is False
+    assert runtime_profile_trusts_bound_subject(_profile(), subject_id="person-child") is False
 
 
 @pytest.mark.parametrize(
@@ -39,19 +39,17 @@ def test_confirmed_bound_subject_with_private_recall_is_trusted() -> None:
     [
         {"active_subject_id": None},
         {"active_subject_id": "unknown"},
-        {"active_subject_id": "  "},
         {"speaker_state": "unconfirmed"},
         {"service_mode": "unknown_safe"},
         {"capabilities": ["chat"]},
-        {"capabilities": None},
+        {},
     ],
 )
-def test_bound_subject_trust_fails_closed(overrides: dict[str, Any]) -> None:
+def test_bound_subject_trust_stays_false_for_any_profile(overrides: dict[str, Any]) -> None:
     assert runtime_profile_trusts_bound_subject(_profile(**overrides)) is False
 
 
-def test_bound_subject_trust_is_for_the_named_subject_only() -> None:
-    assert runtime_profile_trusts_bound_subject(_profile(), subject_id="person-adult") is False
+def test_bound_subject_trust_is_false_without_a_profile() -> None:
     assert runtime_profile_trusts_bound_subject(None) is False
 
 
@@ -81,16 +79,16 @@ def _claim(
     )
 
 
-def test_trusted_profile_keeps_the_device_bound_owner() -> None:
-    decision = _trusted_speaker_decision(_claim(), _scope(trusted=True))
+@pytest.mark.parametrize("trusted", [True, False])
+def test_device_bound_owner_claim_is_always_demoted(trusted: bool) -> None:
+    decision = _trusted_speaker_decision(_claim(), _scope(trusted=trusted))
 
-    assert decision.classification == "owner"
-    assert decision.reason_code == DEVICE_BOUND_SUBJECT_REASON
+    assert decision.classification == "uncertain"
+    assert decision.reason_code == DEVICE_BOUND_SUBJECT_UNVERIFIED
 
 
-@pytest.mark.parametrize("scope", [None, _scope(trusted=False)])
-def test_unconfirmed_profile_downgrades_the_claim(scope: _SubjectMemoryScope | None) -> None:
-    decision = _trusted_speaker_decision(_claim(), scope)
+def test_missing_scope_demotes_the_device_bound_claim() -> None:
+    decision = _trusted_speaker_decision(_claim(), None)
 
     assert decision.classification == "uncertain"
     assert decision.reason_code == DEVICE_BOUND_SUBJECT_UNVERIFIED

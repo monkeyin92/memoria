@@ -22,7 +22,6 @@ from services.agent.tests.unit.runtime_profile_test_helpers import (
     bind_owner_policy,
     canonical_wire_payload,
 )
-from services.speaker.domain import DEVICE_BOUND_SUBJECT_REASON
 
 NOTE = "记不下来"
 
@@ -63,8 +62,8 @@ def _instructions(query: str, *, minor: bool = True, grant: bool = True) -> str:
         fence=GenerationFence("s", 1, 1, 0, 1),
         speaker=SimpleNamespace(
             classification="owner",
-            reason_code=DEVICE_BOUND_SUBJECT_REASON,
-            model_version="device-binding-v1",
+            reason_code="authenticated_text_input",
+            model_version="account-auth-v1",
             profile_id=None,
             template_version=None,
         ),

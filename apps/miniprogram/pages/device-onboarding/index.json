@@ -3,7 +3,6 @@
   "navigationStyle": "custom",
   "enablePullDownRefresh": false,
   "usingComponents": {
-    "face-badge": "/components/face-badge/index",
     "device-screen": "/components/device-screen/index",
     "mp-icon": "/components/mp-icon/index"
   }

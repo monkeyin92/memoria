@@ -1,5 +1,6 @@
 <view class="page-shell trial-page tab-page home-v4" style="{{statusBarStyle}}">
   <view wx:if="{{!authenticated}}" class="home-guest">
+    <view class="guest-brand-art"><face-badge role="starlight" size="brand" plain="{{true}}"></face-badge></view>
     <text class="page-title">{{guestHome.productTitle}}</text>
     <text class="page-lede">{{guestHome.productBody}}</text>
     <view class="card guest-features">
@@ -36,7 +37,7 @@
         <text class="eyebrow">{{pageLede}}</text>
         <text class="trial-title">今天</text>
       </view>
-      <view class="home-avatar" bindtap="openProfile">{{avatarGlyph}}</view>
+      <view class="home-avatar" bindtap="openProfile" aria-label="打开我的资料">{{avatarGlyph}}</view>
     </view>
 
     <view wx:if="{{loading}}" class="trial-card home-pad">
@@ -89,51 +90,56 @@
         <image class="home-chev" src="/assets/ui/v4/chev-rust.svg" />
       </view>
 
-      <view class="trial-card trial-card-xl home-usage-card" bindtap="openDevice">
-        <view class="home-ring" style="{{usageRingStyle}}">
-          <view class="home-ring-inner">
-            <text class="home-ring-num">{{usageCenterLabel}}</text>
-            <text class="home-ring-cap">{{usageCapLabel}}</text>
-          </view>
+      <view class="trial-card trial-card-xl home-review-card" bindtap="openMemory">
+        <view class="home-review-top">
+          <text class="home-lbl">近期回顾</text>
         </view>
-        <view class="home-usage-copy">
-          <text class="home-lbl">今天聊了</text>
-          <view wx:if="{{usageKnown}}" class="home-usage-line">
-            <text class="home-usage-num">{{usageUsedMinutes}}</text>
-            <text class="home-usage-unit"> 分钟</text>
+        <view class="home-review-body">
+          <view class="home-review-copy">
+            <text wx:if="{{memoryPreviews.length}}" class="home-review-lead">{{memoryPreviews[0].text}}</text>
+            <text wx:elif="{{dailySummaryText}}" class="home-review-lead">{{dailySummaryText}}</text>
+            <text wx:else class="home-review-empty">还没有摘要，聊过之后会出现在这里</text>
           </view>
-          <text wx:else class="home-usage-pending">用量暂未统计</text>
+          <view class="home-review-art"><face-badge role="starlight" size="review" plain="{{true}}"></face-badge></view>
+        </view>
+        <view class="home-review-meta">
+          <text class="home-review-stat">今天对话 {{todayCount}} 次</text>
+          <text wx:if="{{showChildMemory}}" class="home-review-stat">近期摘要 {{summaryCount}} 条</text>
+          <text class="home-review-open">打开回顾 ↗</text>
+        </view>
+      </view>
+
+      <view class="home-section-head"><text>陪伴日常</text><text class="home-section-meta">在这里，慢慢了解 TA</text></view>
+      <view class="trial-card home-device-card" bindtap="openDevice">
+        <view class="home-device-illustration"><device-screen online="{{online}}" size="120"></device-screen></view>
+        <view class="home-device-copy">
           <view class="trial-status-pill {{online ? '' : 'is-off'}}">
             <view class="trial-status-dot"></view>
-            <text>{{personaName}}{{online ? '在线' : '离线'}}</text>
+            <text>{{devicePlaceName}} · {{online ? '在线' : '离线'}}</text>
+          </view>
+          <text class="home-lbl">今日聊天用量</text>
+          <view wx:if="{{usageKnown}}" class="home-usage-compact">
+            <text class="home-usage-compact-num">{{usageUsedMinutes}}</text>
+            <text wx:if="{{usageLimitMinutes}}" class="home-usage-compact-unit"> / {{usageLimitMinutes}} 分钟</text>
+            <text wx:else class="home-usage-compact-unit"> 分钟</text>
+          </view>
+          <text wx:else class="home-usage-pending">用量暂未统计</text>
+          <text class="home-usage-cap-hint">{{usageLimitMinutes ? usageCapLabel : '查看设备设置'}}</text>
+          <view wx:if="{{usageKnown && usageLimitMinutes}}" class="progress-track home-usage-track">
+            <view
+              class="progress-fill"
+              style="width: {{usageKnown && usageFillPercent ? usageFillPercent : 0}}%;"
+            ></view>
           </view>
         </view>
+        <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>
 
-      <view class="home-stat-grid">
-        <view class="trial-card home-stat" bindtap="openMemory">
-          <view class="mp-icon-tile"><image src="/assets/ui/v4/book-accent.svg" /></view>
-          <text class="home-lbl">今天对话</text>
-          <view class="home-stat-line">
-            <text class="home-stat-num">{{todayCount}}</text>
-            <text class="home-stat-unit"> 次</text>
-          </view>
-        </view>
-        <view class="trial-card home-stat" bindtap="openMemory">
-          <view class="mp-icon-tile"><image src="/assets/ui/v4/note-accent.svg" /></view>
-          <text class="home-lbl">近期摘要</text>
-          <view class="home-stat-line">
-            <text class="home-stat-num">{{summaryCount}}</text>
-            <text class="home-stat-unit"> 条</text>
-          </view>
-        </view>
-      </view>
-
-      <view wx:if="{{showChildMemory}}" class="trial-card home-row-card" bindtap="openChildMemory">
-        <mp-icon name="heart" size="96"></mp-icon>
+      <view wx:if="{{showChildMemory}}" class="trial-card home-row-card home-memory-entry" bindtap="openChildMemory">
+        <view class="mp-icon-tile"><image src="/assets/ui/v4/book-accent.svg" /></view>
         <view class="home-row-copy">
           <text class="home-card-title">{{childMemoryName}}的记忆</text>
-          <text class="home-row-sub">{{memoryPreviews.length ? (todayTitle === '近期摘要' ? '近期摘要：' : '最近：') + memoryPreviews[0].text : '还没有摘要，聊过之后会出现在这里'}}</text>
+          <text class="home-row-sub">查看长期记忆与近期摘要</text>
         </view>
         <image class="home-chev" src="/assets/ui/v4/chev-faint.svg" />
       </view>
@@ -146,7 +152,7 @@
           </view>
           <switch
             checked="{{safetySubscribeKnown && safetySubscribeOn}}"
-            color="#4A52C9"
+            color="#176B5B"
             disabled="{{!safetySubscribeKnown || safetySubscribeBusy}}"
             bindchange="onSafetySubscribeChange"
           />

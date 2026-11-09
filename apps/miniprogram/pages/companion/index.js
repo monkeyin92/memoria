@@ -99,6 +99,7 @@ Page({
   },
 
   async chooseCompanion(event) {
+    if (this.data.saving) return;
     const companionId = event.currentTarget.dataset.id;
     const companion = companionById(companionId);
     if (companion.id === this.data.profile?.companion_id) return;

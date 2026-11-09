@@ -645,7 +645,7 @@ async def test_no_stepfun_and_no_approved_clip_fails_loudly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "services.agent.src.voice_core.provider_adapter.shipped_approved_catalog",
+        "services.agent.src.voice_core.provider_adapter_fixed_safety.shipped_approved_catalog",
         lambda: FixedSafetyAudioCatalog(()),
     )
     adapter = _adapter(ReplyLLM(CRISIS_SELF_SCRIPT), _UnavailableSpeech())

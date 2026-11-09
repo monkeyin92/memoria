@@ -5,9 +5,10 @@
 
   <block wx:elif="{{alert}}">
     <view class="card attention-card">
-      <view class="attention-mascot"><image class="attention-mascot-img" src="/assets/ui/v4/mascot-calm.jpg" mode="widthFix" /></view>
+      <view class="attention-device" aria-hidden="true"><device-screen online="{{false}}" size="120"></device-screen></view>
       <text class="attention-title">{{alert.message}}</text>
       <text class="attention-time">{{alert.occurredLabel}}</text>
+      <text wx:if="{{alert.stageLabel}}" class="attention-stage">{{alert.stageLabel}}</text>
       <text wx:if="{{alert.categoryLabel}}" class="attention-category">{{alert.categoryLabel}}</text>
       <view wx:if="{{alert.summary}}" class="attention-well">
         <text class="attention-summary">{{alert.summary}}</text>

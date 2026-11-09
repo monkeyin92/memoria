@@ -56,6 +56,9 @@ def test_summary_splits_commits_calls_and_waits() -> None:
     assert "== turn commits n=3  results: committed=2, assistant_echo=1" in report
     assert "final_to_done_ms   n=3 p50=2000 p90=3100 max=3100" in report
     assert "prepare_ms         n=2 p50=230 p90=900 max=900" in report  # the "-" row is not a number
+    assert "== knife asr_final→agent_commit" in report
+    assert "committed_final_to_done_ms n=2 p50=1200 p90=3100 max=3100" in report
+    assert "baseline_232237_final_to_done_ms p50=910 p90=1180 max=1310 n_replies=62" in report
     assert "live_lookup" in report and "n=2 p50=180 p90=650 max=650  outcomes: ok=2" in report
     assert "conversation_close" in report and "outcomes: error=1" in report
     assert "conversation_close   joined  n=1 p50=30 p90=30 max=30  waited>=50ms: 0" in report

@@ -33,9 +33,9 @@ from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.agent.src.voice_core.media_session import MediaReplyChunk
 from services.agent.src.voice_core.provider_adapter import ExistingVoiceProviderAdapter
+from services.agent.tests.unit.agent_wiring_support import _plan_for_fence
 from services.agent.tests.unit.runtime_profile_test_helpers import bind_owner_policy
 from services.agent.tests.unit.runtime_state_helpers import ScriptedChatModel
-from services.agent.tests.unit.test_agent_production_wiring import _plan_for_fence
 from services.agent.tests.unit.test_media_session_golden import (
     _device_identity,
     _Harness,

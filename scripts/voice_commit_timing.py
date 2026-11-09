@@ -16,6 +16,12 @@ wait), ``final_to_start_ms`` (last ASR final -> commit start), the awaits inside
 = the conversation-close verdict, ``prepare`` = reply preparation: runtime profile, plan, memory) and
 ``final_to_done_ms`` (what the child waits for).  Percentiles are nearest-rank; ``-`` means a step was not reached.
 
+Card 3 knife. ``final_to_done_ms`` is asr_final→agent_commit. Tapwake labels the same span ``ASR``.
+Soak-232237 baseline (measured): overall P90 2.52 s / max 3.19 s; that knife p50 0.91 / p90 1.18 / max 1.31 s.
+#523's PR body measured close-verdict wait p90 0.76 s inside that capture; early warmup aims to hide it.
+A same-capture offline re-run cannot prove a runtime win. Deploy #523 then re-soak, and compare
+``final_to_done_ms`` / ``close_ms`` here plus ``knife_asr_final_to_commit`` from ``devicetest/tapwake_report.py``.
+
 The reply request sent before the commit ends in one ``speculative reply`` line (``ReplyPipeline``): ``used`` means the
 committed turn played it, and ``lead_ms`` of those lines is how long it had been out when the turn asked for it, which
 bounds the time it saved on the reply model's first token.  Its first phrase, when synthesized before the commit,
@@ -49,6 +55,8 @@ COMMIT_FIELDS = (
 )
 # A verdict the commit waited this long for is a real cost on the path; shorter waits are scheduling noise.
 SIGNIFICANT_WAIT_MS = 50
+# Measured soak-232237 tapwake "ASR" segment (= final_to_done_ms), seconds → ms for side-by-side printing.
+BASELINE_232237_FINAL_TO_DONE_MS = {"p50": 910, "p90": 1180, "max": 1310, "n_replies": 62}
 
 
 def _fields(line: str, marker: str) -> dict[str, str] | None:
@@ -105,6 +113,29 @@ def summarize(lines: Iterable[str], *, session: str = "") -> str:
     for name in COMMIT_FIELDS:
         values = [v for c in commits if (v := _number(c.get(name))) is not None]
         out.append(f"  {name:<18} {_row(values)}")
+    committed = [c for c in commits if c.get("result") == "committed"]
+    final_done = [v for c in committed if (v := _number(c.get("final_to_done_ms"))) is not None]
+    close_vals = [v for c in committed if (v := _number(c.get("close_ms"))) is not None]
+    close_share = []
+    for commit in committed:
+        done = _number(commit.get("final_to_done_ms"))
+        close = _number(commit.get("close_ms"))
+        if done is not None and done > 0 and close is not None:
+            close_share.append(int(round(1000 * close / done)))
+    baseline = BASELINE_232237_FINAL_TO_DONE_MS
+    out.append(
+        "== knife asr_final→agent_commit (final_to_done_ms; tapwake segment ASR; close_ms is wait inside it)"
+    )
+    out.append(f"  committed_final_to_done_ms {_row(final_done)}")
+    out.append(f"  committed_close_ms {_row(close_vals)}")
+    out.append(
+        f"  close_share_of_final_to_done_x1000 {_row(close_share)}  "
+        "(1000 * close_ms / final_to_done_ms per committed turn)"
+    )
+    out.append(
+        f"  baseline_232237_final_to_done_ms p50={baseline['p50']} p90={baseline['p90']} "
+        f"max={baseline['max']} n_replies={baseline['n_replies']}  (measured; redeploy+#523 needed for delta)"
+    )
     out.append("== classifier calls (cloud round trips, duration_ms)")
     for kind, items in sorted(calls.items()):
         outcomes = Counter(i.get("outcome", "?") for i in items)

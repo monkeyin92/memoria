@@ -150,10 +150,20 @@ def test_retired_livekit_media_chain_is_not_part_of_the_production_stack() -> No
     loopback_limits = (ROOT / "infra" / "nginx-memoria-loopback-smoke.conf").read_text(
         encoding="utf-8"
     )
+    stream = (ROOT / "infra" / "nginx-memoria-stream.conf").read_text(encoding="utf-8")
+    ip_server = (ROOT / "infra" / "nginx-memoria-ip-server.conf").read_text(
+        encoding="utf-8"
+    )
     assert "limit_req_zone $binary_remote_addr zone=memoria_media:10m rate=30r/m;" in limits
     assert (
         "limit_req_zone $binary_remote_addr zone=memoria_media:10m rate=30r/m;" in loopback_limits
     )
+    # 8443 stream must pass the client address; 9443 accepts PROXY only from
+    # the local hop so $binary_remote_addr is not every device's loopback peer.
+    assert "proxy_protocol on;" in stream
+    assert "listen 127.0.0.1:9443 ssl proxy_protocol;" in ip_server
+    assert "set_real_ip_from 127.0.0.1;" in ip_server
+    assert "real_ip_header proxy_protocol;" in ip_server
     session = nginx.split("location = /memoria-api/v1/sessions {", 1)[1].split("}", 1)[0]
     assert "limit_req zone=memoria_session burst=6 nodelay;" in session
 

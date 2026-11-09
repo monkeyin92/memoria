@@ -37,7 +37,9 @@ const EMPTY_ARCHIVE_OFF =
 const CONSENT_OFF_DIALOG =
   "关闭后不会再写入新内容。已有内容仍按当前授权管理。";
 const DELETE_CONFIRM =
-  "删除后，这条记忆会从服务器上删除，无法恢复，不影响其他记忆。";
+  "删除后，这条在线记忆会从服务器上移除，不影响其他记忆。备份中的副本按其轮换策略清除。";
+const CLEAR_CONFIRM =
+  "清空后，这些在线记忆会从服务器上移除。备份中的副本按其轮换策略清除。";
 const DELETE_KEEP = "再想想";
 const CLEARED_TOAST = "已清空，剩余 0 条";
 
@@ -98,6 +100,31 @@ function normalizeSessionSummaries(payload) {
   return items;
 }
 
+const DISPLAY_LIFECYCLE_LABELS = Object.freeze({
+  auto_pending: "自动提取·待确认",
+  pending_confirm: "待家长确认",
+  parent_confirmed: "家长已确认",
+  withdrawn: "已撤回",
+  expired: "已过期",
+});
+
+function archiveDisplayLabel(item) {
+  const lifecycle =
+    typeof item.display_lifecycle === "string" ? item.display_lifecycle.trim() : "";
+  if (lifecycle && DISPLAY_LIFECYCLE_LABELS[lifecycle]) {
+    return DISPLAY_LIFECYCLE_LABELS[lifecycle];
+  }
+  if (typeof item.display_label === "string" && item.display_label.trim()) {
+    const label = item.display_label.trim();
+    if (label === "已确认" || (item.provenance === "auto_extract" && !label.includes("家长"))) {
+      return DISPLAY_LIFECYCLE_LABELS.auto_pending;
+    }
+    return label;
+  }
+  if (item.provenance === "auto_extract") return DISPLAY_LIFECYCLE_LABELS.auto_pending;
+  return DISPLAY_LIFECYCLE_LABELS.parent_confirmed;
+}
+
 function normalizeChildArchive(payload) {
   const items = firstItems(payload)
     .filter((item) => item && typeof item === "object")
@@ -110,6 +137,18 @@ function normalizeChildArchive(payload) {
       const lastMentionedAt =
         typeof item.last_mentioned_at === "string" ? item.last_mentioned_at : "";
       const stamp = lastMentionedAt || createdAt;
+      const displayLifecycle =
+        typeof item.display_lifecycle === "string" && item.display_lifecycle.trim()
+          ? item.display_lifecycle.trim()
+          : item.provenance === "auto_extract"
+            ? "auto_pending"
+            : "parent_confirmed";
+      const statusLabel = archiveDisplayLabel({
+        ...item,
+        display_lifecycle: displayLifecycle,
+      });
+      const pending =
+        displayLifecycle === "auto_pending" || displayLifecycle === "pending_confirm";
       return {
         recordId,
         field,
@@ -118,6 +157,18 @@ function normalizeChildArchive(payload) {
         createdAt,
         lastMentionedAt,
         dateLabel: displayDateLabel(stamp) || "已保存",
+        status: typeof item.status === "string" ? item.status : "",
+        displayLifecycle,
+        statusLabel,
+        provenance: typeof item.provenance === "string" ? item.provenance : "",
+        sourceSessionId:
+          typeof item.source_session_id === "string" ? item.source_session_id : "",
+        ruleVersion: typeof item.rule_version === "string" ? item.rule_version : "",
+        factVersion: Number.isFinite(item.fact_version) ? item.fact_version : 1,
+        polarity: typeof item.polarity === "string" ? item.polarity : "",
+        handledAt: typeof item.handled_at === "string" ? item.handled_at : "",
+        recallEligible: item.recall_eligible === true,
+        pending,
         swipeOpen: false,
       };
     })
@@ -137,7 +188,19 @@ function archiveFactCards(groups) {
     value: group.items.map((item) => item.text).filter(Boolean).join("、"),
     facts: group.items
       .filter((item) => item && item.recordId && item.text)
-      .map((item) => ({ recordId: item.recordId, text: item.text })),
+      .map((item) => ({
+        recordId: item.recordId,
+        text: item.text,
+        statusLabel: item.statusLabel,
+        displayLifecycle: item.displayLifecycle,
+        pending: item.pending,
+        sourceSessionId: item.sourceSessionId,
+        ruleVersion: item.ruleVersion,
+        factVersion: item.factVersion,
+        polarity: item.polarity,
+        handledAt: item.handledAt,
+        recallEligible: item.recallEligible,
+      })),
     caption: ARCHIVE_FIELD_CAPTIONS[group.field] || "",
   }));
 }
@@ -210,15 +273,18 @@ module.exports = {
   ARCHIVE_FIELD_ORDER,
   CHILD_ARCHIVE_CONSENT,
   CLEARED_TOAST,
+  CLEAR_CONFIRM,
   CONSENT_OFF_DIALOG,
   DELETE_CONFIRM,
   DELETE_KEEP,
+  DISPLAY_LIFECYCLE_LABELS,
   EMPTY_ARCHIVE_OFF,
   EMPTY_ARCHIVE_OFF_TITLE,
   EMPTY_ARCHIVE_ON,
   EMPTY_RECENT,
   PRIVACY_LINE,
   archiveConsentFromPersonPayload,
+  archiveDisplayLabel,
   archiveFactCards,
   assertsNoTranscriptFields,
   boundChildFromManifest,

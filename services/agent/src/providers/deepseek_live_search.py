@@ -7,7 +7,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -22,6 +22,8 @@ _SHANGHAI = ZoneInfo("Asia/Shanghai")
 # The Search API rejects queries over 128 characters.
 _MAX_SEARCH_QUERY_CHARS = 128
 _MAX_RESULT_CHARS = 300
+_RECENCY_MARKERS = ("最近", "最新", "近日")
+_RECENCY_MAX_AGE = timedelta(days=30)
 _SYSTEM_PROMPT = (
     "你负责回答一条当前公开的实时信息问题，回答会直接说给 3 到 12 岁的孩子听。"
     "只依据下面给出的联网搜索结果回答，结果里没有或对不上就直接说没有查到，不要编造。"
@@ -85,6 +87,8 @@ class DeepSeekLiveSearch:
             async with asyncio.timeout(self._config.timeout_s):
                 results = await self._search(query)
                 searched_ms = round((time.monotonic() - started_at) * 1000)
+                if _asks_for_recency(query):
+                    results = _keep_recent_results(results, today=self._now().date())
                 if not results:
                     logger.info("deepseek live search empty elapsed_ms=%s", searched_ms)
                     return None
@@ -158,10 +162,34 @@ class DeepSeekLiveSearch:
         }
 
 
+def _asks_for_recency(query: str) -> bool:
+    return any(marker in query for marker in _RECENCY_MARKERS)
+
+
+def _parse_result_date(value: object) -> date | None:
+    text = str(value or "").strip()
+    if len(text) < 10:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def _keep_recent_results(results: list[dict[str, Any]], *, today: date) -> list[dict[str, Any]]:
+    earliest = today - _RECENCY_MAX_AGE
+    kept: list[dict[str, Any]] = []
+    for item in results:
+        stamped = _parse_result_date(item.get("date"))
+        if stamped is not None and stamped >= earliest:
+            kept.append(item)
+    return kept
+
+
 def _render(results: list[dict[str, Any]]) -> str:
     lines = []
     for index, item in enumerate(results, 1):
-        date = str(item.get("date") or "")[:10] or "无日期"
+        stamped = str(item.get("date") or "")[:10] or "无日期"
         body = str(item.get("summary") or item.get("snippet") or "").strip()
-        lines.append(f"[{index}] {item.get('title') or ''}（{date}）{body}"[:_MAX_RESULT_CHARS])
+        lines.append(f"[{index}] {item.get('title') or ''}（{stamped}）{body}"[:_MAX_RESULT_CHARS])
     return "\n".join(lines)

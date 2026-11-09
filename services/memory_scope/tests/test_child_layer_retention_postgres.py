@@ -56,16 +56,16 @@ def _activity_table_sql() -> str:
 
 
 async def _seed(store: ChildLayerStore) -> None:
-    for created_at, text in (
-        (datetime.now(UTC) - timedelta(days=31), "孩子聊了天气"),
-        (datetime.now(UTC), "孩子聊了周末计划"),
+    for created_at, text, session_id in (
+        (datetime.now(UTC) - timedelta(days=31), "孩子聊了天气", "sess-retention-due"),
+        (datetime.now(UTC), "孩子聊了周末计划", "sess-retention-fresh"),
     ):
         await store.write_summary(
             DialogueSummary(
                 subject_id=DUE,
                 text=text,
                 source_event_id=f"evt-{text}",
-                session_id="sess-retention",
+                session_id=session_id,
             ),
             resource_owner_id=PARENT,
             actor_id=PARENT,

@@ -880,6 +880,7 @@ async function showDailyLimits(limits, profile) {
   resolutionPayload = null;
   const page = instantiate(pageDefinition);
   await page.onShow();
+  page.toggleUsage();
   return { page, text: visibleText(renderPage("pages/device/index", page.data)) };
 }
 
@@ -971,20 +972,22 @@ test("the device lists its offline story titles, and says so when it has none to
   storiesFailure = false;
   const page = instantiate(pageDefinition);
   await page.onShow();
+  page.toggleManagement();
+  page.toggleStories();
   assert.deepEqual(page.data.offlineStories, [
     { id: "story_01", title: "小星星的枕头" },
     { id: "story_02", title: "月亮不着急" },
     { id: "story_03", title: "大熊和森林里的悄悄话" },
   ]);
   const text = visibleText(renderPage("pages/device/index", page.data));
-  assert.match(text, /离线故事 不联网也能听 小星星的枕头 月亮不着急 大熊和森林里的悄悄话 隐私说明/);
+  assert.match(text, /离线故事 不联网也能听 小星星的枕头 月亮不着急 大熊和森林里的悄悄话/);
   assert.doesNotMatch(text, /暂无可显示的离线故事/);
 
   storiesFailure = true;
   try {
     await page.onShow();
     assert.deepEqual(page.data.offlineStories, []);
-    assert.match(visibleText(renderPage("pages/device/index", page.data)), /离线故事 不联网也能听 暂无可显示的离线故事 隐私说明/);
+    assert.match(visibleText(renderPage("pages/device/index", page.data)), /离线故事 不联网也能听 暂无可显示的离线故事/);
   } finally {
     storiesFailure = false;
   }
@@ -1688,7 +1691,7 @@ test("persona assignment follows the subject override and the binding default", 
   });
 });
 
-test("an override written by the companion picker reads as following the pick", async () => {
+test("legacy role assignments remain readable without exposing retired voice choices", async () => {
   personaCalls.length = 0;
   personaFailure = false;
   personasPayload = () => ({ custom_personas: [], builtin: [] });
@@ -1730,14 +1733,14 @@ test("an override written by the companion picker reads as following the pick", 
     assert.deepEqual(
       page.data.personaRows.map((row) => [row.person_id, row.persona_name, row.source_label]),
       [
-        ["person_child", "桃喜", "跟随陪伴选择"],
-        ["person_parent", "玄墨", "已单独分配"],
+        ["person_child", "已有表达方式", "已有账号设置"],
+        ["person_parent", "已有表达方式", "已单独分配"],
       ],
     );
 
     // 回读分配后仍按账号伙伴解释来源。
     await page.reloadPersonaAssignments("dev_1");
-    assert.equal(page.data.personaRows[0].source_label, "跟随陪伴选择");
+    assert.equal(page.data.personaRows[0].source_label, "已有账号设置");
   } finally {
     accountProfilePayload = null;
   }
@@ -1772,7 +1775,7 @@ test("persona assignment failure keeps the sheet open and reports the error", as
   personaFailure = false;
 });
 
-test("角色与声音 opens the 伙伴 tab with switchTab, which navigateTo cannot open", async () => {
+test("default voice opens on the companion tab", async () => {
   const switched = [];
   const navigated = [];
   const previous = { switchTab: global.wx.switchTab, navigateTo: global.wx.navigateTo };
@@ -1781,10 +1784,10 @@ test("角色与声音 opens the 伙伴 tab with switchTab, which navigateTo cann
   try {
     const page = instantiate(pageDefinition);
     page.openCompanion();
-    assert.deepEqual(switched, ["/pages/companion/index"]);
     assert.deepEqual(navigated, []);
+    assert.deepEqual(switched, ["/pages/companion/index"]);
     const appConfig = JSON.parse(fs.readFileSync(path.join(root, "app.json"), "utf8"));
-    assert.ok(appConfig.tabBar.list.some((tab) => tab.pagePath === "pages/companion/index"));
+    assert.equal(appConfig.tabBar.list.some((tab) => tab.pagePath === "pages/companion/index"), true);
   } finally {
     global.wx.switchTab = previous.switchTab;
     global.wx.navigateTo = previous.navigateTo;

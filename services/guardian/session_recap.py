@@ -1,10 +1,10 @@
-"""Session-end child recap: one summary plus optional whitelist archive facts.
+"""Session-end child recap: constrained fields first, then optional prose.
 
 Built from the in-process transcript at session end, then the transcript is
 discarded. Never persists raw utterances. Product rules (authoritative):
 generate once per session; skip short or story-only sessions; parent voice via
 LLM; reject raw-transcript echoes and name/health leaks; archive only on
-separate consent.
+separate consent. Ordinary activity feedback stays separate from crisis notify.
 """
 
 from __future__ import annotations
@@ -19,46 +19,73 @@ from services.guardian.child_memory import (
     SUMMARY_MAX_CHARS,
     ArchiveFact,
     DialogueSummary,
-    forbidden_topic,
     quotes_speech,
 )
+from services.guardian.preference_extract import TOPIC_ROWS, extract_interest_facts
+
+INTEREST_TOPICS: Final[tuple[tuple[str, str], ...]] = TOPIC_ROWS
 
 Role = Literal["user", "assistant"]
+InfoState = Literal[
+    "ready",
+    "degraded",
+    "not_generated",
+    "crisis_skipped",
+    "failed",
+    "skipped_short",
+    "skipped_story",
+]
+SessionState = Literal["ordinary", "crisis", "too_short", "story_only", "model_failed"]
+DetectorId = Literal[
+    "names",
+    "precise_location",
+    "health",
+    "victimization",
+    "verbatim",
+    "psych_inference",
+]
+Certainty = Literal["hit", "uncertain"]
 
-# Interest topics that may become preference archive facts when the child names them.
-INTEREST_TOPICS: Final[tuple[tuple[str, str], ...]] = (
-    ("霸王龙", "喜欢霸王龙"),
-    ("恐龙", "喜欢恐龙"),
-    ("太空", "喜欢太空"),
-    ("火箭", "喜欢火箭"),
-    ("画画", "喜欢画画"),
-    ("积木", "喜欢积木"),
-    ("赛车", "喜欢赛车"),
-    ("火车", "喜欢火车"),
-    ("小狗", "喜欢小狗"),
-    ("小猫", "喜欢小猫"),
-    ("公园", "喜欢去公园"),
+# Conservative allowed themes for ordinary parent activity feedback (A07 draft).
+ALLOWED_THEMES: Final[tuple[tuple[str, str, tuple[str, ...]], ...]] = (
+    ("stories", "听故事", ("故事", "童话", "绘本")),
+    ("animals", "动物", ("恐龙", "霸王龙", "小狗", "小猫", "动物")),
+    ("vehicles", "交通工具", ("赛车", "火车", "火箭", "汽车")),
+    ("drawing", "画画", ("画画", "画了", "涂色")),
+    ("blocks", "积木", ("积木",)),
+    ("outdoor_play", "户外玩耍", ("公园", "户外", "玩耍")),
+    ("space", "太空", ("太空", "星星", "月亮")),
+    ("school_routine", "学校日常", ("上学", "放学", "作业", "课堂")),
+    ("weekend_plans", "周末安排", ("周末", "星期六", "星期天")),
+    ("games", "游戏", ("游戏", "玩法", "玩具")),
+    ("music", "唱歌", ("唱歌", "儿歌", "音乐")),
+    ("other_safe", "日常聊天", ()),
 )
 
 _STORY_ONLY_USER = re.compile(r"^(再)?(讲|说|读)(一)?(个|则|段)?(故事|童话|绘本).{0,8}$")
-# Child archive facts come only from what the child says about themselves. A
-# request such as 「给我讲个恐龙故事」 or a fear such as 「我怕小狗」 mentions the
-# same topic as a liking and must not become a preference.
-_SELF_STATEMENT_PREFIX = re.compile(r"^(?:嗯|那个|就是|其实|还有)+")
-_PREFERENCE_STATEMENT = re.compile(
-    r"(?:我|本人)(?:最|特别|超|很|非常|挺|比较|好|更|也|还|一直|就|可)?(?:喜欢|中意|钟意)"
-)
-_PREFERENCE_NEGATION = re.compile(r"(?:不|没|别)[再太怎么会]$")
-# Whose preference the sentence is about. A prefix before 「我」 only names people.
-_OTHER_PERSON = re.compile(
-    r"妈妈|爸爸|爷爷|奶奶|外公|外婆|姥姥|姥爷|姐姐|哥哥|弟弟|妹妹|老师|同学"
-    r"|朋友|阿姨|叔叔|舅舅|姑姑"
-)
-_TOPICS_IN_ORDER = tuple(sorted(INTEREST_TOPICS, key=lambda item: len(item[0]), reverse=True))
 # Named people only: a short name attached to the role word. Skip plurals like 同学们.
 _NAMED_ROLE_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:[\u4e00-\u9fff]{1,3}(?:老师|同学|班主任|校长)(?!们)"
     r"|(?:老师|同学|班主任|校长)(?!们)[\u4e00-\u9fff]{1,3})"
+)
+# Friend / peer nicknames such as 小明 / 小红. Animals, 小学, play themes are not names.
+_FRIEND_NICK_RE: Final[re.Pattern[str]] = re.compile(
+    r"小(?!学|时|心|朋友|孩|狗|猫|鸟|兔|熊|鸡|鸭|鱼|马|龙|恐|火|车|花|草|树|河|山)"
+    r"[\u4e00-\u9fff]{1,2}"
+)
+# Bare given names introduced as people (张伟 / 李雷), not theme words.
+# Surname scan is person-cued only so 周末 / 霸王龙 do not false-hit.
+_INTRODUCED_PERSON_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:和|跟|与|找|叫|认识了)([\u4e00-\u9fff]{2,3})(?:聊|玩|说|一起|还|,|，|$)"
+)
+# 和/跟/与 stay on _INTRODUCED_PERSON_RE so 「和周末」 is not a surname hit.
+_CUED_SURNAME_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:叫|认识了|朋友|同学)"
+    r"(?:张|王|李|赵|刘|陈|杨|黄|周|吴|徐|孙|马|朱|胡|郭|何|高|林|罗|郑|梁|谢|宋|"
+    r"唐|许|韩|冯|邓|曹|彭|曾|肖|田|董|袁|潘|蒋|蔡|余|杜|叶|程|苏|魏|吕|丁|任|"
+    r"沈|姚|卢|姜|崔|钟|谭|陆|汪|范|金|石|廖|贾|夏|韦|方|白|邹|孟|熊|秦|邱|"
+    r"江|尹|薛|闫|段|雷|侯|史|陶|黎|贺|顾|毛|郝|龚|邵|万|钱|严|覃|武|戴|莫|"
+    r"孔|向|汤)([\u4e00-\u9fff]{1,2})"
 )
 _HEALTH_TERMS: Final[tuple[str, ...]] = (
     "生病",
@@ -68,8 +95,20 @@ _HEALTH_TERMS: Final[tuple[str, ...]] = (
     "吃药",
     "打针",
     "咳嗽",
+    "诊所",
+    "输液",
+    "过敏",
+    "不舒服",
+    "肚子疼",
+    "头疼",
+    "头痛",
 )
-# Victim / abuse details must never appear in parent-facing session summaries.
+_HEALTH_UNCERTAIN: Final[tuple[str, ...]] = (
+    "看病",
+    "挂号",
+    "体温",
+    "药店",
+)
 _VICTIM_DETAIL_TERMS: Final[tuple[str, ...]] = (
     "被打",
     "被性侵",
@@ -81,6 +120,27 @@ _VICTIM_DETAIL_TERMS: Final[tuple[str, ...]] = (
     "对我实施暴力",
     "要杀我",
     "救命",
+)
+_VICTIM_UNCERTAIN: Final[tuple[str, ...]] = (
+    "欺负",
+    "打人",
+    "受伤",
+    "流血",
+)
+_PSYCH_INFERENCE_TERMS: Final[tuple[str, ...]] = (
+    "性格",
+    "心理",
+    "内向",
+    "外向",
+    "情商",
+    "成长阶段",
+    "成长很快",
+    "焦虑",
+    "抑郁",
+    "依恋",
+    "人格",
+    "有进步",
+    "更成熟",
 )
 #: Same window as guardian daily recap: this many consecutive chars is a quote.
 VERBATIM_WINDOW: Final = 10
@@ -94,9 +154,11 @@ SESSION_SUMMARY_USER_PROMPT_PREFIX: Final = """
 硬性规则：
 - 用“孩子”做主语或隐含主语，例如“聊了公园里的黄色小狗”。
 - 不得引用或复述孩子的原话，不得截取原文片段。
-- 提到其他人时只写昵称（如“小明”），不要写全名、学校全称或具体住址门牌。
-- 不要出现老师、同学、班主任、校长的姓名，也不要写具体健康细节（生病、医院、吃药等）。
+- 不要写任何人的姓名或昵称（包括小明、同学名、老师名），只写“孩子”或泛称。
+- 不要写学校全称或具体住址门牌。
+- 不要写具体健康细节（生病、医院、吃药、不舒服等）。
 - 不要写受害细节（被打、被性侵、下毒、暴力等），也不要用「危机」一词。
+- 不要推断性格、心理、情商或成长结论；只写本次聊过的活动主题。
 - 只写聊天里出现过的话题，不编造。
 - 全文不超过 200 字。
 
@@ -105,10 +167,15 @@ SESSION_SUMMARY_USER_PROMPT_PREFIX: Final = """
 
 _ADDRESS_OR_SCHOOL_NAME_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:"
-    r"[\u4e00-\u9fff]{2,12}(?:小学|中学|大学|幼儿园)"
-    r"|[\u4e00-\u9fff]{1,12}(?:路|街|巷|弄)\d{1,4}号"
+    r"[\u4e00-\u9fff]{0,12}幼儿园"
+    r"|[\u4e00-\u9fff]{2,12}(?:小学|中学|大学)"
+    r"|[\u4e00-\u9fff]{1,12}(?:大道|路|街|巷|弄)\d{1,4}号"
+    r"|\d{1,3}栋\d{1,4}室"
     r"|[\u4e00-\u9fff]{2,8}市[\u4e00-\u9fff]{1,8}区"
     r")"
+)
+_LOCATION_UNCERTAIN_RE: Final[re.Pattern[str]] = re.compile(
+    r"(?:[\u4e00-\u9fff]{2,8}(?:大道|路|街|巷|弄)|门口|小区|几号楼|\d{1,3}栋)"
 )
 
 
@@ -119,11 +186,30 @@ class SessionTurn:
 
 
 @dataclass(frozen=True, slots=True)
+class DetectorFinding:
+    detector: DetectorId
+    certainty: Certainty
+
+
+@dataclass(frozen=True, slots=True)
+class ParentActivityFeedback:
+    """Constrained parent activity feedback before any free prose is kept."""
+
+    info_state: InfoState
+    themes: tuple[str, ...]
+    activities: tuple[str, ...]
+    session_state: SessionState
+    readable_summary: str | None
+    findings: tuple[DetectorFinding, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SessionRecapDraft:
     summary: DialogueSummary | None
     archive_facts: tuple[ArchiveFact, ...]
     skipped_reason: str | None
     user_turn_count: int
+    feedback: ParentActivityFeedback | None = None
 
 
 def user_turns(turns: Sequence[SessionTurn]) -> list[SessionTurn]:
@@ -188,90 +274,144 @@ def copied_transcript_fragments(summary: str, turns: Sequence[SessionTurn]) -> l
     return fragments
 
 
+_THEME_TOKEN_EXCLUDE: Final[frozenset[str]] = (
+    frozenset(needle for _theme_id, _label, needles in ALLOWED_THEMES for needle in needles)
+    | frozenset(topic for topic, _label in INTEREST_TOPICS)
+    | frozenset({"孩子", "爸爸", "妈妈", "爷爷", "奶奶", "故事", "游戏", "玩具"})
+)
+
+
+def detect_names(text: str) -> DetectorFinding | None:
+    if _NAMED_ROLE_RE.search(text) is not None or _FRIEND_NICK_RE.search(text) is not None:
+        return DetectorFinding("names", "hit")
+    introduced = _INTRODUCED_PERSON_RE.search(text)
+    if introduced is not None and introduced.group(1) not in _THEME_TOKEN_EXCLUDE:
+        return DetectorFinding("names", "hit")
+    cued = _CUED_SURNAME_RE.search(text)
+    if cued is not None and cued.group(1) not in _THEME_TOKEN_EXCLUDE:
+        return DetectorFinding("names", "hit")
+    return None
+
+
+def detect_precise_location(text: str) -> DetectorFinding | None:
+    if _ADDRESS_OR_SCHOOL_NAME_RE.search(text) is not None:
+        return DetectorFinding("precise_location", "hit")
+    if _LOCATION_UNCERTAIN_RE.search(text) is not None:
+        return DetectorFinding("precise_location", "uncertain")
+    return None
+
+
+def detect_health(text: str) -> DetectorFinding | None:
+    if any(term in text for term in _HEALTH_TERMS):
+        return DetectorFinding("health", "hit")
+    if any(term in text for term in _HEALTH_UNCERTAIN):
+        return DetectorFinding("health", "uncertain")
+    return None
+
+
+def detect_victimization(text: str) -> DetectorFinding | None:
+    if any(term in text for term in _VICTIM_DETAIL_TERMS) or "危机" in text:
+        return DetectorFinding("victimization", "hit")
+    if any(term in text for term in _VICTIM_UNCERTAIN):
+        return DetectorFinding("victimization", "uncertain")
+    return None
+
+
+def detect_verbatim(text: str, turns: Sequence[SessionTurn]) -> DetectorFinding | None:
+    if copied_transcript_fragments(text, turns):
+        return DetectorFinding("verbatim", "hit")
+    return None
+
+
+def detect_psych_inference(text: str) -> DetectorFinding | None:
+    if any(term in text for term in _PSYCH_INFERENCE_TERMS):
+        return DetectorFinding("psych_inference", "hit")
+    return None
+
+
+_DETECTORS: Final = (
+    detect_names,
+    detect_precise_location,
+    detect_health,
+    detect_victimization,
+    detect_psych_inference,
+)
+
+
+def run_summary_detectors(text: str, turns: Sequence[SessionTurn]) -> tuple[DetectorFinding, ...]:
+    """Independent detectors. Callers treat any hit or uncertain as unsafe prose."""
+
+    findings: list[DetectorFinding] = []
+    for detector in _DETECTORS:
+        found = detector(text)
+        if found is not None:
+            findings.append(found)
+    verbatim = detect_verbatim(text, turns)
+    if verbatim is not None:
+        findings.append(verbatim)
+    if quotes_speech(text):
+        findings.append(DetectorFinding("verbatim", "hit"))
+    return tuple(findings)
+
+
+def extract_allowed_themes(turns: Sequence[SessionTurn]) -> tuple[str, ...]:
+    """Whitelist theme ids from child turns. No psych labels."""
+
+    blob = "".join(turn.text for turn in user_turns(turns))
+    found: list[str] = []
+    for theme_id, _label, needles in ALLOWED_THEMES:
+        if theme_id == "other_safe":
+            continue
+        if any(needle in blob for needle in needles):
+            found.append(theme_id)
+    if not found and user_turns(turns):
+        found.append("other_safe")
+    return tuple(found)
+
+
+def theme_activity_labels(theme_ids: Sequence[str]) -> tuple[str, ...]:
+    labels = {theme_id: label for theme_id, label, _needles in ALLOWED_THEMES}
+    return tuple(labels[theme_id] for theme_id in theme_ids if theme_id in labels)
+
+
+def detail_free_activity_note(theme_ids: Sequence[str]) -> str | None:
+    """Parent-visible note with themes only. No names, places, health, or quotes."""
+
+    labels = theme_activity_labels(theme_ids)
+    safe = tuple(label for label in labels if label != "日常聊天")
+    if not safe:
+        return None
+    if len(safe) == 1:
+        return f"孩子今天聊了{safe[0]}"
+    return f"孩子今天聊了{'、'.join(safe)}"
+
+
 def redact_name_and_health_terms(text: str) -> str:
     """Strip named roles, health terms, and victim details without chopping unrelated words."""
 
     cleaned = _NAMED_ROLE_RE.sub("", text)
-    for term in (*_HEALTH_TERMS, *_VICTIM_DETAIL_TERMS):
+    cleaned = _FRIEND_NICK_RE.sub("", cleaned)
+    for term in (*_HEALTH_TERMS, *_VICTIM_DETAIL_TERMS, *_PSYCH_INFERENCE_TERMS):
         cleaned = cleaned.replace(term, "")
     cleaned = re.sub(r"[，,]{2,}", "，", cleaned)
     return cleaned.strip("，。、；; \t\n")
 
 
 def accept_parent_summary(text: str, turns: Sequence[SessionTurn]) -> str | None:
-    """Return a cleaned summary, or None when it still leaks raw speech or PII."""
+    """Return cleaned prose only when every independent detector is clear."""
 
     original = " ".join(text.split())
-    if not original or quotes_speech(original):
+    if not original:
         return None
-    cleaned = redact_name_and_health_terms(original)
+    findings = run_summary_detectors(original, turns)
+    if findings:
+        return None
+    cleaned = original
     if len(_compact(cleaned)) < 6:
-        return None
-    if any(term in cleaned for term in (*_HEALTH_TERMS, *_VICTIM_DETAIL_TERMS)):
-        return None
-    if "危机" in cleaned:
-        return None
-    if _NAMED_ROLE_RE.search(cleaned) is not None:
-        return None
-    if _ADDRESS_OR_SCHOOL_NAME_RE.search(cleaned) is not None:
-        return None
-    if copied_transcript_fragments(cleaned, turns):
         return None
     if len(cleaned) > SUMMARY_MAX_CHARS:
         cleaned = cleaned[: SUMMARY_MAX_CHARS - 1] + "…"
     return cleaned
-
-
-def _self_preference_sentences(turns: Sequence[SessionTurn]) -> list[str]:
-    """Child sentences whose own statement about themselves names a liking.
-
-    A sentence without its own 「我喜欢」 (a request, a fear, a question to the
-    robot, a plain mention) is dropped whole, so its topic is never read.
-    """
-
-    found: list[str] = []
-    for turn in user_turns(turns):
-        for sentence in re.split(r"[。.!！?？;；\n]", turn.text):
-            body = _SELF_STATEMENT_PREFIX.sub("", " ".join(sentence.split()))
-            stating = False
-            for clause in re.split(r"[，,]", body):
-                match = _PREFERENCE_STATEMENT.search(clause)
-                if match is None or _PREFERENCE_NEGATION.search(clause[: match.start()]):
-                    continue
-                prefix = clause[: match.start()]
-                # 「我妈妈喜欢…」 and 「你喜欢…吗」 are about someone else.
-                if _OTHER_PERSON.search(prefix) is None and "你" not in prefix:
-                    stating = True
-            if stating:
-                found.append(body)
-    return found
-
-
-def extract_interest_facts(
-    subject_id: str, turns: Sequence[SessionTurn]
-) -> tuple[ArchiveFact, ...]:
-    """Preference facts from the child's own self-statements (e.g. 我最喜欢恐龙).
-
-    A request (「给我讲个恐龙故事」), a fear (「我怕小狗」), a sentence about someone
-    else, or a nickname / pet name writes nothing. The conservative default
-    holds until Monkey decides the write direction for names.
-    """
-
-    found: list[ArchiveFact] = []
-    seen: set[str] = set()
-    for body in _self_preference_sentences(turns):
-        for topic_needle, label in _TOPICS_IN_ORDER:
-            if topic_needle not in body or label in seen:
-                continue
-            if forbidden_topic(label) or quotes_speech(label):
-                continue
-            try:
-                fact = ArchiveFact(subject_id=subject_id, field="preference", text=label)
-            except ValueError:
-                continue
-            found.append(fact)
-            seen.add(label)
-    return tuple(found)
 
 
 def session_hits_crisis(turns: Sequence[SessionTurn]) -> bool:
@@ -292,6 +432,114 @@ def session_hits_crisis(turns: Sequence[SessionTurn]) -> bool:
     return False
 
 
+def compose_parent_activity_feedback(
+    turns: Sequence[SessionTurn],
+    *,
+    summary_text: str | None,
+    skipped_reason: str | None = None,
+) -> ParentActivityFeedback:
+    """Emit constrained themes/activities/session-state first, then safe prose."""
+
+    themes = extract_allowed_themes(turns)
+    activities = theme_activity_labels(themes)
+    early = skip_session_recap(turns)
+    if early == "fewer_than_two_turns":
+        return ParentActivityFeedback(
+            info_state="skipped_short",
+            themes=(),
+            activities=(),
+            session_state="too_short",
+            readable_summary=None,
+            findings=(),
+        )
+    if early == "story_playback_only":
+        return ParentActivityFeedback(
+            info_state="skipped_story",
+            themes=("stories",),
+            activities=theme_activity_labels(("stories",)),
+            session_state="story_only",
+            readable_summary=None,
+            findings=(),
+        )
+    if session_hits_crisis(turns):
+        return ParentActivityFeedback(
+            info_state="crisis_skipped",
+            themes=(),
+            activities=(),
+            session_state="crisis",
+            readable_summary=None,
+            findings=(),
+        )
+    if skipped_reason in {"summary_model_unavailable", "summary_model_failed"} or (
+        skipped_reason is None and summary_text is None
+    ):
+        return ParentActivityFeedback(
+            info_state="failed",
+            themes=themes,
+            activities=activities,
+            session_state="model_failed",
+            readable_summary=None,
+            findings=(),
+        )
+    if skipped_reason is not None and summary_text is None:
+        return ParentActivityFeedback(
+            info_state="failed",
+            themes=themes,
+            activities=activities,
+            session_state="model_failed",
+            readable_summary=None,
+            findings=(),
+        )
+
+    assert summary_text is not None
+    findings = run_summary_detectors(summary_text, turns)
+    if not findings:
+        accepted = accept_parent_summary(summary_text, turns)
+        if accepted is not None:
+            return ParentActivityFeedback(
+                info_state="ready",
+                themes=themes,
+                activities=activities,
+                session_state="ordinary",
+                readable_summary=accepted,
+                findings=(),
+            )
+
+    note = detail_free_activity_note(themes)
+    if note is not None and not run_summary_detectors(note, turns):
+        return ParentActivityFeedback(
+            info_state="degraded",
+            themes=themes,
+            activities=activities,
+            session_state="ordinary",
+            readable_summary=note,
+            findings=findings,
+        )
+    return ParentActivityFeedback(
+        info_state="not_generated",
+        themes=themes,
+        activities=activities,
+        session_state="ordinary",
+        readable_summary=None,
+        findings=findings,
+    )
+
+
+def _skip_reason_for_feedback(feedback: ParentActivityFeedback) -> str | None:
+    if feedback.info_state == "ready":
+        return None
+    if feedback.info_state == "degraded":
+        return None
+    mapping: dict[InfoState, str] = {
+        "skipped_short": "fewer_than_two_turns",
+        "skipped_story": "story_playback_only",
+        "crisis_skipped": "crisis_in_session",
+        "failed": "summary_model_failed",
+        "not_generated": "not_generated",
+    }
+    return mapping.get(feedback.info_state, "invalid_summary")
+
+
 def draft_session_recap(
     *,
     subject_id: str,
@@ -302,50 +550,25 @@ def draft_session_recap(
     summary_text: str | None,
     skipped_reason: str | None = None,
 ) -> SessionRecapDraft:
-    """Build the session-end draft. ``summary_text`` must already be LLM-checked."""
+    """Build the session-end draft from constrained feedback, then optional prose."""
 
     users = user_turns(turns)
-    skip = skip_session_recap(turns)
-    if skip is not None:
+    feedback = compose_parent_activity_feedback(
+        turns, summary_text=summary_text, skipped_reason=skipped_reason
+    )
+    skip = _skip_reason_for_feedback(feedback)
+    if feedback.readable_summary is None:
         return SessionRecapDraft(
             summary=None,
             archive_facts=(),
-            skipped_reason=skip,
+            skipped_reason=skip or "not_generated",
             user_turn_count=len(users),
-        )
-    if session_hits_crisis(turns):
-        return SessionRecapDraft(
-            summary=None,
-            archive_facts=(),
-            skipped_reason="crisis_in_session",
-            user_turn_count=len(users),
-        )
-    if skipped_reason is not None:
-        return SessionRecapDraft(
-            summary=None,
-            archive_facts=(),
-            skipped_reason=skipped_reason,
-            user_turn_count=len(users),
-        )
-    if not summary_text:
-        return SessionRecapDraft(
-            summary=None,
-            archive_facts=(),
-            skipped_reason="summary_model_failed",
-            user_turn_count=len(users),
-        )
-    accepted = accept_parent_summary(summary_text, turns)
-    if accepted is None:
-        return SessionRecapDraft(
-            summary=None,
-            archive_facts=(),
-            skipped_reason="summary_rejected",
-            user_turn_count=len(users),
+            feedback=feedback,
         )
     try:
         summary = DialogueSummary(
             subject_id=subject_id,
-            text=accepted,
+            text=feedback.readable_summary,
             source_event_id=source_event_id,
             session_id=session_id,
         )
@@ -355,30 +578,51 @@ def draft_session_recap(
             archive_facts=(),
             skipped_reason="invalid_summary",
             user_turn_count=len(users),
+            feedback=feedback,
         )
-    facts = extract_interest_facts(subject_id, turns) if archive_consent else ()
+    # Preference archive facts only when ordinary ready prose was accepted.
+    facts = (
+        extract_interest_facts(subject_id, turns)
+        if archive_consent and feedback.info_state == "ready"
+        else ()
+    )
     return SessionRecapDraft(
         summary=summary,
         archive_facts=facts,
         skipped_reason=None,
         user_turn_count=len(users),
+        feedback=feedback,
     )
 
 
 __all__ = [
+    "ALLOWED_THEMES",
     "INTEREST_TOPICS",
     "SESSION_SUMMARY_SYSTEM_PROMPT",
     "VERBATIM_WINDOW",
+    "DetectorFinding",
+    "ParentActivityFeedback",
     "SessionRecapDraft",
     "SessionTurn",
     "accept_parent_summary",
+    "compose_parent_activity_feedback",
     "copied_transcript_fragments",
+    "detail_free_activity_note",
+    "detect_health",
+    "detect_names",
+    "detect_precise_location",
+    "detect_psych_inference",
+    "detect_verbatim",
+    "detect_victimization",
     "draft_session_recap",
+    "extract_allowed_themes",
     "extract_interest_facts",
     "is_story_playback_only",
     "redact_name_and_health_terms",
+    "run_summary_detectors",
     "session_hits_crisis",
     "session_summary_prompt",
     "skip_session_recap",
+    "theme_activity_labels",
     "user_turns",
 ]
