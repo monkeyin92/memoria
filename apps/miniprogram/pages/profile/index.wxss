@@ -147,5 +147,5 @@
 .account-name { font-size: var(--mp-type-heading); }
 .account-sub { font-size: var(--mp-type-meta); }
 .device-card { background: var(--mp-paper); }
-.device-art { background: var(--mp-surface); }
+.device-art { background: transparent; }
 .profile-menu { margin-top: 24px; }

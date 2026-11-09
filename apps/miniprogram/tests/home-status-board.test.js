@@ -27,6 +27,7 @@ test("online status copy is device-oriented, not in-app chat", () => {
     {},
     { live_runtime: { connected: true } },
   );
+  assert.equal(ready.connectionState, "online");
   assert.equal(ready.onlineLabel, "设备在线");
   assert.doesNotMatch(ready.onlineLabel, /可直接对话/);
   const offline = deviceStatusSummary({ status: "failed", network: { internet: false } }, {});
@@ -42,6 +43,7 @@ test("online status uses live runtime evidence while keeping activation history"
   ];
   for (const [diagnostics, online, onlineLabel] of cases) {
     const ready = deviceStatusSummary({ status: "ready_for_conversation" }, {}, diagnostics);
+    assert.equal(ready.connectionState, online ? "online" : diagnostics.live_runtime ? "offline" : "unknown");
     assert.equal(ready.online, online);
     assert.equal(ready.onlineLabel, onlineLabel);
     assert.equal(ready.activationLabel, "可开始对话");
@@ -51,6 +53,7 @@ test("online status uses live runtime evidence while keeping activation history"
     { status: "device_downloading", network: { internet: true } },
     {},
   );
+  assert.equal(activating.connectionState, "unknown");
   assert.equal(activating.online, false);
   assert.equal(activating.onlineLabel, "已联网，等待激活");
 
@@ -58,6 +61,7 @@ test("online status uses live runtime evidence while keeping activation history"
     { status: "failed", network: { internet: false } },
     {},
   );
+  assert.equal(offline.connectionState, "unknown");
   assert.equal(offline.online, false);
   assert.equal(offline.onlineLabel, "暂时离线");
 });

@@ -324,6 +324,8 @@ Page({
     heroRoleId: defaultCompanionId,
     currentUserLabelConfirmed: false,
     online: false,
+    deviceConnectionState: "unknown",
+    deviceConnectionAction: "",
     onlineLabel: "状态待同步",
     syncingBindings: false,
     bindingSyncError: "",
@@ -517,6 +519,9 @@ Page({
       ageSaving: false,
       ageError: "",
       activation: null,
+      online: false,
+      deviceConnectionState: "unknown",
+      deviceConnectionAction: "",
       onlineLabel: "状态待同步",
       firmwareVersion: "未读取",
       networkLabel: "未读取",
@@ -994,6 +999,7 @@ Page({
       // 候选只用于多成员绑定的「此刻是谁在用」选择，不展示任何声音匹配度。
       const candidates = resolution?.candidate_subjects || [];
       const summary = deviceStatusSummary(activation, profile, diagnostics);
+      const deviceConnectionState = summary.connectionState;
       const failures = [profileResult, activationResult].filter(
         (result) => result.status === "rejected",
       );
@@ -1075,6 +1081,8 @@ Page({
         heroRoleId: companion.id,
         activation,
         online: summary.online,
+        deviceConnectionState,
+        deviceConnectionAction: deviceConnectionState === "offline" ? "showConnectionHelp" : "",
         onlineLabel: summary.onlineLabel,
         firmwareVersion: summary.firmwareVersion,
         networkLabel: summary.networkLabel,

@@ -58,7 +58,7 @@
         <view class="device-hero-art" aria-hidden="true"><device-screen online="{{online}}" size="180"></device-screen></view>
       </view>
       <text wx:if="{{bindingSyncError}}" class="notice notice-warn">{{bindingSyncError}}</text>
-      <view wx:if="{{!online}}" class="notice notice-warn">
+      <view wx:if="{{deviceConnectionState === 'offline'}}" class="notice notice-warn">
         <text class="notice-title">设备暂时无法连接</text>
         <text>请检查电源和 Wi‑Fi。绑定关系仍在，无需重新认领。</text>
       </view>
@@ -108,7 +108,7 @@
               <text wx:else class="device-usage-title">用量暂未统计</text>
               <view class="trial-status-pill {{online ? '' : 'is-off'}}">
                 <view class="trial-status-dot"></view>
-                <text>{{online ? '在线' : '离线'}}</text>
+                <text>{{deviceConnectionState === 'online' ? '在线' : deviceConnectionState === 'offline' ? '离线' : '状态待确认'}}</text>
               </view>
             </view>
           </view>
@@ -200,13 +200,13 @@
 
       <!-- 表达方式 / 唤醒词 / 网络 -->
       <view wx:if="{{managementExpanded}}" class="list">
-        <view class="list-row" hover-class="{{online ? 'none' : 'list-row-hover'}}" bindtap="{{online ? '' : 'showConnectionHelp'}}">
+        <view class="list-row" hover-class="{{deviceConnectionState === 'offline' ? 'list-row-hover' : 'none'}}" bindtap="{{deviceConnectionAction}}">
           <view class="row-icon"><mp-icon name="wifi"></mp-icon></view>
           <view class="row-copy">
             <text class="row-title">网络连接</text>
           </view>
-          <text class="row-value {{online ? '' : 'row-value-warn'}}">{{online ? '已连接' : '未连接'}}</text>
-          <image wx:if="{{!online}}" class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
+          <text class="row-value {{deviceConnectionState === 'offline' ? 'row-value-warn' : ''}}">{{deviceConnectionState === 'online' ? '已连接' : deviceConnectionState === 'offline' ? '未连接' : '状态待确认'}}</text>
+          <image wx:if="{{deviceConnectionState === 'offline'}}" class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
       </view>
 

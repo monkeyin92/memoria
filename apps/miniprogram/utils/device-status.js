@@ -45,10 +45,12 @@ function deviceStatusSummary(activation, profile, diagnostics) {
   const status = activation?.status || diagnostics?.binding?.activation_status;
   const ready = status === "ready_for_conversation";
   const liveConnected = diagnostics?.live_runtime?.connected;
+  const connectionState =
+    liveConnected === true ? "online" : liveConnected === false ? "offline" : "unknown";
   const onlineLabel =
-    liveConnected === true
+    connectionState === "online"
       ? "设备在线"
-      : liveConnected === false
+      : connectionState === "offline"
         ? "暂时离线"
         : ready
           ? "状态待确认"
@@ -61,7 +63,8 @@ function deviceStatusSummary(activation, profile, diagnostics) {
                 : "状态暂不可用";
 
   return {
-    online: liveConnected === true,
+    connectionState,
+    online: connectionState === "online",
     onlineLabel,
     firmwareVersion:
       diagnostics?.live_runtime?.firmware_version ||

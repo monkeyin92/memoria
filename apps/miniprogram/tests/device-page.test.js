@@ -1377,6 +1377,8 @@ test("device page loads authoritative settings and diagnostics (half-duplex fail
   assert.equal(page.data.effectiveAudioModeLabel, "未连接，暂无实际模式");
   assert.equal(page.data.liveRuntimeStatusLabel, "当前未连接");
   assert.equal(page.data.online, false);
+  assert.equal(page.data.deviceConnectionState, "offline");
+  assert.equal(page.data.deviceConnectionAction, "showConnectionHelp");
   assert.equal(page.data.onlineLabel, "暂时离线");
   assert.equal(page.data.wakeModeLabel, "点击屏幕唤醒");
   assert.equal(page.data.wakeKeywordOn, false);
@@ -1461,7 +1463,14 @@ test("diagnostics unavailable fails closed for acoustics controls", async () => 
   assert.equal(page.data.diagnostics, null);
   assert.equal(page.data.diagnosticsUnavailable, true);
   assert.equal(page.data.online, false);
+  assert.equal(page.data.deviceConnectionState, "unknown");
+  assert.equal(page.data.deviceConnectionAction, "");
   assert.equal(page.data.onlineLabel, "绑定已确认，设备状态待同步");
+  assert.doesNotMatch(
+    visibleText(renderPage("pages/device/index", page.data, { width: 390, safeTop: 47, safeBottom: 34 })),
+    /设备暂时无法连接/,
+    "unknown runtime state must not be presented as a confirmed offline device",
+  );
   assert.deepEqual(page.data.audioModeOptions, [], "诊断不可用时音频模式不可选");
   assert.deepEqual(
     page.data.bargeInOptions.map((option) => option.value),
@@ -1873,7 +1882,6 @@ test("wake sheet stays open when the save is refused", async () => {
 test("device page shows the network as connected without claiming it is a home network", () => {
   const wxml = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
   assert.ok(!wxml.includes("家庭网络"));
-  assert.ok(wxml.includes("{{online ? '已连接' : '未连接'}}"));
   // Tap-only product: keyword wake sheet entry is gone; label comes from data.
   assert.equal((wxml.match(/bindtap="openWakeSheet"/g) || []).length, 0);
   assert.ok(wxml.includes("{{wakeModeLabel}}"));

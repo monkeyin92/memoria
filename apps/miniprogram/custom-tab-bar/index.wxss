@@ -35,4 +35,3 @@
 .mem-tabbar-hidden {
   display: none;
 }
-.mem-tab-on { background: var(--mp-accent-soft, #e3f0ed); border-radius: 18px; }

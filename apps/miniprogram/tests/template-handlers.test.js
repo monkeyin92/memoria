@@ -71,7 +71,6 @@ test("template handler scan reads static and conditional bindings", () => {
   ]);
   assert.ok(templateHandlers("pages/profile").includes("copyAccountId"));
   assert.ok(templateHandlers("pages/profile").includes("loginFromProfile"));
-  assert.ok(templateHandlers("pages/device").includes("showConnectionHelp"));
 });
 
 test("every page template event names a method the page defines", () => {
