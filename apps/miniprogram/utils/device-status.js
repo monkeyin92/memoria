@@ -44,18 +44,25 @@ function offlineLabelFor(status, activation, profile) {
 function deviceStatusSummary(activation, profile, diagnostics) {
   const status = activation?.status || diagnostics?.binding?.activation_status;
   const ready = status === "ready_for_conversation";
+  const liveConnected = diagnostics?.live_runtime?.connected;
+  const onlineLabel =
+    liveConnected === true
+      ? "设备在线"
+      : liveConnected === false
+        ? "暂时离线"
+        : ready
+          ? "状态待确认"
+          : activation?.network?.internet === true
+            ? "已联网，等待激活"
+            : activation
+              ? "暂时离线"
+              : profile
+                ? "绑定已确认，设备状态待同步"
+                : "状态暂不可用";
 
   return {
-    online: ready,
-    onlineLabel: ready
-      ? "设备在线"
-      : activation?.network?.internet === true
-        ? "已联网，等待激活"
-        : activation
-          ? "暂时离线"
-          : profile
-            ? "绑定已确认，设备状态待同步"
-            : "状态暂不可用",
+    online: liveConnected === true,
+    onlineLabel,
     firmwareVersion:
       diagnostics?.live_runtime?.firmware_version ||
       activation?.firmware_version ||

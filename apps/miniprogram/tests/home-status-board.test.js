@@ -22,21 +22,30 @@ test("home greeting bands do not invent a room or a master title", () => {
 });
 
 test("online status copy is device-oriented, not in-app chat", () => {
-  const ready = deviceStatusSummary({ status: "ready_for_conversation" }, {});
+  const ready = deviceStatusSummary(
+    { status: "ready_for_conversation" },
+    {},
+    { live_runtime: { connected: true } },
+  );
   assert.equal(ready.onlineLabel, "设备在线");
   assert.doesNotMatch(ready.onlineLabel, /可直接对话/);
   const offline = deviceStatusSummary({ status: "failed", network: { internet: false } }, {});
   assert.equal(offline.onlineLabel, "暂时离线");
 });
 
-test("online status reflects activation readiness", () => {
-  const ready = deviceStatusSummary(
-    { status: "ready_for_conversation" },
-    {},
-    { live_runtime: { connected: false, device_id: "dev_1" } },
-  );
-  assert.equal(ready.online, true);
-  assert.equal(ready.onlineLabel, "设备在线");
+test("online status uses live runtime evidence while keeping activation history", () => {
+  const cases = [
+    [{ live_runtime: { connected: true, device_id: "dev_1" } }, true, "设备在线"],
+    [{ live_runtime: { connected: false, device_id: "dev_1" } }, false, "暂时离线"],
+    [{ live_runtime: null }, false, "状态待确认"],
+    [{}, false, "状态待确认"],
+  ];
+  for (const [diagnostics, online, onlineLabel] of cases) {
+    const ready = deviceStatusSummary({ status: "ready_for_conversation" }, {}, diagnostics);
+    assert.equal(ready.online, online);
+    assert.equal(ready.onlineLabel, onlineLabel);
+    assert.equal(ready.activationLabel, "可开始对话");
+  }
 
   const activating = deviceStatusSummary(
     { status: "device_downloading", network: { internet: true } },

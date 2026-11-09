@@ -191,8 +191,13 @@ Page({
       }
     }
     if (this.data.state === "activation") this._controller.startActivationPolling();
+    if (!this.data.busy && (this.data.state === "ble" || this.data.state === "wifi")) {
+      await this._controller.connectBle();
+    }
     // A resumed or re-shown progress step follows the robot again.
-    if (this.data.state === "progress" && !this.data.network) this._controller.watchNetwork();
+    if (!this.data.busy && this.data.state === "progress" && !this.data.network) {
+      await this._controller.watchNetwork();
+    }
     await this._refreshConnectedWifi();
   },
 

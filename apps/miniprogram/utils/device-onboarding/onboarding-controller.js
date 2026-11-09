@@ -639,7 +639,10 @@ class OnboardingController {
     this.stopActivationPolling();
     this.clearSensitiveInput();
     this._bootstrapPop = "";
+    this._busy = false;
+    if (this._state === "progress") this._network = null;
     this._disposeBle();
+    this._emit();
   }
 
   async cancel() {

@@ -45,8 +45,13 @@ test("the production package keeps retired companion art and old voice samples o
 
 test("the home status card keeps device identity, connection state, and working device navigation", async () => {
   for (const online of [true, false]) {
-    const harness = loadPage("pages/home/index", fx.authed(online ? {} : {
-      getActivationStatus: async () => ({ status: "failed", network: { internet: false } }),
+    const harness = loadPage("pages/home/index", fx.authed({
+      ...(online
+        ? {}
+        : {
+            getActivationStatus: async () => ({ status: "failed", network: { internet: false } }),
+          }),
+      getDeviceDiagnostics: async () => ({ live_runtime: { connected: online } }),
     }));
     try {
       const data = await harness.run();
