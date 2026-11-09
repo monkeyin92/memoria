@@ -16,7 +16,7 @@
 
 上一版实验镜像曾完成构建和写入校验，但当前设备画面仍是原来的蓝色，不能把那次写入记录当成粉色版本的真机验收。
 
-本次固定表情版本已重新构建，产品 app 镜像为 `firmware/esp32/artifacts/memoria-esp-vocat-app.bin`，SHA-256 为 `4aa9f292e6c2ce870a2e09f1a2b98734b642469b02b2ba52c5396e229005f760`，大小为 `3381136 bytes`。截至本记录更新时，设备串口端口尚未重新出现，因此这份新镜像还没有完成真机刷写；上一版已刷入的粉色镜像 SHA-256 为 `1c6d453d8384b56b257fae058a5e40ca1232d20844da0d512b0ec509fea0c738`。
+本次固定表情版本已重新构建并刷入设备。实际写入的产品 app 镜像为 `firmware/esp32/artifacts/memoria-esp-vocat-app.bin`，SHA-256 为 `be6072dd33dca2462daa61c95e9a6fd26f5b94ea28a4bab4340de2d2ca823c5c`，大小为 `3381136 bytes`；完整刷写时使用的 `firmware/esp32/.cache/upstream/build/memoria.bin` SHA-256 相同。上一版已刷入的粉色镜像 SHA-256 为 `1c6d453d8384b56b257fae058a5e40ca1232d20844da0d512b0ec509fea0c738`。
 
 刷写前的备份目录是 `devicetest/flash-backups/20261109-display-animation-baseline/`。其中保存了刷前 app、bootloader/分区表、NVS/OTA/PHY、identity 二进制和各分区的芯片 MD5。刷前关键 MD5 为：app `c46cdf55af5c686f70c242f772f77ebd`，identity `db3c2ccded4c3c957c3563bdb6812b64`。
 
@@ -24,9 +24,9 @@
 
 主机侧 `uv run --no-project pytest -q firmware/esp32/tests` 通过，进程退出码为 0。渲染器单独用 clang++ 编译并生成了预览。产品构建通过，app 分区仍有约 18% 空间。
 
-上一版设备侧写入已确认：bootloader、分区表、OTA 数据、assets 和 app 均报告 `Hash of data verified`，刷后 `device namespace: present`。新固定表情版本尚未刷写，因而尚无对应的串口或屏幕验收证据；刷入后仍需现场确认粉色背景、眼睛稳定性和说话时离散表情切换。
+本次设备侧写入已确认：bootloader、分区表、OTA 数据、assets 和 app 均报告 `Hash of data verified`，刷后 `device namespace: present`。刷后串口读到 `SystemInfo`、HTTPS 连接和 `MemoriaPower` 日志，说明新固件已启动并继续运行。刷写过程中 app 阶段曾短暂断连，esptool 自动重连并重新写入，最终校验通过。当前仍没有屏幕照片或现场操作录像，因此粉色背景、眼睛静止效果和说话时离散表情的视觉验收待现场观察。
 
-本次刷写日志保存在 `devicetest/flash-backups/20261109-display-animation-baseline/flash-pink-retry-2.log`，串口日志保存在 `devicetest/flash-backups/20261109-display-animation-baseline/serial-pink-retry.log`。
+本次刷写日志保存在 `devicetest/flash-backups/20261109-display-animation-states/flash-pill-states-165414.log`，刷后串口日志保存在 `devicetest/flash-backups/20261109-display-animation-states/serial-pill-states-165853.log`。此前版本的备份与刷写记录仍保存在 `devicetest/flash-backups/20261109-display-animation-baseline/`。
 
 ## 声源定位现状
 
