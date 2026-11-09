@@ -4,9 +4,9 @@
 
 ## 结论
 
-此前基线的小程序完整回归为 660 项，视觉 harness 在 320/375/390/430 宽度、1.3 倍字体下完成 180 个布局检查；合入监护人与登录修复后，本轮聚焦行为回归为 181 项通过。它们证明测试夹具和静态布局范围内的行为稳定，不等于微信线上版本、控制 API 网关、真实 BLE/Wi-Fi、真实设备屏幕或刷机结果已经验收。当前工作区仍有固件、R02、文档和备份脏改动，审计过程保留了这些改动。
+此前基线的小程序完整回归为 660 项，视觉 harness 在 320/375/390/430 宽度、1.3 倍字体下完成 180 个布局检查；合入监护人与登录修复后，本轮聚焦行为回归为 181 项通过。当前整合后的本地回归为 668 项通过、1 项布局检查因环境缺少 Chrome 跳过。它们证明测试夹具和静态布局范围内的行为稳定，不等于微信线上版本、控制 API 网关、真实 BLE/Wi-Fi、真实设备屏幕或刷机结果已经验收。当前工作区仍有固件、R02、文档和备份脏改动，审计过程保留了这些改动。
 
-本轮已落地的五个 P1 根因修复是：安全提醒读取失败不再伪装成空数据；长期记忆纠正可以编辑并只提交新文本；设备在线状态使用 live runtime 连接证据，配网页面后台恢复时会清除失效的 busy/network 状态并重新观察；监护人首页和回顾页统一孩子主体与计数来源；受保护页面在登录失效后提供可达的恢复入口。剩余风险集中在认证续期链路、硬件休眠与收音反馈，以及多个跨页面状态和文案契约。
+本轮已落地的六个 P1 根因修复是：安全提醒读取失败不再伪装成空数据；长期记忆纠正可以编辑并只提交新文本；设备在线状态使用 live runtime 连接证据，配网页面后台恢复时会清除失效的 busy/network 状态并重新观察；监护人首页和回顾页统一孩子主体与计数来源；受保护页面在登录失效后提供可达的恢复入口；绑定确认页统一长期记忆授权，缺失的 `memory_level` 会在请求边界拒绝。剩余风险集中在认证续期链路、硬件休眠与收音反馈，以及多个跨页面状态和文案契约。
 
 ## 已完成的 P1 修复
 
@@ -17,6 +17,7 @@
 | MP-03 | 设备已激活后断电、离线或小程序后台恢复 | 一次性的激活 ACK 被当作“设备在线”；后台回来后 BLE/Wi-Fi 观察可能冻结，按钮保持 busy | 在线只由 `live_runtime.connected === true` 确认；未知显示待确认；`pause()` 清除失效 busy/network；页面回到 BLE/Wi-Fi/progress 会恢复观察 | `utils/device-status.js`、`utils/device-onboarding/onboarding-controller.js`、`pages/device-onboarding/index.js`；`tests/device-onboarding.test.js`、`tests/home-status-board.test.js` |
 | MP-04 | 监护人打开首页或回顾 | 首页摘要属于孩子但计数来自家长 session；回顾页无法连续展示同一摘要 | 首页使用绑定孩子 days；回顾页复用孩子摘要；读取失败保持未知，不显示伪造的 0；不读取家长 session 或孩子原话 | `pages/home/index.js`、`pages/memory/index.js`；`tests/demo03-family-review.test.js`、`tests/memory-review.test.js` |
 | MP-05 | 游客、会话清除或请求返回 401 | 页面停在加载态或只有不可达的“请先登录”，绑定 claim 可能丢失 | guardian、bind、child-memory、memory-lifecycle、privacy 均提供登录 CTA；bind 保留 claim 和回跳路由；旧账号状态按 auth epoch 清理 | `utils/auth-gate.js`、相关页面；`tests/login-cta-recovery.test.js` |
+| MP-06 | `self_use` 首次绑定在表单与确认页之间往返，或客户端构造绑定请求 | 表单重复提供“记忆深度”选择器；确认页授权说明没有覆盖各模式；缺失 `memory_level` 时一致性校验会放过请求 | 长期记忆由确认页 offer 单独控制；self-use 默认勾选且可取消，往返后保持选择；各模式显示对应说明；家庭空间 offer 为提交必选；`memory_level` 缺失或与授权不一致时 fail-closed | `pages/bind/index.wxml`、`utils/device-binding.js`；`tests/bind-flow.test.js`、`tests/device-binding.test.js`、`tests/runtime-profile-flow.test.js`、`tests/robot-product.test.js`；commits `965677b2`、`e8043f61` |
 
 ## P1：当前必须继续处理
 
@@ -84,12 +85,14 @@
 
 ## 验证记录与边界
 
-- `CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' npm test`：合入本轮两个小程序修复后尚未重跑；此前基线为 660 passed，0 failed，0 skipped，包含 180 个布局检查。
+- `cd apps/miniprogram && npm test`：668 passed，0 failed，1 skipped；跳过项是本环境缺少 `/usr/bin/google-chrome` 的布局检查。
 - `node --test tests/login-cta-recovery.test.js tests/bind-flow.test.js tests/bind-v4.test.js tests/child-memory.test.js tests/memory-lifecycle.test.js tests/demo03-family-review.test.js`：81 passed，0 failed。
-- `npm run check:forbidden-copy`：通过。
+- `node --test tests/bind-flow.test.js tests/device-binding.test.js tests/runtime-profile-flow.test.js tests/robot-product.test.js`：117 passed，0 failed。
+- `cd apps/miniprogram && npm run check:forbidden-copy`：80 个文件检查通过。
+- `cd apps/miniprogram && npm run check:release-gate`：通过。
 - `git diff --check`：通过。
 - `python -m pytest services/control_api/tests/test_account_auth.py -q -r a`：退出码 0，但认证 API 用例因缺少 `MEMORIA_TEST_POSTGRES_DSN` 全部跳过；这不是后端运行验收证据。
-- 当前轮未执行真实微信登录、微信线上网关、微信客户端 cookie 保留/回传、真实 BLE/Wi-Fi、刷机、线上发布或设备串口操作。
+- 当前轮未执行真实微信登录、微信线上网关、微信客户端 cookie 保留/回传、Control API `POST /v1/device-bindings` 联调、真实 BLE/Wi-Fi、刷机、线上发布或设备串口操作。
 - 硬件 P1 结论来自既有 acceptance 文件和真实设备证据；当前轮没有把它们升级为最新构建的验收结果。
 - 本报告中的“已修复”表示代码已在当前 checkout 且本地行为测试通过；“接通、启用、部署、真机验证”仍按各项验收标准单独记录。
 
