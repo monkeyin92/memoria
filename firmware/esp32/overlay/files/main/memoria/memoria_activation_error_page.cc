@@ -2,6 +2,8 @@
 
 #include <lvgl.h>
 
+#include <atomic>
+
 #include "display/display.h"
 #include "memoria_activation_error_text.h"
 
@@ -22,6 +24,7 @@ constexpr int kDetailBottomOffset = -55;
 
 lv_obj_t* page_ = nullptr;
 lv_obj_t* detail_label_ = nullptr;
+std::atomic<bool> page_visible_{false};
 
 lv_obj_t* CreateLabel(lv_obj_t* parent,
                       const char* text,
@@ -86,6 +89,7 @@ bool ShowActivationNetworkErrorPage(Display* display, const char* detail) {
         return false;
     }
     page_ = page;
+    page_visible_.store(true, std::memory_order_release);
     return true;
 }
 
@@ -98,7 +102,12 @@ void HideActivationNetworkErrorPage(Display* display) {
         lv_obj_del(page_);
         page_ = nullptr;
         detail_label_ = nullptr;
+        page_visible_.store(false, std::memory_order_release);
     }
+}
+
+bool ActivationNetworkErrorPageVisible() {
+    return page_visible_.load(std::memory_order_acquire);
 }
 
 }  // namespace memoria

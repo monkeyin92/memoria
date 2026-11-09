@@ -6,9 +6,7 @@ namespace memoria {
 // Source: /workspace/memoria-notes/需求/激活失败提示文案-v1.md
 constexpr const char* kActivationNetworkErrorTitle = "网络没连上";
 constexpr const char* kActivationNetworkErrorBody =
-    "请检查家里的无线网，网好了会自动连上";
-// Bottom line, untranslated diagnostics. The code is (esp_err name, esp_err
-// number, HTTP status, TLS/transport code); no secret or URL is ever passed.
-constexpr const char* kActivationNetworkErrorDetailFormat = "%s (%d)  HTTP %d  TLS 0x%x";
+    "请检查家里的无线网，恢复后会自动重试";
+constexpr const char* kActivationNetworkErrorDetailFormat = "支持码 %s";
 
 }  // namespace memoria

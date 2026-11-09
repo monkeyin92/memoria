@@ -376,8 +376,7 @@ void MemoriaMascotDisplay::StyleQrCard() {
     if (qr_title_ == nullptr) {
         qr_title_ = lv_label_create(qr_overlay_);
     }
-    // No companion has been picked yet when the board asks to be set up.
-    lv_label_set_text(qr_title_, "欢迎使用 Memoria");
+    lv_label_set_text(qr_title_, qr_reprovision_ ? "重新配网" : "扫码绑定");
     lv_obj_set_style_text_color(qr_title_, Color(ink), 0);
     lv_obj_align(qr_title_, LV_ALIGN_TOP_MID, 0, 30);
     if (qr_caption_ != nullptr) {
@@ -402,6 +401,9 @@ bool MemoriaMascotDisplay::ShowQrCode(const std::string& payload, const char* ca
         qr_card_ = nullptr;
         qr_title_ = nullptr;
     }
+    qr_status_until_ms_.store(0);
+    qr_caption_text_ = caption == nullptr ? "微信扫码绑定" : caption;
+    qr_reprovision_ = caption != nullptr && std::strstr(caption, "重新配网") != nullptr;
     if (!LcdDisplay::ShowQrCode(payload, caption)) {
         return false;
     }
@@ -418,11 +420,28 @@ void MemoriaMascotDisplay::ClearQrCode() {
     LcdDisplay::ClearQrCode();
     qr_card_ = nullptr;
     qr_title_ = nullptr;
+    qr_caption_text_.clear();
+    qr_status_until_ms_.store(0);
+    qr_reprovision_ = false;
     qr_visible_.store(false);
     if (Lock(1000)) {
         ApplyChromeOpacity(chrome_opa_);
         Unlock();
     }
+}
+
+void MemoriaMascotDisplay::ShowQrStatus(const char* status, int duration_ms) {
+    if (status == nullptr || !qr_visible_.load()) {
+        return;
+    }
+    if (!Lock(1000)) {
+        return;
+    }
+    if (qr_caption_ != nullptr && qr_overlay_ != nullptr) {
+        lv_label_set_text(qr_caption_, status);
+        qr_status_until_ms_.store(NowMs() + static_cast<uint32_t>(duration_ms > 0 ? duration_ms : 1));
+    }
+    Unlock();
 }
 
 bool MemoriaMascotDisplay::WantsCaption(uint32_t now_ms) {
@@ -498,6 +517,10 @@ void MemoriaMascotDisplay::SetStatus(const char* status) {
 
 void MemoriaMascotDisplay::ShowNotification(const char* notification, int duration_ms) {
     if (notification == nullptr) {
+        return;
+    }
+    if (qr_visible_.load()) {
+        ShowQrStatus(notification, duration_ms);
         return;
     }
     // Upstream announces each Wi-Fi attempt as "连接 <ssid>..."; the screen
@@ -693,6 +716,13 @@ void MemoriaMascotDisplay::AnimationLoop() {
         int64_t drawn_busy_us = 0;
         if (Lock(100)) {
             const uint32_t frame_now = NowMs();
+            if (qr_visible_.load() && qr_status_until_ms_.load() != 0 &&
+                static_cast<int32_t>(qr_status_until_ms_.load() - frame_now) <= 0) {
+                if (qr_caption_ != nullptr) {
+                    lv_label_set_text(qr_caption_, qr_caption_text_.c_str());
+                }
+                qr_status_until_ms_.store(0);
+            }
             // The audio tasks' level taps (memoria_audio_level.h): drained every frame, lit or not, so the
             // mouth and the glow never act on audio that played while the screen was off.
             const memoria::AudioLevelTap::Reading spoken = memoria::output_level_tap.Take();

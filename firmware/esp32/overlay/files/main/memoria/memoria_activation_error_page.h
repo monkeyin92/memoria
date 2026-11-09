@@ -9,5 +9,6 @@ namespace memoria {
 // only draw the page and serialise LVGL with the display lock.
 bool ShowActivationNetworkErrorPage(Display* display, const char* detail);
 void HideActivationNetworkErrorPage(Display* display);
+bool ActivationNetworkErrorPageVisible();
 
 }  // namespace memoria

@@ -50,6 +50,7 @@ public:
     void SetTheme(Theme* theme) override;
     bool ShowQrCode(const std::string& payload, const char* caption) override;
     void ClearQrCode() override;
+    void ShowQrStatus(const char* status, int duration_ms = 2500);
 
     // Switch to another companion (persisted, applied by the animation task).
     // Unknown ids are ignored.
@@ -138,6 +139,9 @@ private:
     int32_t bottom_bar_height_ = 0;
     lv_obj_t* qr_card_ = nullptr;
     lv_obj_t* qr_title_ = nullptr;
+    std::string qr_caption_text_;
+    std::atomic<uint32_t> qr_status_until_ms_{0};
+    bool qr_reprovision_ = false;
     std::atomic<bool> offline_menu_active_{false};
 
     // Inputs from other tasks, consumed by the animation task.

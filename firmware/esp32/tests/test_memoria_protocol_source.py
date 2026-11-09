@@ -393,10 +393,12 @@ def test_the_qr_screen_is_neutral_complete_and_refreshable() -> None:
     display = (
         root / "files" / "main" / "boards" / "memoria" / "esp-vocat" / "memoria_mascot_display.cc"
     ).read_text(encoding="utf-8")
-    assert 'lv_label_set_text(qr_title_, "欢迎使用 Memoria");' in display
+    assert 'lv_label_set_text(qr_title_, qr_reprovision_ ? "重新配网" : "扫码绑定");' in display
     assert "你好，我是" not in display
     bootstrap = (root / "files" / "main" / "memoria" / "memoria_bootstrap.cc").read_text(encoding="utf-8")
-    assert 'kQrCaption = "微信扫一扫 开始配网";' in bootstrap
+    assert 'kBindQrCaption = "微信扫一扫 开始配网";' in bootstrap
+    assert 'kReprovisionQrCaption = "微信扫一扫 重新配网";' in bootstrap
+    assert 'runtime.GetInt("activation_v", 0) == 0' in bootstrap
     refresh = bootstrap[bootstrap.index("esp_err_t MemoriaBootstrap::Refresh") :]
     refresh = refresh[: refresh.index("void MemoriaBootstrap::Stop")]
     assert refresh.index("Stop();") < refresh.index("return Start(display);")
@@ -410,6 +412,64 @@ def test_the_qr_screen_is_neutral_complete_and_refreshable() -> None:
     assert touch.index("MemoriaBootstrap::GetInstance().active()") < touch.index("kDeviceStateStarting")
     assert "Refresh(display_)" in touch
     assert "3 * 1000 * 1000" in touch
+
+
+def test_qr_refresh_feedback_is_visible_on_the_qr_caption_and_cooldown() -> None:
+    root = Path(__file__).parents[1] / "overlay"
+    display = (
+        root / "files" / "main" / "boards" / "memoria" / "esp-vocat" / "memoria_mascot_display.cc"
+    ).read_text(encoding="utf-8")
+    notification = display[display.index("void MemoriaMascotDisplay::ShowNotification") :]
+    assert notification.index("qr_visible_.load()") < notification.index("LvglDisplay::ShowNotification")
+    assert "ShowQrStatus(notification, duration_ms);" in notification
+    assert "lv_label_set_text(qr_caption_, status);" in display
+    assert "lv_label_set_text(qr_caption_, qr_caption_text_.c_str());" in display
+    board = (
+        root / "files" / "main" / "boards" / "memoria" / "esp-vocat" / "memoria_esp_vocat.cc"
+    ).read_text(encoding="utf-8")
+    touch = board[board.index("void HandleScreenTouchRelease(std::uint32_t hold_ms)") :]
+    touch = touch[: touch.index("void InitializeI2c()")]
+    assert 'GetDisplay()->ShowNotification("二维码刚换新，请稍候", 1200);' in touch
+    assert 'GetDisplay()->ShowNotification("已换新二维码，请重新扫码", 2500);' in touch
+
+
+def test_activation_error_page_is_actionable_and_blocks_qr_taps() -> None:
+    root = Path(__file__).parents[1] / "overlay"
+    text = (root / "files" / "main" / "memoria" / "memoria_activation_error_text.h").read_text(
+        encoding="utf-8"
+    )
+    assert "恢复后会自动重试" in text
+    assert 'kActivationNetworkErrorDetailFormat = "支持码 %s";' in text
+    protocol = (root / "files" / "main" / "memoria" / "memoria_protocol.cc").read_text(
+        encoding="utf-8"
+    )
+    failure_detail = protocol[
+        protocol.index("std::string ActivationFailureDetail") :
+        protocol.index("struct ScopedJson")
+    ]
+    assert "esp_err_to_name" not in failure_detail
+    assert "support_code[7]" in failure_detail
+    assert "value & 0xFFFFu" in failure_detail
+    error_page = protocol[
+        protocol.index("void MemoriaProtocol::RunActivationRetry") :
+        protocol.index("void MemoriaProtocol::StartDisplayProfilePoll")
+    ]
+    error_page = error_page[
+        error_page.index("ActivationRetryPolicy::ShouldShowErrorPage") :
+    ]
+    assert error_page.index("display->ClearQrCode();") < error_page.index("MemoriaBootstrap::GetInstance().Stop();")
+    assert "ActivationNetworkErrorPageVisible" in (
+        root / "files" / "main" / "memoria" / "memoria_activation_error_page.h"
+    ).read_text(encoding="utf-8")
+    board = (
+        root / "files" / "main" / "boards" / "memoria" / "esp-vocat" / "memoria_esp_vocat.cc"
+    ).read_text(encoding="utf-8")
+    touch = board[board.index("void HandleScreenTouchRelease(std::uint32_t hold_ms)") :]
+    touch = touch[: touch.index("void InitializeI2c()")]
+    assert touch.index("ActivationNetworkErrorPageVisible()") < touch.index(
+        "MemoriaBootstrap::GetInstance().active()"
+    )
+    assert "retry is automatic" in touch
 
 
 def test_media_challenge_post_has_an_explicit_json_body() -> None:

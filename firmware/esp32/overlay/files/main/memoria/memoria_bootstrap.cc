@@ -35,7 +35,8 @@ constexpr const char* kProvisioningVersion = "memoria-provisioning/1";
 // 二维码打开小程序). The signed payload rides unchanged in `b`; the Mini
 // Program unwraps it (qr-code.js BIND_LINK_PREFIX) before the server sees it.
 constexpr const char* kBindLinkPrefix = "https://aginice.cn/memoria-bind/?b=";
-constexpr const char* kQrCaption = "微信扫一扫 开始配网";
+constexpr const char* kBindQrCaption = "微信扫一扫 开始配网";
+constexpr const char* kReprovisionQrCaption = "微信扫一扫 重新配网";
 constexpr const char* kCapabilityManifestHash =
     "67ab4e8840637bd8df497bed6b13153d146a8fa790271eae59ac3a032345758b";
 constexpr int kHttpTimeoutMs = 10000;
@@ -408,7 +409,11 @@ esp_err_t MemoriaBootstrap::Start(LcdDisplay* display) {
         return ESP_ERR_INVALID_STATE;
     }
     if (active_) {
-        return display->ShowQrCode(kBindLinkPrefix + qr_payload_, kQrCaption) ? ESP_OK : ESP_FAIL;
+        Settings runtime("memoria_runtime", true);
+        const char* caption = runtime.GetInt("activation_v", 0) == 0
+                                  ? kBindQrCaption
+                                  : kReprovisionQrCaption;
+        return display->ShowQrCode(kBindLinkPrefix + qr_payload_, caption) ? ESP_OK : ESP_FAIL;
     }
     display_ = display;
     esp_err_t result = identity_.Load();
@@ -418,7 +423,11 @@ esp_err_t MemoriaBootstrap::Start(LcdDisplay* display) {
     if (result == ESP_OK) {
         result = StartBle();
     }
-    if (result == ESP_OK && !display_->ShowQrCode(kBindLinkPrefix + qr_payload_, kQrCaption)) {
+    Settings runtime("memoria_runtime", true);
+    const char* caption = runtime.GetInt("activation_v", 0) == 0
+                              ? kBindQrCaption
+                              : kReprovisionQrCaption;
+    if (result == ESP_OK && !display_->ShowQrCode(kBindLinkPrefix + qr_payload_, caption)) {
         result = ESP_FAIL;
     }
     if (result != ESP_OK) {
