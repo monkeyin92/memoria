@@ -55,7 +55,12 @@ public:
     // Unknown ids are ignored.
     void SetCompanion(const char* companion_id);
     void SetOfflineMenuActive(bool active);
-    void SetListeningClosed(bool closed) { listening_closed_.store(closed, std::memory_order_relaxed); }
+    void SetListeningClosed(bool closed) {
+        listening_closed_.store(closed, std::memory_order_relaxed);
+        if (closed) {
+            voice_ended_.store(false, std::memory_order_relaxed);
+        }
+    }
     // The device's VAD edges (memoria::SetVoiceActivityHandler). The child stopping while the device
     // listens shows the thinking face until the state moves on; VAD edges in other states (barge-in while
     // speaking) change nothing. Atomics only: it may run under the protocol's state lock.

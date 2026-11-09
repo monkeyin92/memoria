@@ -17,6 +17,7 @@ FIRMWARE_ROOT = pathlib.Path(__file__).parents[1]
 BOARD_DIR = FIRMWARE_ROOT / "overlay" / "files" / "main" / "boards" / "memoria" / "esp-vocat"
 ASSETS_DIR = BOARD_DIR / "assets"
 DISPLAY = BOARD_DIR / "memoria_mascot_display.cc"
+DISPLAY_HEADER = BOARD_DIR / "memoria_mascot_display.h"
 
 WIDTH = 360
 FACE_TOP_MIN_Y = 18
@@ -833,6 +834,11 @@ def test_display_paints_from_device_state_not_emotion_names() -> None:
     # The thinking face comes from the device's own VAD, never from the recognised text.
     assert "user_spoke" not in source
     assert "voice_ended_" in source
+    display_header = DISPLAY_HEADER.read_text(encoding="utf-8")
+    listening_window = display_header[
+        display_header.index("void SetListeningClosed") : display_header.index("// The device's VAD edges")
+    ]
+    assert "voice_ended_.store(false, std::memory_order_relaxed)" in listening_window
     chat = source[source.index("void MemoriaMascotDisplay::SetChatMessage") :]
     chat = chat[: chat.index("\n}\n")]
     assert "voice_ended_" not in chat and "expression" not in chat
