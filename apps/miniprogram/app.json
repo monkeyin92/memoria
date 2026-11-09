@@ -4,7 +4,6 @@
     "pages/device/index",
     "pages/memory/index",
     "pages/profile/index",
-    "pages/companion/index",
     "pages/persona-custom/index",
     "pages/guardian/index",
     "pages/child-memory/index",
@@ -38,15 +37,11 @@
     "list": [
       {
         "pagePath": "pages/home/index",
-        "text": "首页"
+        "text": "今天"
       },
       {
         "pagePath": "pages/memory/index",
         "text": "回顾"
-      },
-      {
-        "pagePath": "pages/companion/index",
-        "text": "声音"
       },
       {
         "pagePath": "pages/device/index",

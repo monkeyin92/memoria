@@ -6,7 +6,7 @@ const test = require("node:test");
 const root = path.join(__dirname, "..");
 const template = fs.readFileSync(path.join(root, "pages/profile/index.wxml"), "utf8");
 const styles = fs.readFileSync(path.join(root, "pages/profile/index.wxss"), "utf8");
-const companionTemplate = fs.readFileSync(path.join(root, "pages/companion/index.wxml"), "utf8");
+const deviceTemplate = fs.readFileSync(path.join(root, "pages/device/index.wxml"), "utf8");
 
 test("profile hero uses the WeChat avatar or a name initial, not a robot mascot", () => {
   assert.match(template, /wx:if="\{\{profile\.avatar_url\}\}"[\s\S]*class="user-avatar"/);
@@ -17,13 +17,12 @@ test("profile hero uses the WeChat avatar or a name initial, not a robot mascot"
   assert.match(styles, /\.user-avatar\s*\{[^}]*border-radius:\s*50%/s);
 });
 
-test("roles and custom personas live on the 角色 tab, not on the profile", () => {
-  assert.match(companionTemplate, /bindtap="openCustomPersona"/);
+test("custom expressions live on the device page, not on the profile", () => {
+  assert.match(deviceTemplate, /bindtap="openCustomPersona"/);
   assert.doesNotMatch(template, /自定义人格|openCompanion|openCustomPersona/);
   assert.doesNotMatch(template, /对着麦克风录|上传音频|我的自定义声音/);
   assert.doesNotMatch(template, /class="persona-row/);
+  assert.doesNotMatch(deviceTemplate, /试听|选择一种音色|声音页/);
   assert.doesNotMatch(template, /companion-mascot-shell|companion-face|character-photo/);
   assert.doesNotMatch(template, /assets\/companions/);
-  assert.match(companionTemplate, /item\.tone/);
-  assert.doesNotMatch(companionTemplate, /我的自定义声音/);
 });

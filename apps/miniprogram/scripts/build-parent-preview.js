@@ -29,7 +29,7 @@ function snapshot(slug, page, data, options = {}) {
 
 async function main() {
   process.env.TZ = "Asia/Shanghai";
-  for (const slug of ["home", "memory", "companion", "device", "profile"]) {
+  for (const slug of ["home", "memory", "device", "profile"]) {
     const scenario = PAGES.find((item) => item.slug === slug);
     const { data } = await scenarioData(scenario, VIEW);
     snapshot(slug, scenario.page, data);
@@ -55,12 +55,12 @@ nav{display:flex;flex-wrap:wrap;gap:8px;margin-top:28px}button{border:1px solid 
 @media(max-width:760px){main{padding:0;display:block}aside{max-width:none;padding:20px}h1{font-size:24px;margin:10px 0}aside p{margin:8px 0}nav{margin-top:12px}.label{margin-top:12px}.phone{margin:auto;border-radius:0;box-shadow:none}}
 @media(max-width:389px){.phone{width:100%;overflow-x:auto}}
 </style></head><body>
-<main><aside><small>MEMORIA / 2026.11</small><h1>把陪伴的日常，<br>轻轻收好。</h1><p>暖纸色、分区色卡与已有角色插画。首页看回顾，设备页只展开此刻需要的设置。</p><nav aria-label="预览页面"><button data-screen="home">首页</button><button data-screen="memory">回顾</button><button data-screen="companion">声音</button><button data-screen="device">设备</button><button data-screen="profile">我的</button></nav><p class="label">由实际 WXML / WXSS 生成。底部导航与设备折叠项可点击；数据来自本地测试样例，未连接真实账号。保存、试听与权限流程请在微信中验证。</p></aside>
+<main><aside><small>MEMORIA / 2026.11</small><h1>把陪伴的日常，<br>轻轻收好。</h1><p>暖纸色、分区色卡与已有角色插画。今天看状态，设备页只展开此刻需要的设置。</p><nav aria-label="预览页面"><button data-screen="home">今天</button><button data-screen="memory">回顾</button><button data-screen="device">设备</button><button data-screen="profile">我的</button></nav><p class="label">由实际 WXML / WXSS 生成。底部导航与设备折叠项可点击；数据来自本地测试样例，未连接真实账号。</p></aside>
 <section class="phone" data-screen-label="小程序交互预览"><iframe title="Memoria 小程序预览" sandbox="allow-scripts"></iframe><div id="toast" role="status"></div></section></main>
 <script>
 const payload=${payload};
 const frame=document.querySelector("iframe");
-const tabSlugs=["home","memory","companion","device","profile"];
+const tabSlugs=["home","memory","device","profile"];
 const toggles={toggleUsage:0,toggleManagement:1,toggleMemberSettings:2,toggleStories:3,toggleDiag:4};
 let screen="home",mask=0,toastTimer;
 function show(next,keepScroll=false){
@@ -78,7 +78,7 @@ window.addEventListener("message",event=>{
  const {handler,index,scroll}=event.data;lastScroll=scroll;
  if(handler==="onTapTab"){show(tabSlugs[Number(index)]||"home");return}
  if(Object.hasOwn(toggles,handler)){mask^=1<<toggles[handler];show("device",true);return}
- const links={openMemory:"memory",openProfile:"profile",openDevice:"device",openCompanion:"companion",openLimitsSheet:"device-quiet",openNightSettings:"device-quiet",closeLimitsSheet:"device"};
+ const links={openMemory:"memory",openProfile:"profile",openDevice:"device",openLimitsSheet:"device-quiet",openNightSettings:"device-quiet",closeLimitsSheet:"device"};
  if(links[handler]){show(links[handler]);return}
  const toast=document.querySelector("#toast");toast.textContent="这是界面预览。此操作需要在微信小程序中完成。";toast.style.display="block";clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.style.display="none",2600);
 });

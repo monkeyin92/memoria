@@ -34,7 +34,6 @@ const PAGES = [
   },
   { slug: "memory-empty", page: "pages/memory/index", harness: authed(fx.emptyMemoryApi) },
   { slug: "memory-empty-memories", page: "pages/memory/index", harness: authed(fx.emptyMemoryApi), actions: [["showMemories"]] },
-  { slug: "companion", page: "pages/companion/index", harness: authed() },
   { slug: "device", page: "pages/device/index", harness: authed() },
   { slug: "profile", page: "pages/profile/index", harness: authed() },
   { slug: "guardian", page: "pages/guardian/index", harness: authed(fx.guardianApi) },

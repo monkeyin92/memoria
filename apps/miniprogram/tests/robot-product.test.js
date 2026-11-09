@@ -29,10 +29,16 @@ test("pages render the robot through face-badge and device-screen, not loose ass
     assert.doesNotMatch(template, /\/assets\/(?:mascots|companions|robots)\//, page);
   }
   const home = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
-  const companion = fs.readFileSync(path.join(root, "pages/companion/index.wxml"), "utf8");
   assert.match(home, /<face-badge/);
   assert.match(home, /<device-screen/);
-  assert.match(companion, /<face-badge/);
+});
+
+test("the retired companion page is absent while internal companion mapping remains", () => {
+  const appConfig = require("../app.json");
+  assert.equal(appConfig.pages.includes("pages/companion/index"), false);
+  assert.equal(fs.existsSync(path.join(root, "pages/companion/index.js")), false);
+  assert.equal(require("../utils/tab-routes").isTabRoute("/pages/companion/index"), false);
+  assert.equal(companionById("taoxi").voiceName, "默认声音");
 });
 
 test("the production package keeps retired companion art and old voice samples out", () => {
@@ -66,23 +72,6 @@ test("the home status card keeps device identity, connection state, and working 
     } finally {
       harness.restore();
     }
-  }
-});
-
-test("the companion tab lists the default voice with a sample preview and the current pick", async () => {
-  const harness = loadPage("pages/companion/index", fx.guest());
-  try {
-    const data = await harness.run();
-    const text = visibleText(renderPage("pages/companion/index", data));
-    assert.match(text, /Memoria/);
-    assert.match(text, /已选/);
-    assert.match(text, /试听/);
-    assert.doesNotMatch(text, /星澜|桃喜|绵绵|阿序|玄墨/);
-    assert.equal(typeof harness.page.chooseCompanion, "function");
-    assert.equal(typeof harness.page.togglePreview, "function");
-    assert.equal(require("../utils/tab-routes").isTabRoute("/pages/companion/index"), true);
-  } finally {
-    harness.restore();
   }
 });
 

@@ -35,7 +35,6 @@ const PARITY = [
   },
   { slug: "05-attention", design: "05-attention.png", page: "pages/attention/index", harness: fx.authed(), query: { id: "n1" } },
   { slug: "10-profile", design: "10-profile.png", page: "pages/profile/index", harness: fx.authed() },
-  { slug: "08-roles", design: "08-roles.png", page: "pages/companion/index", harness: fx.authed() },
   {
     slug: "09-memory",
     design: "09-memory.png",

@@ -205,7 +205,7 @@ test("app registers binding, device, and onboarding pages", () => {
   assert.ok(appConfig.pages.includes("pages/device-onboarding/index"));
   assert.deepEqual(
     appConfig.tabBar.list.map((item) => item.text),
-    ["首页", "回顾", "声音", "设备", "我的"],
+    ["今天", "回顾", "设备", "我的"],
   );
 });
 

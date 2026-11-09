@@ -1775,21 +1775,17 @@ test("persona assignment failure keeps the sheet open and reports the error", as
   personaFailure = false;
 });
 
-test("default voice opens on the companion tab", async () => {
-  const switched = [];
+test("device page keeps custom expression management without a companion tab", async () => {
   const navigated = [];
-  const previous = { switchTab: global.wx.switchTab, navigateTo: global.wx.navigateTo };
-  global.wx.switchTab = (options) => switched.push(options.url);
+  const previous = { navigateTo: global.wx.navigateTo };
   global.wx.navigateTo = (options) => navigated.push(options.url);
   try {
     const page = instantiate(pageDefinition);
-    page.openCompanion();
-    assert.deepEqual(navigated, []);
-    assert.deepEqual(switched, ["/pages/companion/index"]);
+    page.openCustomPersona();
+    assert.deepEqual(navigated, ["/pages/persona-custom/index"]);
     const appConfig = JSON.parse(fs.readFileSync(path.join(root, "app.json"), "utf8"));
-    assert.equal(appConfig.tabBar.list.some((tab) => tab.pagePath === "pages/companion/index"), true);
+    assert.deepEqual(appConfig.tabBar.list.map((tab) => tab.text), ["今天", "回顾", "设备", "我的"]);
   } finally {
-    global.wx.switchTab = previous.switchTab;
     global.wx.navigateTo = previous.navigateTo;
   }
 });

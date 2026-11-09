@@ -1172,10 +1172,6 @@ Page({
     this.loadDevice().finally(() => wx.stopPullDownRefresh());
   },
 
-  openCompanion() {
-    wx.switchTab({ url: "/pages/companion/index" });
-  },
-
   openCustomPersona() {
     if (this.data.personaSaving) return;
     this.closePersonaSheet();

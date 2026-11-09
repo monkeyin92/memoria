@@ -43,14 +43,6 @@ async function main() {
     await frame().click('[data-handler="toggleManagement"]');
     await frame().waitForFunction(() => !document.querySelector('[data-handler="toggleStories"]'));
     checks.push("collapsed management");
-    await frame().click('[data-handler="openCompanion"]');
-    await checkScreen("companion", ".default-voice-page");
-    assert.equal(await frame().$('[data-handler="chooseCompanion"]'), null);
-    assert.equal(await frame().$(".wx-tabbar-host"), null);
-    checks.push("default voice is a child page without a selector");
-    await frame().click('[data-handler="goBack"]');
-    await checkScreen("device", '[data-handler="openLimitsSheet"]');
-    checks.push("default voice back");
     await frame().click('[data-handler="openLimitsSheet"]');
     await checkScreen("device-quiet", ".sheet-mask");
     checks.push("quiet hours sheet open");

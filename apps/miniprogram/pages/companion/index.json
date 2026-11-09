@@ -1,7 +1,0 @@
-{
-  "navigationBarTitleText": "声音",
-  "navigationStyle": "custom",
-  "usingComponents": {
-    "face-badge": "/components/face-badge/index"
-  }
-}
