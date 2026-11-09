@@ -141,7 +141,7 @@
         <view class="home-device-copy">
           <view class="trial-status-pill {{online ? '' : 'is-off'}}">
             <view class="trial-status-dot"></view>
-            <text>{{devicePlaceName}} · {{online ? '在线' : '离线'}}</text>
+            <text>{{devicePlaceName}} · {{onlineLabel}}</text>
           </view>
           <text class="home-lbl">今日聊天用量</text>
           <view wx:if="{{usageKnown}}" class="home-usage-compact">
