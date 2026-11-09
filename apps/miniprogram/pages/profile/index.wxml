@@ -21,10 +21,10 @@
     </view>
 
     <view class="card device-card" bindtap="openDevice">
-      <view class="device-art" aria-hidden="true"><device-screen online="{{deviceBindingState === 'ready' || deviceBindingState === 'cached'}}" size="112"></device-screen></view>
+      <view class="device-art" aria-hidden="true"><device-screen online="{{deviceBindingOnline}}" size="112"></device-screen></view>
       <view class="row-copy">
         <text class="device-name">{{deviceName || '我的设备'}}</text>
-        <view class="device-pill pill {{deviceBindingState === 'ready' || deviceBindingState === 'cached' ? 'pill-online' : 'pill-neutral'}}">{{deviceBindingStateLabel}}</view>
+        <view class="device-pill pill {{deviceBindingPillClass}}">{{deviceBindingStateLabel}}</view>
         <text wx:if="{{deviceBindingState !== 'ready'}}" class="row-meta">{{deviceBindingDetail}}</text>
       </view>
       <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" aria-hidden="true" />

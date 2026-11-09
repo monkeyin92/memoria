@@ -83,6 +83,8 @@ function deviceBindingReset(accountId = "", syncing = false) {
     deviceBindingAccountId: accountId,
     deviceBindingState: syncing ? "syncing" : "idle",
     deviceBindingSyncing: syncing,
+    deviceBindingOnline: false,
+    deviceBindingPillClass: "pill-neutral",
     deviceBindingStateLabel: syncing ? "同步中" : "待同步",
     deviceBindingDetail: syncing
       ? "正在从服务端恢复账号可见设备。"
@@ -103,6 +105,8 @@ function deviceBindingStateData(state) {
   const view = {
     deviceBindingState: status,
     deviceBindingSyncing: false,
+    deviceBindingOnline: status === "ready",
+    deviceBindingPillClass: status === "ready" ? "pill-online" : "pill-neutral",
     deviceBindingError: error,
     deviceBinding: binding,
     deviceBindingSummary: "设备暂未同步",
@@ -125,7 +129,7 @@ function deviceBindingStateData(state) {
     view.deviceBindingDetail = view.deviceBindingModeLabel + " · " + view.deviceBindingLabel;
     view.deviceBindingChoices = deviceBindingChoiceItems(bindings);
   } else if (status === "cached") {
-    view.deviceBindingStateLabel = "已绑定设备";
+    view.deviceBindingStateLabel = "已绑定设备 · 状态待同步";
     view.deviceBindingDetail = view.deviceBindingModeLabel + " · " + view.deviceBindingLabel +
       "；设备列表暂时无法同步，当前为本机保存的绑定。";
   } else if (status === "empty") {

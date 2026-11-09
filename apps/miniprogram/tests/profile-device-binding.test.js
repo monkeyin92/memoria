@@ -167,6 +167,8 @@ test("空缓存只进入同步中，不能推断账号没有设备", async () =>
       assert.equal(page.data.deviceBindingState, "ready");
       assert.equal(page.data.deviceBindingStateLabel, "已绑定设备");
       assert.equal(page.data.deviceBindingSummary, "已绑定 1 台设备");
+      assert.equal(page.data.deviceBindingOnline, true);
+      assert.equal(page.data.deviceBindingPillClass, "pill-online");
     } finally {
       restore();
     }
@@ -260,9 +262,11 @@ test("cached 状态保留本机绑定并提示列表未同步", async () => {
     try {
       await page._loadAuthenticatedData();
       assert.equal(page.data.deviceBindingState, "cached");
-      assert.equal(page.data.deviceBindingStateLabel, "已绑定设备");
+      assert.equal(page.data.deviceBindingStateLabel, "已绑定设备 · 状态待同步");
       assert.equal(page.data.deviceBindingSummary, "已绑定 1 台设备（列表未同步）");
       assert.ok(page.data.deviceBindingDetail.includes("设备列表暂时无法同步"));
+      assert.equal(page.data.deviceBindingOnline, false);
+      assert.equal(page.data.deviceBindingPillClass, "pill-neutral");
       assert.ok(page.data.deviceBindingError);
       assert.equal(
         page.data.hasRuntimeProfile,
