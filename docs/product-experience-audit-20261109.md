@@ -85,6 +85,7 @@
 - `CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' npm test`：660 passed，0 failed，0 skipped；包含 180 个布局检查。
 - `npm run check:forbidden-copy`：通过。
 - `git diff --check`：通过。
+- `python -m pytest services/control_api/tests/test_account_auth.py -q -r a`：退出码 0，但认证 API 用例因缺少 `MEMORIA_TEST_POSTGRES_DSN` 全部跳过；这不是后端运行验收证据。
 - 当前轮未执行真实微信登录、微信线上网关、微信客户端 cookie 保留/回传、真实 BLE/Wi-Fi、刷机、线上发布或设备串口操作。
 - 硬件 P1 结论来自既有 acceptance 文件和真实设备证据；当前轮没有把它们升级为最新构建的验收结果。
 - 本报告中的“已修复”表示代码已在当前 checkout 且本地行为测试通过；“接通、启用、部署、真机验证”仍按各项验收标准单独记录。
