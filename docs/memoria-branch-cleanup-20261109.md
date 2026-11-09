@@ -41,4 +41,4 @@
 
 以下 11 个已完成且干净的 T3 临时 worktree 和本地分支已删除：`t3/audit-branch-cleanup`、`t3/fix-device-status-resume`、`t3/fix-memory-correction`、`t3/fix-safety-alert-read-failure`、`t3/fix-self-use-memory-consent`、`t3/guardian-child-review-fixes`、`t3/miniprogram-auth-renewal-research`、`t3/miniprogram-login-cta-recovery`、`t3/review-memory-binding-consistency`、`t3/review-memory-consent-flow`、`t3/review-miniprogram-p1-fixes`。删除前的完整 T3 分支历史已保存在 `/private/tmp/memoria-t3-branches-20261109.bundle`，`git bundle verify` 通过。
 
-保留了 `t3/fix-hardware-status-feedback`，因为它与当前固件提交存在文案差异；保留了开放 PR 的两个 `.claude/worktrees`、`/private/tmp/memoria-visual` 和主工作树。清理后主工作树仍有 51 项父任务已有的已修改或未跟踪路径。
+保留了 `t3/fix-hardware-status-feedback`，因为它与当前固件提交存在文案差异；保留了开放 PR 的两个 `.claude/worktrees`、`/private/tmp/memoria-visual` 和主工作树。清理后主工作树仍有 50 项父任务已有的已修改或未跟踪路径。
