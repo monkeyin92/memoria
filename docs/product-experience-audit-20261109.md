@@ -4,9 +4,9 @@
 
 ## 结论
 
-小程序当前本地行为回归已通过 660 项，视觉 harness 在 320/375/390/430 宽度、1.3 倍字体下完成 180 个布局检查；这证明最新代码在测试夹具和静态布局范围内稳定。它不等于微信线上版本、控制 API 网关、真实 BLE/Wi-Fi、真实设备屏幕或刷机结果已经验收。当前工作区仍有固件、R02、文档和备份脏改动，审计过程保留了这些改动。
+此前基线的小程序完整回归为 660 项，视觉 harness 在 320/375/390/430 宽度、1.3 倍字体下完成 180 个布局检查；合入监护人与登录修复后，本轮聚焦行为回归为 181 项通过。它们证明测试夹具和静态布局范围内的行为稳定，不等于微信线上版本、控制 API 网关、真实 BLE/Wi-Fi、真实设备屏幕或刷机结果已经验收。当前工作区仍有固件、R02、文档和备份脏改动，审计过程保留了这些改动。
 
-本轮已落地的三个 P1 根因修复是：安全提醒读取失败不再伪装成空数据；长期记忆纠正可以编辑并只提交新文本；设备在线状态使用 live runtime 连接证据，配网页面后台恢复时会清除失效的 busy/network 状态并重新观察。剩余风险集中在监护人数据主体一致性、登录会话恢复、硬件休眠与收音反馈，以及多个跨页面状态和文案契约。
+本轮已落地的五个 P1 根因修复是：安全提醒读取失败不再伪装成空数据；长期记忆纠正可以编辑并只提交新文本；设备在线状态使用 live runtime 连接证据，配网页面后台恢复时会清除失效的 busy/network 状态并重新观察；监护人首页和回顾页统一孩子主体与计数来源；受保护页面在登录失效后提供可达的恢复入口。剩余风险集中在认证续期链路、硬件休眠与收音反馈，以及多个跨页面状态和文案契约。
 
 ## 已完成的 P1 修复
 
@@ -15,6 +15,8 @@
 | MP-01 | 安全提醒接口 401、网络失败或服务失败 | 失败被渲染成“没有需要关注的对话” | 结果区分 `ok/not_found/failed`；首页、回顾页、提醒详情保留失败卡；401 提供登录入口，其他失败可重试 | `utils/crisis-alerts.js`；`tests/crisis-alerts.test.js`；`tests/attention-v4.test.js` |
 | MP-02 | 家长点击长期记忆“这条不对”或历史变更 | 确认面板没有输入框，旧事实可能被再次提交，历史变更会产生“不不喜欢” | 面板提供 textarea；空值和未修改会阻止提交；只提交清理后的新文本；历史变更限制在偏好事实；接口失败留在面板内 | `pages/child-memory/index.js`、`index.wxml`；`tests/child-memory-v4.test.js` |
 | MP-03 | 设备已激活后断电、离线或小程序后台恢复 | 一次性的激活 ACK 被当作“设备在线”；后台回来后 BLE/Wi-Fi 观察可能冻结，按钮保持 busy | 在线只由 `live_runtime.connected === true` 确认；未知显示待确认；`pause()` 清除失效 busy/network；页面回到 BLE/Wi-Fi/progress 会恢复观察 | `utils/device-status.js`、`utils/device-onboarding/onboarding-controller.js`、`pages/device-onboarding/index.js`；`tests/device-onboarding.test.js`、`tests/home-status-board.test.js` |
+| MP-04 | 监护人打开首页或回顾 | 首页摘要属于孩子但计数来自家长 session；回顾页无法连续展示同一摘要 | 首页使用绑定孩子 days；回顾页复用孩子摘要；读取失败保持未知，不显示伪造的 0；不读取家长 session 或孩子原话 | `pages/home/index.js`、`pages/memory/index.js`；`tests/demo03-family-review.test.js`、`tests/memory-review.test.js` |
+| MP-05 | 游客、会话清除或请求返回 401 | 页面停在加载态或只有不可达的“请先登录”，绑定 claim 可能丢失 | guardian、bind、child-memory、memory-lifecycle、privacy 均提供登录 CTA；bind 保留 claim 和回跳路由；旧账号状态按 auth epoch 清理 | `utils/auth-gate.js`、相关页面；`tests/login-cta-recovery.test.js` |
 
 ## P1：当前必须继续处理
 
@@ -34,9 +36,9 @@
 
 推荐方案是保留 refresh token 在 HttpOnly cookie，客户端只在同一认证 epoch 内对 401 做一次串行 refresh，再重放原请求；refresh 401 才清空账号，refresh 409 按 `Retry-After` 做一次受控重试。并发请求共用一个 refresh promise，旧账号切换或 logout 时使其失效。禁止把 refresh token 放入小程序 storage。上线前必须验证微信客户端是否会保存并回传该 cookie、网关是否保留 `Set-Cookie` 和 path、跨冷启动/后台恢复是否可用，并完成 rotation、replay、logout-all、账号切换和旧响应不回填测试。
 
-状态：页面 CTA 和失效回退列入下一实现批次；续期实现等待后端、安全和产品确认上述 cookie 链路与并发语义。
+状态：页面 CTA 和失效回退已合入当前分支（`001fb897`），聚焦回归通过；refresh 续期仍未接入，等待后端、安全和产品确认上述 cookie 链路与并发语义。
 
-验收：每个受保护页面都有可达的“去登录/重新登录”；401 后旧请求不能回填新账号私密数据；续期失败回到登录而不是死循环；真实控制 API 和微信登录链路需单独验收。
+验收：每个受保护页面都有可达的“去登录/重新登录”；401 后旧请求不能回填新账号私密数据；这些页面级行为已有本地回归；续期失败回到登录而不是死循环、真实控制 API 和微信登录链路仍需单独验收。
 
 ### 3. 硬件在黑屏、休眠和收音切换时要告诉用户发生了什么
 
@@ -82,7 +84,8 @@
 
 ## 验证记录与边界
 
-- `CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' npm test`：660 passed，0 failed，0 skipped；包含 180 个布局检查。
+- `CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' npm test`：合入本轮两个小程序修复后尚未重跑；此前基线为 660 passed，0 failed，0 skipped，包含 180 个布局检查。
+- `node --test tests/login-cta-recovery.test.js tests/bind-flow.test.js tests/bind-v4.test.js tests/child-memory.test.js tests/memory-lifecycle.test.js tests/demo03-family-review.test.js`：81 passed，0 failed。
 - `npm run check:forbidden-copy`：通过。
 - `git diff --check`：通过。
 - `python -m pytest services/control_api/tests/test_account_auth.py -q -r a`：退出码 0，但认证 API 用例因缺少 `MEMORIA_TEST_POSTGRES_DSN` 全部跳过；这不是后端运行验收证据。
@@ -93,7 +96,7 @@
 ## 推荐执行顺序
 
 1. 复核已合入的监护人主体/计数/摘要修复，跑 guardian、memory、home 及全量小程序测试。
-2. 完成登录失效 CTA；等待认证续期研究后，由后端、安全和产品确认 token 方案，再实现续期和过期回退。
+2. 完成认证 refresh 的真实 cookie、并发、轮换和账号切换验收；确认后再实现续期和过期回退。
 3. 用硬件独立 worktree 完成深睡、收音 ready、安静时段、二维码刷新和错误页 P1 修复；不覆盖当前脏固件改动；在真实设备完成照片、串口和连续操作验收。
 4. 修复设备绑定、保存反馈、多设备标签、解绑文案和状态读取等 P2，并为每项增加用户可观察回归。
 5. 收敛页面命名、登录 CTA、法律占位文案和死 UI；完成一次最新 HEAD 的视觉矩阵与线上版本指纹核验。
