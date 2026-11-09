@@ -129,7 +129,8 @@
           <view class="home-review-art"><face-badge role="starlight" size="review" plain="{{true}}"></face-badge></view>
         </view>
         <view class="home-review-meta">
-          <text class="home-review-stat">今天对话 {{todayCount}} 次</text>
+          <text wx:if="{{todayCountKnown}}" class="home-review-stat">今天对话 {{todayCount}} 次</text>
+          <text wx:else class="home-review-stat">今天对话暂时无法读取</text>
           <text wx:if="{{showChildMemory}}" class="home-review-stat">近期摘要 {{summaryCount}} 条</text>
           <text class="home-review-open">打开回顾 ↗</text>
         </view>

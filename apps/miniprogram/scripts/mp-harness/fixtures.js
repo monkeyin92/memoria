@@ -284,8 +284,8 @@ function longMemoryApi(days) {
     getGuardianChildDays: async () => ({
       items: Array.from({ length: days }, (_, offset) => ({ day: dayKey(offset), message_count: (offset % 5) + 1 })),
     }),
-    getChildSessionSummaries: async () => ({
-      items: Array.from({ length: days * 3 }, (_, index) => ({
+    getChildSessionSummaries: async (_minorId, limit = 20) => ({
+      items: Array.from({ length: Math.min(days * 3, limit) }, (_, index) => ({
         record_id: `s_long_${index}`,
         text: `聊到了第 ${index + 1} 个有趣的话题，还讲了一个关于星星的故事`,
         created_at: isoMinutesAgo(index * 8 * 60),
