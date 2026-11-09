@@ -15,7 +15,7 @@
 
 上一版实验镜像曾完成构建和写入校验，但当前设备画面仍是原来的蓝色，不能把那次写入记录当成粉色版本的真机验收。
 
-本次粉色固定背景版本已经重新构建，但尚未刷入设备。新的应用镜像为 `firmware/esp32/artifacts/memoria-esp-vocat-app.bin`，SHA-256 为 `644e177dd2f5b078b01354cce47ae6a2c4b0bae463112077cf97c397eded8477`，大小为 `3381280 bytes`。当前没有重新枚举的 USB-Serial-JTAG 端口，因此还没有粉色版本的写入校验、启动日志或真机照片。
+本次粉色固定背景版本已重新构建并刷入设备。实际写入的产品 app 镜像为 `firmware/esp32/artifacts/memoria-esp-vocat-app.bin`，SHA-256 为 `1c6d453d8384b56b257fae058a5e40ca1232d20844da0d512b0ec509fea0c738`，大小为 `3381200 bytes`。干净提交构建的 app SHA-256 为 `644e177dd2f5b078b01354cce47ae6a2c4b0bae463112077cf97c397eded8477`；本次重试沿用了当前产品构建目录中的镜像。
 
 刷写前的备份目录是 `devicetest/flash-backups/20261109-display-animation-baseline/`。其中保存了刷前 app、bootloader/分区表、NVS/OTA/PHY、identity 二进制和各分区的芯片 MD5。刷前关键 MD5 为：app `c46cdf55af5c686f70c242f772f77ebd`，identity `db3c2ccded4c3c957c3563bdb6812b64`。
 
@@ -23,7 +23,9 @@
 
 主机侧 `uv run --no-project pytest -q firmware/esp32/tests` 通过，进程退出码为 0。渲染器单独用 clang++ 编译并生成了预览。产品构建通过，app 分区仍有约 18% 空间。
 
-设备侧尚未确认粉色版本的写入校验或启动。当前 USB-Serial-JTAG 没有重新枚举；产品配置允许空闲熄屏后的 deep sleep，所以原因仍未知，不能据此认定是动画崩溃。设备重新枚举后应先轻触屏幕唤醒，再观察开机、联网、聆听、思考、说话和眨眼状态，并保存串口日志和真机照片。
+设备侧写入已确认：bootloader、分区表、OTA 数据、assets 和 app 均报告 `Hash of data verified`，刷后 `device namespace: present`。刷后串口已读到 HTTP 连接、静音时段和 `MemoriaPower` 运行日志。当前还没有真机照片，因此粉色背景与动画的视觉验收仍待现场观察。
+
+本次刷写日志保存在 `devicetest/flash-backups/20261109-display-animation-baseline/flash-pink-retry-2.log`，串口日志保存在 `devicetest/flash-backups/20261109-display-animation-baseline/serial-pink-retry.log`。
 
 ## 声源定位现状
 
