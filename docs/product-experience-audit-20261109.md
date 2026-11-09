@@ -30,7 +30,11 @@
 
 当前多个页面在用户拒绝登录、会话清除或请求返回 401 后只留下“请先登录”或加载状态，没有明确 CTA；绑定页尤其容易停在“正在读取机器人启用信息”。此外，现有短期 access session 没有已证实的续期路径。登录续期涉及 token 存储、微信 session 生命周期、账号切换和隐私边界，不能只把长期凭证写进小程序 storage。
 
-状态：续期契约已交只读研究；页面 CTA 和失效回退列入下一实现批次。
+状态：外部研究 Agent 因 provider 认证失败，已由当前 checkout 完成只读契约核验。Control API 已有 `/v1/auth/refresh`、短期 900 秒 access token、最长 30 天的 HttpOnly/SameSite=Strict refresh cookie、服务端 hash 存储和 rotation/replay revoke；小程序客户端没有调用 `/refresh`，也没有 refresh 状态机。客户端现在只把 access token 和过期时间写入 storage，收到 401 后立即清空账号和设备上下文。因此这是“后端已接通、客户端未接通、真实微信 cookie 链路未验证”。
+
+推荐方案是保留 refresh token 在 HttpOnly cookie，客户端只在同一认证 epoch 内对 401 做一次串行 refresh，再重放原请求；refresh 401 才清空账号，refresh 409 按 `Retry-After` 做一次受控重试。并发请求共用一个 refresh promise，旧账号切换或 logout 时使其失效。禁止把 refresh token 放入小程序 storage。上线前必须验证微信客户端是否会保存并回传该 cookie、网关是否保留 `Set-Cookie` 和 path、跨冷启动/后台恢复是否可用，并完成 rotation、replay、logout-all、账号切换和旧响应不回填测试。
+
+状态：页面 CTA 和失效回退列入下一实现批次；续期实现等待后端、安全和产品确认上述 cookie 链路与并发语义。
 
 验收：每个受保护页面都有可达的“去登录/重新登录”；401 后旧请求不能回填新账号私密数据；续期失败回到登录而不是死循环；真实控制 API 和微信登录链路需单独验收。
 
@@ -81,7 +85,7 @@
 - `CHROME_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' npm test`：660 passed，0 failed，0 skipped；包含 180 个布局检查。
 - `npm run check:forbidden-copy`：通过。
 - `git diff --check`：通过。
-- 当前轮未执行真实微信登录、微信线上网关、真实 BLE/Wi-Fi、刷机、线上发布或设备串口操作。
+- 当前轮未执行真实微信登录、微信线上网关、微信客户端 cookie 保留/回传、真实 BLE/Wi-Fi、刷机、线上发布或设备串口操作。
 - 硬件 P1 结论来自既有 acceptance 文件和真实设备证据；当前轮没有把它们升级为最新构建的验收结果。
 - 本报告中的“已修复”表示代码已在当前 checkout 且本地行为测试通过；“接通、启用、部署、真机验证”仍按各项验收标准单独记录。
 
