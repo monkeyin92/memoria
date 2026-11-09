@@ -3,20 +3,26 @@
   <text class="eyebrow">授权与隐私</text>
   <text class="page-title">隐私授权</text>
   <text class="page-lede">每一项都单独授权，也都可以随时收回。</text>
-  <text wx:if="{{loading}}" class="loading-text">正在读取授权状态…</text>
-  <text wx:if="{{error}}" class="error-text">{{error}}</text>
 
-  <text class="group-label">长期记忆</text>
-  <view class="list">
-    <view class="list-row" bindtap="openChildMemory">
-      <mp-icon name="note" tone="ink"></mp-icon>
-      <view class="row-copy">
-        <text class="row-title">孩子的长期记忆</text>
-        <text class="row-meta">只记称呼、喜好和宠物名，在「孩子的记忆」里开关</text>
-      </view>
-      <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
-    </view>
+  <view wx:if="{{guest}}" class="notice">
+    <text class="notice-title">请先登录</text>
+    <text class="notice-copy">登录后才能查看和管理隐私授权。</text>
+    <button class="primary-button empty-button" bindtap="openPrivacyLogin">重新登录</button>
   </view>
+
+  <block wx:else>
+    <text class="group-label">长期记忆</text>
+    <view class="list">
+      <view class="list-row" bindtap="openChildMemory">
+        <mp-icon name="note" tone="ink"></mp-icon>
+        <view class="row-copy">
+          <text class="row-title">孩子的长期记忆</text>
+          <text class="row-meta">只记称呼、喜好和宠物名，在「孩子的记忆」里开关</text>
+        </view>
+        <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
+      </view>
+    </view>
+  </block>
 
   <text class="privacy-note">小程序只管理授权，不采集或中转实时音频。</text>
 </view>

@@ -14,7 +14,16 @@
     <view class="dot {{step === 'done' ? 'dot-done' : ''}}"></view>
   </view>
 
-  <block wx:if="{{step === 'loading'}}">
+  <view wx:if="{{authRequired}}" class="l2-card">
+    <text class="l2-card-title">需要登录才能继续</text>
+    <text class="l2-card-sub">这次设备启用信息还保留着。登录后会回到这里继续确认。</text>
+    <view class="button-row">
+      <button class="primary-button" bindtap="openBindLogin">去登录</button>
+      <button class="secondary-button" bindtap="openDevicePage">返回设备管理</button>
+    </view>
+  </view>
+
+  <block wx:elif="{{step === 'loading'}}">
     <view class="l2-card">
       <text class="l2-card-title">正在准备</text>
       <text class="l2-card-sub">马上就好，请稍等。</text>
@@ -22,7 +31,7 @@
     </view>
   </block>
 
-  <block wx:if="{{step === 'error'}}">
+  <block wx:elif="{{step === 'error'}}">
     <view class="l2-card">
       <text class="l2-card-title">无法继续绑定</text>
       <text class="l2-card-sub">{{error}}</text>
@@ -32,7 +41,7 @@
   </block>
 
   <!-- 步骤 1：绑定方式二选一 -->
-  <block wx:if="{{step === 'mode'}}">
+  <block wx:elif="{{step === 'mode'}}">
     <view class="bind-mode-list">
       <view wx:for="{{modeCards}}" wx:key="id" class="choice-card" data-mode="{{item.id}}" bindtap="chooseMode">
         <view class="choice-radio"></view>
@@ -46,7 +55,7 @@
   </block>
 
   <!-- 步骤 2：机器人尾号只读 + 使用者备注 -->
-  <block wx:if="{{step === 'form'}}">
+  <block wx:elif="{{step === 'form'}}">
     <view class="l2-card">
       <text class="l2-card-title">{{modeMeta.title}} · 基本信息</text>
       <view wx:if="{{deviceTail}}" class="field">
@@ -162,7 +171,7 @@
   </block>
 
   <!-- 步骤 3/4：协议勾选与汇总确认 -->
-  <block wx:if="{{step === 'review'}}">
+  <block wx:elif="{{step === 'review'}}">
     <view class="l2-card">
       <text class="l2-card-title">确认一下</text>
       <text class="l2-card-sub">核对下面的信息，勾选需要的授权后提交</text>
@@ -199,7 +208,7 @@
   </block>
 
   <!-- 步骤 5：完成徽章 -->
-  <block wx:if="{{step === 'done'}}">
+  <block wx:elif="{{step === 'done'}}">
     <view class="l2-card done-card">
       <view class="done-device">
         <device-screen online="{{true}}" size="220"></device-screen>

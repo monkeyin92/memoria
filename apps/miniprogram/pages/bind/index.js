@@ -2,7 +2,7 @@ const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
 const { defaultCompanionId } = require("../../utils/companions");
-const { currentRoute, requireLogin } = require("../../utils/auth-gate");
+const { currentRoute, isAuthError, openLogin, requireLogin } = require("../../utils/auth-gate");
 const { ensureChildInfoConsent } = require("../../utils/child-consent");
 const {
   MODE_META,
@@ -119,6 +119,7 @@ Page({
   data: {
     statusBarStyle: statusBarStyle(),
     step: "loading",
+    authRequired: false,
     claimId: "",
     onboardingSessionId: "",
     deviceTail: "",
@@ -175,13 +176,37 @@ Page({
       onboardingSessionId: this._onboardingSessionId,
       deviceTail: /^[A-Za-z0-9]{1,16}$/.test(tail) ? tail : "",
     });
+    const app = getApp();
+    this._unsubscribeAuthCleared = app?.subscribeAuthCleared?.(() => this._enterAuthRequired());
   },
 
   async onShow() {
-    if (!(await requireLogin({ reason: "bind_device" }))) return;
+    if (!(await requireLogin({ reason: "bind_device" }))) {
+      this._enterAuthRequired();
+      return;
+    }
+    this.setData({ authRequired: false });
     if (!ensureChildInfoConsent(currentRoute())) return;
     if (this._claimLoaded) return;
     await this.loadClaim();
+  },
+
+  onUnload() {
+    this._unsubscribeAuthCleared?.();
+    this._unsubscribeAuthCleared = null;
+  },
+
+  _enterAuthRequired() {
+    this.setData({
+      authRequired: true,
+      claimLoading: false,
+      submitting: false,
+      error: "",
+    });
+  },
+
+  openBindLogin() {
+    openLogin({ reason: "bind_device", redirect: currentRoute() });
   },
 
   async loadClaim() {
@@ -214,6 +239,11 @@ Page({
       this.setData({ claim, claimLoading: false, step: "mode", error: "" });
       return claim;
     } catch (error) {
+      if (isAuthError(error)) {
+        this._claimLoaded = false;
+        this._enterAuthRequired();
+        return null;
+      }
       this._claimLoaded = true;
       this.setData({
         claimLoading: false,
@@ -469,6 +499,10 @@ Page({
         (status === "committed" || !isExpired(claim.expires_at))
       );
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterAuthRequired();
+        return false;
+      }
       const code = String(error?.code || "").toUpperCase();
       if (code === "CLAIM_EXPIRED" || code === "QR_SESSION_EXPIRED") return false;
       // The submit itself stays server-authoritative; a network hiccup must
@@ -597,6 +631,10 @@ Page({
         api,
       });
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterAuthRequired();
+        return;
+      }
       this.setData({
         error: error?.message || "订阅安全提醒失败，绑定未提交。",
       });
@@ -631,6 +669,10 @@ Page({
         crisisSubscribeAccepted: gate.kind === "accepted",
       });
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterAuthRequired();
+        return;
+      }
       const code = String(error?.code || error?.detail?.code || "").toUpperCase();
       this.setData({
         error: error?.message || "绑定失败，请稍后重试。",

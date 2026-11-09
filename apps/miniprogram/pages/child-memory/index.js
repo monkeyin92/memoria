@@ -1,6 +1,6 @@
 const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
-const { requireLogin } = require("../../utils/auth-gate");
+const { isAuthError, openLogin, requireLogin } = require("../../utils/auth-gate");
 const { companionById, defaultCompanionId } = require("../../utils/companions");
 const { readBindingManifest } = require("../../utils/device-binding");
 const {
@@ -41,7 +41,7 @@ function pageError(error, fallback) {
 }
 
 function loginRequired(error) {
-  return error?.message === "请先使用微信登录。";
+  return isAuthError(error);
 }
 
 function guestMemoryPatch() {
@@ -53,6 +53,7 @@ function guestMemoryPatch() {
     archiveFlat: [],
     loadState: "idle",
     loading: false,
+    working: false,
     error: "",
     statusBanner: "",
     confirm: null,
@@ -170,6 +171,10 @@ Page({
       });
     }
     await this.refresh();
+  },
+
+  openChildMemoryLogin() {
+    openLogin({ reason: "view_child_memory" });
   },
 
   async onPullDownRefresh() {

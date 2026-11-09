@@ -2,7 +2,11 @@ const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
 const { guardianSummaryErrorState } = require("../../utils/guardian");
-const { requireLogin } = require("../../utils/auth-gate");
+const {
+  isAuthError,
+  openLogin,
+  requireLogin,
+} = require("../../utils/auth-gate");
 const { ensureChildInfoConsent } = require("../../utils/child-consent");
 const contracts = require("../../utils/multi-subject-contracts");
 const {
@@ -90,6 +94,7 @@ Page({
     configOpen: false,
     configNote: CONFIG_GATE_PENDING_MESSAGE,
     authenticated: false,
+    authRequired: false,
     loading: false,
     working: false,
     error: "",
@@ -134,7 +139,7 @@ Page({
       this._enterGuestState();
       return;
     }
-    this.setData({ authenticated: true });
+    this.setData({ authenticated: true, authRequired: false });
     await this.refresh();
   },
 
@@ -155,7 +160,10 @@ Page({
   _enterGuestState() {
     this.setData({
       authenticated: false,
+      authRequired: true,
       loading: false,
+      working: false,
+      error: "",
       role: "unknown",
       links: [],
       activeLinks: [],
@@ -164,6 +172,8 @@ Page({
       notifications: [],
       crisisPush: { enabled: false, templateId: "", explanation: "" },
       summary: null,
+      selectedMinorId: "",
+      summaryState: "idle",
       minorExport: null,
       showMinorDelete: false,
       minorDeletePersonId: "",
@@ -173,6 +183,10 @@ Page({
       configOpen: false,
       configNote: CONFIG_GATE_PENDING_MESSAGE,
     });
+  },
+
+  openGuardianLogin() {
+    openLogin({ reason: "view_guardian_summary" });
   },
 
   async refreshConfigGate() {
@@ -230,7 +244,9 @@ Page({
         if (firstMinorId) await this.selectMinorById(firstMinorId);
       }
     } catch (error) {
-      if (api.isAuthEpochCurrent(authEpoch)) {
+      if (isAuthError(error)) {
+        this._enterGuestState();
+      } else if (api.isAuthEpochCurrent(authEpoch)) {
         this.setData({ error: error?.message || "监护信息暂时无法加载。" });
       }
     } finally {
@@ -276,6 +292,7 @@ Page({
             loadError: "",
           };
         } catch (error) {
+          if (isAuthError(error)) throw error;
           return {
             personId,
             displayName: "绑定中的孩子",
@@ -306,6 +323,10 @@ Page({
       const outcome = await guardianPush.subscribeCrisisAlerts({ config: this.data.crisisPush, api });
       if (outcome.result === "accept") wx.showToast({ title: "已完成订阅安全提醒", icon: "none" });
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterGuestState();
+        return;
+      }
       this.setData({ error: error?.message || "订阅安全提醒失败，请稍后再试。" });
     }
   },
@@ -341,6 +362,10 @@ Page({
       guardianPush.offerCrisisSubscription({ config: this.data.crisisPush, api }).catch(() => {});
       await this.refresh();
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterGuestState();
+        return;
+      }
       this.setData({ error: error?.message || "绑定发起失败。" });
     } finally {
       this.setData({ working: false });
@@ -367,6 +392,10 @@ Page({
         success: () => wx.reLaunch({ url: "/pages/auth/index" }),
       });
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterGuestState();
+        return;
+      }
       this.setData({ error: error?.message || "绑定确认失败，请检查绑定码。" });
     } finally {
       this.setData({ working: false });
@@ -395,6 +424,10 @@ Page({
       }
       await this.refresh();
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterGuestState();
+        return;
+      }
       this.setData({ error: error?.message || "授权状态更新失败。" });
     } finally {
       this.setData({ working: false });
@@ -423,6 +456,10 @@ Page({
       }
       await this._loadBoundSubjectConsents();
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterGuestState();
+        return;
+      }
       this.setData({ error: personConsentError(error) });
     } finally {
       this.setData({ working: false });
@@ -453,6 +490,10 @@ Page({
       this.setData({ minorExport: { personId, filePath, fileName } });
       wx.showToast({ title: "导出文件已生成", icon: "success" });
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterGuestState();
+        return;
+      }
       this.setData({ error: minorDataError(error, "导出失败，请稍后重试。") });
     } finally {
       this.setData({ working: false });
@@ -515,6 +556,10 @@ Page({
       wx.showToast({ title: "已删除 TA 的数据", icon: "success" });
       await this._loadBoundSubjectConsents();
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterGuestState();
+        return;
+      }
       this.setData({ minorDeleteError: minorDataError(error, "删除失败，请稍后重试。") });
     } finally {
       this.setData({ minorDeleting: false });
@@ -533,6 +578,10 @@ Page({
       const summary = await api.getGuardianSummary(minorUserId);
       this.setData({ summary, summaryState: summary.hasData ? "ready" : "empty" });
     } catch (error) {
+      if (isAuthError(error)) {
+        this._enterGuestState();
+        return;
+      }
       this.setData({ summaryState: guardianSummaryErrorState(error) });
     }
   },
