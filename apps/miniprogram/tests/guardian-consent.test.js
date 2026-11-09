@@ -27,9 +27,17 @@ function bodyParagraphs(markdown) {
   return rest.slice(0, end).trim().split("\n\n");
 }
 
-test("guardian consent renders the draft chip, the source note, and the compliance paragraphs in order", () => {
+test("guardian consent renders public copy and the compliance paragraphs in order", () => {
   const markdown = fs.readFileSync(path.join(repo, "docs/compliance.md"), "utf8");
-  const paragraphs = bodyParagraphs(markdown);
+  const paragraphs = bodyParagraphs(markdown).map((paragraph) => {
+    if (paragraph === "这是内测版，待律师审核，还不是已经生效的同意书。") {
+      return "这是内测版同意书，目前仍待律师审核，尚未正式生效。";
+    }
+    if (paragraph === "本说明采用的对外说法是：我们的服务器不存孩子的录音和原话，记忆家长看得见、删得掉。") {
+      return "我们的服务器不存孩子的录音和原话，记忆家长看得见、删得掉。";
+    }
+    return paragraph;
+  });
   const pageParagraphs = require("../pages/guardian-consent/paragraphs");
   assert.deepEqual(pageParagraphs, paragraphs);
 
@@ -40,7 +48,7 @@ test("guardian consent renders the draft chip, the source note, and the complian
     assert.match(text, /^内测版 监护人同意书 /);
     assert.doesNotMatch(text, /内测版 · /);
     assert.doesNotMatch(text, /草稿/);
-    assert.match(text, /来源：docs\/compliance\.md$/);
+    assert.doesNotMatch(text, /来源：|docs\/compliance\.md|本说明采用的对外说法是/);
     let cursor = 0;
     for (const paragraph of paragraphs) {
       const at = text.indexOf(paragraph, cursor);

@@ -35,6 +35,8 @@ const {
   usageRingStyle,
 } = require("../../utils/trial-device-card");
 
+const HERO_CAPTION = "在设备旁点击屏幕唤醒。需要记住的事，稍后确认。";
+
 function guestGreeting() {
   return `${greetingFor()}，欢迎回来`;
 }
@@ -80,7 +82,7 @@ function emptyDashboard() {
     heroRoleId: defaultCompanionId,
     pageLede: formatDateLabel(),
     heroTitle: "给今天，留一点回味。",
-    heroCaption: "在设备旁唤醒「茉莉」。需要记住的事，稍后确认。",
+    heroCaption: HERO_CAPTION,
     heroFoot: "在设备上使用，手机不录音",
     pendingCount: 0,
     todayCount: 0,
@@ -611,9 +613,7 @@ Page({
       devicePlaceName: placeName,
       pageLede: formatDateLabel(),
       heroTitle: online ? "给今天，留一点回味。" : "等它回来，记录还在。",
-      heroCaption: online
-        ? `在设备旁唤醒「${settings?.wake_word_display || "茉莉"}」。需要记住的事，稍后确认。`
-        : "可查看已同步的回顾。设备恢复连接后再记录。",
+      heroCaption: online ? HERO_CAPTION : "可查看已同步的回顾。设备恢复连接后再记录。",
       heroFoot: online ? "在设备上使用，手机不录音" : "绑定关系不受影响",
       pendingCount: todayView.pendingCount || 0,
       todayCount,

@@ -1,4 +1,5 @@
 const { statusBarStyle } = require("../../utils/nav-inset");
+const { leavePage } = require("../../utils/nav-back");
 const { isTabRoute, routeOf } = require("../../utils/tab-routes");
 const { openPrivacyContract } = require("../../utils/privacy-contract");
 const legalRelease = require("../../utils/legal-release");
@@ -84,6 +85,6 @@ Page({
   },
 
   decline() {
-    wx.switchTab({ url: "/pages/home/index" });
+    leavePage(this.data.redirect || "/pages/home/index");
   },
 });

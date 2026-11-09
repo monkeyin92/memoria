@@ -115,10 +115,10 @@ test("profile has no voice-sample entry points after voice-clone removal", () =>
   assert.doesNotMatch(template, /评估/);
 });
 
-test("online hero caption names the device's configured wake word", () => {
+test("hero caption describes the device's screen-tap wake action", () => {
   const script = fs.readFileSync(path.join(root, "pages/home/index.js"), "utf8");
-  assert.match(script, /唤醒「\$\{settings\?\.wake_word_display \|\| "茉莉"\}」/);
-  assert.doesNotMatch(script, /\? "在设备旁唤醒「茉莉」/);
+  assert.match(script, /在设备旁点击屏幕唤醒。需要记住的事，稍后确认。/);
+  assert.doesNotMatch(script, /heroCaption[\s\S]{0,180}茉莉/);
 });
 
 test("trial device card helper uses profile quiet hours and usage limit", () => {

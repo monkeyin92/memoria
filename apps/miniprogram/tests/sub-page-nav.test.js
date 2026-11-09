@@ -9,6 +9,7 @@ const { renderPage } = require("../scripts/mp-harness/render");
 const OWNING_TAB = {
   guardian: "/pages/profile/index",
   bind: "/pages/profile/index",
+  "child-memory": "/pages/profile/index",
   "persona-custom": "/pages/profile/index",
   auth: "/pages/home/index",
   "guardian-consent": "/pages/home/index",
@@ -26,7 +27,7 @@ function readPage(page, ext) {
   return fs.readFileSync(path.join(ROOT, "pages", page, `index.${ext}`), "utf8");
 }
 
-test("child consent exits through 暂不同意 instead of a back button", () => {
+test("child consent keeps its visible decline action without adding a second back button", () => {
   const harness = loadPage("pages/child-consent/index");
   try {
     const html = renderPage("pages/child-consent/index", harness.page.data);
@@ -37,12 +38,24 @@ test("child consent exits through 暂不同意 instead of a back button", () => 
   }
 });
 
-test("child-memory opens on its heading like the design's tab page, with no back button", () => {
-  const harness = loadPage("pages/child-memory/index");
+test("child consent decline returns through the current flow before using its redirect", () => {
+  const harness = loadPage("pages/child-consent/index");
   try {
-    const html = renderPage("pages/child-memory/index", harness.page.data);
-    assert.doesNotMatch(html, /class="nav-back"/);
-    assert.match(html, /class="cm-page trial-page" style="--mp-status-bar: 47px; --mp-capsule-bottom: 83px;"/);
+    harness.page.onLoad({ redirect: "/pages/device-onboarding/index?fresh=1" });
+    global.getCurrentPages = () => [
+      { route: "pages/device-onboarding/index" },
+      { route: "pages/child-consent/index" },
+    ];
+    harness.page.decline();
+    global.getCurrentPages = () => [{ route: "pages/child-consent/index" }];
+    harness.page.decline();
+    const navigation = harness.wxCalls
+      .filter((call) => ["navigateBack", "switchTab", "redirectTo"].includes(call.name))
+      .map((call) => [call.name, call.args[0]]);
+    assert.deepEqual(navigation, [
+      ["navigateBack", { delta: 1 }],
+      ["redirectTo", { url: "/pages/device-onboarding/index?fresh=1" }],
+    ]);
   } finally {
     harness.restore();
   }
