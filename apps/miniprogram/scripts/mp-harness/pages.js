@@ -3,6 +3,7 @@
  * cover. Sample data comes from fixtures.js; unknown API calls resolve null.
  */
 const fx = require("./fixtures");
+const registeredPages = require("../../app.json").pages;
 
 const { authed, guest } = fx;
 const READY_AGREEMENT = "# 用户协议\n\n## 正文\n\n甲。\n";
@@ -85,11 +86,6 @@ const PAGES = [
   { slug: "privacy", page: "pages/privacy/index", harness: authed() },
   { slug: "privacy-guest", page: "pages/privacy/index", harness: guest() },
   { slug: "user-agreement", page: "pages/user-agreement/index", harness: guest() },
-  {
-    slug: "privacy-granted",
-    page: "pages/privacy/index",
-    harness: authed({ getRawVoiceConsent: async () => ({ consent: fx.RAW_VOICE_CONSENT }) }),
-  },
   { slug: "digital-self", page: "pages/digital-self/index", harness: authed(fx.digitalSelfApi), actions: [["toggleEngineering"]] },
   { slug: "digital-self-empty", page: "pages/digital-self/index", harness: authed() },
   { slug: "child-memory", page: "pages/child-memory/index", harness: authed(), query: { minorId: "p_child", name: "乐乐" } },
@@ -116,7 +112,15 @@ const PAGES = [
     harness: authed(),
     actions: [["_applySnapshot", fx.onboardingSnapshot("complete", { activation: { status: "ready_for_conversation" } })]],
   },
+  { slug: "guardian-consent", page: "pages/guardian-consent/index", harness: guest() },
+  { slug: "memory-lifecycle", page: "pages/memory-lifecycle/index", harness: authed(fx.guardianApi) },
 ];
+
+const coveredPages = new Set(PAGES.map((scenario) => scenario.page));
+const missingPages = registeredPages.filter((page) => !coveredPages.has(page));
+if (missingPages.length) {
+  throw new Error(`mp-harness pages missing scenarios for app.json pages: ${missingPages.join(", ")}`);
+}
 
 const VIEWS = [
   { name: "390", width: 390, height: 844, safeTop: 47, safeBottom: 34, fullPage: true },

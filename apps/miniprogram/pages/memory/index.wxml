@@ -74,7 +74,7 @@
         <text wx:else class="l2-card-sub">这里还空空的，没关系。需要时再来看看，一切由你决定。</text>
         <text wx:if="{{!guardianMode || !guardianDataUnavailable}}" class="caption">{{guardianMode ? '孩子和机器人聊几句后，再回来看看。' : '在设备上说几句后，再回来看看。'}}</text>
         <view class="button-row">
-          <button class="secondary-button btn-sm" bindtap="goCompanion">设置声音与表达</button>
+          <button class="secondary-button btn-sm" bindtap="goDeviceSettings">去设备设置</button>
         </view>
       </view>
       <view wx:for="{{days}}" wx:key="date" class="card memory-day memory-day-{{index % 3}}">

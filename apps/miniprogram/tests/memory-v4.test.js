@@ -19,11 +19,13 @@ async function openMemory(overrides = NO_ALERTS) {
   return harness;
 }
 
-test("summary days carry the date and the child chat count", async () => {
+test("recent summaries come first and count-only days collapse into one card", async () => {
   const harness = await openMemory();
   try {
     const text = visibleText(renderPage("pages/memory/index", harness.page.data, { tabBar: false }));
-    assert.match(text, /^最近几天 对话回顾 这里只有摘要，不显示原话，也没有录音。 今天 10月14日 孩子聊了 3 次。 昨天 10月13日 孩子聊了 2 次。 /);
+    assert.match(text, /^最近几天 对话回顾 这里只有摘要，不显示原话，也没有录音。 今天 10月14日 /);
+    assert.match(text, /更多日期 4 天 还有 4 天有聊天记录，共 8 次/);
+    assert.equal((text.match(/孩子聊了 \d+ 次/g) || []).length, 0);
     assert.doesNotMatch(text, /三 14 二 13 一 12 日 11 六 10 五 9/);
     assert.doesNotMatch(text, /日常回顾|· 孩子聊了/);
   } finally {
@@ -31,10 +33,11 @@ test("summary days carry the date and the child chat count", async () => {
   }
 });
 
-test("memory has no date bar even when only one day has a summary", async () => {
+test("memory collapses a count-only guardian response into one summary card", async () => {
   const harness = await openMemory({
     ...NO_ALERTS,
     getGuardianChildDays: async () => ({ items: [{ day: fx.dayKey(0), message_count: 1 }] }),
+    getChildSessionSummaries: async () => ({ items: [] }),
   });
   try {
     assert.equal(harness.page.data.dateStrip, undefined);
@@ -42,7 +45,29 @@ test("memory has no date bar even when only one day has a summary", async () => 
     assert.equal(harness.page.chooseDay, undefined);
     const text = visibleText(renderPage("pages/memory/index", harness.page.data, { tabBar: false }));
     assert.doesNotMatch(text, /三 14 二 13 一 12 日 11 六 10 五 9/);
-    assert.match(text, /今天 10月14日 孩子聊了 1 次。/);
+    assert.match(text, /最近 30 天 1 天 还有 1 天有聊天记录，共 1 次/);
+    assert.equal((text.match(/孩子聊了 \d+ 次/g) || []).length, 0);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("the empty review state opens device settings and has no voice-tab copy", async () => {
+  const harness = await openMemory({
+    ...NO_ALERTS,
+    getGuardianChildDays: async () => ({ items: [] }),
+    getChildSessionSummaries: async () => ({ items: [] }),
+  });
+  try {
+    const text = visibleText(renderPage("pages/memory/index", harness.page.data, { tabBar: false }));
+    assert.match(text, /去设备设置/);
+    assert.doesNotMatch(text, /设置声音与表达/);
+    assert.equal(harness.page.goCompanion, undefined);
+    harness.page.goDeviceSettings();
+    assert.deepEqual(
+      harness.wxCalls.filter((call) => call.name === "switchTab").map((call) => call.args[0].url),
+      ["/pages/device/index"],
+    );
   } finally {
     harness.restore();
   }

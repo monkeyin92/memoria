@@ -346,6 +346,8 @@ test("confirming a candidate calls the canonical review API then refetches the a
     const definition = loadPage("../pages/memory/index");
     const page = instantiate(definition);
     const reviewed = [];
+    const toasts = [];
+    let modalCalls = 0;
     let reviewFetches = 0;
     const restore = stubApi({
       currentIdentity: () => ({ user_id: "person_owner" }),
@@ -373,10 +375,14 @@ test("confirming a candidate calls the canonical review API then refetches the a
       },
       reviewMemoryClaim: async (claimId) => {
         reviewed.push(claimId);
-        return { ok: true };
+        return { ok: true, trace: { review_event_id: "review_123" } };
       },
     });
     try {
+      global.wx.showToast = (options) => toasts.push(options);
+      global.wx.showModal = () => {
+        modalCalls += 1;
+      };
       await page.loadDays();
       assert.equal(page.data.memoryCandidates.length, 1);
       assert.equal(page.data.confirmedMemories.length, 0);
@@ -389,6 +395,8 @@ test("confirming a candidate calls the canonical review API then refetches the a
       assert.equal(page.data.memoryCandidates.length, 0);
       assert.equal(page.data.confirmedMemories.length, 1);
       assert.equal(page.data.confirmedMemories[0].memory_id, "mem_1");
+      assert.deepEqual(toasts, [{ title: "已确认", icon: "success" }]);
+      assert.equal(modalCalls, 0, "成功确认不应阻断式展示 review_event_id");
     } finally {
       restore();
     }
@@ -598,12 +606,10 @@ test("a parent who bound the device for a child sees the child's days and never 
       assert.equal(page.data.guardianSubjectId, "person_child");
       assert.deepEqual(
         page.data.days.map((day) => [day.date, day.count, day.title]),
-        [
-          ["2026-10-01", 8, "孩子聊了 8 次"],
-          ["2026-09-30", 3, "孩子聊了 3 次"],
-        ],
+        [["guardian-count-2", 11, "更多聊天记录"]],
       );
       assert.deepEqual(page.data.days[0].highlights, []);
+      assert.match(page.data.days[0].overview, /还有 2 天有聊天记录，共 11 次/);
     } finally {
       restore();
     }
@@ -631,9 +637,10 @@ test("guardian review shows the same child summaries that the home review card l
     try {
       await page.loadDays();
       assert.equal(page.data.guardianMode, true);
-      assert.equal(page.data.days[0].title, "孩子聊了 8 次");
-      assert.equal(page.data.days[2].title, "近期摘要");
-      assert.equal(page.data.days[2].overview, "最近在聊画画和幼儿园的新朋友。");
+      assert.equal(page.data.days[0].title, "近期摘要");
+      assert.equal(page.data.days[0].overview, "最近在聊画画和幼儿园的新朋友。");
+      assert.equal(page.data.days[1].title, "更多聊天记录");
+      assert.match(page.data.days[1].overview, /还有 1 天有聊天记录，共 3 次/);
       page.setData({ authenticated: true });
       const text = visibleText(renderPage("pages/memory/index", page.data));
       assert.match(text, /最近在聊画画和幼儿园的新朋友。/);

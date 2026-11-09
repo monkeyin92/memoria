@@ -70,7 +70,7 @@ test("no unread alert puts no safety banner on home or 回顾", async () => {
   const store = fx.safetyAlertApi([]);
   assert.deepEqual(await homeScreen(store), { pins: 0, opens: [] });
   const review = await reviewScreen(store);
-  assert.doesNotMatch(review.text, /需要你关注|还有/);
+  assert.doesNotMatch(review.text, /需要你关注/);
   assert.deepEqual(review.opens, []);
 });
 
@@ -78,8 +78,8 @@ test("one unread alert shows on home and 回顾 without a 还有 line", async ()
   const store = fx.safetyAlertApi([fx.SAFETY_ALERT]);
   assert.deepEqual(await homeScreen(store), { pins: 1, opens: ["/pages/attention/index?id=n1"] });
   const review = await reviewScreen(store);
-  assert.match(review.text, / 有一条需要你关注的对话 今天 19:42 今天 10月14日 /);
-  assert.doesNotMatch(review.text, /还有/);
+  assert.match(review.text, /有一条需要你关注的对话 今天 19:42/);
+  assert.doesNotMatch(review.text, /有一条需要你关注的对话 今天 19:42 还有/);
   assert.deepEqual(review.opens, ["/pages/attention/index?id=n1"]);
 });
 
@@ -88,7 +88,7 @@ test("three unread alerts show the newest once, and 回顾 says 还有 2 条", a
   assert.deepEqual(await homeScreen(store), { pins: 1, opens: ["/pages/attention/index?id=n3"] });
   const review = await reviewScreen(store);
   assert.equal((review.text.match(ALERT_COPY) || []).length, 1);
-  assert.match(review.text, / 有一条需要你关注的对话 今天 19:42 还有 2 条 今天 10月14日 /);
+  assert.match(review.text, /有一条需要你关注的对话 今天 19:42 还有 2 条/);
   assert.deepEqual(review.opens, ["/pages/attention/index?id=n3"]);
 });
 
@@ -99,7 +99,7 @@ test("after 我知道了 a later login shows the next unread alert, never the ac
 
   assert.deepEqual(await homeScreen(store), { pins: 1, opens: ["/pages/attention/index?id=n2"] });
   const review = await reviewScreen(store);
-  assert.match(review.text, / 有一条需要你关注的对话 今天 19:12 还有 1 条 今天 10月14日 /);
+  assert.match(review.text, /有一条需要你关注的对话 今天 19:12 还有 1 条/);
   assert.deepEqual(review.opens, ["/pages/attention/index?id=n2"]);
 
   for (const { opens } of [await homeScreen(store), await reviewScreen(store)]) {
@@ -112,13 +112,13 @@ test("coming back to 回顾 after 我知道了 drops the acknowledged alert", as
   const harness = loadPage("pages/memory/index", fx.authed(store));
   try {
     await harness.run();
-    assert.match(reviewBanner(harness).text, / 今天 19:42 还有 1 条 /);
+    assert.match(reviewBanner(harness).text, /有一条需要你关注的对话 今天 19:42 还有 1 条/);
     await store.markGuardianNotificationRead("n3");
     harness.page.onShow();
     await harness.settle();
     const { text } = reviewBanner(harness);
-    assert.match(text, / 有一条需要你关注的对话 今天 19:12 今天 10月14日 /);
-    assert.doesNotMatch(text, /还有/);
+    assert.match(text, /有一条需要你关注的对话 今天 19:12/);
+    assert.doesNotMatch(text, /有一条需要你关注的对话 今天 19:12 还有/);
   } finally {
     harness.restore();
   }

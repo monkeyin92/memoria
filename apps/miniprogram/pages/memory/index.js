@@ -46,6 +46,13 @@ function normalizeDay(item) {
   };
 }
 
+function summaryTextForDay(item) {
+  const summary = item.summary || {};
+  return [summary.overview, item.overview, item.summary_text].find(
+    (value) => typeof value === "string" && value.trim(),
+  ) || "";
+}
+
 /*
  * 实际听到的记录（PR-19）。当前没有可靠 DAC/精确声道证据时服务端不会
  * 下发 approximate=false，因此客户端默认按近似记录展示；只有显式 false
@@ -54,14 +61,16 @@ function normalizeDay(item) {
 /* 监护人视图的一天：只有次数，不含孩子原话。 */
 function normalizeGuardianDay(item) {
   const count = Number(item.message_count) || 0;
+  const summary = item.summary || {};
+  const overview = summaryTextForDay(item);
   return {
     ...dayLabels(item.day || ""),
     date: item.day || "",
     count,
-    title: `孩子聊了 ${count} 次`,
-    overview: `孩子聊了 ${count} 次。`,
-    highlights: [],
-    suggestion: "",
+    title: overview ? summary.title || item.title || "这一天的回顾" : `孩子聊了 ${count} 次`,
+    overview: overview || `孩子聊了 ${count} 次。`,
+    highlights: summary.highlights || item.highlights || [],
+    suggestion: summary.suggestion || item.suggestion || "",
   };
 }
 
@@ -70,7 +79,6 @@ function normalizeRecentSummary(item, index) {
   const date = String(item.createdAt || "").slice(0, 10) || today();
   return {
     ...dayLabels(date),
-    dayLabel: "近期摘要",
     date: index ? `${date}-${index}` : date,
     count: 0,
     title: "近期摘要",
@@ -78,6 +86,52 @@ function normalizeRecentSummary(item, index) {
     highlights: [],
     suggestion: "",
   };
+}
+
+function hasSummary(item) {
+  return Boolean(summaryTextForDay(item).trim());
+}
+
+function guardianCountSummary(items, label) {
+  const count = items.reduce((total, item) => total + (Number(item.message_count) || 0), 0);
+  const days = items.length;
+  return {
+    dayLabel: label,
+    dateLabel: `${days} 天`,
+    date: `guardian-count-${days}`,
+    count,
+    title: "更多聊天记录",
+    overview: `还有 ${days} 天有聊天记录，共 ${count} 次。仅显示汇总，不展开逐日计次。`,
+    highlights: [],
+    suggestion: "这里只有摘要，不显示孩子原话。",
+  };
+}
+
+function guardianDaysView(guardianDays, recentChildSummaries) {
+  const countItems = Array.isArray(guardianDays) ? guardianDays : [];
+  if (countItems.length > 30) {
+    return (recentChildSummaries || [])
+      .slice(0, 3)
+      .map(normalizeRecentSummary)
+      .concat(countItems.map(normalizeGuardianDay));
+  }
+  const inlineSummaryDays = countItems.filter(hasSummary).map(normalizeGuardianDay);
+  const summaryDays = inlineSummaryDays.slice();
+  const summaryDates = new Set(inlineSummaryDays.map((item) => item.date));
+  for (const [index, summary] of (recentChildSummaries || []).entries()) {
+    const date = String(summary.createdAt || "").slice(0, 10);
+    if (summaryDates.has(date)) continue;
+    summaryDates.add(date);
+    summaryDays.push(normalizeRecentSummary(summary, index));
+  }
+  const countOnlyItems = countItems.filter(
+    (item) => !hasSummary(item) && !summaryDates.has(item.day || item.date || ""),
+  );
+  if (summaryDays.length) {
+    return countOnlyItems.length ? summaryDays.concat(guardianCountSummary(countOnlyItems, "更多日期")) : summaryDays;
+  }
+  if (countItems.length) return [guardianCountSummary(countItems, "最近 30 天")];
+  return (recentChildSummaries || []).map(normalizeRecentSummary);
 }
 
 const GUARDIAN_ERRORS = Object.freeze({
@@ -440,10 +494,7 @@ Page({
         guardianError,
         guardianDataUnavailable,
         days: guardianSubject
-          ? [
-              ...(guardianDays || []).map(normalizeGuardianDay),
-              ...recentChildSummaries.map(normalizeRecentSummary),
-            ]
+          ? guardianDaysView(guardianDays || [], recentChildSummaries)
           : (daysResult.items || []).length
             ? (daysResult.items || []).map(normalizeDay)
             : recentDays,
@@ -583,7 +634,7 @@ Page({
     wx.navigateTo({ url: "/pages/memory-lifecycle/index" });
   },
 
-  goCompanion() {
+  goDeviceSettings() {
     wx.switchTab({ url: "/pages/device/index" });
   },
 
@@ -606,28 +657,16 @@ Page({
     this.setData({ reviewingClaimId: claimId, error: "" });
     const forChild = this.data.guardianMode && this.data.guardianSubjectId;
     try {
-      const review = forChild
-        ? await api.reviewGuardianChildMemory(this.data.guardianSubjectId, claimId, "confirm")
-        : await api.reviewMemoryClaim(claimId);
+      await (forChild
+        ? api.reviewGuardianChildMemory(this.data.guardianSubjectId, claimId, "confirm")
+        : api.reviewMemoryClaim(claimId));
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       const refreshed = await this.loadDays();
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       if (refreshed === "ok" && forChild) {
         wx.showToast({ title: "已确认，会记住", icon: "success" });
       } else if (refreshed === "ok") {
-        const trace = review?.trace || {};
-        const reviewEventId = trace.review_event_id || review?.review_event_id || "";
-        const reviewedAt = trace.reviewed_at || "";
-        if (reviewEventId) {
-          wx.showModal({
-            title: "记忆已确认",
-            content: `追溯号：${reviewEventId}${reviewedAt ? `\n确认时间：${reviewedAt}` : ""}`,
-            showCancel: false,
-            confirmText: "知道了",
-          });
-        } else {
-          wx.showToast({ title: "已确认", icon: "success" });
-        }
+        wx.showToast({ title: "已确认", icon: "success" });
       }
     } catch (error) {
       if (!api.isAuthEpochCurrent(authEpoch)) return;

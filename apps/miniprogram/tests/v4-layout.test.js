@@ -5,6 +5,7 @@ const test = require("node:test");
 process.env.TZ = "Asia/Shanghai";
 
 const { PAGES, VIEWS } = require("../scripts/mp-harness/pages");
+const registeredPages = JSON.parse(fs.readFileSync(require.resolve("../app.json"), "utf8")).pages;
 
 function chromeSkipReason() {
   try {
@@ -17,6 +18,17 @@ function chromeSkipReason() {
 }
 
 const skip = chromeSkipReason();
+
+test("the harness covers every app.json page and removes the stale privacy-granted scenario", () => {
+  const coveredPages = new Set(PAGES.map((scenario) => scenario.page));
+  assert.deepEqual(
+    registeredPages.filter((page) => !coveredPages.has(page)),
+    [],
+  );
+  assert.equal(PAGES.some((scenario) => scenario.slug === "privacy-granted"), false);
+  assert.ok(PAGES.some((scenario) => scenario.slug === "memory-lifecycle"));
+  assert.ok(PAGES.some((scenario) => scenario.slug === "guardian-consent"));
+});
 
 test("every page state lays out without overflow, capsule or tab bar collisions at 320/375/390/430 and 1.3x font", { skip: skip || false }, async (t) => {
   const { launch, problems, shoot } = require("../scripts/mp-harness/shoot");
