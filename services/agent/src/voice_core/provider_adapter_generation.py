@@ -19,6 +19,27 @@ from services.agent.src.contracts.ids import CancellationContext, GenerationFenc
 from services.agent.src.voice_core.media_protocol import SessionIdentity
 from services.common.fixed_safety_scripts import SpokenPhrase
 
+
+def take_presynthesized_stream(
+    speech_synthesis: Any,
+    fence: GenerationFence,
+    first_phrase: SpokenPhrase,
+    cancel_event: asyncio.Event,
+) -> Any:
+    """Take the provider session opened for this generation's first phrase, if one exists."""
+
+    from services.common.labelled_lines import labelled_catalogue
+
+    take = getattr(speech_synthesis, "take_presynthesis", None)
+    spoken = first_phrase.spoken
+    if not callable(take):
+        return None
+    sends_first = (
+        bool(spoken) and not cancel_event.is_set() and labelled_catalogue().by_text(spoken) is None
+    )
+    return take(fence, spoken if sends_first else "")
+
+
 if TYPE_CHECKING:
     from services.agent.src.voice_core.media_session import MediaReplyChunk
     from services.agent.src.voice_core.provider_adapter import (
@@ -88,7 +109,6 @@ class ExistingVoiceProviderGenerationMixin:
             cancellation: CancellationContext,
             cancel_event: asyncio.Event,
         ) -> AsyncIterator[MediaReplyChunk]: ...
-
 
     async def generate_reply(
         self,

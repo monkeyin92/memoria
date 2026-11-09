@@ -711,6 +711,28 @@ class FixedSafetyTTS:
     def stream(self, **kwargs: Any) -> FixedSafetySpeechStream:
         return FixedSafetySpeechStream(self._catalog, self._inner, kwargs)
 
+    def presynthesize(self, fence: Any, text: str, **speech: Any) -> Any:
+        """Pre-synthesize ``text`` only when a stream would hand it to the live engine as it is.
+
+        Text that is or may grow into an approved line is held back for the stored clip, and a live engine
+        never receives reviewed safety copy ahead of that decision.
+        """
+
+        start = getattr(self._inner, "presynthesize", None)
+        if not callable(start) or not self._passes_through(text):
+            return None
+        return start(fence, text, **speech)
+
+    def take_presynthesis(self, fence: Any, text: str) -> FixedSafetySpeechStream | None:
+        take = getattr(self._inner, "take_presynthesis", None)
+        inner_stream = take(fence, text) if callable(take) else None
+        if inner_stream is None:
+            return None
+        return FixedSafetySpeechStream.passing_through(self._catalog, self._inner, inner_stream)
+
+    def _passes_through(self, text: str) -> bool:
+        return self._catalog.match(text) is None and not self._catalog.could_continue(text)
+
     async def aclose(self) -> None:
         close = getattr(self._inner, "aclose", None)
         if callable(close):
@@ -759,6 +781,18 @@ class FixedSafetySpeechStream:
         self._t_selected: float | None = None
         self._t_validated: float | None = None
         self._timing_logged = False
+
+    @classmethod
+    def passing_through(
+        cls, catalog: FixedSafetyAudioCatalog, inner: Any, inner_stream: Any
+    ) -> FixedSafetySpeechStream:
+        """A stream whose first text already went to ``inner_stream``, as ``push_text`` leaves it then."""
+
+        stream = cls(catalog, inner, {})
+        stream._inner_stream = inner_stream
+        stream._passthrough = True
+        stream._decided.set()
+        return stream
 
     def __getattr__(self, name: str) -> Any:
         if self._inner_stream is None:

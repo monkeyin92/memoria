@@ -29,6 +29,7 @@ from services.agent.src.speculative_reply import (
     SpeculativeReply,
     log_outcome,
 )
+from services.agent.src.speculative_speech import speech_head_start
 from services.common.crisis_policy import route_crisis
 
 if TYPE_CHECKING:
@@ -102,6 +103,7 @@ class ReplySpeculationMixin:
         _runtime: DuplexRuntime
         _speculation: SpeculativeReply | None
         _speculative_reply: bool
+        _speculative_speech: bool
         _warmed_memory: _WarmedMemory | None
         _tts_model: str
         language_model: Any
@@ -205,7 +207,12 @@ class ReplySpeculationMixin:
                 _speculation_change(current, key, memory, chat_ctx),
             )
         self._replace_speculation(text)
-        speculation = SpeculativeReply(key, claimed=claim, memory=memory)
+        speech = (
+            speech_head_start(self._runtime, key, speaker_class=plan.provenance.speaker_class)
+            if self._speculative_speech
+            else None
+        )
+        speculation = SpeculativeReply(key, claimed=claim, memory=memory, speech=speech)
         self._speculation = speculation
 
         def spawn(coroutine: Any) -> asyncio.Task[None]:

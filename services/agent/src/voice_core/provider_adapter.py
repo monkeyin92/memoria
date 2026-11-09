@@ -52,6 +52,7 @@ from services.agent.src.voice_core.provider_adapter_fixed_safety import (
 )
 from services.agent.src.voice_core.provider_adapter_generation import (
     ExistingVoiceProviderGenerationMixin,
+    take_presynthesized_stream,
 )
 from services.agent.src.voice_core.provider_adapter_spans import (
     ExistingVoiceProviderSpanMixin,
@@ -1073,7 +1074,6 @@ class ExistingVoiceProviderAdapter(
             ):
                 yield chunk
             return
-
         sample_origin = 0
         if catalogue.prefix_candidate(first_phrase.spoken):
             labelled_phrases: list[SpokenPhrase] = [first_phrase]
@@ -1126,37 +1126,37 @@ class ExistingVoiceProviderAdapter(
                         sample_origin = chunk.source_start_sample + chunk.frame_samples
                         yield chunk
                 return
-
             async def _replay_all() -> AsyncGenerator[SpokenPhrase, None]:
                 for phrase in labelled_phrases:
                     yield phrase
-
             reply = _replay_all()
             reply_iter = aiter(reply)
             first_phrase = await anext(reply_iter)
-
         bind_fence = getattr(self.speech_synthesis, "bind_fence", None)
         if callable(bind_fence):
             bound = bind_fence(fence)
             if inspect.isawaitable(bound):
                 await bound
-        stream_factory = self.speech_synthesis.stream  # type: ignore[attr-defined]
-        stream = stream_factory()
-        if inspect.isawaitable(stream):
-            stream = await stream
+        stream = take_presynthesized_stream(
+            self.speech_synthesis, fence, first_phrase, cancel_event
+        )
+        first_phrase_pushed = stream is not None
+        if stream is None:
+            stream_factory = self.speech_synthesis.stream  # type: ignore[attr-defined]
+            stream = stream_factory()
+            if inspect.isawaitable(stream):
+                stream = await stream
         push_text = getattr(stream, "push_text", None)
         end_input = getattr(stream, "end_input", None)
         if not callable(push_text) or not callable(end_input):
             raise RuntimeError("speech provider stream cannot accept text")
         self._active_speech_streams[fence] = stream
         self._generation_output_ends[fence] = 0
-
         phrases: list[str] = []
         pending_announcements: deque[str] = deque()
         first_phrase_ready = asyncio.Event()
         trailing_labelled: list[tuple[Any, str]] = []
-
-        async def push_phrase(phrase: SpokenPhrase) -> None:
+        async def push_phrase(phrase: SpokenPhrase, *, already_pushed: bool = False) -> None:
             if cancel_event.is_set() or not phrase.spoken:
                 return
             labelled = labelled_catalogue().by_text(phrase.spoken)
@@ -1167,14 +1167,15 @@ class ExistingVoiceProviderAdapter(
                 return
             phrases.append(phrase.display)
             pending_announcements.append(phrase.display)
-            pushed = push_text(phrase.spoken)
-            if inspect.isawaitable(pushed):
-                await pushed
+            if not already_pushed:
+                pushed = push_text(phrase.spoken)
+                if inspect.isawaitable(pushed):
+                    await pushed
             first_phrase_ready.set()
 
         async def produce_text() -> None:
             try:
-                await push_phrase(first_phrase)
+                await push_phrase(first_phrase, already_pushed=first_phrase_pushed)
                 async for phrase in reply_iter:
                     await push_phrase(phrase)
             finally:
@@ -1183,7 +1184,6 @@ class ExistingVoiceProviderAdapter(
                 ended = end_input()
                 if inspect.isawaitable(ended):
                     await ended
-
         producer = asyncio.create_task(
             produce_text(),
             name=f"media-tts-text-{fence.session_id}-{fence.generation_id}",
@@ -1329,6 +1329,7 @@ class ExistingVoiceProviderAdapter(
             self._active_speech_streams.pop(fence, None)
             self._generation_output_ends.pop(fence, None)
 
+
 def build_existing_provider_factory(
     *,
     asr_session_factory: ASRSessionFactory,
@@ -1403,8 +1404,7 @@ def build_production_provider_factory(
         ]
         asr_endpoints: list[str] = []
         dashscope_required = asr_provider == "funasr" or (
-            asr_provider == "volc"
-            and ASRFailoverConfig.from_env().tertiary == "dashscope_funasr"
+            asr_provider == "volc" and ASRFailoverConfig.from_env().tertiary == "dashscope_funasr"
         )
         if dashscope_required:
             required.extend(

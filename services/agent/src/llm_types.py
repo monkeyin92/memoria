@@ -82,6 +82,19 @@ class ChatChunk:
     delta: ChoiceDelta | None = None
 
 
+def chunk_text(chunk: object) -> str:
+    """The plain text of one streamed model item: a string, or a chunk's delta content."""
+
+    if isinstance(chunk, str):
+        return chunk
+    delta = getattr(chunk, "delta", None)
+    if delta is not None:
+        content = getattr(delta, "content", None)
+        if isinstance(content, str):
+            return content
+    return ""
+
+
 class StopResponse(Exception):  # noqa: N818 - name kept from the retired library
     """A committed turn must not be answered (stale fence or unbindable voice)."""
 
@@ -93,4 +106,5 @@ __all__ = [
     "ChatRole",
     "ChoiceDelta",
     "StopResponse",
+    "chunk_text",
 ]
