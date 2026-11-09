@@ -16,17 +16,30 @@
 
 上一版实验镜像曾完成构建和写入校验，但当前设备画面仍是原来的蓝色，不能把那次写入记录当成粉色版本的真机验收。
 
-本次固定表情版本已重新构建并刷入设备。实际写入的产品 app 镜像为 `firmware/esp32/artifacts/memoria-esp-vocat-app.bin`，SHA-256 为 `be6072dd33dca2462daa61c95e9a6fd26f5b94ea28a4bab4340de2d2ca823c5c`，大小为 `3381136 bytes`；完整刷写时使用的 `firmware/esp32/.cache/upstream/build/memoria.bin` SHA-256 相同。上一版已刷入的粉色镜像 SHA-256 为 `1c6d453d8384b56b257fae058a5e40ca1232d20844da0d512b0ec509fea0c738`。
+本次固定表情版本已重新构建，并把同一份 app 写入 `ota_0` 和 `ota_1`。实际写入的产品 app 镜像为 `firmware/esp32/artifacts/memoria-esp-vocat-app.bin`，SHA-256 为 `a91c653a881dee80f15b79af3e2c5daf556ea3b82323b6e42ae44b4357c21caf`，大小为 `3381136 bytes`。
 
-刷写前的备份目录是 `devicetest/flash-backups/20261109-display-animation-baseline/`。其中保存了刷前 app、bootloader/分区表、NVS/OTA/PHY、identity 二进制和各分区的芯片 MD5。刷前关键 MD5 为：app `c46cdf55af5c686f70c242f772f77ebd`，identity `db3c2ccded4c3c957c3563bdb6812b64`。
+刷写前的备份目录是 `devicetest/flash-backups/20261109-display-animation-states/pre-reflash-173629/`。其中保存了两个 app 槽、bootloader/分区表、NVS/OTA/PHY 和 identity 的二进制备份。刷前 `ota_0` 的 app 前缀 SHA-256 为 `be6072dd33dca2462daa61c95e9a6fd26f5b94ea28a4bab4340de2d2ca823c5c`，`ota_1` 仍是旧点阵固件，完整槽 MD5 为 `c46cdf55af5c686f70c242f772f77ebd`。
 
 ## 验证边界
 
 主机侧 `uv run --no-project pytest -q firmware/esp32/tests` 通过，进程退出码为 0。渲染器单独用 clang++ 编译并生成了预览。产品构建通过，app 分区仍有约 18% 空间。
 
-本次设备侧写入已确认：bootloader、分区表、OTA 数据、assets 和 app 均报告 `Hash of data verified`，刷后 `device namespace: present`。刷后串口读到 `SystemInfo`、HTTPS 连接和 `MemoriaPower` 日志，说明新固件已启动并继续运行。刷写过程中 app 阶段曾短暂断连，esptool 自动重连并重新写入，最终校验通过。当前仍没有屏幕照片或现场操作录像，因此粉色背景、眼睛静止效果和说话时离散表情的视觉验收待现场观察。
+本次先把 8192 字节空白 `otadata` 写入 `0xd000`，再把同一 app 写入 `0x20000` 和 `0x410000`。三个写入阶段都报告 `Hash of data verified`，写入退出码为 0。
 
-本次刷写日志保存在 `devicetest/flash-backups/20261109-display-animation-states/flash-pill-states-165414.log`，刷后串口日志保存在 `devicetest/flash-backups/20261109-display-animation-states/serial-pill-states-165853.log`。此前版本的备份与刷写记录仍保存在 `devicetest/flash-backups/20261109-display-animation-baseline/`。
+刷后强制复位的串口日志确认 `MEMORIA_FIRMWARE_BUILD=28; slot=ota_0`，并读到 `MemoriaMascot: face=wake`、`expression=neutral` 和 `face=calm`。日志没有出现回滚或药丸脸初始化失败。设备仍能连接 Wi-Fi 和 HTTPS。
+
+芯片端 MD5 复核结果如下。保护区 `boot_and_ptable`、`nvs`、`phy_init`、`identity` 和 `assets` 与刷前二进制或刷前设备端 MD5 相同。`otadata` 在空白写入后由引导程序恢复为运行记录，这是预期变化。
+
+- `boot_and_ptable`: `9604c30e3bec72b32bff6a8fb8b98554`
+- `nvs`: `9d08c986e3aa8c60714a2cb21a9a23b1`
+- `otadata`: `11c30a9ae56317cafe1c25ac18da9f41`
+- `phy_init`: `6ae59e64850377ee5470c854761551ea`
+- `identity`: `db3c2ccded4c3c957c3563bdb6812b64`
+- `assets`: `7840e4bce899b8eaacc10f9bc9a29008`
+
+两个 app 槽的前 `3381136` 字节芯片端 MD5 都为 `a76a3e8b5b17afc5e3a73f3772089726`，与当前 app 文件一致。两个完整槽的 MD5 都为 `931ecdeb81b79c6608ac345985e3e22d`。完整槽包含 app 文件之外的槽尾字节，因此以 app 边界 MD5 作为镜像一致性判据。
+
+本次刷写日志保存在 `devicetest/flash-backups/20261109-display-animation-states/pre-reflash-173629/write-both-ota-slots.log`。刷后启动日志保存在 `devicetest/flash-backups/20261109-display-animation-states/pre-reflash-173629/serial-after-forced-reset.log`。MD5 与槽边界核对日志也保存在同一目录。当前仍没有屏幕照片或现场操作录像，因此粉色背景、眼睛静止效果和说话时离散表情的视觉验收待现场观察。
 
 ## 声源定位现状
 
