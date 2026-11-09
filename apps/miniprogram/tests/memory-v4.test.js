@@ -52,6 +52,27 @@ test("memory collapses a count-only guardian response into one summary card", as
   }
 });
 
+test("unknown guardian message counts stay unknown instead of becoming zero", async () => {
+  const harness = await openMemory({
+    ...NO_ALERTS,
+    getGuardianChildDays: async () => ({
+      items: [
+        { day: fx.dayKey(0), message_count: 3 },
+        { day: fx.dayKey(1) },
+      ],
+    }),
+    getChildSessionSummaries: async () => ({ items: [] }),
+  });
+  try {
+    const text = visibleText(renderPage("pages/memory/index", harness.page.data, { tabBar: false }));
+    assert.match(text, /还有 2 天有聊天记录，共 3 次，另有 1 天次数待同步/);
+    assert.doesNotMatch(text, /共 3 次，另有 1 天次数待同步。.*0 次/);
+    assert.doesNotMatch(text, /共 0 次/);
+  } finally {
+    harness.restore();
+  }
+});
+
 test("the empty review state opens device settings and has no voice-tab copy", async () => {
   const harness = await openMemory({
     ...NO_ALERTS,

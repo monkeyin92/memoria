@@ -30,10 +30,13 @@ for (const scenario of PAGES) {
   });
 }
 
-test(`memory renders all ${LONG_LIST_SIZE} days and visible child summaries within WeChat's 256 KiB guidance`, async (t) => {
+test(`memory compresses ${LONG_LIST_SIZE} count-only days and keeps visible summaries within WeChat's 256 KiB guidance`, async (t) => {
   const m = await measure(LONG_LISTS.find((item) => item.slug === "memory-200"));
   t.diagnostic(`calls=${m.calls} largest=${m.largest}B render=${m.renderMs.toFixed(1)}ms`);
-  assert.equal((stripStyle(m.html).match(/class="card memory-day /g) || []).length, LONG_LIST_SIZE + 3);
+  const dayCards = (stripStyle(m.html).match(/class="card memory-day /g) || []).length;
+  assert.ok(dayCards >= 1 && dayCards <= 4, `day cards ${dayCards}`);
+  assert.match(m.html, /仅显示汇总，不展开逐日计次/);
+  assert.doesNotMatch(m.html, /孩子聊了 \d+ 次/);
   assert.ok(m.largest < 256 * KiB, `largest setData ${m.largest} bytes`);
   assert.ok(m.renderMs < 500, `render ${m.renderMs}ms`);
 });

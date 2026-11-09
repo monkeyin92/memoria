@@ -38,12 +38,18 @@ function normalizeDay(item) {
   return {
     ...dayLabels(item.day || item.date || ""),
     date: item.day || item.date || "",
-    count: item.message_count || 0,
+    count: normalizeMessageCount(item.message_count),
     title: summary.title || item.title || "这一天的回顾",
     overview: summary.overview || item.overview || item.summary_text || "还没有生成摘要。",
     highlights: summary.highlights || item.highlights || [],
     suggestion: summary.suggestion || item.suggestion || "",
   };
+}
+
+function normalizeMessageCount(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const count = typeof value === "number" ? value : Number(String(value).trim());
+  return Number.isInteger(count) && count >= 0 ? count : null;
 }
 
 function summaryTextForDay(item) {
@@ -60,15 +66,15 @@ function summaryTextForDay(item) {
  */
 /* 监护人视图的一天：只有次数，不含孩子原话。 */
 function normalizeGuardianDay(item) {
-  const count = Number(item.message_count) || 0;
+  const count = normalizeMessageCount(item.message_count);
   const summary = item.summary || {};
   const overview = summaryTextForDay(item);
   return {
     ...dayLabels(item.day || ""),
     date: item.day || "",
     count,
-    title: overview ? summary.title || item.title || "这一天的回顾" : `孩子聊了 ${count} 次`,
-    overview: overview || `孩子聊了 ${count} 次。`,
+    title: overview ? summary.title || item.title || "这一天的回顾" : count === null ? "这一天的回顾" : `孩子聊了 ${count} 次`,
+    overview: overview || (count === null ? "当天聊天次数暂未同步。" : `孩子聊了 ${count} 次。`),
     highlights: summary.highlights || item.highlights || [],
     suggestion: summary.suggestion || item.suggestion || "",
   };
@@ -93,15 +99,22 @@ function hasSummary(item) {
 }
 
 function guardianCountSummary(items, label) {
-  const count = items.reduce((total, item) => total + (Number(item.message_count) || 0), 0);
+  const knownCounts = items.map((item) => normalizeMessageCount(item.message_count)).filter((count) => count !== null);
+  const count = knownCounts.reduce((total, item) => total + item, 0);
+  const unknownDays = items.length - knownCounts.length;
   const days = items.length;
+  const countLabel = unknownDays
+    ? count
+      ? `共 ${count} 次，另有 ${unknownDays} 天次数待同步`
+      : "聊天次数待同步"
+    : `共 ${count} 次`;
   return {
     dayLabel: label,
     dateLabel: `${days} 天`,
     date: `guardian-count-${days}`,
     count,
     title: "更多聊天记录",
-    overview: `还有 ${days} 天有聊天记录，共 ${count} 次。仅显示汇总，不展开逐日计次。`,
+    overview: `还有 ${days} 天有聊天记录，${countLabel}。仅显示汇总，不展开逐日计次。`,
     highlights: [],
     suggestion: "这里只有摘要，不显示孩子原话。",
   };
@@ -109,12 +122,6 @@ function guardianCountSummary(items, label) {
 
 function guardianDaysView(guardianDays, recentChildSummaries) {
   const countItems = Array.isArray(guardianDays) ? guardianDays : [];
-  if (countItems.length > 30) {
-    return (recentChildSummaries || [])
-      .slice(0, 3)
-      .map(normalizeRecentSummary)
-      .concat(countItems.map(normalizeGuardianDay));
-  }
   const inlineSummaryDays = countItems.filter(hasSummary).map(normalizeGuardianDay);
   const summaryDays = inlineSummaryDays.slice();
   const summaryDates = new Set(inlineSummaryDays.map((item) => item.date));
