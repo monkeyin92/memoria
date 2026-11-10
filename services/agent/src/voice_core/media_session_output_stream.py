@@ -29,7 +29,6 @@ from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession
 from services.agent.src.voice_core.media_protocol import (
     PlaybackEventType,
     PlaybackProgress,
-    should_pause_asr_for_playback,
 )
 from services.agent.src.voice_core.media_session_output_chunks import MediaOutputChunksMixin
 from services.agent.src.voice_core.media_session_types import (
@@ -1328,10 +1327,21 @@ class MediaOutputStreamMixin(MediaOutputChunksMixin):
             return
         self._record_playback_boundary(context)
         playback_boundary = context.last_playback_end_sample
-        if should_pause_asr_for_playback(context.identity) and playback_boundary is not None:
+        playback_started = context.output.playback_started
+        playback_start_sample = (
+            playback_started[1]
+            if playback_started is not None and playback_started[0].matches(fence)
+            else None
+        )
+        # ``should_pause_asr_for_playback`` only controls the start-of-playback
+        # task rotation. Full-duplex devices keep capture open: the provider
+        # compares this start sample with its accepted task audio and keeps a
+        # task that already contains barge-in speech.
+        if playback_boundary is not None:
             await context.provider.reset_asr_after_playback(
                 context.identity,
                 playback_end_sample=playback_boundary,
+                playback_start_sample=playback_start_sample,
             )
         wake_ack = (
             context.device_wake_ack_fence is not None

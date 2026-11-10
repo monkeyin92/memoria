@@ -96,6 +96,7 @@ class MediaVoiceProvider(Protocol):
         identity: SessionIdentity,
         *,
         playback_end_sample: int,
+        playback_start_sample: int | None = None,
     ) -> None: ...
 
     async def close(self, identity: SessionIdentity) -> None: ...

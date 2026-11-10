@@ -124,6 +124,56 @@ class _LongStoryProvider(_ScriptedProvider):
         return chunks()
 
 
+class _PlaybackWindowStoryProvider(_LongStoryProvider):
+    """Expose the stale-task failure as an assistant-echo-shaped final."""
+
+    def __init__(self, opening: str = "意气风发。") -> None:
+        super().__init__(opening=opening)
+        self.playback_reset_applied = False
+        self.asr_texts: list[str] = []
+
+    async def ingest_audio(
+        self,
+        identity: SessionIdentity,
+        frame: AudioFrame,
+    ) -> Sequence[ASRResult]:
+        scripted = self.finals.pop(frame.sequence, None)
+        if scripted is None:
+            return await super().ingest_audio(identity, frame)
+        self.audio_calls.append(frame.sequence)
+        text, start_sample = scripted
+        if self.reply_calls > 0 and not self.playback_reset_applied:
+            text = self.opening
+        self.asr_texts.append(text)
+        return (
+            ASRResult(
+                task_epoch=1,
+                sentence_id=f"playback-window-{frame.sequence}",
+                revision=1,
+                capture_start_sample=start_sample,
+                capture_end_sample=frame.capture_end_sample,
+                text=text,
+                is_final=True,
+                confidence=0.99,
+                stream_epoch=identity.stream_epoch,
+            ),
+        )
+
+    async def reset_asr_after_playback(
+        self,
+        identity: SessionIdentity,
+        *,
+        playback_end_sample: int,
+        playback_start_sample: int | None = None,
+    ) -> None:
+        await super().reset_asr_after_playback(
+            identity,
+            playback_end_sample=playback_end_sample,
+            playback_start_sample=playback_start_sample,
+        )
+        self.playback_reset_applied = True
+
+
 def _device_identity(session_id: str) -> SessionIdentity:
     return SessionIdentity(
         session_id,
@@ -743,8 +793,40 @@ async def test_device_playback_echo_plus_backchannel_does_not_stop_the_story() -
     await _run_story(
         _device_identity("content-barge-in-echo-backchannel"),
         script,
-        opening="从前有一座山，山里有一座庙。",
+        opening="从前有一座山，山里有一座庙，庙里有一个老和尚。",
     )
+
+
+@pytest.mark.asyncio
+async def test_interrupt_assist_quiet_playback_resets_before_the_next_user_turn() -> None:
+    """A quiet three-second window must not leave the next final on the reply task."""
+
+    provider = _PlaybackWindowStoryProvider()
+    harness = _StoryHarness(_device_identity("interrupt-assist-quiet-window"), provider)
+    await harness.start()
+    try:
+        await harness.start_story()
+        provider.release.set()
+        await harness.wait_for(lambda: harness.context.output.provider_complete)
+        await harness.playback_ended()
+        assert provider.playback_reset_applied is True
+
+        await harness.audio_frames(150)  # 3.0 s after playback ended
+        await harness.utterance("我想喝水了", frames=25)
+        await harness.wait_for(lambda: provider.reply_calls == 2)
+
+        assert _user_turn_texts(harness.context) == ["给我讲个故事", "我想喝水了"]
+        assert provider.asr_texts[-1] == "我想喝水了"
+        assert (
+            harness.runtime.orchestrator.metrics.get(
+                "guarded_user_input_total",
+                {"reason": "assistant_echo"},
+            )
+            == 0
+        )
+    finally:
+        provider.release.set()
+        await harness.close()
 
 
 @pytest.mark.asyncio
