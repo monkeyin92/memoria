@@ -31,13 +31,13 @@ Memoria 是一个陪伴机器人系列。最终成品可以有多种实体外形
 
 **目标。** 在对话里让伙伴“像在看你、懂你”。当前只跟着设备状态做眨眼和张嘴；下一步让它跟着内容做出简单情绪反应，再延伸到边听边点头这类非言语互动。
 
-**范围。** 这是产品定义 + 服务层改动，不涉及新模型上线。用现有的 `emotion` JSON 字段（协议见 [`memoria_protocol.cc:2943`](../firmware/esp32/overlay/files/main/memoria/memoria_protocol.cc:2943)），固件侧保持简单。
+**范围。** 这是产品定义 + 服务层改动，不涉及新模型上线。用现有的 `emotion` JSON 字段（协议见 [`memoria_protocol.cc`](../firmware/esp32/overlay/files/main/memoria/memoria_protocol.cc)），固件侧保持简单。
 
 ---
 
 #### 现状
 
-- **固件。** [`MemoriaMascotDisplay::SetEmotion()`](../firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/memoria_mascot_display.cc:445) 把服务端的表情名存进一个定长缓冲，动画任务读进说话帧，由 `FaceForExpression()` 在现有七张脸里挑一张（happy/caring/loving 和 neutral 用说话脸，curious/thinking 用思考脸，surprised 用招呼脸，sad 用平静脸；没收到名字或名字不认识时也保持说话脸）。危机脚本仍固定平静脸。不说话的状态仍跟设备状态走：思考脸来自设备自己的 VAD 结束，不读识别文本。眨眼、说话脸的嘴形、进入说话的 200 ms 等待和说话后 800 ms 保持见 README「屏幕：黄色点阵脸」。没有新增表情。
+- **固件。** [`MemoriaMascotDisplay::SetEmotion()`](../firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/memoria_mascot_display.cc) 把服务端的表情名存进一个定长缓冲，动画任务读进说话帧，由 `FaceForExpression()` 在现有七张脸里挑一张（happy/caring/loving 和 neutral 用说话脸，curious/thinking 用思考脸，surprised 用招呼脸，sad 用平静脸；没收到名字或名字不认识时也保持说话脸）。危机脚本仍固定平静脸。不说话的状态仍跟设备状态走：思考脸来自设备自己的 VAD 结束，不读识别文本。眨眼、说话脸的嘴形、进入说话的 200 ms 等待和说话后 800 ms 保持见 README「屏幕：黄色点阵脸」。没有新增表情。
 - **服务端。** 回复开头可以带一个内部标签 `[emotion:neutral|happy|caring|curious]`。`PhraseSegmenter` 在进入 TTS 前剥离标签，并把值写入当前 turn 的 `SpeechPlan.assistant_emotion`。豆包 TTS 只有开启 `DOUBAO_TTS_STYLE_CONTROL_ENABLED` 时才把情绪追加到 `context_texts`；表情走 `assistant_expression`，不依赖这个开关。
 
 ---

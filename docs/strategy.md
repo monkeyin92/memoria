@@ -523,7 +523,7 @@ Memoria 现有协调逻辑散布在 6 个文件中,领域边界模糊、失败�
 - Deliver: 输出投递时机 (`media_session_commit` 的投递部分)
 - Memory: 轮次提交与上下文 (`ConversationProjection`)
 
-契约文件: [services/agent/src/orchestration/coordination_contracts.py](services/agent/src/orchestration/coordination_contracts.py)
+契约文件: [services/agent/src/orchestration/coordination_contracts.py](../services/agent/src/orchestration/coordination_contracts.py)
 
 **2. 时序测试覆盖**
 
@@ -534,7 +534,7 @@ Memoria 现有协调逻辑散布在 6 个文件中,领域边界模糊、失败�
 - 19 类请求: 简单问答 / 工具调用 / 学习辅导 / 睡前故事 / 记忆记录 / 设备控制 / ...
 - 22 种时序模式: 正常流程 / 中期打断 / 晚期打断 / 犹豫停顿 / 连续打断 / 延迟结果 / 过期失效 / ...
 
-契约文件: [tests/voice_coordination/simulator_contracts.py](tests/voice_coordination/simulator_contracts.py)
+契约文件: [tests/voice_coordination/simulator_contracts.py](../tests/voice_coordination/simulator_contracts.py)
 
 #### 受限部分
 
