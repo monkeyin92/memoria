@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "assets": [
+    {
+      "id": "story_01",
+      "path": "firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/stories/story_01.ogg",
+      "sha256": "633b9913ea35980925f9fda95d4f47781ca22154cc9258e0ebc8242de94160e7",
+      "duration_s": 149.7065,
+      "lufs": -16.27,
+      "true_peak_dbtp": -1.85,
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "codec": "opus",
+      "voice_id": "zh_female_shaoergushi_uranus_bigtts",
+      "measured_at": "2026-11-10T09:09:03Z",
+      "source": "share/音频重合成/20261028-归一化候选/README.md#实测结果"
+    },
+    {
+      "id": "story_02",
+      "path": "firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/stories/story_02.ogg",
+      "sha256": "968d3514b9e5367e610c404b85d37efcb0527703ffb8ce25116d13434ffb8395",
+      "duration_s": 137.2065,
+      "lufs": -16.16,
+      "true_peak_dbtp": -0.44,
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "codec": "opus",
+      "voice_id": "zh_female_shaoergushi_uranus_bigtts",
+      "measured_at": "2026-11-10T09:09:03Z",
+      "source": "share/音频重合成/20261028-归一化候选/README.md#实测结果"
+    },
+    {
+      "id": "story_03",
+      "path": "firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/stories/story_03.ogg",
+      "sha256": "150f38181f6300e65b8bede1c00a0d4009f3fd4587d489a64653d1f3cdea27ab",
+      "duration_s": 153.222625,
+      "lufs": -16.25,
+      "true_peak_dbtp": -1.34,
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "codec": "opus",
+      "voice_id": "zh_female_shaoergushi_uranus_bigtts",
+      "measured_at": "2026-11-10T09:09:03Z",
+      "source": "share/音频重合成/20261028-归一化候选/README.md#实测结果"
+    },
+    {
+      "id": "night_soothe",
+      "path": "firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/stories/night_soothe.ogg",
+      "sha256": "657567abe7e8914e2c1a1938dde8ee0e8479e6931d9473df1a38798af724ed4e",
+      "duration_s": 65.462813,
+      "lufs": -16.27,
+      "true_peak_dbtp": -1.85,
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "codec": "opus",
+      "voice_id": "zh_female_shaoergushi_uranus_bigtts",
+      "measured_at": "2026-11-10T09:09:03Z",
+      "source": "share/音频重合成/20261028-归一化候选/README.md#实测结果"
+    },
+    {
+      "id": "llm_unavailable",
+      "path": "firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/offline_lines/llm_unavailable.ogg",
+      "sha256": "09f8bdd8e5fc8741afff5b8bceb5a4427f9d45301357ba759b8c27cf98060be4",
+      "duration_s": 4.193563,
+      "lufs": -20.4,
+      "true_peak_dbtp": -7.0,
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "codec": "opus",
+      "voice_id": "zh_female_shaoergushi_uranus_bigtts",
+      "measured_at": "2026-11-10T09:09:03Z",
+      "source": "firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/offline_lines/index.json",
+      "note": "README.md 声称已归一化到目标带，但板端仍是 2026-10-27 原版文件（cd74b1c4），归一化版本没有进入离线包。"
+    },
+    {
+      "id": "llm_thinking",
+      "path": "firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/offline_lines/llm_thinking.ogg",
+      "sha256": "1d9fa2a5a3298f19d4c609a273300227d92779a81fea0a1db00df73d9d6aeb55",
+      "duration_s": 1.575563,
+      "lufs": -23.1,
+      "true_peak_dbtp": -6.3,
+      "sample_rate_hz": 16000,
+      "channels": 1,
+      "codec": "opus",
+      "voice_id": "zh_female_shaoergushi_uranus_bigtts",
+      "measured_at": "2026-11-10T09:09:03Z",
+      "source": "firmware/esp32/overlay/files/main/boards/memoria/esp-vocat/assets/offline_lines/index.json",
+      "note": "README.md 声称已归一化到目标带，但板端仍是 2026-10-27 原版文件（cd74b1c4），归一化版本没有进入离线包。"
+    }
+  ]
+}
