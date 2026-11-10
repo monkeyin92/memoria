@@ -104,7 +104,7 @@
 | T-15c e2e + 镜像部署验证 | 时长不写死；占位版本验证镜像链路 | T-15a/b、T-14 重审 | 并入 15b 收尾 |
 | 音频换版（不属于 T-15 代码） | 29 条整套重合男声、试听、合规、USB 重刷 assets | T-14、T-30 至 T-32 | 你与工程负责人 |
 
-音频合规未过前，代码 PR 不得携带新音频文件（AGENTS.md 儿童可听内容门禁 + T-14 未审）。
+音频合规未过前，代码 PR 不得携带新音频文件（PR 模板的儿童可听内容门禁 + T-14 未审）。
 
 ### 推荐排期
 
@@ -523,7 +523,7 @@ Memoria 现有协调逻辑散布在 6 个文件中,领域边界模糊、失败�
 - Deliver: 输出投递时机 (`media_session_commit` 的投递部分)
 - Memory: 轮次提交与上下文 (`ConversationProjection`)
 
-契约文件: [services/agent/src/orchestration/coordination_contracts.py](services/agent/src/orchestration/coordination_contracts.py)
+契约文件: [services/agent/src/orchestration/coordination_contracts.py](../services/agent/src/orchestration/coordination_contracts.py)
 
 **2. 时序测试覆盖**
 
@@ -534,7 +534,7 @@ Memoria 现有协调逻辑散布在 6 个文件中,领域边界模糊、失败�
 - 19 类请求: 简单问答 / 工具调用 / 学习辅导 / 睡前故事 / 记忆记录 / 设备控制 / ...
 - 22 种时序模式: 正常流程 / 中期打断 / 晚期打断 / 犹豫停顿 / 连续打断 / 延迟结果 / 过期失效 / ...
 
-契约文件: [tests/voice_coordination/simulator_contracts.py](tests/voice_coordination/simulator_contracts.py)
+契约文件: [tests/voice_coordination/simulator_contracts.py](../tests/voice_coordination/simulator_contracts.py)
 
 #### 受限部分
 
@@ -542,7 +542,7 @@ Memoria 现有协调逻辑散布在 6 个文件中,领域边界模糊、失败�
 
 论文依赖 Harness Editor (Codex + GPT-5.6) 自动编辑协调规则代码。Memoria 受儿童内容合规约束:
 
-- `AGENTS.md` 明确要求: 儿童可听内容、回复脚本及安全拦截规则需产品部与合规部审批
+- `.github/pull_request_template.md` 明确要求: 儿童可听内容、回复脚本及安全拦截规则需产品部与合规部审批
 - `.github/pull_request_template.md` 包含「儿童可听内容」审批流程
 - 协调规则直接影响机器人语音回复时机,属于儿童可听内容交付链路
 
