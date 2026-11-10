@@ -13,6 +13,7 @@ from scripts.capture_runtime_inventory import (  # noqa: E402
     UNKNOWN,
     build_inventory,
     capture_from_backend,
+    carry_non_host_metadata,
     compare_inventories,
     inspect_format,
     parse_prev_release,
@@ -339,7 +340,7 @@ def test_capture_from_backend_reads_host_layout(tmp_path: Path) -> None:
         _override_text("media-edge", "memoria-media-edge:20261023-protected-crisis-v1"),
         encoding="utf-8",
     )
-    bridge_file.with_name("agent-rollback.override.yml").write_text(
+    bridge_file.with_name("agent-component.rollback.override.yml").write_text(
         _override_text("voice-core-media-bridge", "memoria-agent:20261101-asr-failover-v2"),
         encoding="utf-8",
     )
@@ -352,6 +353,7 @@ def test_capture_from_backend_reads_host_layout(tmp_path: Path) -> None:
     )
     bridge_chain = (
         "/opt/memoria/releases/20261029-plan-head-start-v1/docker-compose.production.yml,"
+        "/opt/memoria/component-releases/card/pre-cutover-live.override.yml,"
         f"/opt/memoria/{bridge_rel}"
     )
     edge_chain = (
@@ -450,6 +452,7 @@ def test_capture_from_backend_reads_host_layout(tmp_path: Path) -> None:
     assert bridge["image_id_complete"] is False
     assert "b54189c" not in bridge["revision_commit"]
     file_sha = hashlib.sha256(bridge_body.encode("utf-8")).hexdigest()
+    assert bridge["override_path"] == f"/opt/memoria/{bridge_rel}"
     assert bridge["override_sha256"] == file_sha
     assert bridge["override_sha256"] != tsv_sha
     assert any("disagrees with" in item for item in doc["unknowns"])
@@ -462,6 +465,11 @@ def test_capture_from_backend_reads_host_layout(tmp_path: Path) -> None:
         "target": "memoria-media-edge:20261023-protected-crisis-v1",
     } in anchors
     assert {
+        "role": "voice-core-media-bridge",
+        "method": "agent-component.rollback.override.yml",
+        "target": "memoria-agent:20261101-asr-failover-v2",
+    } in anchors
+    assert {
         "role": "control-api",
         "method": "release_ops.rollback",
         "target": f"20261028-assistant-emotion-v1@{_COMMIT_D}",
@@ -469,6 +477,76 @@ def test_capture_from_backend_reads_host_layout(tmp_path: Path) -> None:
     control = next(c for c in doc["components"] if c["role"] == "control-api")
     assert control["effective_flags"]["TTS_PROVIDER"] == "stepfun_primary"
     assert "API_KEY" not in control["effective_flags"]
+
+
+def test_validate_rejects_unknown_line_for_a_filled_field() -> None:
+    doc = build_inventory(
+        evidence_class="handoff_reconstruction",
+        observations=[],
+        firmware={
+            "build": "25",
+            "app_commit": UNKNOWN,
+            "assets_hash": "0be9af66",
+            "evidence": "USB flash",
+        },
+    )
+    assert validate_inventory(doc) == []
+    assert "firmware.app_commit unknown" in doc["unknowns"]
+    doc["unknowns"].append("firmware.build unknown")
+    errors = validate_inventory(doc)
+    assert any("firmware.build" in err and "still calls it unknown" in err for err in errors)
+
+
+def test_carry_forward_keeps_non_host_metadata() -> None:
+    previous = {
+        "components": [
+            {
+                "role": "voice-core-media-bridge",
+                "status": {"code": UNKNOWN, "wired": "2026-11-02"},
+            },
+            {
+                "role": "firmware",
+                "container": UNKNOWN,
+                "image_ref": UNKNOWN,
+                "image_id": UNKNOWN,
+                "registry_digest": UNKNOWN,
+                "revision_commit": UNKNOWN,
+                "status": {"code": "2026-10-23"},
+            },
+        ],
+        "firmware": {
+            "build": "25",
+            "app_commit": UNKNOWN,
+            "assets_hash": "0be9af66",
+            "evidence": "USB flash",
+        },
+        "miniprogram": {"version": UNKNOWN, "evidence": "local upload"},
+    }
+    doc = build_inventory(
+        evidence_class="live_capture",
+        observations=[
+            {
+                "role": "voice-core-media-bridge",
+                "image": "memoria-agent:20261106-card5-committed-boundary-v1",
+                "image_id": "sha256:" + "1" * 64,
+                "revision": _COMMIT_A,
+                "effective_flags": _flags(),
+            }
+        ],
+        firmware=previous["firmware"],
+        miniprogram=previous["miniprogram"],
+        captured_at="2026-11-10T07:00:00+00:00",
+    )
+    notes = carry_non_host_metadata(doc, previous)
+    bridge = next(c for c in doc["components"] if c["role"] == "voice-core-media-bridge")
+    assert bridge["status"]["wired"] == "2026-11-02"
+    assert any(c["role"] == "firmware" for c in doc["components"])
+    assert "firmware.app_commit unknown" in doc["unknowns"]
+    assert "firmware.build unknown" not in doc["unknowns"]
+    assert "miniprogram.version unknown" in doc["unknowns"]
+    assert len(notes) == 2
+    doc["unknowns"].extend(notes)
+    assert validate_inventory(doc) == []
 
 
 def test_seeded_repo_inventory_validates() -> None:

@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-11-10T06:56:00+00:00",
+  "captured_at": "2026-11-10T07:49:18+00:00",
   "components": [
     {
       "compose_chain": "/opt/memoria/releases/20261029-plan-head-start-v1/docker-compose.production.yml",
@@ -25,45 +25,13 @@
       "started_at": "2026-10-29T06:29:28.824869385Z",
       "status": {
         "code": "2026-10-29",
-        "wired": "2026-11-02",
         "enabled": "unknown",
-        "verified": "unknown",
         "evidence_dates": {
           "code": "2026-10-29",
           "wired": "2026-11-02"
-        }
-      }
-    },
-    {
-      "compose_chain": "/opt/memoria/releases/20261029-plan-head-start-v1/docker-compose.production.yml,/opt/memoria/component-releases/20261106-card5-committed-boundary-v1/pre-cutover-live.override.yml,/opt/memoria/component-releases/20261106-card5-committed-boundary-v1/agent-component.override.yml",
-      "container": "memoria-voice-core-media-bridge-1",
-      "effective_flags": {
-        "MEMORIA_RELEASE_COMMIT": "unknown",
-        "MEMORIA_RELEASE_TAG": "20261029-plan-head-start-v1",
-        "MEMORIA_SPEAKER_AUTHORITY_ENABLED": "false",
-        "STEPFUN_TTS_ENABLED": "true",
-        "STEPFUN_TTS_VOICE": "wenrounansheng",
-        "TTS_PROVIDER": "doubao"
-      },
-      "health": "healthy",
-      "image_id": "sha256:77146b02ce281b143143fc2de5dc32902e4b49b6fe3bc857798c12d9a50e7ebe",
-      "image_id_complete": true,
-      "image_ref": "memoria-agent:20261106-card5-committed-boundary-v1",
-      "override_path": "/opt/memoria/component-releases/20261106-card5-committed-boundary-v1/pre-cutover-live.override.yml",
-      "override_sha256": "9d4b93edc7a628db85a7856880b6048c32381a185f81f3a7b802675a129bff0c",
-      "registry_digest": "unknown",
-      "restarts": 0,
-      "revision_commit": "b03756b3c5268c90596bd1acda32a7b314094d9a",
-      "role": "voice-core-media-bridge",
-      "started_at": "2026-11-07T09:18:44.897729001Z",
-      "status": {
-        "code": "unknown",
-        "wired": "2026-11-02",
-        "enabled": "unknown",
+        },
         "verified": "unknown",
-        "evidence_dates": {
-          "wired": "2026-11-02"
-        }
+        "wired": "2026-11-02"
       }
     },
     {
@@ -90,90 +58,122 @@
       "started_at": "2026-10-23T15:31:43.935833592Z",
       "status": {
         "code": "2026-10-23",
-        "wired": "2026-11-02",
         "enabled": "unknown",
-        "verified": "unknown",
         "evidence_dates": {
           "code": "2026-10-23",
           "wired": "2026-11-02"
-        }
+        },
+        "verified": "unknown",
+        "wired": "2026-11-02"
       }
     },
     {
-      "role": "firmware",
-      "container": "unknown",
-      "image_ref": "unknown",
-      "image_id": "unknown",
-      "image_id_complete": "unknown",
-      "registry_digest": "unknown",
-      "revision_commit": "unknown",
-      "override_sha256": "unknown",
-      "compose_chain": "unknown",
-      "override_path": "unknown",
-      "started_at": "unknown",
-      "health": "unknown",
-      "restarts": "unknown",
+      "compose_chain": "/opt/memoria/releases/20261029-plan-head-start-v1/docker-compose.production.yml,/opt/memoria/component-releases/20261106-card5-committed-boundary-v1/pre-cutover-live.override.yml,/opt/memoria/component-releases/20261106-card5-committed-boundary-v1/agent-component.override.yml",
+      "container": "memoria-voice-core-media-bridge-1",
       "effective_flags": {
-        "TTS_PROVIDER": "unknown",
+        "MEMORIA_RELEASE_COMMIT": "unknown",
+        "MEMORIA_RELEASE_TAG": "20261029-plan-head-start-v1",
+        "MEMORIA_SPEAKER_AUTHORITY_ENABLED": "false",
+        "STEPFUN_TTS_ENABLED": "true",
+        "STEPFUN_TTS_VOICE": "wenrounansheng",
+        "TTS_PROVIDER": "doubao"
+      },
+      "health": "healthy",
+      "image_id": "sha256:77146b02ce281b143143fc2de5dc32902e4b49b6fe3bc857798c12d9a50e7ebe",
+      "image_id_complete": true,
+      "image_ref": "memoria-agent:20261106-card5-committed-boundary-v1",
+      "override_path": "/opt/memoria/component-releases/20261106-card5-committed-boundary-v1/agent-component.override.yml",
+      "override_sha256": "e44602e093e80728e9b8f5eb44d6ad6b1c16638ecd652869bd6e80fb9f390de0",
+      "registry_digest": "unknown",
+      "restarts": 0,
+      "revision_commit": "b03756b3c5268c90596bd1acda32a7b314094d9a",
+      "role": "voice-core-media-bridge",
+      "started_at": "2026-11-07T09:18:44.897729001Z",
+      "status": {
+        "code": "unknown",
+        "enabled": "unknown",
+        "evidence_dates": {
+          "wired": "2026-11-02"
+        },
+        "verified": "unknown",
+        "wired": "2026-11-02"
+      }
+    },
+    {
+      "compose_chain": "unknown",
+      "container": "unknown",
+      "effective_flags": {
+        "MEMORIA_RELEASE_COMMIT": "unknown",
+        "MEMORIA_RELEASE_TAG": "unknown",
+        "MEMORIA_SPEAKER_AUTHORITY_ENABLED": "unknown",
         "STEPFUN_TTS_ENABLED": "unknown",
         "STEPFUN_TTS_VOICE": "unknown",
-        "MEMORIA_SPEAKER_AUTHORITY_ENABLED": "unknown",
-        "MEMORIA_RELEASE_TAG": "unknown",
-        "MEMORIA_RELEASE_COMMIT": "unknown"
+        "TTS_PROVIDER": "unknown"
       },
+      "health": "unknown",
+      "image_id": "unknown",
+      "image_id_complete": "unknown",
+      "image_ref": "unknown",
+      "override_path": "unknown",
+      "override_sha256": "unknown",
+      "registry_digest": "unknown",
+      "restarts": "unknown",
+      "revision_commit": "unknown",
+      "role": "firmware",
+      "started_at": "unknown",
       "status": {
         "code": "2026-10-23",
-        "wired": "2026-10-23",
         "enabled": "unknown",
-        "verified": "unknown",
         "evidence_dates": {
           "code": "2026-10-23",
           "wired": "2026-10-23"
-        }
+        },
+        "verified": "unknown",
+        "wired": "2026-10-23"
       }
     },
     {
-      "role": "miniprogram",
-      "container": "unknown",
-      "image_ref": "unknown",
-      "image_id": "unknown",
-      "image_id_complete": "unknown",
-      "registry_digest": "unknown",
-      "revision_commit": "unknown",
-      "override_sha256": "unknown",
       "compose_chain": "unknown",
-      "override_path": "unknown",
-      "started_at": "unknown",
-      "health": "unknown",
-      "restarts": "unknown",
+      "container": "unknown",
       "effective_flags": {
-        "TTS_PROVIDER": "unknown",
+        "MEMORIA_RELEASE_COMMIT": "unknown",
+        "MEMORIA_RELEASE_TAG": "unknown",
+        "MEMORIA_SPEAKER_AUTHORITY_ENABLED": "unknown",
         "STEPFUN_TTS_ENABLED": "unknown",
         "STEPFUN_TTS_VOICE": "unknown",
-        "MEMORIA_SPEAKER_AUTHORITY_ENABLED": "unknown",
-        "MEMORIA_RELEASE_TAG": "unknown",
-        "MEMORIA_RELEASE_COMMIT": "unknown"
+        "TTS_PROVIDER": "unknown"
       },
+      "health": "unknown",
+      "image_id": "unknown",
+      "image_id_complete": "unknown",
+      "image_ref": "unknown",
+      "override_path": "unknown",
+      "override_sha256": "unknown",
+      "registry_digest": "unknown",
+      "restarts": "unknown",
+      "revision_commit": "unknown",
+      "role": "miniprogram",
+      "started_at": "unknown",
       "status": {
         "code": "unknown",
-        "wired": "unknown",
         "enabled": "unknown",
+        "evidence_dates": {},
         "verified": "unknown",
-        "evidence_dates": {}
+        "wired": "unknown"
       }
     }
   ],
   "evidence_class": "live_capture",
   "firmware": {
-    "build": "25",
     "app_commit": "unknown",
     "assets_hash": "0be9af66",
+    "build": "25",
     "evidence": "HANDOFF USB flash 2026-10-23 23:47-23:51; no voice test"
   },
   "memoria_root": "/opt/memoria",
   "miniprogram": {
-    "version": "unknown",
-    "evidence": "HANDOFF last local upload 2026-10-14 was 03ff0f3; later uploads were not verified"
+    "evidence": "HANDOFF last local upload 2026-10-14 was 03ff0f3; later uploads were not verified",
+    "version": "unknown"
   },
   "rollback": {
     "per_component": [
@@ -181,6 +181,11 @@
         "method": "media-edge-rollback.override.yml",
         "role": "media-edge",
         "target": "memoria-media-edge:20261023-protected-crisis-v1"
+      },
+      {
+        "method": "agent-component.rollback.override.yml",
+        "role": "voice-core-media-bridge",
+        "target": "memoria-agent:rollback-20261106-card5-committed-boundary-v1-pre"
       },
       {
         "method": "release_ops.rollback",
@@ -223,12 +228,8 @@
     "media-edge: registry_digest unknown",
     "voice-core-media-bridge: flag MEMORIA_RELEASE_COMMIT unknown",
     "voice-core-media-bridge: registry_digest unknown",
-    "firmware.build unknown",
     "firmware.app_commit unknown",
-    "firmware.assets_hash unknown",
-    "firmware.evidence unknown",
     "miniprogram.version unknown",
-    "miniprogram.evidence unknown",
     "firmware: carried from the prior handoff record, not part of the host capture",
     "miniprogram: carried from the prior handoff record, not part of the host capture"
   ]
