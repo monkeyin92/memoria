@@ -6,7 +6,9 @@ cd "$HOME/projects/memoria"
 TAG=card5-overlay
 EXPECT_IMAGE=memoria-agent:20261106-card5-committed-boundary-v1
 EXPECT_BUILD=28
-EXPECT_ELF=d0e90d73a
+# 2026-11-10: board reflashed with the current-main keep-awake build so the board no longer
+# deep-sleeps during reset; the bridge candidate is unchanged.
+EXPECT_ELF=0007be1f9
 EXPECT_BYPASS=ed2b4c0e
 EXPECT_VOL=30
 D="devicetest/precheck-$(date +%Y%m%d-%H%M%S)-${TAG}"; mkdir -p "$D"
