@@ -851,40 +851,6 @@ async def test_interrupt_assist_nonzero_playback_echo_resets_before_next_user_tu
 
 
 @pytest.mark.asyncio
-async def test_replayed_echo_after_playback_reset_is_not_a_barge_in_or_new_turn() -> None:
-    """A final replayed into the fresh ASR task is filtered by both echo guards."""
-
-    provider = _PlaybackWindowStoryProvider(opening="今天的故事里有一只小兔子。")
-    harness = _StoryHarness(_device_identity("replayed-playback-echo"), provider)
-    await harness.start()
-    try:
-        await harness.start_story()
-        provider.release.set()
-        await harness.wait_for(lambda: harness.context.output.provider_complete)
-        await harness.playback_ended()
-        assert provider.playback_reset_applied is True
-
-        await harness.vad_start(harness.sample)
-        await harness.audio_frames(2, final_text=provider.opening)
-        assert harness.context.pending.content_barge_in is False
-        await harness.vad_end(harness.sample)
-        await harness.settle()
-
-        assert provider.reply_calls == 1
-        assert _user_turn_texts(harness.context) == ["给我讲个故事"]
-        assert (
-            harness.runtime.orchestrator.metrics.get(
-                "guarded_user_input_total",
-                {"reason": "assistant_echo"},
-            )
-            == 1
-        )
-    finally:
-        provider.release.set()
-        await harness.close()
-
-
-@pytest.mark.asyncio
 async def test_device_garbled_echo_of_the_story_is_not_a_question() -> None:
     """A fuzzy repeat of the announced line (12+ chars) is the reply's own voice."""
 

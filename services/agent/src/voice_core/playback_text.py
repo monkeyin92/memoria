@@ -72,19 +72,6 @@ _CONTENT_MARKERS = (
 # one contiguous part of the played line. Comparing against the whole reply
 # makes a short echo look unrelated as soon as the reply is longer than it.
 _FUZZY_ECHO_COVERAGE = 0.85
-_QUESTION_MARKERS = (
-    "吗",
-    "呢",
-    "为什么",
-    "怎么",
-    "什么",
-    "哪",
-    "谁",
-    "多少",
-    "是否",
-    "能不能",
-    "可不可以",
-)
 _SPEECH_MARKUP = str.maketrans("", "", "，。！？、,.!?;；:：…~～\"'“”‘’（）() \t\r\n　")
 # A request to keep talking is the opposite of a barge-in; 「不要停」 must never stop the reply.
 _KEEP_PLAYING = ("不要停", "别停", "不用停", "继续", "接着讲", "接着说")
@@ -106,11 +93,17 @@ def _strip_edge_backchannels(text: str) -> str:
 
 
 def _candidate_has_question_signal(text: str) -> bool:
-    """Keep a question from being suppressed by a near-copy playback echo."""
+    """Keep a question from being suppressed by a near-copy playback echo.
 
-    return any(marker in text for marker in _QUESTION_MARKERS) or any(
-        punctuation in text for punctuation in "？?!"
-    )
+    Only a closing particle or question punctuation counts. A reply line that
+    happens to carry 「什么」 or 「哪」 must not make its own echo look like an
+    owner question.
+    """
+
+    stripped = text.strip().rstrip("。.!！…~～ \t\r\n　")
+    if stripped.endswith(("吗", "呢")):
+        return True
+    return any(punctuation in text for punctuation in "？?")
 
 
 def playback_text_is_echo(text: str, playback_text: str) -> bool:
