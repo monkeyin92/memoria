@@ -77,10 +77,10 @@ logger = logging.getLogger(__name__)
 # usually closed by then; rebuild it before the first frame after a gap this
 # long instead of sending that frame into a dead task.
 _RESUME_GAP_S = 3.0
-# ``playback_end_sample`` includes the 0.8 s echo margin owned by the media
-# session. Replaying 1.25 s before that fence reaches at least 0.45 s before
-# the physical playback end, while the history cap prevents a long reply from
-# being joined to the next user turn.
+# ``playback_floor_sample`` includes the 0.8 s echo margin owned by the media
+# session. Replay is anchored at the physical ``playback_end_sample`` and
+# reaches 1.25 s before it; the history cap prevents a long reply from being
+# joined to the next user turn.
 _PLAYBACK_REPLAY_LEAD_S = 1.25
 _PLAYBACK_REPLAY_HISTORY_S = 2.0
 
@@ -872,11 +872,13 @@ class ExistingVoiceProviderAdapter(
         identity: SessionIdentity,
         *,
         playback_end_sample: int,
+        playback_floor_sample: int,
     ) -> None:
         async with self._audio_lock:
             await self._reset_asr_after_playback(
                 identity,
                 playback_end_sample=playback_end_sample,
+                playback_floor_sample=playback_floor_sample,
             )
 
     async def _reset_asr_after_playback(
@@ -884,6 +886,7 @@ class ExistingVoiceProviderAdapter(
         identity: SessionIdentity,
         *,
         playback_end_sample: int,
+        playback_floor_sample: int,
     ) -> None:
         """Rotate normally completed playback and fence its echo tail.
 
@@ -894,13 +897,15 @@ class ExistingVoiceProviderAdapter(
         playback boundary is still recognized.
         """
 
-        if playback_end_sample < 0:
-            raise ValueError("playback end sample must be non-negative")
+        if playback_end_sample < 0 or playback_floor_sample < 0:
+            raise ValueError("playback samples must be non-negative")
+        if playback_floor_sample < playback_end_sample:
+            raise ValueError("playback floor sample must not precede playback end")
         resume_sample_floor = max(
-            playback_end_sample,
+            playback_floor_sample,
             self._asr_resume_sample_floor or 0,
         )
-        replay_frames = self._playback_replay_frames(resume_sample_floor)
+        replay_frames = self._playback_replay_frames(playback_end_sample)
         self._asr_resume_sample_floor = resume_sample_floor
         self._audio_since_finalize = False
         self._last_ingest_sample_end = None

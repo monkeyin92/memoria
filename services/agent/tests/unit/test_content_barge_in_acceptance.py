@@ -79,8 +79,18 @@ def test_non_exact_playback_echo_with_trailing_backchannel_is_not_content_barge_
     )
 
 
-def test_short_candidate_against_long_reply_is_content_barge_in() -> None:
-    candidate = "小兔子在森林里唱歌还跳舞啦真开心"
+def test_short_candidate_from_long_reply_is_echo() -> None:
+    reply = "今天的故事里小兔子在森林里唱歌遇见了狐狸，还一起回家吃晚饭。故事最后大家都睡着了，森林恢复了安静的夜晚，月亮升起来了。"
+    candidate = reply[:16]
+
+    assert sum(character.isalnum() for character in candidate) == 16
+    assert sum(character.isalnum() for character in reply) == 54
+    assert playback_text_is_echo(candidate, reply) is True
+    assert content_barge_in_wanted(candidate, playback_text=reply) is False
+
+
+def test_short_candidate_unrelated_to_long_reply_is_content_barge_in() -> None:
+    candidate = "小熊今天想去河边看星星呀回家睡觉"
     reply = "今天的故事里小兔子在森林里唱歌遇见了狐狸，还一起回家吃晚饭。故事最后大家都睡着了，森林恢复了安静的夜晚，月亮升起来了。"
 
     assert sum(character.isalnum() for character in candidate) == 16
