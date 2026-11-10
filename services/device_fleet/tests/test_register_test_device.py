@@ -37,16 +37,16 @@ from services.device_fleet.bootstrap_domain import (
 from services.device_fleet.bootstrap_postgres_store import PostgresBootstrapStore
 from services.device_fleet.bootstrap_service import DeviceOnboardingService
 from services.device_fleet.bootstrap_store import SQLiteBootstrapStore
-from services.device_fleet.test_device_registration import (
+from services.device_fleet.device_test_registration import (
     REGISTRATION_ACTION,
     TEST_ENVIRONMENT_ID,
     delete_registration_audits,
     delete_registration_audits_for_account,
 )
-from services.device_fleet.test_device_registration import (
+from services.device_fleet.device_test_registration import (
     TestEnvironment as RegistrationEnvironment,
 )
-from services.device_fleet.test_device_registration import (
+from services.device_fleet.device_test_registration import (
     TestRegistrationRejected as RegistrationRejected,
 )
 

@@ -20,7 +20,7 @@ from typing import Any, Literal, Protocol, cast
 import asyncpg
 
 from services.archive.object_store import ObjectNotFoundError, ObjectRef, ObjectStore
-from services.device_fleet.test_device_registration import RegistrationAuditDeletion
+from services.device_fleet.device_test_registration import RegistrationAuditDeletion
 from services.evolution.account_fence import AccountReadGuard, AccountWriteBlockedError
 from services.governance.subject_export import (
     build_subject_export,

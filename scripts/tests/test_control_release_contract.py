@@ -87,8 +87,9 @@ def test_ci_python_filter_covers_docs_tests_and_control_release_tools() -> None:
 def test_ci_control_api_image_gate_is_offline_and_blocks_python() -> None:
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "control-api-image:" in workflow
-    # `python` is the required aggregate: it needs the image build and fails when it failed.
-    assert "needs: [changes, control-api-image, python-gates, python-shards]" in workflow
+    # `python` is the required aggregate: it needs both image builds and fails when either failed.
+    assert "needs: [changes, agent-image, control-api-image, python-gates, python-shards]" in workflow
+    assert '[[ "${{ needs.agent-image.result }}" == success ]]' in workflow
     assert '[[ "${{ needs.control-api-image.result }}" == success ]]' in workflow
     assert "infra/Dockerfile.control-api" in workflow
     assert "infra/Dockerfile.control-api-source-overlay" in workflow

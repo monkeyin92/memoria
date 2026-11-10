@@ -50,7 +50,12 @@ node_modules/
 .workbuddy/
 tmp/
 scratch/
-outputs/
+outputs/*
+# Keep the committed anti-manipulation receipts visible; all other outputs stay local.
+!outputs/acceptance/
+outputs/acceptance/*
+!outputs/acceptance/anti-manipulation-u1-u8-20261028/
+!outputs/acceptance/anti-manipulation-u1-u8-20261028/**
 .tmp_*.sh
 
 # Local mascot cutout backups (opaque masters)
@@ -67,6 +72,14 @@ data/
 *.wav
 !services/agent/tests/fixtures/audio/**
 !tests/e2e/fixtures/**
+# Committed safety prompts and acceptance receipts stay visible; new files in
+# these directories must show as untracked rather than vanish silently.
+!infra/voices/fixed_safety/
+!infra/voices/fixed_safety/*.wav
+!docs/acceptance/run-20260924-defect-a-retest-live/
+!docs/acceptance/run-20260924-defect-a-retest-live/*.log
+!docs/acceptance/run-20261015-aigc-labels/archive/
+!docs/acceptance/run-20261015-aigc-labels/archive/*.wav
 
 # The audio-acceptance tool keeps a recorded-turns log and regenerates its own fixtures
 !scripts/auto_audio/fixtures/**
@@ -86,4 +99,5 @@ devicetest/r02-*/
 devicetest/precheck-*/
 devicetest/safety-*/
 devicetest/targeted-*/
+devicetest/flash-backups/
 .audit/raw-receipts-*.tar.gz

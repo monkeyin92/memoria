@@ -297,14 +297,19 @@ def _attach_override_files(
                 )
         if "-component.override.yml" not in local.name:
             continue
-        sibling = local.with_name(
-            local.name.replace("-component.override.yml", "-rollback.override.yml")
-        )
-        image = _image_in_override(sibling)
-        if image is None:
+        # Two rollback naming conventions exist on the host.
+        siblings = [
+            local.with_name(local.name.replace("-component.override.yml", suffix))
+            for suffix in ("-rollback.override.yml", "-component.rollback.override.yml")
+        ]
+        for sibling in siblings:
+            image = _image_in_override(sibling)
+            if image is None:
+                continue
+            found.append({"role": role, "method": sibling.name, "target": image})
+            break
+        else:
             extra_unknowns.append(f"{role}: rollback override not readable")
-            continue
-        found.append({"role": role, "method": sibling.name, "target": image})
     return found
 
 
@@ -500,6 +505,8 @@ def capture_from_backend(
     evidence_class: str,
     memoria_root: Path | None = None,
     captured_at: str | None = None,
+    firmware: Mapping[str, Any] | None = None,
+    miniprogram: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     observations: list[dict[str, Any]] = []
     for name in backend.list_memoria_containers():
@@ -509,10 +516,11 @@ def capture_from_backend(
             continue
         chain = backend.inspect_field(name, "chain")
         override_path = UNKNOWN
-        if "," in chain:
-            parts = chain.split(",")
-            if len(parts) >= 2:
-                override_path = parts[1]
+        # The compose label lists files in apply order, so the last entry is the
+        # override that actually shaped this container.
+        parts = [part for part in chain.split(",") if part]
+        if len(parts) >= 2:
+            override_path = parts[-1]
         raw_flags = backend.inspect_flags(name)
         flags = {
             key: str(raw_flags.get(key, UNKNOWN)) if isinstance(raw_flags, Mapping) else UNKNOWN
@@ -574,10 +582,38 @@ def capture_from_backend(
         observations=observations,
         stack=stack or None,
         rollback=rollback or None,
+        firmware=firmware,
+        miniprogram=miniprogram,
         captured_at=captured_at or _utc_now(),
         memoria_root=root_s,
         extra_unknowns=extra_unknowns,
     )
+
+
+def carry_non_host_metadata(
+    doc: dict[str, Any],
+    previous: Mapping[str, Any],
+) -> list[str]:
+    """Overlay what a host capture cannot see; host observations stay authoritative."""
+    prev_components = {
+        comp.get("role"): comp
+        for comp in previous.get("components") or []
+        if isinstance(comp, Mapping)
+    }
+    live_roles = {comp.get("role") for comp in doc.get("components") or []}
+    for comp in doc.get("components") or []:
+        prev = prev_components.get(comp.get("role"))
+        if isinstance(prev, Mapping) and isinstance(prev.get("status"), Mapping):
+            comp["status"] = dict(prev["status"])
+    notes: list[str] = []
+    for section in ("firmware", "miniprogram"):
+        prev = prev_components.get(section)
+        if isinstance(prev, Mapping) and section not in live_roles:
+            doc["components"].append(dict(prev))
+        notes.append(
+            f"{section}: carried from the prior handoff record, not part of the host capture"
+        )
+    return notes
 
 
 def validate_inventory(doc: Mapping[str, Any]) -> list[str]:
@@ -593,6 +629,14 @@ def validate_inventory(doc: Mapping[str, Any]) -> list[str]:
         errors.append("unknowns must be a list")
     if "rollback" not in doc or not isinstance(doc["rollback"], Mapping):
         errors.append("rollback missing")
+    unknown_lines = {item for item in doc.get("unknowns") or [] if isinstance(item, str)}
+    for section in ("firmware", "miniprogram"):
+        values = doc.get(section)
+        if not isinstance(values, Mapping):
+            continue
+        for key, value in values.items():
+            if value != UNKNOWN and f"{section}.{key} unknown" in unknown_lines:
+                errors.append(f"{section}.{key} has a value but unknowns still calls it unknown")
     for comp in doc["components"]:
         if not isinstance(comp, Mapping):
             errors.append("component entry must be an object")
@@ -781,6 +825,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     cap.add_argument("--output", type=Path, required=True)
     cap.add_argument("--memoria-root", type=Path, default=None)
     cap.add_argument(
+        "--carry-forward",
+        type=Path,
+        default=None,
+        help="inventory to copy firmware/miniprogram and component status from",
+    )
+    cap.add_argument(
         "--evidence-class",
         required=True,
         choices=sorted(EVIDENCE_CLASSES),
@@ -809,11 +859,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+        previous = _load_json(args.carry_forward) if args.carry_forward else None
         doc = capture_from_backend(
             backend,
             evidence_class=args.evidence_class,
             memoria_root=args.memoria_root,
+            firmware=previous.get("firmware") if previous else None,
+            miniprogram=previous.get("miniprogram") if previous else None,
         )
+        if previous:
+            for note in carry_non_host_metadata(doc, previous):
+                if note not in doc["unknowns"]:
+                    doc["unknowns"].append(note)
         errors = validate_inventory(doc)
         if errors:
             print("inventory invalid after capture:", file=sys.stderr)
