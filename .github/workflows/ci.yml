@@ -240,11 +240,10 @@ jobs:
           scripts/tests/test_provider_smoke_llm.py
           scripts/tests/test_local_process_probe.py
           scripts/tests/test_deploy_agent_component_manual_base.py
-      - name: Nightly backup script tests (fake docker and df)
-        run: >-
-          uv run pytest --import-mode=importlib --no-cov
-          scripts/tests/test_nightly_backup_script.py
-          scripts/tests/test_nightly_backup_retention.py
+      # The whole directory, not a list of files. A test file left off every
+      # list never ran, and one went red on main unnoticed.
+      - name: Script tests
+        run: uv run pytest --import-mode=importlib --no-cov scripts/tests
       - name: Control release artifact smoke (offline)
         env:
           ENVIRONMENT: development
@@ -277,8 +276,6 @@ jobs:
         run: uv run python scripts/media_runtime_smoke.py
       - name: Media replay, chaos and load contract
         run: uv run python scripts/media_runtime_replay.py
-      - name: Wake matrix tool regression (self-contained, no device)
-        run: uv run pytest --import-mode=importlib --no-cov scripts/tests/test_wake_word_matrix.py
       - name: Offline E2E
         run: uv run python scripts/run_e2e.py --profile offline
       - name: Provider smoke (skip without keys)
