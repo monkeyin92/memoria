@@ -67,6 +67,15 @@ def test_playback_echo_with_trailing_backchannel_is_not_content_barge_in() -> No
     )
 
 
+def test_non_exact_playback_echo_with_trailing_backchannel_is_not_content_barge_in() -> None:
+    reply = "明天早上我们一起去公园散步吧"
+
+    assert not content_barge_in_wanted(
+        "明天早上我们一起去公园散步啦，嗯。",
+        playback_text=reply,
+    )
+
+
 def test_real_question_after_backchannel_still_is_content_barge_in() -> None:
     assert content_barge_in_wanted(
         "嗯，等一下，我想问云是怎么变出来的？",

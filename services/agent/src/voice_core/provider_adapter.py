@@ -762,20 +762,51 @@ class ExistingVoiceProviderAdapter(
         self._asr_resume_sample_floor = None
         return frame
 
+    def _has_audio_after_playback_start(self, playback_start_sample: int | None) -> bool:
+        """Return whether accepted non-silent task audio crossed playback start."""
+
+        if playback_start_sample is None:
+            return False
+        snapshot = self.current_asr_audio_task_snapshot
+        if snapshot is not None and snapshot.audio_end_sample is not None:
+            if snapshot.audio_end_sample <= playback_start_sample:
+                return False
+            # Full-duplex devices can send continuous zero PCM while the
+            # speaker is active. That is capture, but it is not barge-in.
+            if snapshot.all_zero is True:
+                return False
+            return True
+        if (
+            self._last_ingest_sample_end is not None
+            and self._last_ingest_sample_end > playback_start_sample
+        ):
+            # When the provider cannot expose energy metadata, keep the task
+            # fail-closed so a real barge-in is never rotated away.
+            return True
+        return self._audio_since_finalize and self._last_ingest_sample_end is None
+
     async def reset_asr_after_playback(
         self,
         identity: SessionIdentity,
         *,
         playback_end_sample: int,
+        playback_start_sample: int | None = None,
     ) -> None:
         """Retire playback audio before the next user speech can open a task."""
 
         if playback_end_sample < 0:
             raise ValueError("playback end sample must be non-negative")
-        self._asr_resume_sample_floor = max(
+        resume_sample_floor = max(
             playback_end_sample,
             self._asr_resume_sample_floor or 0,
         )
+        if self._has_audio_after_playback_start(playback_start_sample):
+            # A task containing playback-window speech owns audio that began
+            # before playback ended. Rotating it here would discard the
+            # beginning of a real barge-in; the existing result-level echo
+            # guard will classify the candidate without losing its samples.
+            return
+        self._asr_resume_sample_floor = resume_sample_floor
         self._audio_since_finalize = False
         self._last_ingest_sample_end = None
         self._pending_vad_start = None
@@ -784,6 +815,11 @@ class ExistingVoiceProviderAdapter(
         if asr is None:
             self._clear_asr_event_context()
             return
+        # Reuse the adapter/provider session when it exposes a task-reset seam.
+        # A provider whose protocol binds one task to one WebSocket may still
+        # rotate that task connection internally; rebuilding the whole adapter
+        # is the fallback for providers without this seam and risks latency or
+        # in-flight audio at every reply boundary.
         reset_for_gap = getattr(asr, "reset_for_gap", None)
         if callable(reset_for_gap):
             result = reset_for_gap()
@@ -792,7 +828,7 @@ class ExistingVoiceProviderAdapter(
             self._clear_asr_event_context()
             return
         await self._reset_asr_session(identity.stream_epoch)
-        self._asr_resume_sample_floor = playback_end_sample
+        self._asr_resume_sample_floor = resume_sample_floor
 
     async def pause_asr_for_playback(self, identity: SessionIdentity) -> None:
         """Close the current ASR task when playback starts to avoid idle timeout.
