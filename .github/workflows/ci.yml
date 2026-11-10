@@ -347,20 +347,22 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # The required `python` check: it fails when any shard, the gates or the image
+  # The required `python` check: it fails when any shard, the gates or an image
   # build failed (a skipped job would otherwise count as passing), then combines
   # the shards' coverage and applies the coverage gates.
   python:
-    needs: [changes, control-api-image, python-gates, python-shards]
+    needs: [changes, agent-image, control-api-image, python-gates, python-shards]
     if: ${{ always() && needs.changes.outputs.python == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Every python job passed
         run: |
+          echo "agent-image=${{ needs.agent-image.result }}"
           echo "control-api-image=${{ needs.control-api-image.result }}"
           echo "python-gates=${{ needs.python-gates.result }}"
           echo "python-shards=${{ needs.python-shards.result }}"
+          [[ "${{ needs.agent-image.result }}" == success ]]
           [[ "${{ needs.control-api-image.result }}" == success ]]
           [[ "${{ needs.python-gates.result }}" == success ]]
           [[ "${{ needs.python-shards.result }}" == success ]]
