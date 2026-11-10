@@ -14,7 +14,7 @@ VERSION_FILE="${SKILLS_DST}/PSTACK_VERSION"
 UPSTREAM_REPO="${PSTACK_UPSTREAM_REPO:-https://github.com/cursor/plugins.git}"
 UPSTREAM_REF="${PSTACK_UPSTREAM_REF:-main}"
 OVERLAY_ANCHOR='Remaining triggers:'
-CHILD_AUDIO_RULE='- Child-facing stories, lines, or audio → never synthesize or add from draft scripts on your own. Such PRs need 产品部 and 合规部 sign-off before merge. Fill `.github/pull_request_template.md` section 「儿童可听内容（故事/台词/音频）」. See also `AGENTS.md`.'
+CHILD_AUDIO_RULE='- Child-facing stories, lines, or audio → never synthesize or add from draft scripts on your own. Such PRs need 产品部 and 合规部 sign-off before merge. Fill `.github/pull_request_template.md` section 「儿童可听内容（故事/台词/音频）」.'
 
 # Skill folder names must be a single path segment under .cursor/skills/.
 assert_skill_name() {

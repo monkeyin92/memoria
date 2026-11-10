@@ -12,7 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "sync-pstack.sh"
 
-CHILD_AUDIO_BULLET = "- Child-facing stories, lines, or audio → never synthesize or add from draft scripts on your own. Such PRs need 产品部 and 合规部 sign-off before merge. Fill `.github/pull_request_template.md` section 「儿童可听内容（故事/台词/音频）」. See also `AGENTS.md`."
+CHILD_AUDIO_BULLET = "- Child-facing stories, lines, or audio → never synthesize or add from draft scripts on your own. Such PRs need 产品部 and 合规部 sign-off before merge. Fill `.github/pull_request_template.md` section 「儿童可听内容（故事/台词/音频）」."
 
 _UPSTREAM_POTETO = """\
 # Poteto mode

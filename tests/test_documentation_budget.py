@@ -30,7 +30,6 @@ DOCUMENT_SUFFIXES = {".md", ".markdown", ".mdown", ".rst", ".adoc", ".asciidoc"}
 # at runtime are markdown by format, not project docs.
 ALLOWED_TOOLING_PREFIX = ".cursor/"
 ALLOWED_TOOLING_FILES = {
-    "AGENTS.md",
     ".github/pull_request_template.md",
     "apps/miniprogram/legal/user-agreement.md",
 }
