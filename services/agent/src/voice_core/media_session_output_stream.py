@@ -1291,7 +1291,7 @@ class MediaOutputStreamMixin(MediaOutputChunksMixin):
             await request_standby(context, reason=LLM_UNAVAILABLE_STANDBY_REASON)
 
     @staticmethod
-    def _record_playback_boundary(context: _MediaVoiceSession) -> None:
+    def _record_playback_boundary(context: _MediaVoiceSession) -> tuple[int, int]:
         """Snapshot the uplink capture boundary of a just-ended playback.
 
         Playback completion is the only authoritative echo boundary for the
@@ -1307,9 +1307,10 @@ class MediaOutputStreamMixin(MediaOutputChunksMixin):
             context.last_asr_evidence_end_sample,
             int(getattr(context.asr, "last_sent_sample", 0) or 0),
         )
-        boundary = evidence + _PLAYBACK_ECHO_TAIL_MARGIN_SAMPLES
-        if boundary > (context.last_playback_end_sample or 0):
-            context.last_playback_end_sample = boundary
+        playback_floor = evidence + _PLAYBACK_ECHO_TAIL_MARGIN_SAMPLES
+        if playback_floor > (context.last_playback_end_sample or 0):
+            context.last_playback_end_sample = playback_floor
+        return evidence, context.last_playback_end_sample or playback_floor
 
     async def _finish_completed_output(
         self,
@@ -1325,17 +1326,16 @@ class MediaOutputStreamMixin(MediaOutputChunksMixin):
         owner = context.output.output_owner
         if owner is not None and not owner.fence.matches(fence):
             return
-        self._record_playback_boundary(context)
-        playback_boundary = context.last_playback_end_sample
+        playback_end_sample, playback_floor_sample = self._record_playback_boundary(context)
         # This path is reached only after provider completion and playback
         # completion. Stop words and content barge-ins preempt the reply
         # before it gets here, so rotate the normal-completion task
         # unconditionally and fence the existing echo tail.
-        if playback_boundary is not None:
-            await context.provider.reset_asr_after_playback(
-                context.identity,
-                playback_end_sample=playback_boundary,
-            )
+        await context.provider.reset_asr_after_playback(
+            context.identity,
+            playback_end_sample=playback_end_sample,
+            playback_floor_sample=playback_floor_sample,
+        )
         wake_ack = (
             context.device_wake_ack_fence is not None
             and context.device_wake_ack_fence.matches(fence)

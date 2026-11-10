@@ -112,8 +112,10 @@ class FakeMediaProvider(MediaVoiceProvider):
         _identity: SessionIdentity,
         *,
         playback_end_sample: int,
+        playback_floor_sample: int,
     ) -> None:
         self.playback_reset_samples.append(playback_end_sample)
+        _ = playback_floor_sample
 
     async def close(self, _identity: SessionIdentity) -> None:
         self.closed = True

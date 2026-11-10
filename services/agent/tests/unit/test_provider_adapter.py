@@ -1046,6 +1046,7 @@ async def test_existing_provider_adapter_fences_new_audio_after_playback_boundar
     identity = SessionIdentity("adapter-playback-boundary", stream_epoch=1)
     old_task_start = 8_950_720
     playback_end = 9_259_200
+    playback_floor = playback_end + 12_800
     old_task_samples = playback_end - old_task_start
     old_task_pcm = b"\x01\x00" * old_task_samples
 
@@ -1070,11 +1071,12 @@ async def test_existing_provider_adapter_fences_new_audio_after_playback_boundar
     await adapter.reset_asr_after_playback(
         identity,
         playback_end_sample=playback_end,
+        playback_floor_sample=playback_floor,
     )
 
     # The first frame after the 0.8 s playback tail straddles the fence. Its
     # pre-fence samples must never enter the new provider task.
-    post_playback_start = playback_end - 1_600
+    post_playback_start = playback_floor - 1_600
     await adapter.ingest_audio(
         identity,
         AudioFrame(
@@ -1088,11 +1090,11 @@ async def test_existing_provider_adapter_fences_new_audio_after_playback_boundar
 
     assert asr.reset_for_gap_calls == 1
     assert asr.closed is False
-    assert [start for _, start in asr.sent] == [old_task_start, playback_end]
+    assert [start for _, start in asr.sent] == [old_task_start, playback_floor]
     snapshot = adapter.current_asr_audio_task_snapshot
     assert snapshot is not None
-    assert snapshot.audio_start_sample == playback_end
-    assert snapshot.task_sample_origin == playback_end
+    assert snapshot.audio_start_sample == playback_floor
+    assert snapshot.task_sample_origin == playback_floor
 
 
 @pytest.mark.asyncio
@@ -1134,9 +1136,10 @@ async def test_existing_provider_adapter_replays_short_speech_across_playback_bo
     )
     identity = SessionIdentity("adapter-playback-replay", stream_epoch=1)
     actual_playback_end = 8_000
-    playback_boundary = actual_playback_end + 12_800
-    speech_start = actual_playback_end - 4_800
+    playback_floor = actual_playback_end + 12_800
+    speech_start = actual_playback_end - 6_720
     speech_samples = 19_200
+    speech_end = speech_start + speech_samples
 
     await adapter.ingest_audio(
         identity,
@@ -1150,22 +1153,24 @@ async def test_existing_provider_adapter_replays_short_speech_across_playback_bo
     )
     await adapter.reset_asr_after_playback(
         identity,
-        playback_end_sample=playback_boundary,
+        playback_end_sample=actual_playback_end,
+        playback_floor_sample=playback_floor,
     )
 
     assert first.closed is True
     assert second.sent == [
         (b"\x03\x00" * speech_samples, speech_start),
     ]
-    assert adapter._asr_resume_sample_floor == speech_start + speech_samples
+    assert speech_end < playback_floor
+    assert adapter._asr_resume_sample_floor == playback_floor
 
     results = await adapter.ingest_audio(
         identity,
-        AudioFrame(identity, 1, speech_start + speech_samples, 320, b"\x04\x00" * 320),
+        AudioFrame(identity, 1, speech_end, 640, b"\x04\x00" * 640),
     )
 
     assert any(result.text == "播放边界前已经开口的短句" for result in results)
-    assert second.sent[-1] == (b"\x04\x00" * 320, speech_start + speech_samples)
+    assert second.sent[-1] == (b"\x04\x00" * 320, playback_floor)
     assert adapter._asr_resume_sample_floor is None
 
 
@@ -1207,7 +1212,11 @@ async def test_existing_provider_adapter_serializes_reset_finalize_and_ingest() 
         AudioFrame(identity, 0, 0, 320, b"\x01\x00" * 320),
     )
     reset_task = asyncio.create_task(
-        adapter.reset_asr_after_playback(identity, playback_end_sample=320)
+        adapter.reset_asr_after_playback(
+            identity,
+            playback_end_sample=320,
+            playback_floor_sample=320,
+        )
     )
     await asr.reset_started.wait()
     finalize_task = asyncio.create_task(adapter.finalize_speech_segment(identity))
@@ -1255,7 +1264,11 @@ async def test_existing_provider_adapter_preserves_larger_resume_floor_on_reconn
         AudioFrame(identity, 0, 0, 320, b"\x01\x00" * 320),
     )
     adapter._asr_resume_sample_floor = 10_000
-    await adapter.reset_asr_after_playback(identity, playback_end_sample=9_000)
+    await adapter.reset_asr_after_playback(
+        identity,
+        playback_end_sample=9_000,
+        playback_floor_sample=10_000,
+    )
     await adapter.ingest_audio(
         identity,
         AudioFrame(identity, 1, 9_500, 1_000, b"\x02\x00" * 1_000),

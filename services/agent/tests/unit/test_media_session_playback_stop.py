@@ -131,6 +131,7 @@ class _PlaybackWindowStoryProvider(_LongStoryProvider):
         super().__init__(opening=opening)
         self.playback_reset_applied = False
         self.playback_reset_calls: list[int] = []
+        self.playback_reset_floor_calls: list[int] = []
         self.playback_window_audio_start_sample = 8_950_720
         self.playback_window_audio_end_sample = 9_340_160
         self.playback_window_end_sample = 9_259_200
@@ -171,11 +172,14 @@ class _PlaybackWindowStoryProvider(_LongStoryProvider):
         identity: SessionIdentity,
         *,
         playback_end_sample: int,
+        playback_floor_sample: int,
     ) -> None:
         self.playback_reset_calls.append(playback_end_sample)
+        self.playback_reset_floor_calls.append(playback_floor_sample)
         await super().reset_asr_after_playback(
             identity,
             playback_end_sample=playback_end_sample,
+            playback_floor_sample=playback_floor_sample,
         )
         self.playback_reset_applied = True
 
@@ -824,7 +828,8 @@ async def test_interrupt_assist_nonzero_playback_echo_resets_before_next_user_tu
         assert provider.playback_window_all_zero is False
         playback_boundary = harness.context.last_playback_end_sample
         assert playback_boundary is not None
-        assert provider.playback_reset_calls == [playback_boundary]
+        assert provider.playback_reset_calls == [playback_boundary - 12_800]
+        assert provider.playback_reset_floor_calls == [playback_boundary]
         assert provider.playback_reset_applied is True
 
         await harness.audio_frames(150)  # 3.0 s after playback ended
@@ -839,6 +844,40 @@ async def test_interrupt_assist_nonzero_playback_echo_resets_before_next_user_tu
                 {"reason": "assistant_echo"},
             )
             == 0
+        )
+    finally:
+        provider.release.set()
+        await harness.close()
+
+
+@pytest.mark.asyncio
+async def test_replayed_echo_after_playback_reset_is_not_a_barge_in_or_new_turn() -> None:
+    """A final replayed into the fresh ASR task is filtered by both echo guards."""
+
+    provider = _PlaybackWindowStoryProvider(opening="今天的故事里有一只小兔子。")
+    harness = _StoryHarness(_device_identity("replayed-playback-echo"), provider)
+    await harness.start()
+    try:
+        await harness.start_story()
+        provider.release.set()
+        await harness.wait_for(lambda: harness.context.output.provider_complete)
+        await harness.playback_ended()
+        assert provider.playback_reset_applied is True
+
+        await harness.vad_start(harness.sample)
+        await harness.audio_frames(2, final_text=provider.opening)
+        assert harness.context.pending.content_barge_in is False
+        await harness.vad_end(harness.sample)
+        await harness.settle()
+
+        assert provider.reply_calls == 1
+        assert _user_turn_texts(harness.context) == ["给我讲个故事"]
+        assert (
+            harness.runtime.orchestrator.metrics.get(
+                "guarded_user_input_total",
+                {"reason": "assistant_echo"},
+            )
+            == 1
         )
     finally:
         provider.release.set()
