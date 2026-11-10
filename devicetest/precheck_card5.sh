@@ -4,7 +4,7 @@
 set -uo pipefail
 cd "$HOME/projects/memoria"
 TAG=card5-overlay
-EXPECT_IMAGE=memoria-agent:20261106-card5-committed-boundary-v1
+EXPECT_IMAGE=memoria-agent:20261110-card5-echo-window-v1
 EXPECT_BUILD=28
 # 2026-11-10: board reflashed with the current-main keep-awake build so the board no longer
 # deep-sleeps during reset; the bridge candidate is unchanged.
