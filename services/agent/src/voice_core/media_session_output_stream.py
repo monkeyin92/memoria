@@ -63,10 +63,6 @@ _UNHEARD_OUTPUT_FLOOR_WAIT_S = 4.0
 # outranks a wordless turn for longer, so a slow recovery still gets to speak.
 _UNHEARD_OUTPUT_FIXED_SAFETY_WAIT_S = 30.0
 _UNHEARD_OUTPUT_FLOOR_POLL_S = 0.02
-# Echo of the reply's tail can outlive the playback completion event by the
-# ASR pipeline's segmentation lag, so the boundary that gates early follow-up
-# endpoints carries a margin over the freshest uplink evidence.
-_PLAYBACK_ECHO_TAIL_MARGIN_SAMPLES = 12_800  # 0.8 s at 16 kHz
 
 
 @dataclass(slots=True)
@@ -1289,28 +1285,6 @@ class MediaOutputStreamMixin(MediaOutputChunksMixin):
         request_standby = getattr(self, "_request_device_standby", None)
         if callable(request_standby):
             await request_standby(context, reason=LLM_UNAVAILABLE_STANDBY_REASON)
-
-    @staticmethod
-    def _record_playback_boundary(context: _MediaVoiceSession) -> tuple[int, int]:
-        """Snapshot the uplink capture boundary of a just-ended playback.
-
-        Playback completion is the only authoritative echo boundary for the
-        early follow-up endpoint: the speaker window is over in wall-clock,
-        but the uplink sample position that corresponds to it has to come from
-        evidence (projection watermark, accepted ASR ends, PCM sent to ASR).
-        The margin keeps fail-closed semantics for echo-tail finals that were
-        segmented before the speaker actually stopped.
-        """
-
-        evidence = max(
-            context.projection.latest_capture_sample,
-            context.last_asr_evidence_end_sample,
-            int(getattr(context.asr, "last_sent_sample", 0) or 0),
-        )
-        playback_floor = evidence + _PLAYBACK_ECHO_TAIL_MARGIN_SAMPLES
-        if playback_floor > (context.last_playback_end_sample or 0):
-            context.last_playback_end_sample = playback_floor
-        return evidence, context.last_playback_end_sample or playback_floor
 
     async def _finish_completed_output(
         self,
