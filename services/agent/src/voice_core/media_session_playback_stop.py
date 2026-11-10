@@ -1104,10 +1104,7 @@ class MediaPlaybackStopMixin:
             not stop_word
             and not result.rescue_synthesized
             and self._reply_can_still_be_stopped(context)
-            and content_barge_in_wanted(
-                text,
-                playback_text=self._playback_current_line(context),
-            )
+            and content_barge_in_wanted(text, playback_text=self._playback_current_line(context))
             and not self._playback_text_is_echo(context, text)
             and self._playback_input_guard_reason(context, result) is None
         )

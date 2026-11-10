@@ -29,6 +29,12 @@ if TYPE_CHECKING:
         MediaVoiceSessionState as _MediaVoiceSession,
     )
 
+# Echo of the reply's tail can outlive the playback completion event by the
+# ASR pipeline's segmentation lag, so the boundary that gates early follow-up
+# endpoints carries a margin over the freshest uplink evidence.
+_PLAYBACK_ECHO_TAIL_MARGIN_SAMPLES = 12_800  # 0.8 s at 16 kHz
+
+
 def _shift_reply_chunk(chunk: MediaReplyChunk, offset: int) -> MediaReplyChunk:
     """Place a reply chunk after audio this generation already carried."""
 
@@ -197,3 +203,25 @@ class MediaOutputChunksMixin:
             # A stop that cancels this stream mid-cue leaves the marker
             # unfinished; the close path then plays it in its own generation.
             context.aigc_closing_marker_state = "done" if completed else "idle"
+
+    @staticmethod
+    def _record_playback_boundary(context: _MediaVoiceSession) -> tuple[int, int]:
+        """Snapshot the uplink capture boundary of a just-ended playback.
+
+        Playback completion is the only authoritative echo boundary for the
+        early follow-up endpoint: the speaker window is over in wall-clock,
+        but the uplink sample position that corresponds to it has to come from
+        evidence (projection watermark, accepted ASR ends, PCM sent to ASR).
+        The margin keeps fail-closed semantics for echo-tail finals that were
+        segmented before the speaker actually stopped.
+        """
+
+        evidence = max(
+            context.projection.latest_capture_sample,
+            context.last_asr_evidence_end_sample,
+            int(getattr(context.asr, "last_sent_sample", 0) or 0),
+        )
+        playback_floor = evidence + _PLAYBACK_ECHO_TAIL_MARGIN_SAMPLES
+        if playback_floor > (context.last_playback_end_sample or 0):
+            context.last_playback_end_sample = playback_floor
+        return evidence, context.last_playback_end_sample or playback_floor
