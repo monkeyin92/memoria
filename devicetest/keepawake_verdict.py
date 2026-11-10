@@ -60,12 +60,16 @@ def main():
     ap.add_argument("--max-no-reply", default="0")
     ap.add_argument("--max-reply-latency-p90", default="2.0")
     ap.add_argument("--max-reply-latency-max", default="3.0")
+    ap.add_argument("--reply-latency-record-only", action="store_true")
     a = ap.parse_args()
     serial = a.serial or a.run / "serial.log"
-    out = subprocess.run([sys.executable, "scripts/voice_soak_verdict.py", str(a.run),
-                          "--max-no-reply", a.max_no_reply,
-                          "--max-reply-latency-p90", a.max_reply_latency_p90,
-                          "--max-reply-latency-max", a.max_reply_latency_max],
+    verdict_command = [sys.executable, "scripts/voice_soak_verdict.py", str(a.run),
+                       "--max-no-reply", a.max_no_reply,
+                       "--max-reply-latency-p90", a.max_reply_latency_p90,
+                       "--max-reply-latency-max", a.max_reply_latency_max]
+    if a.reply_latency_record_only:
+        verdict_command.append("--reply-latency-record-only")
+    out = subprocess.run(verdict_command,
                          capture_output=True, text=True).stdout
     base = json.loads([line for line in out.splitlines() if line.startswith("{")][-1])
     rows = [

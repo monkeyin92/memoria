@@ -146,6 +146,7 @@ class ExistingVoiceProviderAdapter(
     _last_global_asr_task_epoch: int = field(default=0, init=False)
     _audio_since_finalize: bool = field(default=False, init=False)
     _last_ingest_sample_end: int | None = field(default=None, init=False)
+    _asr_resume_sample_floor: int | None = field(default=None, init=False)
     _pending_vad_start: tuple[int, int] | None = field(default=None, init=False)
     _applied_vad_start: tuple[int, int] | None = field(default=None, init=False)
     _asr_task_contexts: dict[str, tuple[int, int, int]] = field(
@@ -445,6 +446,7 @@ class ExistingVoiceProviderAdapter(
         self._asr_task_epoch_offset = self._asr_task_epoch_floor
         self._audio_since_finalize = False
         self._last_ingest_sample_end = None
+        self._asr_resume_sample_floor = None
         if self._pending_vad_start is not None and self._pending_vad_start[0] != stream_epoch:
             self._pending_vad_start = None
         self._applied_vad_start = None
@@ -609,6 +611,10 @@ class ExistingVoiceProviderAdapter(
             raise ValueError("provider frame identity does not match session")
         if len(frame.payload) % 2:
             raise ValueError("provider input must be 16-bit PCM")
+        admitted_frame = self._frame_after_playback_boundary(frame)
+        if admitted_frame is None:
+            return ()
+        frame = admitted_frame
         asr = await self._ensure_asr(identity.stream_epoch, identity)
         self._apply_vad_start(asr)
         if (
@@ -705,6 +711,7 @@ class ExistingVoiceProviderAdapter(
             raise RuntimeError("FunASR task boundary event was not available to the media adapter")
         self._audio_since_finalize = False
         self._last_ingest_sample_end = None
+        self._asr_resume_sample_floor = None
         self._pending_vad_start = None
         self._applied_vad_start = None
         return tuple(results)
@@ -729,10 +736,63 @@ class ExistingVoiceProviderAdapter(
             await asr.reconnect_with_replay()
         self._audio_since_finalize = False
         self._last_ingest_sample_end = None
+        self._asr_resume_sample_floor = None
         self._pending_vad_start = None
         self._applied_vad_start = None
         self._clear_asr_event_context()
         self._remember_asr_task(asr, identity.stream_epoch)
+
+    def _frame_after_playback_boundary(self, frame: AudioFrame) -> AudioFrame | None:
+        """Drop the part of a capture frame that predates the playback fence."""
+
+        floor = self._asr_resume_sample_floor
+        if floor is None:
+            return frame
+        frame_end = frame.capture_start_sample + frame.frame_samples
+        if frame_end <= floor:
+            return None
+        if frame.capture_start_sample < floor:
+            offset_samples = floor - frame.capture_start_sample
+            frame = replace(
+                frame,
+                capture_start_sample=floor,
+                frame_samples=frame_end - floor,
+                payload=frame.payload[offset_samples * 2 :],
+            )
+        self._asr_resume_sample_floor = None
+        return frame
+
+    async def reset_asr_after_playback(
+        self,
+        identity: SessionIdentity,
+        *,
+        playback_end_sample: int,
+    ) -> None:
+        """Retire playback audio before the next user speech can open a task."""
+
+        if playback_end_sample < 0:
+            raise ValueError("playback end sample must be non-negative")
+        self._asr_resume_sample_floor = max(
+            playback_end_sample,
+            self._asr_resume_sample_floor or 0,
+        )
+        self._audio_since_finalize = False
+        self._last_ingest_sample_end = None
+        self._pending_vad_start = None
+        self._applied_vad_start = None
+        asr = self._asr
+        if asr is None:
+            self._clear_asr_event_context()
+            return
+        reset_for_gap = getattr(asr, "reset_for_gap", None)
+        if callable(reset_for_gap):
+            result = reset_for_gap()
+            if inspect.isawaitable(result):
+                await result
+            self._clear_asr_event_context()
+            return
+        await self._reset_asr_session(identity.stream_epoch)
+        self._asr_resume_sample_floor = playback_end_sample
 
     async def pause_asr_for_playback(self, identity: SessionIdentity) -> None:
         """Close the current ASR task when playback starts to avoid idle timeout.

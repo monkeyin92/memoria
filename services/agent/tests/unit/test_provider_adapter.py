@@ -988,6 +988,85 @@ async def test_existing_provider_adapter_keeps_late_final_on_old_lazy_task_origi
 
 
 @pytest.mark.asyncio
+async def test_existing_provider_adapter_fences_new_audio_after_playback_boundary() -> None:
+    class PlaybackWindowASR(FakeASR):
+        def __init__(self) -> None:
+            super().__init__()
+            self.rotation_pending = False
+            self.task_audio_start_sample: int | None = None
+            self.task_audio_end_sample: int | None = None
+            self.task_audio_send_count = 0
+            self.task_pcm_sample_count = 0
+            self.reset_for_gap_calls = 0
+
+        async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+            if self.rotation_pending:
+                self.rotation_pending = False
+                self.task_epoch += 1
+                self.task_id = f"task-{self.task_epoch}"
+                self.task_sample_origin = capture_start_sample
+                self.task_audio_start_sample = None
+                self.task_audio_end_sample = None
+                self.task_audio_send_count = 0
+                self.task_pcm_sample_count = 0
+            end_sample = capture_start_sample + len(pcm) // 2
+            if self.task_audio_start_sample is None:
+                self.task_audio_start_sample = capture_start_sample
+            self.task_audio_end_sample = end_sample
+            self.task_audio_send_count += 1
+            self.task_pcm_sample_count += len(pcm) // 2
+            self.sent.append((pcm, capture_start_sample))
+
+        async def reset_for_gap(self) -> None:
+            self.reset_for_gap_calls += 1
+            self.rotation_pending = True
+
+    asr = PlaybackWindowASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("adapter-playback-boundary", stream_epoch=1)
+    old_task_start = 8_950_720
+    old_task_samples = 389_440
+    playback_end = old_task_start + old_task_samples
+
+    await adapter.ingest_audio(
+        identity,
+        AudioFrame(
+            identity,
+            0,
+            old_task_start,
+            old_task_samples,
+            b"\x01\x00" * old_task_samples,
+        ),
+    )
+    await adapter.reset_asr_after_playback(identity, playback_end_sample=playback_end)
+
+    # The first frame after the 0.8 s playback tail straddles the fence. Its
+    # pre-fence samples must never enter the new provider task.
+    post_playback_start = playback_end - 1_600
+    await adapter.ingest_audio(
+        identity,
+        AudioFrame(
+            identity,
+            1,
+            post_playback_start,
+            3_200,
+            b"\x02\x00" * 3_200,
+        ),
+    )
+
+    assert asr.reset_for_gap_calls == 1
+    assert [start for _, start in asr.sent] == [old_task_start, playback_end]
+    snapshot = adapter.current_asr_audio_task_snapshot
+    assert snapshot is not None
+    assert snapshot.audio_start_sample == playback_end
+    assert snapshot.task_sample_origin == playback_end
+
+
+@pytest.mark.asyncio
 async def test_existing_provider_adapter_waits_for_final_after_task_finished() -> None:
     class InvertedTailASR(FakeASR):
         def __init__(self) -> None:

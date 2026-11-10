@@ -144,3 +144,22 @@ def test_serial_resume_listening_clears_mic_closed(watcher) -> None:
     watcher._parse(1.0, CLOSED_TRUE)
     watcher._parse(2.0, "09:54:06.316 I (83390) MemoriaUsbCommand: usb wake action=resume_listening")
     assert watcher.mic_closed is False
+
+
+def test_play_clip_bounds_afplay_and_surfaces_timeout(monkeypatch) -> None:
+    monkeypatch.setitem(sys.modules, "serial", types.ModuleType("serial"))
+    module = importlib.import_module("devicetest.voice_soak_tapwake")
+    monkeypatch.setattr(module, "clip_seconds", lambda _path: 3.5)
+
+    def stalled_run(command, **kwargs):
+        assert command[0] == "afplay"
+        assert kwargs["timeout"] == 13.5
+        raise module.subprocess.TimeoutExpired(command, timeout=kwargs["timeout"])
+
+    monkeypatch.setattr(module.subprocess, "run", stalled_run)
+
+    with pytest.raises(module.AfplayTimeoutError) as raised:
+        module.play_clip(Path("stalled.wav"))
+
+    assert raised.value.path == Path("stalled.wav")
+    assert raised.value.timeout_s == 13.5

@@ -61,12 +61,16 @@ class SoakVerdict:
     max_no_reply: int | None
     max_reply_latency_p90_s: float | None
     max_reply_latency_max_s: float | None
+    informational: tuple[str, ...] = ()
+    reply_latency_record_only: bool = False
 
     def as_dict(self) -> dict[str, object]:
         return {
             "passed": self.passed,
             "status": self.status,
             "failures": list(self.failures),
+            "informational": list(self.informational),
+            "reply_latency_record_only": self.reply_latency_record_only,
             "no_reply": self.no_reply,
             "reply_latency_p90_s": self.reply_latency_p90_s,
             "reply_latency_max_s": self.reply_latency_max_s,
@@ -88,6 +92,8 @@ def _verdict(
     max_no_reply: int | None = MAX_NO_REPLY,
     max_reply_latency_p90_s: float | None = MAX_REPLY_LATENCY_P90_S,
     max_reply_latency_max_s: float | None = MAX_REPLY_LATENCY_MAX_S,
+    informational: tuple[str, ...] = (),
+    reply_latency_record_only: bool = False,
 ) -> SoakVerdict:
     return SoakVerdict(
         status == "pass",
@@ -99,6 +105,8 @@ def _verdict(
         max_no_reply,
         max_reply_latency_p90_s,
         max_reply_latency_max_s,
+        informational,
+        reply_latency_record_only,
     )
 
 
@@ -286,6 +294,7 @@ def judge(
     max_no_reply: int | None = MAX_NO_REPLY,
     max_reply_latency_p90_s: float | None = MAX_REPLY_LATENCY_P90_S,
     max_reply_latency_max_s: float | None = MAX_REPLY_LATENCY_MAX_S,
+    reply_latency_record_only: bool = False,
 ) -> SoakVerdict:
     """Read one run directory and return pass, fail, or incomplete."""
     try:
@@ -297,6 +306,7 @@ def judge(
             max_no_reply=max_no_reply,
             max_reply_latency_p90_s=max_reply_latency_p90_s,
             max_reply_latency_max_s=max_reply_latency_max_s,
+            reply_latency_record_only=reply_latency_record_only,
         )
 
     loaded = load_manifest(run)
@@ -307,6 +317,7 @@ def judge(
             max_no_reply=max_no_reply,
             max_reply_latency_p90_s=max_reply_latency_p90_s,
             max_reply_latency_max_s=max_reply_latency_max_s,
+            reply_latency_record_only=reply_latency_record_only,
         )
 
     incomplete = check_completeness(loaded, rows, run)
@@ -317,9 +328,11 @@ def judge(
             max_no_reply=max_no_reply,
             max_reply_latency_p90_s=max_reply_latency_p90_s,
             max_reply_latency_max_s=max_reply_latency_max_s,
+            reply_latency_record_only=reply_latency_record_only,
         )
 
     failures: list[str] = []
+    informational: list[str] = []
     for row in rows:
         kind = row.get("kind")
         if kind == "abort":
@@ -375,7 +388,10 @@ def judge(
     ):
         if limit is not None and (value is None or value > limit):
             shown = "missing" if value is None else value
-            failures.append(f"{name}: {shown} > {limit}")
+            message = f"{name}: {shown} > {limit}"
+            (informational if reply_latency_record_only else failures).append(
+                f"{message} (record-only)" if reply_latency_record_only else message
+            )
 
     status: VerdictStatus = "pass" if not failures else "fail"
     return _verdict(
@@ -387,6 +403,8 @@ def judge(
         max_no_reply=max_no_reply,
         max_reply_latency_p90_s=max_reply_latency_p90_s,
         max_reply_latency_max_s=max_reply_latency_max_s,
+        informational=tuple(informational),
+        reply_latency_record_only=reply_latency_record_only,
     )
 
 
@@ -414,6 +432,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--max-reply-latency-max", type=_optional_latency, default=MAX_REPLY_LATENCY_MAX_S
     )
+    parser.add_argument(
+        "--reply-latency-record-only",
+        action="store_true",
+        help="record latency gates as informational instead of failing the verdict",
+    )
     args = parser.parse_args(argv)
     timeline = args.run / "timeline.jsonl"
     if not timeline.is_file():
@@ -424,6 +447,7 @@ def main(argv: list[str] | None = None) -> int:
         max_no_reply=args.max_no_reply,
         max_reply_latency_p90_s=args.max_reply_latency_p90,
         max_reply_latency_max_s=args.max_reply_latency_max,
+        reply_latency_record_only=args.reply_latency_record_only,
     )
     print(json.dumps(result.as_dict(), ensure_ascii=False))
     return 0 if result.passed else 1

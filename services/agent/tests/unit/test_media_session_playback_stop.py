@@ -715,6 +715,39 @@ async def test_device_backchannel_mid_story_does_not_stop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_device_playback_echo_plus_backchannel_does_not_stop_the_story() -> None:
+    """A final made of the playing line plus 「嗯」 stays on the reply side."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        harness.runtime.input_guard.enabled = False
+        echo_start_sample = harness.sample
+        await harness.audio_frames(
+            15,
+            final_text="从前有一座山，山里有一座庙，嗯。",
+        )
+        assert (echo_start_sample, harness.sample) == (8_000, 12_800)
+        await harness.assert_story_still_playing(story)
+        assert harness.context.pending.turn_endpoint_sample is None
+        assert harness.story.reply_calls == 1
+
+        question_start_sample = harness.sample
+        await harness.audio_frames(
+            15,
+            final_text="嗯，等一下，我想问云是怎么变出来的？",
+        )
+        assert (question_start_sample, harness.sample) == (12_800, 17_600)
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert _user_turn_texts(harness.context)[-1] == "嗯，等一下，我想问云是怎么变出来的？"
+
+    await _run_story(
+        _device_identity("content-barge-in-echo-backchannel"),
+        script,
+        opening="从前有一座山，山里有一座庙。",
+    )
+
+
+@pytest.mark.asyncio
 async def test_device_garbled_echo_of_the_story_is_not_a_question() -> None:
     """A fuzzy repeat of the announced line (12+ chars) is the reply's own voice."""
 

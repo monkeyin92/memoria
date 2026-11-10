@@ -346,13 +346,24 @@ def clip_seconds(path: Path) -> float:
     return float(match.group(1)) if match else 0.0
 
 
+class AfplayTimeoutError(RuntimeError):
+    def __init__(self, path: Path, timeout_s: float) -> None:
+        self.path = path
+        self.timeout_s = timeout_s
+        super().__init__(f"afplay timed out after {timeout_s:.1f}s: {path}")
+
+
 def play_clip(path: Path) -> tuple[float, float, float]:
     """Play a prepared clip. A clip shorter than half a second is a failed synthesis, not a short word."""
     clip = clip_seconds(path)
     if clip < MIN_CLIP_SECONDS:
         raise RuntimeError(f"{path.name} is {clip:.2f}s long: refusing to play a silent clip")
     start = now()
-    subprocess.run(["afplay", str(path)], check=True)
+    timeout_s = max(10.0, clip + 10.0)
+    try:
+        subprocess.run(["afplay", str(path)], check=True, timeout=timeout_s)
+    except subprocess.TimeoutExpired as exc:
+        raise AfplayTimeoutError(path, timeout_s) from exc
     return start, now(), clip
 
 
@@ -664,7 +675,25 @@ def main() -> int:
                     record(kind="abort", verdict="ABORT_OUTPUT_MUTED", tag=tag,
                            reason="macOS output muted, at volume 0, or below the requested level before the line")
                     return 7
-                t0, t1, clip = speak(step["say"], int(step.get("rate", 175)), out, tag, bank, step.get("tag"))
+                try:
+                    t0, t1, clip = speak(
+                        step["say"],
+                        int(step.get("rate", 175)),
+                        out,
+                        tag,
+                        bank,
+                        step.get("tag"),
+                    )
+                except AfplayTimeoutError as exc:
+                    record(
+                        kind="abort",
+                        verdict="ABORT_AFPLAY_TIMEOUT",
+                        tag=tag,
+                        path=str(exc.path),
+                        timeout_s=exc.timeout_s,
+                        reason=str(exc),
+                    )
+                    return 8
                 record(kind="said", tag=tag, text=step["say"], voice="bank" if bank is not None and (bank / f"{step.get('tag')}.wav").exists() else "Tingting",
                        rate=step.get("rate", 175), clip_s=round(clip, 2), start=stamp(t0), end=stamp(t1))
                 started = watcher.wait_state({"speaking"}, float(step.get("reply_timeout", 30)), since=t1 - 0.5)
@@ -694,8 +723,25 @@ def main() -> int:
                             record(kind="abort", verdict="ABORT_OUTPUT_MUTED", tag=tag,
                                    reason="macOS output muted, at volume 0, or below the requested level before the stop line")
                             return 7
-                        i0, i1, _ = speak(interrupt["say"], int(interrupt.get("rate", 175)), out, tag + "-stop",
-                                          bank, step.get("tag", "") + "-stop")
+                        try:
+                            i0, i1, _ = speak(
+                                interrupt["say"],
+                                int(interrupt.get("rate", 175)),
+                                out,
+                                tag + "-stop",
+                                bank,
+                                step.get("tag", "") + "-stop",
+                            )
+                        except AfplayTimeoutError as exc:
+                            record(
+                                kind="abort",
+                                verdict="ABORT_AFPLAY_TIMEOUT",
+                                tag=tag,
+                                path=str(exc.path),
+                                timeout_s=exc.timeout_s,
+                                reason=str(exc),
+                            )
+                            return 8
                         expect_playing = bool(interrupt.get("expect_playing"))
                         settle = float(interrupt.get("settle", 8))
                         # A backchannel must leave the reply playing, so sample the state right after the
