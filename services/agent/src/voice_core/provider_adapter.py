@@ -77,6 +77,12 @@ logger = logging.getLogger(__name__)
 # usually closed by then; rebuild it before the first frame after a gap this
 # long instead of sending that frame into a dead task.
 _RESUME_GAP_S = 3.0
+# ``playback_end_sample`` includes the 0.8 s echo margin owned by the media
+# session. Replaying 1.25 s before that fence reaches at least 0.45 s before
+# the physical playback end, while the history cap prevents a long reply from
+# being joined to the next user turn.
+_PLAYBACK_REPLAY_LEAD_S = 1.25
+_PLAYBACK_REPLAY_HISTORY_S = 2.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +153,12 @@ class ExistingVoiceProviderAdapter(
     _audio_since_finalize: bool = field(default=False, init=False)
     _last_ingest_sample_end: int | None = field(default=None, init=False)
     _asr_resume_sample_floor: int | None = field(default=None, init=False)
+    _recent_audio_frames: deque[tuple[int, int, bytes]] = field(
+        default_factory=deque,
+        init=False,
+    )
+    _recent_audio_samples: int = field(default=0, init=False)
+    _audio_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     _pending_vad_start: tuple[int, int] | None = field(default=None, init=False)
     _applied_vad_start: tuple[int, int] | None = field(default=None, init=False)
     _asr_task_contexts: dict[str, tuple[int, int, int]] = field(
@@ -421,6 +433,61 @@ class ExistingVoiceProviderAdapter(
         self._sentence_revisions.clear()
         self._sentence_revision_order.clear()
 
+    def _clear_recent_audio(self) -> None:
+        self._recent_audio_frames.clear()
+        self._recent_audio_samples = 0
+
+    def _remember_recent_audio(self, frame: AudioFrame) -> None:
+        start = frame.capture_start_sample
+        end = frame.capture_end_sample
+        if self._recent_audio_frames and start != self._recent_audio_frames[-1][1]:
+            self._clear_recent_audio()
+        self._recent_audio_frames.append((start, end, frame.payload))
+        self._recent_audio_samples += frame.frame_samples
+        max_samples = int(_PLAYBACK_REPLAY_HISTORY_S * self.config.sample_rate)
+        while self._recent_audio_samples > max_samples and len(self._recent_audio_frames) > 1:
+            old_start, old_end, _ = self._recent_audio_frames.popleft()
+            self._recent_audio_samples -= old_end - old_start
+
+    def _playback_replay_frames(
+        self,
+        playback_end_sample: int,
+    ) -> tuple[tuple[int, int, bytes], ...]:
+        if not self._recent_audio_frames:
+            return ()
+        if self._recent_audio_frames[-1][1] <= playback_end_sample:
+            return ()
+        lead_samples = int(_PLAYBACK_REPLAY_LEAD_S * self.config.sample_rate)
+        history_samples = int(_PLAYBACK_REPLAY_HISTORY_S * self.config.sample_rate)
+        replay_start = max(0, playback_end_sample - lead_samples)
+        replay_end = self._recent_audio_frames[-1][1]
+        replay_start = max(replay_start, replay_end - history_samples)
+        frames: list[tuple[int, int, bytes]] = []
+        for start, end, payload in self._recent_audio_frames:
+            if end <= replay_start:
+                continue
+            offset = max(0, replay_start - start)
+            selected_start = start + offset
+            frames.append((selected_start, end, payload[offset * 2 :]))
+        return tuple(frames)
+
+    async def _replay_playback_tail(
+        self,
+        identity: SessionIdentity,
+        frames: tuple[tuple[int, int, bytes], ...],
+    ) -> int | None:
+        if not frames:
+            return None
+        asr = await self._ensure_asr(identity.stream_epoch, identity)
+        replay_end: int | None = None
+        for start, end, payload in frames:
+            await asr.send_pcm(payload, capture_start_sample=start)
+            self._remember_asr_task(asr, identity.stream_epoch)
+            replay_end = end
+        self._audio_since_finalize = True
+        self._last_ingest_sample_end = replay_end
+        return replay_end
+
     async def _reset_asr_session(self, stream_epoch: int) -> None:
         """Discard provider state so ``stream_epoch`` owns a new sample origin."""
 
@@ -453,6 +520,10 @@ class ExistingVoiceProviderAdapter(
         self._clear_asr_event_context()
 
     async def reset_for_stream_epoch(self, identity: SessionIdentity) -> None:
+        async with self._audio_lock:
+            await self._reset_for_stream_epoch(identity)
+
+    async def _reset_for_stream_epoch(self, identity: SessionIdentity) -> None:
         """Fence a transport epoch before its first PCM frame is accepted."""
 
         stream_epoch = identity.stream_epoch
@@ -462,15 +533,22 @@ class ExistingVoiceProviderAdapter(
             raise ValueError("ASR stream epoch moved backwards")
         if stream_epoch == self._stream_epoch:
             return
+        self._clear_recent_audio()
         await self._reset_asr_session(stream_epoch)
 
     async def recover_after_failure(self, identity: SessionIdentity) -> None:
+        async with self._audio_lock:
+            await self._recover_after_failure(identity)
+
+    async def _recover_after_failure(self, identity: SessionIdentity) -> None:
         """Replace a failed provider task before the next frame is processed."""
 
         if identity.stream_epoch < 1:
             raise ValueError("stream_epoch must be positive")
         if self._stream_epoch and identity.stream_epoch < self._stream_epoch:
             raise ValueError("ASR stream epoch moved backwards")
+        if identity.stream_epoch != self._stream_epoch:
+            self._clear_recent_audio()
         await self._reset_asr_session(identity.stream_epoch)
 
     async def _ensure_asr(
@@ -605,6 +683,14 @@ class ExistingVoiceProviderAdapter(
         identity: SessionIdentity,
         frame: AudioFrame,
     ) -> tuple[ASRResult, ...]:
+        async with self._audio_lock:
+            return await self._ingest_audio(identity, frame)
+
+    async def _ingest_audio(
+        self,
+        identity: SessionIdentity,
+        frame: AudioFrame,
+    ) -> tuple[ASRResult, ...]:
         """Send one absolute-range PCM frame and drain bounded ASR results."""
 
         if frame.identity != identity:
@@ -634,6 +720,7 @@ class ExistingVoiceProviderAdapter(
             frame.payload,
             capture_start_sample=frame.capture_start_sample,
         )
+        self._remember_recent_audio(frame)
         self._audio_since_finalize = True
         self._last_ingest_sample_end = frame.capture_start_sample + frame.frame_samples
         # ``send_pcm`` may transparently reconnect and advance the provider
@@ -656,6 +743,13 @@ class ExistingVoiceProviderAdapter(
         return tuple(results)
 
     async def finalize_speech_segment(
+        self,
+        identity: SessionIdentity,
+    ) -> tuple[ASRResult, ...]:
+        async with self._audio_lock:
+            return await self._finalize_speech_segment(identity)
+
+    async def _finalize_speech_segment(
         self,
         identity: SessionIdentity,
     ) -> tuple[ASRResult, ...]:
@@ -711,12 +805,23 @@ class ExistingVoiceProviderAdapter(
             raise RuntimeError("FunASR task boundary event was not available to the media adapter")
         self._audio_since_finalize = False
         self._last_ingest_sample_end = None
-        self._asr_resume_sample_floor = None
         self._pending_vad_start = None
         self._applied_vad_start = None
         return tuple(results)
 
     async def reset_after_discontinuity(
+        self,
+        identity: SessionIdentity,
+        *,
+        capture_start_sample: int,
+    ) -> None:
+        async with self._audio_lock:
+            await self._reset_after_discontinuity(
+                identity,
+                capture_start_sample=capture_start_sample,
+            )
+
+    async def _reset_after_discontinuity(
         self,
         identity: SessionIdentity,
         *,
@@ -736,7 +841,7 @@ class ExistingVoiceProviderAdapter(
             await asr.reconnect_with_replay()
         self._audio_since_finalize = False
         self._last_ingest_sample_end = None
-        self._asr_resume_sample_floor = None
+        self._clear_recent_audio()
         self._pending_vad_start = None
         self._applied_vad_start = None
         self._clear_asr_event_context()
@@ -768,14 +873,25 @@ class ExistingVoiceProviderAdapter(
         *,
         playback_end_sample: int,
     ) -> None:
+        async with self._audio_lock:
+            await self._reset_asr_after_playback(
+                identity,
+                playback_end_sample=playback_end_sample,
+            )
+
+    async def _reset_asr_after_playback(
+        self,
+        identity: SessionIdentity,
+        *,
+        playback_end_sample: int,
+    ) -> None:
         """Rotate normally completed playback and fence its echo tail.
 
         The caller reaches this seam only after provider completion and full
         playback acknowledgement. A spoken stop or content barge-in preempts
-        the reply before this seam, so rotating here cannot discard one that
-        already interrupted the reply. A sentence that straddles a normal
-        playback boundary may lose its first 0.8 seconds to the existing echo
-        tail; audio after that boundary starts the next provider task.
+        the reply before this seam. Keep a bounded tail from the old task and
+        replay it into a fresh task so a sentence that started before the
+        playback boundary is still recognized.
         """
 
         if playback_end_sample < 0:
@@ -784,31 +900,41 @@ class ExistingVoiceProviderAdapter(
             playback_end_sample,
             self._asr_resume_sample_floor or 0,
         )
+        replay_frames = self._playback_replay_frames(resume_sample_floor)
         self._asr_resume_sample_floor = resume_sample_floor
         self._audio_since_finalize = False
         self._last_ingest_sample_end = None
         self._pending_vad_start = None
         self._applied_vad_start = None
         asr = self._asr
+        if replay_frames:
+            await self._reset_asr_session(identity.stream_epoch)
+            replay_end = await self._replay_playback_tail(identity, replay_frames)
+            if replay_end is not None:
+                self._asr_resume_sample_floor = max(resume_sample_floor, replay_end)
+            self._clear_recent_audio()
+            return
         if asr is None:
             self._clear_asr_event_context()
+            self._clear_recent_audio()
             return
-        # Reuse the adapter/provider session when it exposes a task-reset seam.
-        # A provider whose protocol binds one task to one WebSocket may still
-        # rotate that task connection internally; rebuilding the whole adapter
-        # is the fallback for providers without this seam and risks latency or
-        # in-flight audio at every reply boundary.
         reset_for_gap = getattr(asr, "reset_for_gap", None)
         if callable(reset_for_gap):
             result = reset_for_gap()
             if inspect.isawaitable(result):
                 await result
             self._clear_asr_event_context()
+            self._clear_recent_audio()
             return
         await self._reset_asr_session(identity.stream_epoch)
         self._asr_resume_sample_floor = resume_sample_floor
+        self._clear_recent_audio()
 
     async def pause_asr_for_playback(self, identity: SessionIdentity) -> None:
+        async with self._audio_lock:
+            await self._pause_asr_for_playback(identity)
+
+    async def _pause_asr_for_playback(self, identity: SessionIdentity) -> None:
         """Close the current ASR task when playback starts to avoid idle timeout.
 
         Half-duplex playback stops capture, so FunASR would idle-timeout after

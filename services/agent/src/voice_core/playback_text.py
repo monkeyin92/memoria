@@ -68,6 +68,23 @@ _CONTENT_MARKERS = (
     "帮我",
     "告诉我",
 )
+# A fuzzy echo is only accepted when almost all of the candidate is covered by
+# one contiguous part of the played line. Comparing against the whole reply
+# makes a short echo look unrelated as soon as the reply is longer than it.
+_FUZZY_ECHO_COVERAGE = 0.85
+_QUESTION_MARKERS = (
+    "吗",
+    "呢",
+    "为什么",
+    "怎么",
+    "什么",
+    "哪",
+    "谁",
+    "多少",
+    "是否",
+    "能不能",
+    "可不可以",
+)
 _SPEECH_MARKUP = str.maketrans("", "", "，。！？、,.!?;；:：…~～\"'“”‘’（）() \t\r\n　")
 # A request to keep talking is the opposite of a barge-in; 「不要停」 must never stop the reply.
 _KEEP_PLAYING = ("不要停", "别停", "不用停", "继续", "接着讲", "接着说")
@@ -88,6 +105,14 @@ def _strip_edge_backchannels(text: str) -> str:
     return remainder
 
 
+def _candidate_has_question_signal(text: str) -> bool:
+    """Keep a question from being suppressed by a near-copy playback echo."""
+
+    return any(marker in text for marker in _QUESTION_MARKERS) or any(
+        punctuation in text for punctuation in "？?!"
+    )
+
+
 def playback_text_is_echo(text: str, playback_text: str) -> bool:
     """Match a candidate to the current line with a conservative fuzzy bound."""
 
@@ -99,7 +124,18 @@ def playback_text_is_echo(text: str, playback_text: str) -> bool:
         return True
     if len(heard) < 10 or len(spoken) < 10:
         return False
-    return SequenceMatcher(None, heard, spoken).ratio() >= 0.8
+    # A near-copy question is still the owner's turn: 「公园吗」 versus the
+    # played 「公园吧」 shares almost the whole candidate, but treating that
+    # coverage as echo would suppress a real question.
+    if _candidate_has_question_signal(text):
+        return False
+    match = SequenceMatcher(None, heard, spoken).find_longest_match(
+        0,
+        len(heard),
+        0,
+        len(spoken),
+    )
+    return match.size / len(heard) >= _FUZZY_ECHO_COVERAGE
 
 
 def content_barge_in_wanted(text: str, *, playback_text: str = "") -> bool:
@@ -114,7 +150,7 @@ def content_barge_in_wanted(text: str, *, playback_text: str = "") -> bool:
     remainder = _strip_edge_backchannels(text)
     if not remainder:
         return False
-    if playback_text and playback_text_is_echo(remainder, playback_text):
+    if playback_text and playback_text_is_echo(text, playback_text):
         return False
     if count_cjk_chars(remainder) >= _CONTENT_MIN_CJK:
         return True

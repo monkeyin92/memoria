@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import audioop
+import math
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from typing import Any, cast
@@ -95,9 +97,15 @@ class PlaybackWindowASR(FakeASR):
         self.task_audio_end_sample: int | None = None
         self.task_audio_send_count = 0
         self.task_pcm_sample_count = 0
-        self.task_pcm_peak_abs = 12_344
-        self.task_pcm_rms = 784.834
+        self.task_pcm_peak_abs = 0
+        self._task_pcm_square_sum = 0.0
         self.reset_for_gap_calls = 0
+
+    @property
+    def task_pcm_rms(self) -> float | None:
+        if not self.task_pcm_sample_count:
+            return None
+        return math.sqrt(self._task_pcm_square_sum / self.task_pcm_sample_count)
 
     async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
         if self.rotation_pending:
@@ -109,12 +117,17 @@ class PlaybackWindowASR(FakeASR):
             self.task_audio_end_sample = None
             self.task_audio_send_count = 0
             self.task_pcm_sample_count = 0
+            self.task_pcm_peak_abs = 0
+            self._task_pcm_square_sum = 0.0
         end_sample = capture_start_sample + len(pcm) // 2
         if self.task_audio_start_sample is None:
             self.task_audio_start_sample = capture_start_sample
         self.task_audio_end_sample = end_sample
         self.task_audio_send_count += 1
         self.task_pcm_sample_count += len(pcm) // 2
+        self.task_pcm_peak_abs = max(self.task_pcm_peak_abs, audioop.max(pcm, 2))
+        chunk_rms = audioop.rms(pcm, 2)
+        self._task_pcm_square_sum += float(chunk_rms * chunk_rms * (len(pcm) // 2))
         self.sent.append((pcm, capture_start_sample))
 
     async def reset_for_gap(self) -> None:
@@ -1032,8 +1045,9 @@ async def test_existing_provider_adapter_fences_new_audio_after_playback_boundar
     )
     identity = SessionIdentity("adapter-playback-boundary", stream_epoch=1)
     old_task_start = 8_950_720
-    old_task_samples = 389_440
     playback_end = 9_259_200
+    old_task_samples = playback_end - old_task_start
+    old_task_pcm = b"\x01\x00" * old_task_samples
 
     await adapter.ingest_audio(
         identity,
@@ -1042,7 +1056,7 @@ async def test_existing_provider_adapter_fences_new_audio_after_playback_boundar
             0,
             old_task_start,
             old_task_samples,
-            b"\x01\x00" * old_task_samples,
+            old_task_pcm,
         ),
     )
     snapshot = adapter.current_asr_audio_task_snapshot
@@ -1050,8 +1064,8 @@ async def test_existing_provider_adapter_fences_new_audio_after_playback_boundar
     assert snapshot.audio_start_sample == old_task_start
     assert snapshot.audio_end_sample == old_task_start + old_task_samples
     assert snapshot.observed_sample_count == old_task_samples
-    assert snapshot.peak_abs == 12_344
-    assert snapshot.rms == pytest.approx(784.834)
+    assert snapshot.peak_abs == audioop.max(old_task_pcm, 2)
+    assert snapshot.rms == pytest.approx(audioop.rms(old_task_pcm, 2))
     assert snapshot.all_zero is False
     await adapter.reset_asr_after_playback(
         identity,
@@ -1079,6 +1093,147 @@ async def test_existing_provider_adapter_fences_new_audio_after_playback_boundar
     assert snapshot is not None
     assert snapshot.audio_start_sample == playback_end
     assert snapshot.task_sample_origin == playback_end
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_replays_short_speech_across_playback_boundary() -> None:
+    class ReplayASR(FakeASR):
+        def __init__(self, text: str = "") -> None:
+            super().__init__()
+            self.text = text
+
+        async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+            if not self.sent:
+                self.task_sample_origin = capture_start_sample
+            self.sent.append((pcm, capture_start_sample))
+            if self.text:
+                await self.events.put(
+                    FunASRServerEvent(
+                        event="result-generated",
+                        task_id=self.task_id,
+                        sentence=FunASRSentence(
+                            sentence_id=1,
+                            text=self.text,
+                            begin_ms=0,
+                            end_ms=1200,
+                            sentence_end=True,
+                            heartbeat=False,
+                            words=(),
+                        ),
+                    )
+                )
+                self.text = ""
+
+    first = ReplayASR()
+    second = ReplayASR("播放边界前已经开口的短句")
+    sessions = iter((first, second))
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: next(sessions)),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("adapter-playback-replay", stream_epoch=1)
+    actual_playback_end = 8_000
+    playback_boundary = actual_playback_end + 12_800
+    speech_start = actual_playback_end - 4_800
+    speech_samples = 19_200
+
+    await adapter.ingest_audio(
+        identity,
+        AudioFrame(
+            identity,
+            0,
+            speech_start,
+            speech_samples,
+            b"\x03\x00" * speech_samples,
+        ),
+    )
+    await adapter.reset_asr_after_playback(
+        identity,
+        playback_end_sample=playback_boundary,
+    )
+
+    assert first.closed is True
+    assert second.sent == [
+        (b"\x03\x00" * speech_samples, speech_start),
+    ]
+    assert adapter._asr_resume_sample_floor == speech_start + speech_samples
+
+    results = await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 1, speech_start + speech_samples, 320, b"\x04\x00" * 320),
+    )
+
+    assert any(result.text == "播放边界前已经开口的短句" for result in results)
+    assert second.sent[-1] == (b"\x04\x00" * 320, speech_start + speech_samples)
+    assert adapter._asr_resume_sample_floor is None
+
+
+@pytest.mark.asyncio
+async def test_existing_provider_adapter_serializes_reset_finalize_and_ingest() -> None:
+    class BlockingResetASR(FakeASR):
+        def __init__(self) -> None:
+            super().__init__()
+            self.reset_started = asyncio.Event()
+            self.release_reset = asyncio.Event()
+            self.rotation_pending = False
+            self.task_sends: list[tuple[str, bytes, int]] = []
+
+        async def reset_for_gap(self) -> None:
+            self.reset_for_gap_calls += 1
+            self.reset_started.set()
+            await self.release_reset.wait()
+            self.rotation_pending = True
+
+        async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+            if self.rotation_pending:
+                self.rotation_pending = False
+                self.task_epoch += 1
+                self.task_id = f"task-{self.task_epoch}"
+                self.task_sample_origin = capture_start_sample
+            self.sent.append((pcm, capture_start_sample))
+            self.task_sends.append((self.task_id, pcm, capture_start_sample))
+
+    asr = BlockingResetASR()
+    adapter = ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, lambda: asr),
+        language_model=cast(Any, FakeLLM()),
+        speech_synthesis=cast(Any, FakeTTS()),
+    )
+    identity = SessionIdentity("adapter-reset-lock", stream_epoch=1)
+
+    await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 0, 0, 320, b"\x01\x00" * 320),
+    )
+    reset_task = asyncio.create_task(
+        adapter.reset_asr_after_playback(identity, playback_end_sample=320)
+    )
+    await asr.reset_started.wait()
+    finalize_task = asyncio.create_task(adapter.finalize_speech_segment(identity))
+    await asyncio.sleep(0)
+    queued_frame_task = asyncio.create_task(
+        adapter.ingest_audio(
+            identity,
+            AudioFrame(identity, 1, 160, 320, b"\x02\x00" * 320),
+        )
+    )
+    asr.release_reset.set()
+
+    await reset_task
+    await finalize_task
+    assert adapter._asr_resume_sample_floor == 320
+    results = await queued_frame_task
+    await adapter.ingest_audio(
+        identity,
+        AudioFrame(identity, 2, 480, 160, b"\x03\x00" * 160),
+    )
+
+    assert results == ()
+    assert asr.reset_for_gap_calls == 1
+    assert asr.task_sends[1] == ("task-2", b"\x02\x00" * 160, 320)
+    assert asr.task_sends[2] == ("task-2", b"\x03\x00" * 160, 480)
+    assert adapter._asr_resume_sample_floor is None
 
 
 @pytest.mark.asyncio
