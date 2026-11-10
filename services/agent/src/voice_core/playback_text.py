@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+from difflib import SequenceMatcher
 
 from services.agent.src.orchestration.interruption_guard import count_cjk_chars
 
@@ -72,15 +73,7 @@ _SPEECH_MARKUP = str.maketrans("", "", "，。！？、,.!?;；:：…~～\"'“
 _KEEP_PLAYING = ("不要停", "别停", "不用停", "继续", "接着讲", "接着说")
 
 
-def content_barge_in_wanted(text: str) -> bool:
-    """True when words heard over playback are the owner's next question.
-
-    A backchannel alone (「嗯」「对」「好」) is agreement, never a stop.  What is left after
-    the backchannel needs four characters or a question/command word to endpoint the reply.
-    """
-
-    if any(phrase in text for phrase in _KEEP_PLAYING):
-        return False
+def _strip_edge_backchannels(text: str) -> str:
     remainder = text.translate(_SPEECH_MARKUP)
     stripping = True
     while stripping and remainder:
@@ -92,7 +85,36 @@ def content_barge_in_wanted(text: str) -> bool:
             elif remainder.endswith(filler):
                 remainder = remainder[: -len(filler)]
                 stripping = True
+    return remainder
+
+
+def playback_text_is_echo(text: str, playback_text: str) -> bool:
+    """Match a candidate to the current line with a conservative fuzzy bound."""
+
+    heard = _compact(_strip_edge_backchannels(text))
+    spoken = _compact(playback_text)
+    if not heard or not spoken:
+        return False
+    if heard in spoken:
+        return True
+    if len(heard) < 10 or len(spoken) < 10:
+        return False
+    return SequenceMatcher(None, heard, spoken).ratio() >= 0.8
+
+
+def content_barge_in_wanted(text: str, *, playback_text: str = "") -> bool:
+    """True when words heard over playback are the owner's next question.
+
+    A backchannel alone (「嗯」「对」「好」) is agreement, never a stop.  What is left after
+    the backchannel needs four characters or a question/command word to endpoint the reply.
+    """
+
+    if any(phrase in text for phrase in _KEEP_PLAYING):
+        return False
+    remainder = _strip_edge_backchannels(text)
     if not remainder:
+        return False
+    if playback_text and playback_text_is_echo(remainder, playback_text):
         return False
     if count_cjk_chars(remainder) >= _CONTENT_MIN_CJK:
         return True

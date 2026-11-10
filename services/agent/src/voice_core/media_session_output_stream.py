@@ -26,7 +26,11 @@ from services.agent.src.voice_core.crisis_script_interrupt import (
 )
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession, PCMFrame
-from services.agent.src.voice_core.media_protocol import PlaybackEventType, PlaybackProgress
+from services.agent.src.voice_core.media_protocol import (
+    PlaybackEventType,
+    PlaybackProgress,
+    should_pause_asr_for_playback,
+)
 from services.agent.src.voice_core.media_session_output_chunks import MediaOutputChunksMixin
 from services.agent.src.voice_core.media_session_types import (
     MediaReplyChunk,
@@ -1323,6 +1327,12 @@ class MediaOutputStreamMixin(MediaOutputChunksMixin):
         if owner is not None and not owner.fence.matches(fence):
             return
         self._record_playback_boundary(context)
+        playback_boundary = context.last_playback_end_sample
+        if should_pause_asr_for_playback(context.identity) and playback_boundary is not None:
+            await context.provider.reset_asr_after_playback(
+                context.identity,
+                playback_end_sample=playback_boundary,
+            )
         wake_ack = (
             context.device_wake_ack_fence is not None
             and context.device_wake_ack_fence.matches(fence)

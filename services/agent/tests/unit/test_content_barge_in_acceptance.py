@@ -58,6 +58,22 @@ def test_a_backchannel_prefix_still_leaves_the_question_behind_it() -> None:
     assert content_barge_in_wanted("好的，那我问问别的事")
 
 
+def test_playback_echo_with_trailing_backchannel_is_not_content_barge_in() -> None:
+    reply = "从前有一座山山里有一座庙"
+
+    assert not content_barge_in_wanted(
+        "从前有一座山山里有一座庙，嗯。",
+        playback_text=reply,
+    )
+
+
+def test_real_question_after_backchannel_still_is_content_barge_in() -> None:
+    assert content_barge_in_wanted(
+        "嗯，等一下，我想问云是怎么变出来的？",
+        playback_text="从前有一座山山里有一座庙",
+    )
+
+
 @pytest.mark.parametrize("text", ["不要停", "别停啊", "继续讲这个故事", "接着说"])
 def test_a_request_to_keep_talking_never_stops_the_reply(text: str) -> None:
     assert not content_barge_in_wanted(text), text

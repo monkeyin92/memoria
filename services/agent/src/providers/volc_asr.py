@@ -633,6 +633,22 @@ class VolcASRSession:
         self._rotation_pending = True
         self._task_open = False
 
+    async def reset_for_gap(self) -> None:
+        """Discard the current task without emitting its partial or final text."""
+
+        if self._closed:
+            return
+        await self._abort_task()
+        self._failed = False
+        self._rotation_pending = True
+        self._task_open = False
+        self.task_id = None
+        self._task_sample_origin = self._last_sent_sample
+        self._origin_known = True
+        self._evidence.reset()
+        self._ring.clear()
+        self._ring_bytes = 0
+
     async def _abort_task(self) -> None:
         if self._recv_task is not None:
             self._recv_task.cancel()
