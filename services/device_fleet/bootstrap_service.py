@@ -77,7 +77,7 @@ from services.device_fleet.bootstrap_domain import (
 )
 from services.device_fleet.bootstrap_port import BootstrapStorePort
 from services.device_fleet.bootstrap_store import SQLiteBootstrapStore
-from services.device_fleet.test_device_registration import (
+from services.device_fleet.device_test_registration import (
     RegistrationAuditDeletion,
     TestDeviceRegistration,
     apply_test_device_registration,

@@ -25,7 +25,7 @@ from services.device_fleet.bootstrap_domain import (
 from services.device_fleet.bootstrap_postgres_store import PostgresBootstrapStore
 from services.device_fleet.bootstrap_service import DeviceOnboardingService
 from services.device_fleet.bootstrap_store import SQLiteBootstrapStore
-from services.device_fleet.test_device_registration import (
+from services.device_fleet.device_test_registration import (
     TestRegistrationRejected,
     require_test_environment,
 )
