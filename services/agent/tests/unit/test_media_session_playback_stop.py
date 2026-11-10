@@ -130,6 +130,13 @@ class _PlaybackWindowStoryProvider(_LongStoryProvider):
     def __init__(self, opening: str = "意气风发。") -> None:
         super().__init__(opening=opening)
         self.playback_reset_applied = False
+        self.playback_reset_calls: list[int] = []
+        self.playback_window_audio_start_sample = 8_950_720
+        self.playback_window_audio_end_sample = 9_340_160
+        self.playback_window_end_sample = 9_259_200
+        self.playback_window_rms = 784.834
+        self.playback_window_peak_abs = 12_344
+        self.playback_window_all_zero = False
         self.asr_texts: list[str] = []
 
     async def ingest_audio(
@@ -164,12 +171,11 @@ class _PlaybackWindowStoryProvider(_LongStoryProvider):
         identity: SessionIdentity,
         *,
         playback_end_sample: int,
-        playback_start_sample: int | None = None,
     ) -> None:
+        self.playback_reset_calls.append(playback_end_sample)
         await super().reset_asr_after_playback(
             identity,
             playback_end_sample=playback_end_sample,
-            playback_start_sample=playback_start_sample,
         )
         self.playback_reset_applied = True
 
@@ -531,6 +537,7 @@ async def test_device_question_mid_story_stops_the_reply_and_answers_it() -> Non
         [effect] = harness.cancel_effects()
         assert effect.turn_id == story.turn_id
         assert _user_turn_texts(harness.context) == ["给我讲个故事", question]
+        assert harness.story.playback_reset_samples == []
         assert not harness.closed()
 
     await _run_story(_device_identity("content-barge-in-question"), script)
@@ -798,8 +805,8 @@ async def test_device_playback_echo_plus_backchannel_does_not_stop_the_story() -
 
 
 @pytest.mark.asyncio
-async def test_interrupt_assist_quiet_playback_resets_before_the_next_user_turn() -> None:
-    """A quiet three-second window must not leave the next final on the reply task."""
+async def test_interrupt_assist_nonzero_playback_echo_resets_before_next_user_turn() -> None:
+    """A t037-shaped echo window must not keep the next final on the reply task."""
 
     provider = _PlaybackWindowStoryProvider()
     harness = _StoryHarness(_device_identity("interrupt-assist-quiet-window"), provider)
@@ -809,6 +816,15 @@ async def test_interrupt_assist_quiet_playback_resets_before_the_next_user_turn(
         provider.release.set()
         await harness.wait_for(lambda: harness.context.output.provider_complete)
         await harness.playback_ended()
+        assert provider.playback_window_audio_start_sample == 8_950_720
+        assert provider.playback_window_audio_end_sample == 9_340_160
+        assert provider.playback_window_end_sample == 9_259_200
+        assert provider.playback_window_rms == pytest.approx(784.834)
+        assert provider.playback_window_peak_abs == 12_344
+        assert provider.playback_window_all_zero is False
+        playback_boundary = harness.context.last_playback_end_sample
+        assert playback_boundary is not None
+        assert provider.playback_reset_calls == [playback_boundary]
         assert provider.playback_reset_applied is True
 
         await harness.audio_frames(150)  # 3.0 s after playback ended

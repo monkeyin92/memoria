@@ -1327,21 +1327,14 @@ class MediaOutputStreamMixin(MediaOutputChunksMixin):
             return
         self._record_playback_boundary(context)
         playback_boundary = context.last_playback_end_sample
-        playback_started = context.output.playback_started
-        playback_start_sample = (
-            playback_started[1]
-            if playback_started is not None and playback_started[0].matches(fence)
-            else None
-        )
-        # ``should_pause_asr_for_playback`` only controls the start-of-playback
-        # task rotation. Full-duplex devices keep capture open: the provider
-        # compares this start sample with its accepted task audio and keeps a
-        # task that already contains barge-in speech.
+        # This path is reached only after provider completion and playback
+        # completion. Stop words and content barge-ins preempt the reply
+        # before it gets here, so rotate the normal-completion task
+        # unconditionally and fence the existing echo tail.
         if playback_boundary is not None:
             await context.provider.reset_asr_after_playback(
                 context.identity,
                 playback_end_sample=playback_boundary,
-                playback_start_sample=playback_start_sample,
             )
         wake_ack = (
             context.device_wake_ack_fence is not None

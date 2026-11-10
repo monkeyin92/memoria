@@ -273,7 +273,7 @@ class MediaOutputDispatchMixin:
             return
         if event is ReplyDeliveryEvent.FIRST_FRAME_SENT:
             started_sample = int(getattr(context.asr, "last_sent_sample", 0) or 0)
-            if started_sample >= 0:
+            if started_sample:
                 context.output.playback_started = (fence, started_sample)
         wake_fence = context.device_wake_ack_fence
         if (

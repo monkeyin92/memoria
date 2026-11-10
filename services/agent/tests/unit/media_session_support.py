@@ -59,7 +59,6 @@ class FakeMediaProvider(MediaVoiceProvider):
         self.cancelled: list[GenerationFence] = []
         self.pause_asr_calls: list[int] = []
         self.playback_reset_samples: list[int] = []
-        self.playback_reset_windows: list[tuple[int | None, int]] = []
         self.closed = False
 
     async def ingest_audio(
@@ -113,10 +112,8 @@ class FakeMediaProvider(MediaVoiceProvider):
         _identity: SessionIdentity,
         *,
         playback_end_sample: int,
-        playback_start_sample: int | None = None,
     ) -> None:
         self.playback_reset_samples.append(playback_end_sample)
-        self.playback_reset_windows.append((playback_start_sample, playback_end_sample))
 
     async def close(self, _identity: SessionIdentity) -> None:
         self.closed = True

@@ -762,37 +762,21 @@ class ExistingVoiceProviderAdapter(
         self._asr_resume_sample_floor = None
         return frame
 
-    def _has_audio_after_playback_start(self, playback_start_sample: int | None) -> bool:
-        """Return whether accepted non-silent task audio crossed playback start."""
-
-        if playback_start_sample is None:
-            return False
-        snapshot = self.current_asr_audio_task_snapshot
-        if snapshot is not None and snapshot.audio_end_sample is not None:
-            if snapshot.audio_end_sample <= playback_start_sample:
-                return False
-            # Full-duplex devices can send continuous zero PCM while the
-            # speaker is active. That is capture, but it is not barge-in.
-            if snapshot.all_zero is True:
-                return False
-            return True
-        if (
-            self._last_ingest_sample_end is not None
-            and self._last_ingest_sample_end > playback_start_sample
-        ):
-            # When the provider cannot expose energy metadata, keep the task
-            # fail-closed so a real barge-in is never rotated away.
-            return True
-        return self._audio_since_finalize and self._last_ingest_sample_end is None
-
     async def reset_asr_after_playback(
         self,
         identity: SessionIdentity,
         *,
         playback_end_sample: int,
-        playback_start_sample: int | None = None,
     ) -> None:
-        """Retire playback audio before the next user speech can open a task."""
+        """Rotate normally completed playback and fence its echo tail.
+
+        The caller reaches this seam only after provider completion and full
+        playback acknowledgement. A spoken stop or content barge-in preempts
+        the reply before this seam, so rotating here cannot discard one that
+        already interrupted the reply. A sentence that straddles a normal
+        playback boundary may lose its first 0.8 seconds to the existing echo
+        tail; audio after that boundary starts the next provider task.
+        """
 
         if playback_end_sample < 0:
             raise ValueError("playback end sample must be non-negative")
@@ -800,12 +784,6 @@ class ExistingVoiceProviderAdapter(
             playback_end_sample,
             self._asr_resume_sample_floor or 0,
         )
-        if self._has_audio_after_playback_start(playback_start_sample):
-            # A task containing playback-window speech owns audio that began
-            # before playback ended. Rotating it here would discard the
-            # beginning of a real barge-in; the existing result-level echo
-            # guard will classify the candidate without losing its samples.
-            return
         self._asr_resume_sample_floor = resume_sample_floor
         self._audio_since_finalize = False
         self._last_ingest_sample_end = None

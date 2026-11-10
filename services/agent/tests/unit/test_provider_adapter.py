@@ -95,7 +95,8 @@ class PlaybackWindowASR(FakeASR):
         self.task_audio_end_sample: int | None = None
         self.task_audio_send_count = 0
         self.task_pcm_sample_count = 0
-        self.task_pcm_peak_abs = 2
+        self.task_pcm_peak_abs = 12_344
+        self.task_pcm_rms = 784.834
         self.reset_for_gap_calls = 0
 
     async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
@@ -1032,7 +1033,7 @@ async def test_existing_provider_adapter_fences_new_audio_after_playback_boundar
     identity = SessionIdentity("adapter-playback-boundary", stream_epoch=1)
     old_task_start = 8_950_720
     old_task_samples = 389_440
-    playback_end = old_task_start + old_task_samples
+    playback_end = 9_259_200
 
     await adapter.ingest_audio(
         identity,
@@ -1044,10 +1045,17 @@ async def test_existing_provider_adapter_fences_new_audio_after_playback_boundar
             b"\x01\x00" * old_task_samples,
         ),
     )
+    snapshot = adapter.current_asr_audio_task_snapshot
+    assert snapshot is not None
+    assert snapshot.audio_start_sample == old_task_start
+    assert snapshot.audio_end_sample == old_task_start + old_task_samples
+    assert snapshot.observed_sample_count == old_task_samples
+    assert snapshot.peak_abs == 12_344
+    assert snapshot.rms == pytest.approx(784.834)
+    assert snapshot.all_zero is False
     await adapter.reset_asr_after_playback(
         identity,
         playback_end_sample=playback_end,
-        playback_start_sample=playback_end,
     )
 
     # The first frame after the 0.8 s playback tail straddles the fence. Its
@@ -1071,31 +1079,6 @@ async def test_existing_provider_adapter_fences_new_audio_after_playback_boundar
     assert snapshot is not None
     assert snapshot.audio_start_sample == playback_end
     assert snapshot.task_sample_origin == playback_end
-
-
-@pytest.mark.asyncio
-async def test_existing_provider_adapter_keeps_task_when_playback_window_has_audio() -> None:
-    asr = PlaybackWindowASR()
-    adapter = ExistingVoiceProviderAdapter(
-        asr_session_factory=cast(Any, lambda: asr),
-        language_model=cast(Any, FakeLLM()),
-        speech_synthesis=cast(Any, FakeTTS()),
-    )
-    identity = SessionIdentity("adapter-playback-barge-in", stream_epoch=1)
-
-    await adapter.ingest_audio(
-        identity,
-        AudioFrame(identity, 0, 10_000, 320, b"\x02\x00" * 320),
-    )
-    await adapter.reset_asr_after_playback(
-        identity,
-        playback_end_sample=20_000,
-        playback_start_sample=10_160,
-    )
-
-    assert asr.reset_for_gap_calls == 0
-    assert asr.closed is False
-    assert adapter._asr_resume_sample_floor is None
 
 
 @pytest.mark.asyncio
