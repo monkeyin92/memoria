@@ -9,7 +9,7 @@
 
 ## 当前生产快照
 
-**权威当前运行清单**（整栈 + overlay 混合、回滚锚点、未知项）：[`docs/ops/current-runtime-inventory.json`](docs/ops/current-runtime-inventory.json)。用法与比对见 [`docs/ops/runtime-inventory.md`](docs/ops/runtime-inventory.md)。本文件下面的日期节是历史收据，不再当作「当前线上」第二真相源。2026-11-04 入库的清单是 `handoff_reconstruction`（从后文 10-29 / 11-02 等日期节拼出），**不是**主机 `live_capture`；未做 Monkey 授权下的现网 docker 核对，不得宣称生产已核实。本地捕获命令与 Mac 同步步骤见该 how-to。
+**权威当前运行清单**（整栈 + overlay 混合、回滚锚点、未知项）：[`docs/ops/current-runtime-inventory.json`](docs/ops/current-runtime-inventory.json)。用法与比对见 [`docs/ops/runtime-inventory.md`](docs/ops/runtime-inventory.md)。本文件下面的日期节是历史收据，不再当作「当前线上」第二真相源。2026-11-04 入库的清单是 `handoff_reconstruction`；2026-11-10 14:56 CST 已按授权在主机上做只读 `live_capture`，control-api、bridge、media-edge 的镜像、镜像 ID、revision、health、restarts、override 与回滚锚点以该文件为准。固件与小程序段不是主机可见项，仍沿用 2026-11-04 的交接记录，文件的 `unknowns` 已注明。本地捕获命令与 Mac 同步步骤见该 how-to。
 
 - **生产主机（2026-10-05 起）**：整套服务 01:33–01:40（CST）从旧机 122.51.108.140 迁到 110.42.235.198（原 pocketSparks 生产机，与 hr-tracker、MySQL 等共用，40 GB 盘、3.7 GiB 内存）；ssh 别名 `memoria-prod` 指新机，旧机别名 `memoria-prod-old`（旧机 10-06 到期，到期后别名和 known_hosts 条目可删）。Control API 绑 `127.0.0.1:18791`（hr-tracker 占 8791），由 `MEMORIA_CONTROL_API_PORT` 参数化。对外域名是 `aginice.cn`（你 10-05 说「域名换成aginice.cn这个域名，之前那个不用了」；证书到 2027-01-02，**2026-12-19 前换证**；`aigcnice.com` 仍解析到旧机，旧机到期后失效，已定不做桥、不动 DNS）。客户端当时已切完（之后的版本见下面「设备固件」「小程序体验版」两条）：小程序体验版 `0.2.20261005.3`，固件 build 24，机器人只连 `aginice.cn:8443`。详见「2026-10-05 服务迁移到 110.42.235.198」「2026-10-05 域名切换到 aginice.cn」两节。
 - **产品定位（2026-10-04 起）**：聚焦儿童青少年（陪伴、关怀、教学导师）；老年人与年轻人方向先删去，不进工程队列、验收与对外叙事（README「产品定位」已改写）；代码里已有的长辈、成人服务模式暂留、不再投入，是否清理另行决定；更早各节里的老年相关记录是当时的历史收据，不改。

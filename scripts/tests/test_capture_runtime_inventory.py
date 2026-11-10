@@ -473,20 +473,17 @@ def test_capture_from_backend_reads_host_layout(tmp_path: Path) -> None:
 
 def test_seeded_repo_inventory_validates() -> None:
     path = ROOT / "docs" / "ops" / "current-runtime-inventory.json"
-    text = path.read_text(encoding="utf-8")
-    doc = json.loads(text)
-    assert doc["evidence_class"] == "handoff_reconstruction"
-    assert doc["captured_at"] is None
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    assert doc["evidence_class"] == "live_capture"
+    assert doc["captured_at"] is not None
     assert validate_inventory(doc) == []
     bridge = next(c for c in doc["components"] if c["role"] == "voice-core-media-bridge")
-    assert bridge["image_id"] == "263748d8bb79"
-    assert bridge["image_id_complete"] is False
-    assert bridge["revision_commit"] == UNKNOWN
-    assert doc["stack"]["current_commit"] == UNKNOWN
+    assert bridge["image_ref"] == "memoria-agent:20261106-card5-committed-boundary-v1"
+    assert bridge["revision_commit"] == "b03756b3c5268c90596bd1acda32a7b314094d9a"
+    assert bridge["image_id"].startswith("sha256:")
+    assert doc["stack"]["current_tag"] == "20261029-plan-head-start-v1"
+    assert doc["stack"]["current_commit"] == "2c6ff2ccf3212e9d8b9b45f94ffad28dd8b0c82d"
     assert doc["rollback"]["stack_prev"]["tag"] == "20261028-assistant-emotion-v1"
-    assert doc["rollback"]["stack_prev"]["commit"] == UNKNOWN
-    assert "2c6ff2ccf3212e9d8b9b45f94ffad28dd8b0c82d" not in text
-    assert "3e42b95de956d0b7367a24d6cce2fb62c48a481a" not in text
-    assert "sha256:" not in text
+    assert doc["rollback"]["stack_prev"]["commit"] == "3e42b95de956d0b7367a24d6cce2fb62c48a481a"
     assert "None" not in render_markdown(doc)
     assert doc["unknowns"]
