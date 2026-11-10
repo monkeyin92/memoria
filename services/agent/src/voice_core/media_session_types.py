@@ -91,6 +91,14 @@ class MediaVoiceProvider(Protocol):
 
     async def pause_asr_for_playback(self, identity: SessionIdentity) -> None: ...
 
+    async def reset_asr_after_playback(
+        self,
+        identity: SessionIdentity,
+        *,
+        playback_end_sample: int,
+        playback_floor_sample: int,
+    ) -> None: ...
+
     async def close(self, identity: SessionIdentity) -> None: ...
 
 

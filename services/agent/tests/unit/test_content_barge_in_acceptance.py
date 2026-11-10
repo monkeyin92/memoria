@@ -7,7 +7,10 @@ Field 2026-10-29 soak (t017/t018): the uplink carried a whole new question and a
 from __future__ import annotations
 
 import pytest
-from services.agent.src.voice_core.playback_text import content_barge_in_wanted
+from services.agent.src.voice_core.playback_text import (
+    content_barge_in_wanted,
+    playback_text_is_echo,
+)
 
 STOP_QUESTION = "等一下，我想问另一个问题，云是怎么变出来的？"
 
@@ -56,6 +59,66 @@ def test_leftover_words_under_four_without_a_question_never_stop(text: str) -> N
 def test_a_backchannel_prefix_still_leaves_the_question_behind_it() -> None:
     assert content_barge_in_wanted("嗯，云是怎么变出来的？")
     assert content_barge_in_wanted("好的，那我问问别的事")
+
+
+def test_playback_echo_with_trailing_backchannel_is_not_content_barge_in() -> None:
+    reply = "从前有一座山山里有一座庙"
+
+    assert not content_barge_in_wanted(
+        "从前有一座山山里有一座庙，嗯。",
+        playback_text=reply,
+    )
+
+
+def test_non_exact_playback_echo_with_trailing_backchannel_is_not_content_barge_in() -> None:
+    reply = "明天早上我们一起去公园散步吧"
+
+    assert not content_barge_in_wanted(
+        "明天早上我们一起去公园散步啦，嗯。",
+        playback_text=reply,
+    )
+
+
+def test_short_candidate_from_long_reply_is_echo() -> None:
+    reply = "今天的故事里小兔子在森林里唱歌遇见了狐狸，还一起回家吃晚饭。故事最后大家都睡着了，森林恢复了安静的夜晚，月亮升起来了。"
+    candidate = reply[:16]
+
+    assert sum(character.isalnum() for character in candidate) == 16
+    assert sum(character.isalnum() for character in reply) == 54
+    assert playback_text_is_echo(candidate, reply) is True
+    assert content_barge_in_wanted(candidate, playback_text=reply) is False
+
+
+def test_short_candidate_unrelated_to_long_reply_is_content_barge_in() -> None:
+    candidate = "小熊今天想去河边看星星呀回家睡觉"
+    reply = "今天的故事里小兔子在森林里唱歌遇见了狐狸，还一起回家吃晚饭。故事最后大家都睡着了，森林恢复了安静的夜晚，月亮升起来了。"
+
+    assert sum(character.isalnum() for character in candidate) == 16
+    assert sum(character.isalnum() for character in reply) == 54
+    assert playback_text_is_echo(candidate, reply) is False
+    assert content_barge_in_wanted(candidate, playback_text=reply) is True
+
+
+def test_near_copy_question_is_content_barge_in() -> None:
+    candidate = "那我们明天还去公园吗"
+    reply = "那我们明天还去公园吧"
+
+    assert playback_text_is_echo(candidate, reply) is False
+    assert content_barge_in_wanted(candidate, playback_text=reply) is True
+
+
+def test_question_punctuation_survives_echo_guard() -> None:
+    candidate = "那我们明天还去公园走走？"
+    reply = "那我们明天还去公园散步吧"
+
+    assert content_barge_in_wanted(candidate, playback_text=reply) is True
+
+
+def test_real_question_after_backchannel_still_is_content_barge_in() -> None:
+    assert content_barge_in_wanted(
+        "嗯，等一下，我想问云是怎么变出来的？",
+        playback_text="从前有一座山山里有一座庙",
+    )
 
 
 @pytest.mark.parametrize("text", ["不要停", "别停啊", "继续讲这个故事", "接着说"])

@@ -61,6 +61,7 @@ from services.agent.src.voice_core.playback_text import (
     content_barge_in_wanted,
     followup_utterance_looks_complete,
     playback_followup_grace_s,
+    playback_text_is_echo,
 )
 from services.agent.src.voice_core.semantic_completeness import is_semantically_complete
 from services.agent.src.voice_core.speech_timeline import ASRResult
@@ -136,7 +137,7 @@ class MediaPlaybackStopMixin:
         ) -> bool: ...
 
         @staticmethod
-        def _record_playback_boundary(context: _MediaVoiceSession) -> None: ...
+        def _record_playback_boundary(context: _MediaVoiceSession) -> tuple[int, int]: ...
 
         @staticmethod
         def _mark_empty_turn_endpoint_pin(
@@ -202,11 +203,10 @@ class MediaPlaybackStopMixin:
     def _playback_text_is_echo(context: _MediaVoiceSession, text: str) -> bool:
         """True when ``text`` repeats what the reply announced most recently."""
 
-        heard = _compact(text)
         spoken = _compact(getattr(context.output, "assistant_text", ""))[
             -_PLAYBACK_STOP_ECHO_TAIL_CHARS:
         ]
-        return bool(heard) and heard in spoken
+        return playback_text_is_echo(text, spoken)
 
     @staticmethod
     def _playback_stop_is_echo(context: _MediaVoiceSession, text: str) -> bool:
@@ -242,7 +242,7 @@ class MediaPlaybackStopMixin:
             start = result.capture_start_sample
             return (
                 f"stop_word={lexical_playback_control_only(text)} "
-                f"content_barge_in={content_barge_in_wanted(text)} "
+                f"content_barge_in={content_barge_in_wanted(text, playback_text=self._playback_current_line(context))} "
                 f"guard={self._playback_input_guard_reason(context, result)} "
                 f"echo={self._playback_echo_for_guard(context, text)} "
                 f"in_flight={self._reply_in_flight(context)} "
@@ -1104,7 +1104,7 @@ class MediaPlaybackStopMixin:
             not stop_word
             and not result.rescue_synthesized
             and self._reply_can_still_be_stopped(context)
-            and content_barge_in_wanted(text)
+            and content_barge_in_wanted(text, playback_text=self._playback_current_line(context))
             and not self._playback_text_is_echo(context, text)
             and self._playback_input_guard_reason(context, result) is None
         )

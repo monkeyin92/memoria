@@ -26,7 +26,10 @@ from services.agent.src.voice_core.crisis_script_interrupt import (
 )
 from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 as _media_pb2
 from services.agent.src.voice_core.media_bridge_server import MediaBridgeSession, PCMFrame
-from services.agent.src.voice_core.media_protocol import PlaybackEventType, PlaybackProgress
+from services.agent.src.voice_core.media_protocol import (
+    PlaybackEventType,
+    PlaybackProgress,
+)
 from services.agent.src.voice_core.media_session_output_chunks import MediaOutputChunksMixin
 from services.agent.src.voice_core.media_session_types import (
     MediaReplyChunk,
@@ -60,10 +63,6 @@ _UNHEARD_OUTPUT_FLOOR_WAIT_S = 4.0
 # outranks a wordless turn for longer, so a slow recovery still gets to speak.
 _UNHEARD_OUTPUT_FIXED_SAFETY_WAIT_S = 30.0
 _UNHEARD_OUTPUT_FLOOR_POLL_S = 0.02
-# Echo of the reply's tail can outlive the playback completion event by the
-# ASR pipeline's segmentation lag, so the boundary that gates early follow-up
-# endpoints carries a margin over the freshest uplink evidence.
-_PLAYBACK_ECHO_TAIL_MARGIN_SAMPLES = 12_800  # 0.8 s at 16 kHz
 
 
 @dataclass(slots=True)
@@ -1287,27 +1286,6 @@ class MediaOutputStreamMixin(MediaOutputChunksMixin):
         if callable(request_standby):
             await request_standby(context, reason=LLM_UNAVAILABLE_STANDBY_REASON)
 
-    @staticmethod
-    def _record_playback_boundary(context: _MediaVoiceSession) -> None:
-        """Snapshot the uplink capture boundary of a just-ended playback.
-
-        Playback completion is the only authoritative echo boundary for the
-        early follow-up endpoint: the speaker window is over in wall-clock,
-        but the uplink sample position that corresponds to it has to come from
-        evidence (projection watermark, accepted ASR ends, PCM sent to ASR).
-        The margin keeps fail-closed semantics for echo-tail finals that were
-        segmented before the speaker actually stopped.
-        """
-
-        evidence = max(
-            context.projection.latest_capture_sample,
-            context.last_asr_evidence_end_sample,
-            int(getattr(context.asr, "last_sent_sample", 0) or 0),
-        )
-        boundary = evidence + _PLAYBACK_ECHO_TAIL_MARGIN_SAMPLES
-        if boundary > (context.last_playback_end_sample or 0):
-            context.last_playback_end_sample = boundary
-
     async def _finish_completed_output(
         self,
         context: _MediaVoiceSession,
@@ -1322,7 +1300,16 @@ class MediaOutputStreamMixin(MediaOutputChunksMixin):
         owner = context.output.output_owner
         if owner is not None and not owner.fence.matches(fence):
             return
-        self._record_playback_boundary(context)
+        playback_end_sample, playback_floor_sample = self._record_playback_boundary(context)
+        # This path is reached only after provider completion and playback
+        # completion. Stop words and content barge-ins preempt the reply
+        # before it gets here, so rotate the normal-completion task
+        # unconditionally and fence the existing echo tail.
+        await context.provider.reset_asr_after_playback(
+            context.identity,
+            playback_end_sample=playback_end_sample,
+            playback_floor_sample=playback_floor_sample,
+        )
         wake_ack = (
             context.device_wake_ack_fence is not None
             and context.device_wake_ack_fence.matches(fence)

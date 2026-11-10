@@ -16,6 +16,7 @@ SCENARIO="devicetest/scenarios/child_tapwake.json"
   echo "start $(date -Iseconds)"
   echo "port=$PORT"
   echo "gates MAX_NO_REPLY=0 P90<=2.0s max<=3.0s; pre gate idle-only 180s (real State line, no assume_idle); turn gate idle|listening|listening_closed 60s (listening window is product state, #453)"
+  echo "latency policy: 延迟只记录不拦（2026-11-06 决定）"
 } | tee "$REPORT_DIR/meta.txt"
 ls -la "$PORT" || { echo "FAIL: serial missing"; exit 2; }
 
@@ -98,6 +99,7 @@ fi
 set +e
 uv run --no-project python scripts/voice_soak_verdict.py "$OUT" \
   --max-no-reply 0 --max-reply-latency-p90 2.0 --max-reply-latency-max 3.0 \
+  --reply-latency-record-only \
   2>&1 | tee "$REPORT_DIR/verdict.txt"
 VC=$?
 set -e
@@ -109,7 +111,9 @@ summary = {
   "out": "$OUT",
   "report_dir": str(rd),
   "verdict_exit": $VC,
-  "gates": {"max_no_reply": 0, "max_reply_latency_p90_s": 2.0, "max_reply_latency_max_s": 3.0},
+  "gates": {"max_no_reply": 0, "max_reply_latency_p90_s": 2.0, "max_reply_latency_max_s": 3.0,
+            "reply_latency_record_only": True,
+            "latency_policy": "延迟只记录不拦（2026-11-06 决定）"},
   "firmware": {"elf_sha256": "$ELF"},
 }
 import subprocess
@@ -130,6 +134,7 @@ PY
 stop_logger
 set +e
 python3 devicetest/keepawake_verdict.py "$OUT" --serial "$SERIAL_RAW" --summary "$REPORT_DIR/summary.json" \
+  --reply-latency-record-only \
   2>&1 | tee "$REPORT_DIR/keepawake_verdict.txt"
 VC=${PIPESTATUS[0]}
 set -e

@@ -182,6 +182,28 @@ async def test_conversation_yield_proxy_resolves_only_on_matching_terminal() -> 
     await registry.finalize_session(identity.session_id)
 
 
+@pytest.mark.asyncio
+async def test_first_frame_without_asr_audio_does_not_fabricate_playback_start() -> None:
+    identity = SessionIdentity("first-frame-without-asr-audio")
+    registry = MediaVoiceCoreRegistry(
+        bridge=MediaBridgeGrpcServer(),
+        provider_factory=lambda _identity: FakeMediaProvider(),
+    )
+    context = await registry.open_session(identity)
+    fence = GenerationFence(identity.session_id, 1, 1, 0)
+
+    assert context.asr.last_sent_sample == 0
+    registry._record_reply_delivery_event(
+        context,
+        fence,
+        ReplyDeliveryEvent.FIRST_FRAME_SENT,
+        "test",
+    )
+
+    assert context.output.playback_started is None
+    await registry.finalize_session(identity.session_id)
+
+
 def test_empty_tail_classification_uses_captured_samples_for_gating() -> None:
     assert (
         classify_empty_segment(
