@@ -1,0 +1,20 @@
+{
+  "control_pid": {
+    "pid": 39478,
+    "ps_exit_code": 1,
+    "ps_output": ""
+  },
+  "bridge_pid": {
+    "pid": 39479,
+    "ps_exit_code": 1,
+    "ps_output": ""
+  },
+  "edge_pid": {
+    "pid": 39566,
+    "ps_exit_code": 1,
+    "ps_output": ""
+  },
+  "docker_running_names": [
+    "toonflow-app-toonflow-1"
+  ]
+}
