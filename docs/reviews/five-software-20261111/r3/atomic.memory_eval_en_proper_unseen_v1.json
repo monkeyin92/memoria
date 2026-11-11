@@ -1,0 +1,271 @@
+{
+  "adapter": "memoria-postgres-synthetic-atomic-tool-no-embedding",
+  "case_count": 4,
+  "cases": [
+    {
+      "case_id": "tool-0",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-unseen-0"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-unseen-0"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-0",
+          "matched": true,
+          "matched_item_id": "c66d5d96-cc5d-53b7-921b-081b5e54fe42",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "Qdrant",
+          "item_id": "c66d5d96-cc5d-53b7-921b-081b5e54fe42",
+          "kind": "claim",
+          "matched_expected_key": "tool-0",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-unseen-0"
+          ],
+          "status": "confirmed",
+          "title": "Qdrant",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-0",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-0"
+          ],
+          "relevant_keys": [
+            "tool-0"
+          ]
+        },
+        {
+          "query_id": "other-0",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-1",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-unseen-1"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-unseen-1"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-1",
+          "matched": true,
+          "matched_item_id": "b0f7ce30-c63f-5912-8945-35d172c94075",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "PostgreSQL",
+          "item_id": "b0f7ce30-c63f-5912-8945-35d172c94075",
+          "kind": "claim",
+          "matched_expected_key": "tool-1",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-unseen-1"
+          ],
+          "status": "confirmed",
+          "title": "PostgreSQL",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-1",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-1"
+          ],
+          "relevant_keys": [
+            "tool-1"
+          ]
+        },
+        {
+          "query_id": "other-1",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-2",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-unseen-2"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-unseen-2"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-2",
+          "matched": true,
+          "matched_item_id": "78c289d2-3e01-5f5f-aab2-857ce563d69e",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "Obsidian",
+          "item_id": "78c289d2-3e01-5f5f-aab2-857ce563d69e",
+          "kind": "claim",
+          "matched_expected_key": "tool-2",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-unseen-2"
+          ],
+          "status": "confirmed",
+          "title": "Obsidian",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-2",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-2"
+          ],
+          "relevant_keys": [
+            "tool-2"
+          ]
+        },
+        {
+          "query_id": "other-2",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-3",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-unseen-3"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-unseen-3"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-3",
+          "matched": true,
+          "matched_item_id": "c95bf682-3ebe-5937-9697-e1394f475260",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "OpenTelemetry",
+          "item_id": "c95bf682-3ebe-5937-9697-e1394f475260",
+          "kind": "claim",
+          "matched_expected_key": "tool-3",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-unseen-3"
+          ],
+          "status": "confirmed",
+          "title": "OpenTelemetry",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-3",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-3"
+          ],
+          "relevant_keys": [
+            "tool-3"
+          ]
+        },
+        {
+          "query_id": "other-3",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    }
+  ],
+  "dataset_version": "synthetic-atomic-en-proper-unseen-v1",
+  "failed_cases": [],
+  "metrics": {
+    "candidate_leakage": 0.0,
+    "comfort_recall_at_5": 0.0,
+    "contradiction_rate": 0.0,
+    "cross_account_leakage": 0.0,
+    "cross_session_recall_at_5": 0.0,
+    "extraction_precision": 1.0,
+    "extraction_recall": 1.0,
+    "input_tokens": 0,
+    "latency_p50_ms": 3.834832983557135,
+    "latency_p95_ms": 4.5274170115590096,
+    "ndcg_at_10": 1.0,
+    "output_tokens": 0,
+    "paraphrase_followup_recall_at_5": 0.0,
+    "recall_at_10": 1.0,
+    "recall_at_5": 1.0,
+    "source_attribution_accuracy": 1.0,
+    "temporal_accuracy": 0.0,
+    "token_cost": 0
+  },
+  "scenario_coverage": [
+    "exact_fact"
+  ]
+}

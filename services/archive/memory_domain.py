@@ -357,6 +357,8 @@ class MemorySearchQuery:
     # Candidate and disputed memories are opt-in.  Ordinary search callers
     # must not receive evidence that has not been explicitly approved.
     include_candidates: bool = False
+    # Reply context requests facts; review/search UIs enumerate their projections.
+    distinct_facts: bool = False
     entity_ids: tuple[str, ...] = ()
     valid_at: datetime | None = None
     sensitivities: tuple[MemorySensitivity, ...] = ()

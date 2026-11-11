@@ -1088,7 +1088,7 @@ async def _companion_items(
                 occurred_after=recall.occurred_after,
                 occurred_before=recall.occurred_before,
                 include_candidates=False,
-                limit=8,
+                limit=8, distinct_facts=True,
             )
         )
 

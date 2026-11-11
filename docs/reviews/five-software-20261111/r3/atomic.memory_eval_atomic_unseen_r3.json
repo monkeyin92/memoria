@@ -1,0 +1,511 @@
+{
+  "adapter": "memoria-postgres-synthetic-atomic-tool-no-embedding",
+  "case_count": 8,
+  "cases": [
+    {
+      "case_id": "tool-0",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-unseen_r3-0"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-unseen_r3-0"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-0",
+          "matched": true,
+          "matched_item_id": "a313fac1-c474-510c-a987-738c17e0d255",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "DuckDB",
+          "item_id": "a313fac1-c474-510c-a987-738c17e0d255",
+          "kind": "claim",
+          "matched_expected_key": "tool-0",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-unseen_r3-0"
+          ],
+          "status": "confirmed",
+          "title": "DuckDB",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-0",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-0"
+          ],
+          "relevant_keys": [
+            "tool-0"
+          ]
+        },
+        {
+          "query_id": "other-0",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-1",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-unseen_r3-1"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-unseen_r3-1"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-1",
+          "matched": true,
+          "matched_item_id": "4ab9790e-9a1c-5070-bbb1-e67d4c600ca7",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "Weaviate",
+          "item_id": "4ab9790e-9a1c-5070-bbb1-e67d4c600ca7",
+          "kind": "claim",
+          "matched_expected_key": "tool-1",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-unseen_r3-1"
+          ],
+          "status": "confirmed",
+          "title": "Weaviate",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-1",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-1"
+          ],
+          "relevant_keys": [
+            "tool-1"
+          ]
+        },
+        {
+          "query_id": "other-1",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-2",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-unseen_r3-2"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-unseen_r3-2"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-2",
+          "matched": true,
+          "matched_item_id": "290eea49-7b09-5c22-87d2-89a88c917937",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "Zotero",
+          "item_id": "290eea49-7b09-5c22-87d2-89a88c917937",
+          "kind": "claim",
+          "matched_expected_key": "tool-2",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-unseen_r3-2"
+          ],
+          "status": "confirmed",
+          "title": "Zotero",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-2",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-2"
+          ],
+          "relevant_keys": [
+            "tool-2"
+          ]
+        },
+        {
+          "query_id": "other-2",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-3",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-unseen_r3-3"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-unseen_r3-3"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-3",
+          "matched": true,
+          "matched_item_id": "dda2e247-d45f-5156-9650-0b4194f9eed4",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "Kubernetes",
+          "item_id": "dda2e247-d45f-5156-9650-0b4194f9eed4",
+          "kind": "claim",
+          "matched_expected_key": "tool-3",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-unseen_r3-3"
+          ],
+          "status": "confirmed",
+          "title": "Kubernetes",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-3",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-3"
+          ],
+          "relevant_keys": [
+            "tool-3"
+          ]
+        },
+        {
+          "query_id": "other-3",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-4",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-unseen_r3-4"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-unseen_r3-4"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-4",
+          "matched": true,
+          "matched_item_id": "9042886b-27c3-5c51-a12a-d4e57ebbceba",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "ClickHouse",
+          "item_id": "9042886b-27c3-5c51-a12a-d4e57ebbceba",
+          "kind": "claim",
+          "matched_expected_key": "tool-4",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-unseen_r3-4"
+          ],
+          "status": "confirmed",
+          "title": "ClickHouse",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-4",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-4"
+          ],
+          "relevant_keys": [
+            "tool-4"
+          ]
+        },
+        {
+          "query_id": "other-4",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-5",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-unseen_r3-5"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-unseen_r3-5"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-5",
+          "matched": true,
+          "matched_item_id": "3a389def-8b39-54fc-9b4d-7dd325124cbc",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "Polars",
+          "item_id": "3a389def-8b39-54fc-9b4d-7dd325124cbc",
+          "kind": "claim",
+          "matched_expected_key": "tool-5",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-unseen_r3-5"
+          ],
+          "status": "confirmed",
+          "title": "Polars",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-5",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-5"
+          ],
+          "relevant_keys": [
+            "tool-5"
+          ]
+        },
+        {
+          "query_id": "other-5",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-6",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-unseen_r3-6"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-unseen_r3-6"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-6",
+          "matched": true,
+          "matched_item_id": "5cb1d8ac-8ef1-5827-86f7-bd649668cb61",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "Milvus",
+          "item_id": "5cb1d8ac-8ef1-5827-86f7-bd649668cb61",
+          "kind": "claim",
+          "matched_expected_key": "tool-6",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-unseen_r3-6"
+          ],
+          "status": "confirmed",
+          "title": "Milvus",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-6",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-6"
+          ],
+          "relevant_keys": [
+            "tool-6"
+          ]
+        },
+        {
+          "query_id": "other-6",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-7",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-unseen_r3-7"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-unseen_r3-7"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-7",
+          "matched": true,
+          "matched_item_id": "8221834a-fe83-5ab1-b2a3-06b592207414",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "Grafana",
+          "item_id": "8221834a-fe83-5ab1-b2a3-06b592207414",
+          "kind": "claim",
+          "matched_expected_key": "tool-7",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-unseen_r3-7"
+          ],
+          "status": "confirmed",
+          "title": "Grafana",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-7",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-7"
+          ],
+          "relevant_keys": [
+            "tool-7"
+          ]
+        },
+        {
+          "query_id": "other-7",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    }
+  ],
+  "dataset_version": "synthetic-atomic-proper-unseen_r3-r3",
+  "failed_cases": [],
+  "metrics": {
+    "candidate_leakage": 0.0,
+    "comfort_recall_at_5": 0.0,
+    "contradiction_rate": 0.0,
+    "cross_account_leakage": 0.0,
+    "cross_session_recall_at_5": 0.0,
+    "extraction_precision": 1.0,
+    "extraction_recall": 1.0,
+    "input_tokens": 0,
+    "latency_p50_ms": 3.318499948363751,
+    "latency_p95_ms": 4.418957978487015,
+    "ndcg_at_10": 1.0,
+    "output_tokens": 0,
+    "paraphrase_followup_recall_at_5": 0.0,
+    "recall_at_10": 1.0,
+    "recall_at_5": 1.0,
+    "source_attribution_accuracy": 1.0,
+    "temporal_accuracy": 0.0,
+    "token_cost": 0
+  },
+  "scenario_coverage": [
+    "exact_fact"
+  ]
+}

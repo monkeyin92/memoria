@@ -1,0 +1,511 @@
+{
+  "adapter": "memoria-postgres-synthetic-atomic-tool-no-embedding",
+  "case_count": 8,
+  "cases": [
+    {
+      "case_id": "tool-0",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-fixed-0"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-fixed-0"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-0",
+          "matched": true,
+          "matched_item_id": "22167353-cfb4-58ca-adda-65e02a90d69c",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "Qdrant",
+          "item_id": "22167353-cfb4-58ca-adda-65e02a90d69c",
+          "kind": "claim",
+          "matched_expected_key": "tool-0",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-fixed-0"
+          ],
+          "status": "confirmed",
+          "title": "Qdrant",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-0",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-0"
+          ],
+          "relevant_keys": [
+            "tool-0"
+          ]
+        },
+        {
+          "query_id": "other-0",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-1",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-fixed-1"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-fixed-1"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-1",
+          "matched": true,
+          "matched_item_id": "f39c76bb-beb6-5f5b-8fb2-1f214f5cb708",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "PostgreSQL",
+          "item_id": "f39c76bb-beb6-5f5b-8fb2-1f214f5cb708",
+          "kind": "claim",
+          "matched_expected_key": "tool-1",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-fixed-1"
+          ],
+          "status": "confirmed",
+          "title": "PostgreSQL",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-1",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-1"
+          ],
+          "relevant_keys": [
+            "tool-1"
+          ]
+        },
+        {
+          "query_id": "other-1",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-2",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-fixed-2"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-fixed-2"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-2",
+          "matched": true,
+          "matched_item_id": "c75f58c0-470e-5777-bcb9-273416ce89d6",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "Obsidian",
+          "item_id": "c75f58c0-470e-5777-bcb9-273416ce89d6",
+          "kind": "claim",
+          "matched_expected_key": "tool-2",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-fixed-2"
+          ],
+          "status": "confirmed",
+          "title": "Obsidian",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-2",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-2"
+          ],
+          "relevant_keys": [
+            "tool-2"
+          ]
+        },
+        {
+          "query_id": "other-2",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-3",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-fixed-3"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-fixed-3"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-3",
+          "matched": true,
+          "matched_item_id": "3b63430d-3a8c-5bb4-8370-b8351f329021",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "OpenTelemetry",
+          "item_id": "3b63430d-3a8c-5bb4-8370-b8351f329021",
+          "kind": "claim",
+          "matched_expected_key": "tool-3",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-fixed-3"
+          ],
+          "status": "confirmed",
+          "title": "OpenTelemetry",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-3",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-3"
+          ],
+          "relevant_keys": [
+            "tool-3"
+          ]
+        },
+        {
+          "query_id": "other-3",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-4",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-fixed-4"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-fixed-4"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-4",
+          "matched": true,
+          "matched_item_id": "33af65f1-add4-5dd4-87d2-5ead9ab1fc58",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "SQLite",
+          "item_id": "33af65f1-add4-5dd4-87d2-5ead9ab1fc58",
+          "kind": "claim",
+          "matched_expected_key": "tool-4",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-fixed-4"
+          ],
+          "status": "confirmed",
+          "title": "SQLite",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-4",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-4"
+          ],
+          "relevant_keys": [
+            "tool-4"
+          ]
+        },
+        {
+          "query_id": "other-4",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-5",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-fixed-5"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-fixed-5"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-5",
+          "matched": true,
+          "matched_item_id": "9122759a-54b4-550b-ae6c-ef741b32f802",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "FastAPI",
+          "item_id": "9122759a-54b4-550b-ae6c-ef741b32f802",
+          "kind": "claim",
+          "matched_expected_key": "tool-5",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-fixed-5"
+          ],
+          "status": "confirmed",
+          "title": "FastAPI",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-5",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-5"
+          ],
+          "relevant_keys": [
+            "tool-5"
+          ]
+        },
+        {
+          "query_id": "other-5",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-6",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-fixed-6"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-fixed-6"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-6",
+          "matched": true,
+          "matched_item_id": "fac9b680-20a4-5a84-94dd-75d7747766ea",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "NumPy",
+          "item_id": "fac9b680-20a4-5a84-94dd-75d7747766ea",
+          "kind": "claim",
+          "matched_expected_key": "tool-6",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-fixed-6"
+          ],
+          "status": "confirmed",
+          "title": "NumPy",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-6",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-6"
+          ],
+          "relevant_keys": [
+            "tool-6"
+          ]
+        },
+        {
+          "query_id": "other-6",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    },
+    {
+      "case_id": "tool-7",
+      "expected": [
+        {
+          "actual_source_event_ids": [
+            "atomic-fixed-7"
+          ],
+          "actual_valid_from": "2026-10-01T12:00:00+00:00",
+          "expected_source_event_ids": [
+            "atomic-fixed-7"
+          ],
+          "expected_valid_from": null,
+          "key": "tool-7",
+          "matched": true,
+          "matched_item_id": "0a6d6437-2078-5676-b996-b4ec8e956031",
+          "source_attribution_passed": true,
+          "temporal_passed": null
+        }
+      ],
+      "extracted": [
+        {
+          "account_id": "synthetic-owner-a",
+          "body": "PyTorch",
+          "item_id": "0a6d6437-2078-5676-b996-b4ec8e956031",
+          "kind": "claim",
+          "matched_expected_key": "tool-7",
+          "memory_kind": "semantic",
+          "source_event_ids": [
+            "atomic-fixed-7"
+          ],
+          "status": "confirmed",
+          "title": "PyTorch",
+          "valid_from": "2026-10-01T12:00:00+00:00",
+          "valid_to": null
+        }
+      ],
+      "matched_projection_count": 1,
+      "predicted_count": 1,
+      "queries": [
+        {
+          "query_id": "own-7",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [
+            "tool-7"
+          ],
+          "relevant_keys": [
+            "tool-7"
+          ]
+        },
+        {
+          "query_id": "other-7",
+          "recall_at_10": 1.0,
+          "recall_at_5": 1.0,
+          "recalled_keys": [],
+          "relevant_keys": []
+        }
+      ],
+      "scenario": "exact_fact"
+    }
+  ],
+  "dataset_version": "synthetic-atomic-proper-fixed-r3",
+  "failed_cases": [],
+  "metrics": {
+    "candidate_leakage": 0.0,
+    "comfort_recall_at_5": 0.0,
+    "contradiction_rate": 0.0,
+    "cross_account_leakage": 0.0,
+    "cross_session_recall_at_5": 0.0,
+    "extraction_precision": 1.0,
+    "extraction_recall": 1.0,
+    "input_tokens": 0,
+    "latency_p50_ms": 3.5142089473083615,
+    "latency_p95_ms": 4.519208974670619,
+    "ndcg_at_10": 1.0,
+    "output_tokens": 0,
+    "paraphrase_followup_recall_at_5": 0.0,
+    "recall_at_10": 1.0,
+    "recall_at_5": 1.0,
+    "source_attribution_accuracy": 1.0,
+    "temporal_accuracy": 0.0,
+    "token_cost": 0
+  },
+  "scenario_coverage": [
+    "exact_fact"
+  ]
+}

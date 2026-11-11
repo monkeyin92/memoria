@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 
+import pytest
 from services.archive.domain import EvidenceEvent
 from services.archive.memory_domain import ExtractedClaim, MemoryExtraction
 from services.archive.memory_evaluation import (
@@ -39,10 +40,18 @@ class AtomicToolExtractor:
         )
 
 
-async def test_unseen_english_atomic_claims(postgres_database, owner_sql):
+@pytest.mark.parametrize(
+    "dataset_name, count",
+    [
+        ("memory_eval_en_proper_unseen_v1.json", 4),
+        ("memory_eval_atomic_fixed_r3.json", 8),
+        ("memory_eval_atomic_unseen_r3.json", 8),
+    ],
+)
+async def test_unseen_english_atomic_claims(postgres_database, owner_sql, dataset_name, count):
     owner_sql(f'GRANT CREATE ON DATABASE "{postgres_database.name}" TO memoria_app')
     dataset = load_memory_evaluation_dataset(
-        Path(__file__).parents[1] / "evaluation" / "memory_eval_en_proper_unseen_v1.json"
+        Path(__file__).parents[1] / "evaluation" / dataset_name
     )
     adapter = CatalogMemoryEvaluationAdapter(
         postgres_database.role_dsn("memoria_app"),
@@ -54,8 +63,10 @@ async def test_unseen_english_atomic_claims(postgres_database, owner_sql):
     payload = json.loads(report_json(report))
     destination = os.environ.get("MEMORIA_ATOMIC_EVAL_REPORT")
     if destination:
-        Path(destination).write_text(json.dumps(payload, ensure_ascii=False, indent=2))
-    assert report.case_count == 4
+        Path(destination + "." + dataset_name).write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2)
+        )
+    assert report.case_count == count
     assert report.metrics.cross_account_leakage == 0
     assert report.metrics.candidate_leakage == 0
     assert report.metrics.extraction_recall == 1
