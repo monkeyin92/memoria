@@ -8,6 +8,7 @@ mascot expression read the same per-turn value.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Final, Literal, cast
 
@@ -19,6 +20,13 @@ ASSISTANT_EMOTIONS: Final[tuple[AssistantEmotion, ...]] = (
     "caring",
     "curious",
 )
+
+_BARE_TAG = re.compile(r"\[(?:neutral|happy|caring|curious)\]", re.IGNORECASE)
+
+
+def strip_bare_emotion_tags(text: str) -> str:
+    return _BARE_TAG.sub("", text)
+
 
 _TAG_PREFIX = "[emotion:"
 _TAG_PREFIX_LOWER = _TAG_PREFIX.lower()
@@ -58,7 +66,23 @@ class AssistantEmotionFilter:
     _resolved: bool = False
     _drop_until_close: bool = False
 
+    _bare_pending: str = ""
+
     def feed(self, token: str) -> str | None:
+        text = self._bare_pending + token
+        self._bare_pending = ""
+        opening = text.rfind("[")
+        if opening >= 0 and "]" not in text[opening:]:
+            suffix = text[opening:].lower()
+            if any(f"[{emotion}]".startswith(suffix) for emotion in ASSISTANT_EMOTIONS):
+                self._bare_pending = text[opening:]
+                text = text[:opening]
+        for match in _BARE_TAG.finditer(text):
+            if self.emotion is None:
+                self.emotion = cast(AssistantEmotion, match.group()[1:-1].lower())
+        return self._feed_prefixed_tag(strip_bare_emotion_tags(text))
+
+    def _feed_prefixed_tag(self, token: str) -> str | None:
         if self._resolved:
             if self._drop_until_close:
                 end = token.find("]")
@@ -102,6 +126,8 @@ class AssistantEmotionFilter:
 
     def flush(self) -> str:
         """Release pending text, or drop an incomplete reserved tag."""
+        self._buffer += self._bare_pending
+        self._bare_pending = ""
         if self._resolved:
             if self._drop_until_close:
                 self._buffer = ""
