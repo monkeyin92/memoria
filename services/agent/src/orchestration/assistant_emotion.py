@@ -126,12 +126,11 @@ class AssistantEmotionFilter:
 
     def flush(self) -> str:
         """Release pending text, or drop an incomplete reserved tag."""
-        self._buffer += self._bare_pending
+        pending = self._bare_pending
         self._bare_pending = ""
         if self._resolved:
-            if self._drop_until_close:
-                self._buffer = ""
-            return ""
+            return pending
+        self._buffer += pending
         self._resolved = True
         stripped = self._buffer.lstrip()
         if not stripped:

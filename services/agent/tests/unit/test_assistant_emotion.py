@@ -247,3 +247,9 @@ def test_bare_tags_across_every_stream_split(text):
             + filter_.flush()
         )
         assert output == strip_bare_emotion_tags(text)
+
+
+def test_incomplete_non_control_bracket_text_survives_flush():
+    from services.agent.src.orchestration.assistant_emotion import AssistantEmotionFilter
+    filter_ = AssistantEmotionFilter()
+    assert (filter_.feed("正文[ca") or "") + filter_.flush() == "正文[ca"
