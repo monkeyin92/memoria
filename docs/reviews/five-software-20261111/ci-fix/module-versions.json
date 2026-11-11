@@ -1,0 +1,33 @@
+{
+	"Path": "golang.org/x/net",
+	"Version": "v0.62.0",
+	"Time": "2026-10-27T19:00:16Z",
+	"Indirect": true,
+	"Dir": "/Users/monkeyin/go/pkg/mod/golang.org/x/net@v0.62.0",
+	"GoMod": "/Users/monkeyin/go/pkg/mod/cache/download/golang.org/x/net/@v/v0.62.0.mod",
+	"GoVersion": "1.26.0",
+	"Sum": "h1:18ELalfM5+XNRwzM2nYqXsZQ9ByS1uhj2O/U7+5jqRY=",
+	"GoModSum": "h1:WgDCOTH8iwtB66T4/GfI94AHo/hhdb7Hah9NDseQfiI="
+}
+{
+	"Path": "golang.org/x/sys",
+	"Version": "v0.49.0",
+	"Time": "2026-10-06T18:35:47Z",
+	"Indirect": true,
+	"Dir": "/Users/monkeyin/go/pkg/mod/golang.org/x/sys@v0.49.0",
+	"GoMod": "/Users/monkeyin/go/pkg/mod/cache/download/golang.org/x/sys/@v/v0.49.0.mod",
+	"GoVersion": "1.26.0",
+	"Sum": "h1:XbzkgYJHdqh/8m2Uu0W/dQv8nktxx4BFHp1M0gROTXA=",
+	"GoModSum": "h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og="
+}
+{
+	"Path": "golang.org/x/text",
+	"Version": "v0.43.0",
+	"Time": "2026-10-09T15:18:32Z",
+	"Indirect": true,
+	"Dir": "/Users/monkeyin/go/pkg/mod/golang.org/x/text@v0.43.0",
+	"GoMod": "/Users/monkeyin/go/pkg/mod/cache/download/golang.org/x/text/@v/v0.43.0.mod",
+	"GoVersion": "1.26.0",
+	"Sum": "h1:1QivrlhwAsnMOcqgOdl9my7s9OyZl8O5/UGUTJVXoWc=",
+	"GoModSum": "h1:hbSIYA/amXcRXTFSZqh8tWHEoqRvvbKPJ2uz/KU+a+s="
+}

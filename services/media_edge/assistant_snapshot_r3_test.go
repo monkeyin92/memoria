@@ -36,7 +36,7 @@ func TestAssistantR3HTTPFixture(t *testing.T) {
 		return conn
 	}
 	connection := connect(18)
-	defer func() { connection.Close() }()
+	defer func() { _ = connection.Close() }()
 	server := NewServer(JWTVerifier{}, 4)
 	server.DeviceWSS = env.server
 	server.InternalControlToken = "r3-local-internal-token-32-characters"
@@ -55,7 +55,7 @@ func TestAssistantR3HTTPFixture(t *testing.T) {
 		env.server.ForwardCoreEventForSession(request, &mediav1.CoreToMedia{Event: &mediav1.CoreToMedia_Client{Client: &client}})
 	})
 	mux.HandleFunc("/fixture/disconnect", func(w http.ResponseWriter, r *http.Request) {
-		connection.Close()
+		_ = connection.Close()
 		waitReleased(t, env, "r3 disconnect")
 	})
 	mux.HandleFunc("/fixture/reconnect", func(w http.ResponseWriter, r *http.Request) { connection = connect(19) })

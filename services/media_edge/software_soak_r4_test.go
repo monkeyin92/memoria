@@ -25,7 +25,7 @@ func TestSoftwareR4RealBridgePreflight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer bridge.Close()
+	defer func() { _ = bridge.Close() }()
 	transcripts := make(chan string, 8)
 	env := newDeviceTestEnv(t, func(server *DeviceWSServer) {
 		server.RuntimeFactory = func(request OpenSessionRequest, session *Session, sender DownlinkSender) (*VoiceCoreMediaRuntime, error) {
@@ -83,7 +83,7 @@ func TestSoftwareR4RealBridgePreflight(t *testing.T) {
 	for {
 		response, err := http.Get(os.Getenv("MEMORIA_R4_CONTROL_URL") + "/v1/devices/dev_test_01/session-state")
 		if err == nil {
-			response.Body.Close()
+			_ = response.Body.Close()
 			if response.StatusCode != 401 {
 				t.Fatalf("unauthenticated Control status %d", response.StatusCode)
 			}
@@ -148,7 +148,7 @@ func TestSoftwareR4RealBridgePreflight(t *testing.T) {
 				t.Fatal(err)
 			}
 			body, _ := io.ReadAll(response.Body)
-			response.Body.Close()
+			_ = response.Body.Close()
 			t.Logf("Control response epoch=%d code=%d body=%s", epoch, response.StatusCode, body)
 			var state struct {
 				Status string `json:"status"`

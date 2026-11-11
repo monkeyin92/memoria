@@ -82,7 +82,7 @@ func TestSoftwareR5Window(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer bridge.Close()
+	defer func() { _ = bridge.Close() }()
 	var mu sync.Mutex
 	observed := map[string]*r5Observation{}
 	transcripts := make(chan *mediav1.TranscriptEvent, 1024)
@@ -152,7 +152,7 @@ func TestSoftwareR5Window(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		response.Body.Close()
+		_ = response.Body.Close()
 		return response.StatusCode == 401
 	})
 	requestID := 0
@@ -173,7 +173,7 @@ func TestSoftwareR5Window(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		result, e := io.ReadAll(response.Body)
 		if e != nil {
 			t.Fatal(e)

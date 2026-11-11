@@ -51,7 +51,7 @@ func TestAssistantSnapshotRejectsOldStreamSequenceAndGeneration(t *testing.T) {
 func TestAssistantSnapshotThroughAuthenticatedHTTP(t *testing.T) {
 	env := newDeviceTestEnv(t, nil)
 	connection, _ := connectAt(t, env, 18)
-	defer connection.Close()
+	defer func() { _ = connection.Close() }()
 	server := NewServer(JWTVerifier{}, 4)
 	server.DeviceWSS = env.server
 	server.InternalControlToken = "software-window-local-control-token"
@@ -75,7 +75,7 @@ func TestAssistantSnapshotThroughAuthenticatedHTTP(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !authorized {
-			response.Body.Close()
+			_ = response.Body.Close()
 			if response.StatusCode != 401 {
 				t.Fatal(response.StatusCode)
 			}
@@ -83,18 +83,18 @@ func TestAssistantSnapshotThroughAuthenticatedHTTP(t *testing.T) {
 		}
 		var status DeviceRuntimeStatus
 		err = json.NewDecoder(response.Body).Decode(&status)
-		response.Body.Close()
+		_ = response.Body.Close()
 		if err != nil || response.StatusCode != 200 || status.AssistantState == nil || status.AssistantState.Phase != "speaking" {
 			t.Fatalf("snapshot %+v, err %v", status, err)
 		}
 	}
-	connection.Close()
+	_ = connection.Close()
 	waitReleased(t, env, "snapshot disconnect")
 	if env.server.RuntimeStatus("dev_1").AssistantState != nil {
 		t.Fatal("disconnected snapshot retained")
 	}
 	replacement, _ := connectAt(t, env, 19)
-	defer replacement.Close()
+	defer func() { _ = replacement.Close() }()
 	if env.server.RuntimeStatus("dev_1").AssistantState != nil {
 		t.Fatal("replacement inherited old phase")
 	}

@@ -44,6 +44,8 @@ node_modules/
 
 # Logs / local
 *.log
+# Preserve only this delivery's committed acceptance log receipts.
+!docs/reviews/five-software-20261111/**/*.log
 .cache/
 .npm-cache/
 .playwright-mcp/

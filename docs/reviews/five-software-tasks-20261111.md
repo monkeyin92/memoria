@@ -14,7 +14,7 @@ Base `23f75b4d7eb05f587ca7c44a27273e5a2a9a0d55`. Worktree `/Users/monkeyin/.t3/w
 
 ## PR、整合验证与清理归档
 
-软件交付由 [PR #591](https://github.com/monkeyin92/memoria/pull/591) 合入 `main`；实际合并状态、head 与 CI 以该 PR 为准。用户已明确授权创建、合并、删除本次分支和 worktree，并回写现有 Notion 卡片。此授权不包含生产部署或设备操作。
+交付入口为 [PR #591](https://github.com/monkeyin92/memoria/pull/591)，状态以 GitHub 为准；本轮未执行推送或合并。用户已明确授权创建、合并、删除本次分支和 worktree，并回写现有 Notion 卡片。此授权不包含生产部署或设备操作。
 
 合入最新 `origin/main` 的 `f2d15786` 后，整合业务候选为 `7c33ce5817c341c1ef5a2abec9bd89647afc38cf`，无冲突。主 Agent 对 main 新增的八个 Agent 提示词及回复套件、公共回复安全套件和防诱导筛查执行 `.venv/bin/python -m pytest -o addopts='' -q`，617 项通过、零跳过；Ruff、strict mypy（593 文件）与 33 项原模块预算通过。900 秒收据仍归属于 `2c4d4e61`，未对 main 新增的提示词与回复安全改动重复长稳，也不据此声明真实模型生成质量通过。整合版本的独立复核结果记录在 PR。
 
@@ -352,3 +352,15 @@ Ruff、593 文件 strict mypy、33 项原模块预算、Go race 和 mediaruntime
 原始日志、完整 scanner JSON、逐样本资源和最终二进制只留在 ignored `outputs/five-software-r6/`、`outputs/five-software-r6-preflight/` 和 `outputs/five-software-r6-900-final/`。新 clone 只有摘要、配置、hash、精确命令和必要摘录，不含大体积原始数据。公开发布、生产、设备、真实模型与新的正式跨厂商复审均未执行，主 Agent 负责 fresh Review。
 
 Model the Domain 将读取、旋转和终态清理分到各自的域路径。Boundary Discipline 只允许明确撤回状态触发降级，保留 actor/binding/fence 拒绝。Fix Root Causes 修复过度使用读取权限的调用点，Prove It Works 要求真实 PG 和三进程故障证据。Benchmark Checklist 将本次资源数据限定为一次共享主机观测。
+
+## PR #591 定向 CI 修复（2026-11-12）
+
+基线 `0f0bffba0b62ac64553d85bfdcca22f4c6d15691`；本轮仅在原隔离 worktree 写入，route: self（Implementation 子 Agent，未递归委派）。三个原 CI job 日志已保留于 `/tmp/pr591-ci-fix/`，原始日志不覆盖。python-gates 原 833 项为 832 passed / 1 failed；gitignore 单项现场复现失败后，仅白名单 `docs/reviews/five-software-20261111/**/*.log`，重跑 1 passed，全仓其他日志继续忽略。
+
+四个 Go 测试文件按既有 `_ = Close()` 清理惯例显式接收返回值，未改断言、业务逻辑或跳过条件。原 CI 报告九项 errcheck；本机完整 lint 又实际发现四项同文件同类关闭错误，一并处理，共十三处。官方校验的 golangci-lint v2.12.2 在 Go 1.27.3 上 panic（工具由 Go 1.26 构建）；保留失败日志，改用项目 Go 1.26.10 后完整 lint 通过，0 issues。Go 1.27.3 race/build 通过；最终改动在 Go 1.26.10 上重新执行 race（所有默认 package 通过）及 mediaruntime build，均 exit 0。opt-in 长稳、真实私有权威 PG/生命周期联合矩阵本轮未重跑；原测试与断言均保留。
+
+只定向将 x/net v0.60.0 升至 v0.62.0；其 go.mod 必需 x/sys v0.49.0、x/text v0.43.0，三者最低 Go 1.26.0，兼容项目 1.26.10，项目 Go 声明未变。go.sum 仅增加这三版本校验。未修改 Python 依赖、workflow、Dockerfile、扫描门槛或 ignore。
+
+实际执行 `docker build -f infra/Dockerfile.media-edge -t memoria-media-edge:pr591-ci-fix .` 通过（本机 Linux arm64 镜像，非 CI amd64 复刻）。官方 SHA-256 校验的 Trivy v0.76.2 对该镜像执行与 CI 相同 HIGH/CRITICAL、ignore-unfixed 门槛，exit 0，OS 与 Go binary 各零项，CVE-2026-78661 未再报告。镜像 ID、精确命令和原始文件 hash 见 [verification.json](five-software-20261111/ci-fix/verification.json)。当前 module 的 govulncheck 仍报告本机 Go 1.27.3 标准库 GO-2026-6859（修复于 1.27.4），未发现其他依赖漏洞。历史整仓 Trivy 81 advisory FAIL 收据保持不变，本轮未重扫整仓，不能用目标镜像通过覆盖它。
+
+原始扫描 JSON、构建与失败日志存 `/tmp/pr591-ci-fix/`；小型结果提交在 [ci-fix](five-software-20261111/ci-fix/verification.json)。只删除本轮镜像标签/镜像和临时下载工具、二进制，未创建测试容器，未清理共享构建缓存。原始日志及官方 checksum 保留。GitHub CI 与独立跨厂商复审未执行，需主 Agent 推送后继续门禁；未执行生产、设备、Notion、PR 评论或合并。
