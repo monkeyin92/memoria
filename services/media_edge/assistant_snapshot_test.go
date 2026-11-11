@@ -32,6 +32,20 @@ func TestAssistantSnapshotRejectsOldStreamSequenceAndGeneration(t *testing.T) {
 	if c.assistantSnapshot.Sequence != 2 {
 		t.Fatal("old stream replaced state")
 	}
+	event.Identity.StreamEpoch = 3
+	event.Identity.SessionId = "wrong-session"
+	c.observeAssistant(event)
+	if c.assistantSnapshot.Sequence != 2 {
+		t.Fatal("wrong session replaced state")
+	}
+	event.Identity.SessionId = "session"
+	for _, payload := range []string{`{bad`, `{"payload":{"phase":"speaking"}}`, `{"payload":{"phase":"unknown"},"session_epoch":1}`} {
+		event.JsonPayload = []byte(payload)
+		c.observeAssistant(event)
+		if c.assistantSnapshot.Sequence != 2 {
+			t.Fatal("invalid envelope replaced state")
+		}
+	}
 }
 
 func TestAssistantSnapshotThroughAuthenticatedHTTP(t *testing.T) {

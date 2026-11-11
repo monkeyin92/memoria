@@ -1,0 +1,57 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_equivalent_projections_leave_distinct_claims_and_sources _________
+
+archive = <services.archive.postgres_archive.PostgresLifeArchive object at 0x10c115310>
+make_catalog = <function make_catalog.<locals>.make at 0x10c209080>
+
+    async def test_equivalent_projections_leave_distinct_claims_and_sources(archive, make_catalog):
+        for i, text in enumerate(("Qdrant", "Qdrant PostgreSQL", "Qdrant Obsidian")):
+            await _record(archive, event_id=f"equiv-{i}", text=text, minute=i, explicit_memory=True)
+        catalog = await make_catalog(extractor=ProjectionExtractor())
+        report = await catalog.compile_pending()
+        assert report.compiled_events == 3
+        result = await catalog.search(
+            MemorySearchQuery(
+                account_id="account-memory",
+                speaker_class="owner",
+                text="Qdrant",
+                include_candidates=True,
+                limit=20,
+                distinct_facts=True,
+            )
+        )
+        raw = await catalog.search(
+            MemorySearchQuery(
+                account_id="account-memory",
+                speaker_class="owner",
+                text="Qdrant",
+                include_candidates=True,
+                limit=20,
+            )
+        )
+        assert len(raw.items) == 10
+        if destination := os.environ.get("MEMORIA_R3_DEDUP_REPORT"):
+            Path(destination).write_text(
+                json.dumps(
+                    {
+                        "extractor": ProjectionExtractor.version,
+                        "embedding": "none",
+                        "raw_count": len(raw.items),
+                        "distinct_count": len(result.items),
+                        "sources": 3,
+                        "raw_unique_source_ratio": 3 / len(raw.items),
+                        "distinct_unique_source_ratio": 3 / len(result.items),
+                    },
+                    indent=2,
+                )
+            )
+>       assert len(result.items) == 7
+E       AssertionError: assert 10 == 7
+E        +  where 10 = len((MemorySearchItem(item_id='6d7501fe-f098-5986-8e08-10607adda3f7', kind='claim', title='Qdrant Obsidian', snippet='Qdra...10, 0, tzinfo=datetime.timezone.utc), stability=0.9, salience=0.5, sensitivity='personal', conflict_state='none'), ...))
+E        +    where (MemorySearchItem(item_id='6d7501fe-f098-5986-8e08-10607adda3f7', kind='claim', title='Qdrant Obsidian', snippet='Qdra...10, 0, tzinfo=datetime.timezone.utc), stability=0.9, salience=0.5, sensitivity='personal', conflict_state='none'), ...) = MemorySearchResult(items=(MemorySearchItem(item_id='6d7501fe-f098-5986-8e08-10607adda3f7', kind='claim', title='Qdrant...9, 10, 0, tzinfo=datetime.timezone.utc), stability=0.5, salience=0.55, sensitivity='personal', conflict_state='none'))).items
+
+services/archive/tests/test_projection_equivalence_r3.py:86: AssertionError
+=========================== short test summary info ============================
+FAILED services/archive/tests/test_projection_equivalence_r3.py::test_equivalent_projections_leave_distinct_claims_and_sources
+1 failed in 0.84s

@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 from services.control_api.app.assistant_snapshot import project_assistant_snapshot
 from services.control_api.app.security import AuthenticatedUser, require_authenticated_user
@@ -11,6 +12,8 @@ def test_freshness_and_connection_fences():
     snapshot = {
         "session_id": "session",
         "stream_epoch": 2,
+        "sequence": 1,
+        "fence": {"session_epoch": 1, "generation_id": 1, "turn_id": 1, "tool_epoch": 0},
         "phase": "thinking_silent",
         "observed_at": now.isoformat(),
     }
@@ -47,3 +50,33 @@ async def test_read_endpoint_protects_device_owner(tmp_path):
             user_id="other", session_id="s", jti="j"
         )
         assert (await client.get("/v1/devices/dev_test_01/session-state")).status_code in (403, 404)
+
+
+@pytest.mark.parametrize("invalid", ["naive", "future", "phase", "fence", "sequence", "json"])
+def test_invalid_runtime_snapshot_is_never_online(invalid):
+    now = datetime.now(UTC)
+    snapshot = {
+        "session_id": "session",
+        "stream_epoch": 2,
+        "sequence": 1,
+        "fence": {"session_epoch": 1, "generation_id": 1, "turn_id": 1, "tool_epoch": 0},
+        "phase": "speaking",
+        "observed_at": now.isoformat(),
+    }
+    if invalid == "naive":
+        snapshot["observed_at"] = now.replace(tzinfo=None).isoformat()
+    if invalid == "future":
+        snapshot["observed_at"] = (now + timedelta(seconds=1)).isoformat()
+    if invalid == "phase":
+        snapshot["phase"] = "made_up"
+    if invalid == "fence":
+        snapshot.pop("fence")
+    if invalid == "sequence":
+        snapshot["sequence"] = 0
+    runtime = {
+        "connected": True,
+        "session_id": "session",
+        "stream_epoch": 2,
+        "assistant_state": snapshot if invalid != "json" else "{bad",
+    }
+    assert project_assistant_snapshot(runtime, now=now)["status"] == "unknown"

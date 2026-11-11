@@ -35,12 +35,32 @@ def project_assistant_snapshot(
     snapshot = runtime.get("assistant_state")
     if runtime.get("connected") is not True or not isinstance(snapshot, dict):
         return result
+    if not isinstance(runtime.get("session_id"), str) or not runtime["session_id"]:
+        return result
     if snapshot.get("session_id") != runtime.get("session_id") or snapshot.get(
         "stream_epoch"
     ) != runtime.get("stream_epoch"):
         return result
+    fence = snapshot.get("fence")
+    if not isinstance(fence, dict) or any(
+        type(fence.get(key)) is not int or fence[key] < minimum
+        for key, minimum in (
+            ("session_epoch", 1),
+            ("generation_id", 0),
+            ("turn_id", 0),
+            ("tool_epoch", 0),
+        )
+    ):
+        return result
+    if any(
+        type(snapshot.get(key)) is not int or snapshot[key] < 1
+        for key in ("stream_epoch", "sequence")
+    ):
+        return result
     try:
         observed = datetime.fromisoformat(str(snapshot["observed_at"]).replace("Z", "+00:00"))
+        if observed.tzinfo is None or observed.utcoffset() is None:
+            return result
         age = (now.astimezone(UTC) - observed).total_seconds()
         phase = AssistantPhase(snapshot["phase"])
     except (KeyError, TypeError, ValueError):

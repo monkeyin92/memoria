@@ -28,7 +28,7 @@ func (c *DeviceConnection) observeAssistant(client *mediav1.ClientEvent) {
 		} `json:"payload"`
 		SessionEpoch uint64 `json:"session_epoch"`
 	}
-	if json.Unmarshal(client.GetJsonPayload(), &envelope) != nil {
+	if json.Unmarshal(client.GetJsonPayload(), &envelope) != nil || envelope.SessionEpoch == 0 {
 		return
 	}
 	switch envelope.Payload.Phase {
@@ -38,10 +38,12 @@ func (c *DeviceConnection) observeAssistant(client *mediav1.ClientEvent) {
 	}
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
-	if c.assistantSnapshot != nil && client.GetSequence() <= c.assistantSnapshot.Sequence {
+	if c.assistantSnapshot != nil && (client.GetSequence() <= c.assistantSnapshot.Sequence ||
+		envelope.SessionEpoch < c.assistantSnapshot.Fence.SessionEpoch ||
+		client.GetGenerationId() < c.assistantSnapshot.Fence.GenerationID) {
 		return
 	}
-	if client.GetGenerationId() < c.currentFence.GenerationID {
+	if envelope.SessionEpoch < c.currentFence.SessionEpoch || client.GetGenerationId() < c.currentFence.GenerationID {
 		return
 	}
 	c.assistantSnapshot = &AssistantSnapshot{Phase: envelope.Payload.Phase, State: envelope.Payload.State, Sequence: client.GetSequence(), SessionID: c.sessionID, StreamEpoch: uint64(c.epoch), Fence: deviceFence{TurnID: client.GetTurnId(), GenerationID: client.GetGenerationId(), ToolEpoch: client.GetToolEpoch(), SessionEpoch: envelope.SessionEpoch}, ObservedAt: time.Now().UTC()}

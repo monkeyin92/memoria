@@ -1,0 +1,4 @@
+.......................................................                  [100%]Task was destroyed but it is pending!
+task: <Task pending name='interaction-delegation-start' coro=<ReplyDelegationMixin._start_committed_delegation() running at /Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/agent/src/reply_delegation.py:166> wait_for=<Future pending cb=[Task.task_wakeup()]> cb=[DuplexRuntime._spawn.<locals>._done() at /Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/agent/src/duplex_runtime.py:704]>
+
+55 passed in 32.39s
