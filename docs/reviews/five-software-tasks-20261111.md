@@ -6,7 +6,7 @@ S2 生命周期回归已在 `ac3eeab6` 修复，新的跨厂商复审待主 Agen
 
 `current()` 和实际私有 action authority 继续 fail-closed。撤回同意后，仍有效的控制会话可以安全降级和重新签发；显式切人、剩余 chat/tutor 决策及失败启动清理恢复工作。新测试检查真实 HTTP payload、签名和 PG epoch、能力、状态。21 项新 PG+ASGI 回归、11 项收据控制、原有综合选择 801 项均通过，必需 PG 矩阵零跳过。这些计数互有包含，不相加。[R6 验证](five-software-20261111/r6/verification.json)记录精确命令。
 
-主 Agent 的 `7f339217` S3 修复保持不变。其 63 项测试属于上述 801 项，正向 fixture 仍为 40/40。只读重评原 bundle 得到 16/40 次、0/8 例通过，原 SHA-256 未变。相对历史 19/40、1/8，U5#2、U5#5、U8#5 新增“缺少必要引导”失败，详见[独立保存的变化](five-software-20261111/r6/recorded-bundle-deltas.json)。原 PM 判断、三句和每例 5/5 门槛未改，这三个筛查变化交主 Agent 复核。
+主 Agent 复核了 `7f339217` 产生的三个新增失败。U5#2、U5#5、U8#5 都包含“不过我是 AI”；其中“不”属于转折词，未否定身份声明。新增两个身份正控制和一个转折后的否定导向负控制，修复前为 2 failed、8 passed，修复后筛查器 66 项测试全通过，正向 fixture 仍为 40/40。[新保存的旧包重评](five-software-20261111/r6/recorded-bundle-after-concessive-fix.json)恢复为 19/40 次、1/8 例，整体仍失败。原 bundle SHA、PM 判断、三句和每例 5/5 门槛不变。R6 的历史 16/40 收据保持原样，不再作为当前判定。
 
 干净候选 `2c4d4e61163b3804debd0bc75f2b85af03822e9a` 完成 45 秒故障预检和新的 900.007511 秒三进程窗口，[R6 summary](five-software-20261111/r6/summary.json)的 16 项谓词全通过。安全扫描仍 **FAIL**。桥 RSS 增长未归因，不证明泄漏或容量。新的独立复审、真实模型、生产和设备边界仍未验收，原产品任务复选项继续保持未完成。未执行 push、PR、merge、部署、生产 SSH、设备、外部通知或付费模型调用。
 
@@ -19,7 +19,7 @@ Read the actual callers and persisted shape. Reproduce before changing behavior.
 | Task | Implemented and verified increment | Missing from the requested completion predicate |
 | --- | --- | --- |
 | P0-04 | R6 区分私有读取与旧 profile 生命周期权威。21 项新 PG+ASGI 回归覆盖撤回后的降级、切人、决策、终态清理及错误 actor/device/binding/fence、过期和关闭状态；原矩阵继续通过。 | 新候选跨厂商复审待主 Agent 执行。Retention 本身仍不可过期，原自然到期控制测试 runtime private-recall consent。 |
-| P2-06 | 原 continuity、tutor 和 recap 软件控制继续通过。保留 7f339217 的 S3 修复，63 项筛查测试和 40/40 正向 fixture 通过。旧 bundle 当前实测 16/40、0/8。 | 原模型 bundle 仍失败，三个筛查判定变化待主 Agent 复核；原 PM 判断未改。自动模型续接和真实措辞质量仍未验证，独立复审待执行。 |
+| P2-06 | 原 continuity、tutor 和 recap 软件控制继续通过。S3 否定及转折控制通过，筛查器 66 项测试、40/40 正向 fixture 通过。旧 bundle 当前实测 19/40、1/8，原 PM 判断未改。 | 原模型 bundle 仍失败。自动模型续接和真实措辞质量仍未验证，独立复审待执行。 |
 | P1-06 | R3 implements exact equivalent-projection selection in the real Planner recall caller, preserves independent claims and multi-source episodes, expands atomic fixed/unseen PG fixtures, and exercises real planner HTTP, budgets, subject switching and private consent revocation with ReplyPlan cache consumption. | Software predicate complete subject to parent cross-provider review. Real Qwen/production embedding, deployed gateway and device recall remain unverified. |
 | P1-05 | R3 combines real authenticated Go runtime HTTP with real Bearer Control HTTP, SQLite activation/auth and PG Session authority. Rejects stale generation with higher sequence, missing fences and stale private profiles; proves expiry, revocation, unbind, manager takeover, disconnect and reconnect. | Software device read predicate complete subject to parent cross-provider review. Session-only non-device API is outside scope. Client UI, firmware and device acceptance remain unverified. |
 | P2-04 | R6 在干净候选 2c4d4e61 上完成 900.007511 秒三进程窗口，180 个周期和 181 次资源采样。签名权威、真实音频、TCP、SIGKILL、慢写与旧 PCM、排空和清理通过。 | 新候选独立复审待执行。当前实际重扫门禁 FAIL。RSS 增长未归因，不宣称无泄漏、容量、部署回滚或设备 terminate-no-reconnect 通过。 |

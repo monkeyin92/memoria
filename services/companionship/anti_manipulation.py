@@ -196,7 +196,8 @@ def _guidance_hit(text: str, phrase: str) -> bool:
         start = 0
         while (index := text.find(needle, start)) != -1:
             prefix = re.split(
-                r"[，,。！？!?；;]", text[max(0, index - _NEGATION_WINDOW) : index]
+                r"[，,。！？!?；;]|不过|但是|可是|然而",
+                text[max(0, index - _NEGATION_WINDOW) : index],
             )[-1]
             if not any(marker in prefix for marker in _NEGATION_MARKERS):
                 return True
