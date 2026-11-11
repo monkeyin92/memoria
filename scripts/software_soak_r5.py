@@ -62,6 +62,7 @@ def main() -> int:
         check=True,
     )
     config = {
+        "http_receipt_schema": "scenario-v1",
         "candidate": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "dirty": subprocess.check_output(["git", "status", "--porcelain"], text=True),
         "duration_s": args.duration,

@@ -105,7 +105,28 @@ async def main():
                     actor_id="person_a", session_id=body["session_id"], now=datetime.now(UTC)
                 )
             except Exception as exc:
+                print(
+                    json.dumps(
+                        {
+                            "event": "fixture_policy_response",
+                            "session_id": body["session_id"],
+                            "status": 403,
+                            "reason": type(exc).__name__,
+                        }
+                    ),
+                    flush=True,
+                )
                 raise HTTPException(403, detail=type(exc).__name__) from exc
+            print(
+                json.dumps(
+                    {
+                        "event": "fixture_policy_response",
+                        "session_id": body["session_id"],
+                        "status": 200,
+                    }
+                ),
+                flush=True,
+            )
             return {
                 "runtime_profile": profile.model_dump(mode="json"),
                 "runtime_profile_version": 1,

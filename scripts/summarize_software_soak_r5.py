@@ -5,11 +5,94 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from collections import Counter
 from pathlib import Path
 
+_STATE_PATH = "/v1/devices/dev_test_01/session-state"
+_POLICY_PATH = "/fixture/session-policy"
+_ACCESS = re.compile(r'"(GET|POST) ([^ ]+) HTTP/[0-9.]+" (\d{3})')
 
-def summarize(directory: Path) -> dict:
+
+def _expected_driver_response(row: dict) -> bool:
+    if row["status"] == 200:
+        return True
+    if row["status"] == 401:
+        return (
+            row.get("method") == "GET"
+            and row.get("path") == _STATE_PATH
+            and row.get("request") is None
+        )
+    return (
+        row["status"] == 403
+        and row.get("method") == "POST"
+        and row.get("path") == _POLICY_PATH
+        and row.get("request") == {"session_id": "missing-session"}
+    )
+
+
+def _server_http_receipt(
+    server: str, bridge: str, http: list[dict], *, scenario_receipts: bool
+) -> dict:
+    rows = []
+    malformed = []
+    for line in server.splitlines():
+        if " HTTP/" not in line:
+            continue
+        match = _ACCESS.search(line)
+        if match is None:
+            malformed.append(line)
+        else:
+            method, path, status = match.groups()
+            rows.append((method, path, int(status)))
+    counts = Counter(status for _, _, status in rows)
+    unexpected = [
+        row
+        for row in rows
+        if row[2] != 200 and row not in {("GET", _STATE_PATH, 401), ("POST", _POLICY_PATH, 403)}
+    ]
+    # Each verified provider admission follows one asserted missing-session probe.
+    provider_probes = len(re.findall(r"verified profile session=", bridge))
+    driver_probes = sum(row["status"] == 403 and _expected_driver_response(row) for row in http)
+    missing_bearer = sum(row["status"] == 401 and _expected_driver_response(row) for row in http)
+    expected_denials = {401: missing_bearer + 1, 403: provider_probes + driver_probes}
+    scenario_rows = [
+        json.loads(line)
+        for line in server.splitlines()
+        if line.startswith('{"event": "fixture_policy_response"')
+    ]
+    scenarios_valid = not scenario_receipts or (
+        len(scenario_rows) == sum(path == _POLICY_PATH for _, path, _ in rows)
+        and sum(row["status"] == 403 for row in scenario_rows) == counts[403]
+        and all(
+            row["status"] == 200
+            or (
+                row["status"] == 403
+                and row.get("session_id") == "missing-session"
+                and row.get("reason") == "PersistentSessionNotFound"
+            )
+            for row in scenario_rows
+        )
+    )
+    return {
+        "status_counts": {str(key): value for key, value in counts.items()},
+        "expected_denials": {str(key): value for key, value in expected_denials.items()},
+        "denial_evidence": "one readiness GET without Bearer; driver exact missing-session request; provider admission after asserted missing-session fetch",
+        "unexpected": unexpected,
+        "malformed": malformed,
+        "scenario_receipts": len(scenario_rows),
+        "scenarios_valid": scenarios_valid,
+        "pass": scenarios_valid
+        and bool(rows)
+        and not unexpected
+        and not malformed
+        and provider_probes > 0
+        and missing_bearer == driver_probes == 1
+        and all(counts[status] == count for status, count in expected_denials.items()),
+    }
+
+
+def summarize(directory: Path, *, output: Path | None = None) -> dict:
     config = json.loads((directory / "config.json").read_text())
     result = json.loads((directory / "result.json").read_text())
     events = []
@@ -61,11 +144,20 @@ def summarize(directory: Path) -> dict:
     ]
     http = [row for row in events if row["event"] == "http_request"]
     slow = next((row for row in faults if row["event"] == "fault_slow_bounded_old_rejected"), {})
+    server_http = _server_http_receipt(
+        (directory / "control.log").read_text(),
+        bridge,
+        http,
+        scenario_receipts=config.get("http_receipt_schema") == "scenario-v1",
+    )
     predicates = {
+        "clean_candidate": config.get("dirty") == "",
+        "control_positive_each_cycle": bool(cycles) and counts["control_positive"] >= len(cycles),
+        "control_server_http_validated": server_http["pass"],
         "sample_coverage": len(samples) >= config["duration_s"] // 5
         and samples[-1]["elapsed_s"] - samples[0]["elapsed_s"] >= config["duration_s"] - 5,
         "http_no_unexpected_status": bool(http)
-        and all(row["status"] in {200, 401, 403} for row in http),
+        and all(_expected_driver_response(row) for row in http),
         "bridge_authority_clients_drained": "fixture authority clients after registry drain remaining=0"
         in bridge,
         "completed_duration": result.get("window_completed") is True
@@ -99,7 +191,9 @@ def summarize(directory: Path) -> dict:
     }
     latencies = sorted(row["latency_ms"] for row in cycles)
     summary = {
+        "schema": "software-soak-r6",
         "candidate": config["candidate"],
+        "server_http": server_http,
         "edge_binary_sha256": config["edge_binary_sha256"],
         "start": result.get("start"),
         "end": result.get("end"),
@@ -110,7 +204,7 @@ def summarize(directory: Path) -> dict:
         "resources": resources,
         "faults": faults,
         "http_status_counts": dict(Counter(str(row["status"]) for row in http)),
-        "http_unexpected_non_success": sum(row["status"] not in {200, 401, 403} for row in http),
+        "http_unexpected_non_success": sum(not _expected_driver_response(row) for row in http),
         "cycle_latency_ms": {
             "count": len(latencies),
             "p50": latencies[len(latencies) // 2],
@@ -139,15 +233,18 @@ def summarize(directory: Path) -> dict:
             )
         },
     }
-    (directory / "summary.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False))
+    (output or directory / "summary.json").write_text(
+        json.dumps(summary, indent=2, ensure_ascii=False)
+    )
     return summary
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    result = summarize(args.directory)
+    result = summarize(args.directory, output=args.output)
     print(
         json.dumps(
             {
