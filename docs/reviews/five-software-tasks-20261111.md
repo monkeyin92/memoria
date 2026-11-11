@@ -2,13 +2,13 @@
 
 ## 2026-11-12 独立审查后的软件修复
 
-S2 生命周期回归已在 `ac3eeab6` 修复，新的跨厂商复审待主 Agent 执行。[原 Gemini 审查](five-software-final-review-20261112.md)对 `b2ffc904` 的 **Changes requested** 结论、SHA 和原始发现保持不变。本轮先提交真实 PG+ASGI 复现，再修复并验证，没有自行宣告正式 Review 通过。
+约定的五项软件实现与本地验证已完成。Gemini 对最终业务候选 `4dc67723121aa1715ce59ce713d1861312ff17e2` 的[独立复审](five-software-rereview-20261112.md)通过，新增发现为 0 S1 / 0 S2 / 0 S3。审查方实际执行 183 项核心测试，零跳过，Go race、Ruff、strict mypy 与 33 项原模块预算检查通过，并从原始日志重汇总两轮窗口收据。安全扫描仍失败，本结论不构成发布放行。[原审查](five-software-final-review-20261112.md)对 `b2ffc904` 的原始结论和复现记录保留为修复依据。
 
 `current()` 和实际私有 action authority 继续 fail-closed。撤回同意后，仍有效的控制会话可以安全降级和重新签发；显式切人、剩余 chat/tutor 决策及失败启动清理恢复工作。新测试检查真实 HTTP payload、签名和 PG epoch、能力、状态。21 项新 PG+ASGI 回归、11 项收据控制、原有综合选择 801 项均通过，必需 PG 矩阵零跳过。这些计数互有包含，不相加。[R6 验证](five-software-20261111/r6/verification.json)记录精确命令。
 
 主 Agent 复核了 `7f339217` 产生的三个新增失败。U5#2、U5#5、U8#5 都包含“不过我是 AI”；其中“不”属于转折词，未否定身份声明。新增两个身份正控制和一个转折后的否定导向负控制，修复前为 2 failed、8 passed，修复后筛查器 66 项测试全通过，正向 fixture 仍为 40/40。[新保存的旧包重评](five-software-20261111/r6/recorded-bundle-after-concessive-fix.json)恢复为 19/40 次、1/8 例，整体仍失败。原 bundle SHA、PM 判断、三句和每例 5/5 门槛不变。R6 的历史 16/40 收据保持原样，不再作为当前判定。
 
-干净候选 `2c4d4e61163b3804debd0bc75f2b85af03822e9a` 完成 45 秒故障预检和新的 900.007511 秒三进程窗口，[R6 summary](five-software-20261111/r6/summary.json)的 16 项谓词全通过。安全扫描仍 **FAIL**。桥 RSS 增长未归因，不证明泄漏或容量。新的独立复审、真实模型、生产和设备边界仍未验收，原产品任务复选项继续保持未完成。未执行 push、PR、merge、部署、生产 SSH、设备、外部通知或付费模型调用。
+干净候选 `2c4d4e61163b3804debd0bc75f2b85af03822e9a` 完成 45 秒故障预检和新的 900.007511 秒三进程窗口，[R6 summary](five-software-20261111/r6/summary.json)的 16 项谓词全通过。后续业务改动仅涉及离线筛查器，不影响该运行链路，未将窗口改记为最终候选整树哈希相同。安全扫描仍 **FAIL**。桥 RSS 增长未归因，不证明泄漏或容量。真实模型、生产和设备边界仍未验收，原产品任务复选项继续保持未完成。未执行 push、PR、merge、部署、生产 SSH、设备、外部通知或付费模型调用。
 
 Base `23f75b4d7eb05f587ca7c44a27273e5a2a9a0d55`. Worktree `/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9`, branch `t3/five-software-tasks-acceptance`. The original checkout and its unrelated uncommitted files were not used as implementation input.
 
@@ -18,11 +18,11 @@ Read the actual callers and persisted shape. Reproduce before changing behavior.
 
 | Task | Implemented and verified increment | Missing from the requested completion predicate |
 | --- | --- | --- |
-| P0-04 | R6 区分私有读取与旧 profile 生命周期权威。21 项新 PG+ASGI 回归覆盖撤回后的降级、切人、决策、终态清理及错误 actor/device/binding/fence、过期和关闭状态；原矩阵继续通过。 | 新候选跨厂商复审待主 Agent 执行。Retention 本身仍不可过期，原自然到期控制测试 runtime private-recall consent。 |
-| P2-06 | 原 continuity、tutor 和 recap 软件控制继续通过。S3 否定及转折控制通过，筛查器 66 项测试、40/40 正向 fixture 通过。旧 bundle 当前实测 19/40、1/8，原 PM 判断未改。 | 原模型 bundle 仍失败。自动模型续接和真实措辞质量仍未验证，独立复审待执行。 |
-| P1-06 | R3 implements exact equivalent-projection selection in the real Planner recall caller, preserves independent claims and multi-source episodes, expands atomic fixed/unseen PG fixtures, and exercises real planner HTTP, budgets, subject switching and private consent revocation with ReplyPlan cache consumption. | Software predicate complete subject to parent cross-provider review. Real Qwen/production embedding, deployed gateway and device recall remain unverified. |
-| P1-05 | R3 combines real authenticated Go runtime HTTP with real Bearer Control HTTP, SQLite activation/auth and PG Session authority. Rejects stale generation with higher sequence, missing fences and stale private profiles; proves expiry, revocation, unbind, manager takeover, disconnect and reconnect. | Software device read predicate complete subject to parent cross-provider review. Session-only non-device API is outside scope. Client UI, firmware and device acceptance remain unverified. |
-| P2-04 | R6 在干净候选 2c4d4e61 上完成 900.007511 秒三进程窗口，180 个周期和 181 次资源采样。签名权威、真实音频、TCP、SIGKILL、慢写与旧 PCM、排空和清理通过。 | 新候选独立复审待执行。当前实际重扫门禁 FAIL。RSS 增长未归因，不宣称无泄漏、容量、部署回滚或设备 terminate-no-reconnect 通过。 |
+| P0-04 | R6 区分私有读取与旧 profile 生命周期权威。21 项新 PG+ASGI 回归覆盖撤回后的降级、切人、决策、终态清理及错误 actor/device/binding/fence、过期和关闭状态；原矩阵和独立复审通过。 | Retention 本身仍不可过期，原自然到期控制测试 runtime private-recall consent。线上、监护消息实际投递与设备链未验。 |
+| P2-06 | 原 continuity、tutor 和 recap 软件控制继续通过。S3 否定及转折控制通过，筛查器 66 项测试、40/40 正向 fixture 和独立复审通过。旧 bundle 当前实测 19/40、1/8，原 PM 判断未改。 | 原模型 bundle 仍失败。自动模型续接和真实措辞质量仍未验证。 |
+| P1-06 | Planner 实际调用在 LIMIT 前选择等价事实，保留独立 claim 和多源 episode。原子固定及未见集、真实 PG/HTTP、限额、超时、切人、撤销和缓存消费控制通过，独立复审通过。 | 真实 Qwen/生产 embedding、线上网关与设备召回未验。 |
+| P1-05 | 真实 Go 内部 HTTP、Bearer Control HTTP、SQLite 身份与 PG 会话权威链通过。旧代大序号、缺失 fence、过期、撤销、解绑、换管理员、断连和重连控制通过，独立复审通过。 | 非设备 session-only API 不在范围。客户端 UI、固件与设备验收未执行。 |
+| P2-04 | R6 在干净候选 2c4d4e61 上完成 900.007511 秒三进程窗口，180 个周期和 181 次资源采样。签名权威、真实音频、TCP、SIGKILL、慢写与旧 PCM、排空和清理通过。收据负控制及独立复审通过。 | 当前实际重扫门禁 FAIL。RSS 增长未归因，不宣称无泄漏、容量、部署回滚或设备 terminate-no-reconnect 通过。 |
 
 ## Commits
 
