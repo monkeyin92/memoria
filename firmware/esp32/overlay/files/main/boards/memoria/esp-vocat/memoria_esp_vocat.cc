@@ -575,6 +575,7 @@ private:
     std::atomic<int64_t> imu_mute_until_ms_{0};
     memoria::OfflineMenuMachine offline_menu_;
     std::atomic<std::uint32_t> offline_play_generation_{0};
+    std::atomic<std::uint32_t> offline_prompt_generation_{0};
     // Pacing between local clips, and the story grace before OnStoryFinished.
     static constexpr std::uint32_t kOfflineClipGapMs = 1600;
     std::atomic<bool> offline_story_cancel_{false};
@@ -602,15 +603,7 @@ private:
         }
     }
 
-    // BMI270 has no haptic motor. A body tap is a short accel impulse, not
-    // conversation start, screen tap rumble, or a sustained shake. The pulse
-    // classifier and what a pat or a tap decides in each state live in
-    // memoria_pat.h so host tests cover the exact firmware policy.
-    //
-    // Product 2026-10-21: while the companion speaks, a pat or a screen tap
-    // stops the current sentence and the device goes back to listening, so the
-    // child can talk at once. A crisis script plays to its end and ignores
-    // both.
+    // Body pats may stop an interruptible reply. Screen taps only wake standby.
     static constexpr int64_t kTouchImuMuteMs = 400;
     static constexpr char kScreenTapTag[] = "MemoriaScreenTap";
     bool imu_logged_ratio_ = false;
@@ -823,7 +816,8 @@ private:
     memoria::TapDevice TapDeviceFor(DeviceState state) const {
         // Local clips can play while Application remains idle.
         const auto offline_mode = offline_menu_.mode();
-        if (!Application::GetInstance().GetAudioService().IsPlaybackIdle() ||
+        if (offline_prompt_generation_.load(std::memory_order_relaxed) != 0 ||
+            !Application::GetInstance().GetAudioService().IsPlaybackIdle() ||
             offline_mode == memoria::OfflineMode::kPlaying ||
             offline_mode == memoria::OfflineMode::kPendingOnlineAfterStory) {
             return memoria::TapDevice::kBusy;
@@ -860,6 +854,7 @@ private:
         if (out.stop_story) {
             offline_story_cancel_.store(true, std::memory_order_relaxed);
             offline_play_generation_.fetch_add(1, std::memory_order_relaxed);
+            offline_prompt_generation_.store(0, std::memory_order_relaxed);
         }
         if (out.clip_count == 0 && !out.start_story && !out.enter_deep_sleep) {
             return;
@@ -867,7 +862,15 @@ private:
         const std::uint32_t generation =
             offline_play_generation_.fetch_add(1, std::memory_order_relaxed) + 1;
         offline_story_cancel_.store(false, std::memory_order_relaxed);
+        offline_prompt_generation_.store(generation, std::memory_order_relaxed);
         Application::GetInstance().Schedule([this, out, generation]() {
+            struct PromptLease {
+                std::atomic<std::uint32_t>& owner;
+                std::uint32_t generation;
+                ~PromptLease() {
+                    owner.compare_exchange_strong(generation, 0, std::memory_order_relaxed);
+                }
+            } lease{offline_prompt_generation_, generation};
             if (generation != offline_play_generation_.load(std::memory_order_relaxed)) {
                 return;
             }
@@ -1048,12 +1051,18 @@ private:
                 return;
             }
             case memoria::TapWakeAction::kStartConversation:
+                offline_menu_.OnNetworkSample(now_ms, NetworkLooksOnline(), true);
+                SyncOfflineMenuScreen();
                 power.SetPhase(memoria::PowerPhase::kWaking);
                 wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
                 PlayLocalAssetClip("wo_zai_ne.ogg");
                 app.WakeWordInvoke(wake_source);
                 return;
             case memoria::TapWakeAction::kResumeListening:
+                offline_menu_.OnNetworkSample(now_ms, NetworkLooksOnline(), true);
+                SyncOfflineMenuScreen();
+                power.SetPhase(memoria::PowerPhase::kConversing);
+                wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
                 PlayLocalAssetClip("wo_zai_ne.ogg");
                 memoria::SendListeningResume();
                 return;
@@ -1114,6 +1123,7 @@ private:
                  static_cast<int>(state));
         offline_story_cancel_.store(true, std::memory_order_relaxed);
         offline_play_generation_.fetch_add(1, std::memory_order_relaxed);
+        offline_prompt_generation_.store(0, std::memory_order_relaxed);
         if (state == kDeviceStateListening) {
             app.StopListening();
         } else if (state == kDeviceStateSpeaking) {

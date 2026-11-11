@@ -197,8 +197,31 @@ rg -Fq 'memoria::PatIgnoreReasonName(result.kind, result.ignore)' \
     die "every rejected pat/rumble candidate must name its reason from the shared table"
 rg -Fq 'memoria::PatGestureDecisionFor(facts)' "$board_dir/memoria_esp_vocat.cc" || \
     die "a body pat while speaking must stop the reply through the shared policy"
-rg -Fq 'memoria::ScreenTapDecisionFor(' "$board_dir/memoria_esp_vocat.cc" || \
-    die "a screen tap while speaking must stop the reply through the shared policy"
+"$python_bin" - "$board_dir/memoria_esp_vocat.cc" <<'PYTHON'
+import pathlib
+import sys
+source = pathlib.Path(sys.argv[1]).read_text()
+def method(signature):
+    start = source.index(signature)
+    pos = source.index("{", start) + 1
+    depth = 1
+    end = pos
+    while depth:
+        depth += (source[end] == "{") - (source[end] == "}")
+        end += 1
+    return source[pos:end - 1]
+entry = method("void HandleScreenTouchRelease(")
+classifier = method("memoria::TapDevice TapDeviceFor(")
+dispatch = method("void DispatchTapWakeAction(")
+assert "memoria::TapWakeActionFor(" in entry, "screen touch must use standby wake policy"
+assert "DispatchTapWakeAction(" in entry, "screen touch must dispatch the wake decision"
+assert "IsPlaybackIdle()" in classifier and "offline_prompt_generation_" in classifier
+assert "return memoria::TapDevice::kBusy" in classifier, "local audio must block screen wake"
+assert "kResumeListening" in dispatch and "SendListeningResume()" in dispatch
+assert "kStartConversation" in dispatch and "WakeWordInvoke(wake_source)" in dispatch
+for forbidden in ("ScreenTapDecisionFor", "AbortSpeaking", "OnScreenTapGesture", "ToggleChatState", "NotifyLocalFlush"):
+    assert forbidden not in entry + dispatch, "screen touch must not stop playback: " + forbidden
+PYTHON
 rg -Fq 'memoria::PlaybackStopRegistry::GetInstance().allowed()' "$board_dir/memoria_esp_vocat.cc" || \
     die "a local gesture stop must honour the generation's interruptible flag"
 [[ -f "$MEMORIA_UPSTREAM_DIR/main/memoria/memoria_playback_stop.h" ]] || \

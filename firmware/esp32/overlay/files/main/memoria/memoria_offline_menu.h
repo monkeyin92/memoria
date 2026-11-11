@@ -145,6 +145,11 @@ public:
         if (was_online && !online) {
             return OnNetworkDown(now_ms, in_conversation);
         }
+        if (online && in_conversation && mode_ != OfflineMode::kPlaying &&
+            mode_ != OfflineMode::kPendingOnlineAfterStory) {
+            Reset();
+            return {};
+        }
         if (!was_online && online) {
             return OnNetworkUp();
         }

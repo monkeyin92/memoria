@@ -1,17 +1,4 @@
-"""Host-side checks for what a body pat or a screen tap does in every device state.
-
-2026-10-21 15:24 field test on the #350 firmware: while the companion spoke,
-patting the robot and tapping the screen neither stopped playback nor changed
-the companion, and the serial log carried no pat or touch line at all. The old
-board code logged only an accepted pat, animated only in idle and had no
-speaking path, so the log could not tell "no impulse" from "event ignored".
-
-`memoria_pat.h` now owns that policy next to the pulse classifier: the
-classifier's reaction to a high delta, what a confirmed pat decides in each
-device state, and what a screen tap release decides. All of it is host-tested
-here without ESP-IDF.
-"""
-
+"""Host checks for body pat decisions and playback protection."""
 from __future__ import annotations
 
 import pathlib
@@ -96,13 +83,6 @@ int main() {
         {"speaking_shake", mem_3, false, false},
         {"speaking_crisis_pat", mem_3, true, true},
         {"idle_crisis_pat", mem_0, true, true},
-        {"idle_tap", mem_0, false, false},
-        {"speaking_tap", mem_3, false, false},
-        {"listening_tap", mem_2, false, false},
-        {"speaking_tap_crisis", mem_3, true, false},
-        {"starting_tap", mem_1, false, false},
-        {"idle_tap_offline", mem_0, false, false},
-        {"idle_crisis_tap", mem_0, true, false},
     };
     for (const auto& scene : scenes) {
         memoria::PatGestureFacts facts;
@@ -110,14 +90,7 @@ int main() {
         facts.speaking_crisis_playback = scene.protected_playback;
         facts.is_pat = scene.pat;
         const auto decision = memoria::PatGestureDecisionFor(facts);
-        memoria::TapGestureFacts tap;
-        tap.state = scene.state;
-        tap.speaking_crisis_playback = scene.protected_playback;
-        tap.wifi_configuring = scene.state == mem_1;
-        tap.offline_wants_tap = std::strcmp(scene.name, "idle_tap_offline") == 0;
-        const auto tap_decision = memoria::ScreenTapDecisionFor(tap);
-        printf("%s pat=%s tap=%s\n", scene.name, memoria::PatGestureDecisionName(decision),
-               memoria::ScreenTapDecisionName(tap_decision));
+        printf("%s pat=%s\n", scene.name, memoria::PatGestureDecisionName(decision));
     }
     return 0;
 }
@@ -178,13 +151,13 @@ def _feed(pat_tool: pathlib.Path, samples: list[tuple[int, bool]]) -> list[str]:
     return completed.stdout.splitlines()
 
 
-def _decisions(decision_tool: pathlib.Path) -> dict[str, tuple[str, str]]:
+def _decisions(decision_tool: pathlib.Path) -> dict[str, str]:
     completed = subprocess.run([str(decision_tool)], text=True, capture_output=True, check=True)
     out = {}
     for line in completed.stdout.splitlines():
-        scene, pat, tap = line.split()
-        assert pat.startswith("pat=") and tap.startswith("tap=")
-        out[scene] = (pat[len("pat="):], tap[len("tap="):])
+        scene, pat = line.split()
+        assert pat.startswith("pat=")
+        out[scene] = pat[len("pat="):]
     return out
 
 
@@ -253,32 +226,17 @@ def test_sustained_motion_is_a_shake_not_a_pat(pat_tool: pathlib.Path) -> None:
 
 def test_pat_stops_playback_in_idle_and_speaking_only(decision_tool: pathlib.Path) -> None:
     decisions = _decisions(decision_tool)
-    # An idle tap navigates (wake / offline menu); a pat is its own gesture.
-    assert decisions["idle_pat"] == ("stop_speaking", "tap_navigation")
-    assert decisions["speaking_pat"] == ("stop_speaking", "stop_speaking")
-    assert decisions["listening_pat"] == ("none", "none")
+    assert decisions["idle_pat"] == "stop_speaking"
+    assert decisions["speaking_pat"] == "stop_speaking"
+    assert decisions["listening_pat"] == "none"
     # A shake is a dizzy companion, never a stop.
-    assert decisions["speaking_shake"] == ("none", "stop_speaking")
+    assert decisions["speaking_shake"] == "none"
 
 
 def test_crisis_playback_never_stops(decision_tool: pathlib.Path) -> None:
     decisions = _decisions(decision_tool)
-    assert decisions["speaking_crisis_pat"] == ("crisis_keep_playback", "crisis_keep_playback")
-    assert decisions["speaking_tap_crisis"] == ("none", "crisis_keep_playback")
-
-
-def test_screen_tap_stops_playback_and_keeps_idle_wake(decision_tool: pathlib.Path) -> None:
-    decisions = _decisions(decision_tool)
-    assert decisions["speaking_tap"] == ("none", "stop_speaking")
-    assert decisions["listening_tap"] == ("none", "none")
-    assert decisions["starting_tap"] == ("none", "tap_navigation")
-
-
-def test_offline_menu_tap_keeps_its_navigation(decision_tool: pathlib.Path) -> None:
-    decisions = _decisions(decision_tool)
-    assert decisions["idle_tap"] == ("none", "tap_navigation")
-    assert decisions["idle_tap_offline"] == ("none", "tap_navigation")
-    assert decisions["idle_crisis_tap"] == ("none", "tap_navigation")
+    assert decisions["speaking_crisis_pat"] == "crisis_keep_playback"
+    assert decisions["idle_crisis_pat"] == "none"
 
 
 def test_protected_playback_flag_is_decoded_from_the_wire() -> None:

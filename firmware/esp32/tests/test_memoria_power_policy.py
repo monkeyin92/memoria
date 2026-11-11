@@ -276,12 +276,14 @@ struct FakeMenu {
     memoria::OfflineMode mode() const { return mode_; }
     bool WantsTap(bool net, bool idle) { return mode_ != memoria::OfflineMode::kInactive || (!net && idle); }
     memoria::OfflineMenuOutput OnTap(unsigned, unsigned, bool, bool) { ++menus; return {}; }
+    void OnNetworkSample(unsigned, bool, bool) {}
 };
 struct Board {
     std::atomic<bool> listening_capture_closed_{false};
     std::atomic<unsigned> wifi_hold_since_ms_{0};
     static constexpr unsigned kWifiHoldNotArmed = 0;
     FakeMenu offline_menu_;
+    std::atomic<unsigned> offline_prompt_generation_{0};
     Display* display_ = nullptr;
     int64_t last_qr_refresh_us_ = 0;
     void MuteImuForTouch() {}
@@ -292,6 +294,7 @@ struct Board {
     void EnterTapDeepSleep() { ++sleeps; }
     void PlayLocalAssetClip(const char*) { ++cues; }
     void ApplyOfflineMenuOutput(const memoria::OfflineMenuOutput&) {}
+    void SyncOfflineMenuScreen() {}
 ''' + methods + r'''
 };
 int main(int argc, char** argv) {
@@ -316,14 +319,14 @@ int main(int argc, char** argv) {
 
 
 @pytest.mark.parametrize("state,online,closed,mode,quiet,expected", [
-    (1, 1, 0, 0, 0, "1 0 1 0 0 0 0"),  # Online idle starts with one cue.
-    (3, 1, 1, 0, 0, "0 1 1 0 0 0 0"),  # Closed listening resumes its session.
-    (3, 0, 1, 0, 0, "0 1 1 0 0 0 0"),
-    (1, 0, 0, 0, 0, "0 0 0 1 0 0 0"),  # Offline idle still opens its menu.
-    (0, 0, 0, 0, 0, "0 0 0 0 0 1 0"),
-    (0, 1, 0, 0, 0, "0 0 0 0 0 0 0"),
-    (1, 1, 0, 0, 1, "0 0 0 0 0 0 1"),  # Quiet idle keeps night behavior.
-    (1, 0, 0, 0, 1, "0 0 0 0 0 0 1"),
+    pytest.param(1, 1, 0, 0, 0, "1 0 1 0 0 0 0", id="online_idle_starts_with_cue"),
+    pytest.param(3, 1, 1, 0, 0, "0 1 1 0 0 0 0", id="online_closed_listening_resumes"),
+    pytest.param(3, 0, 1, 0, 0, "0 1 1 0 0 0 0", id="offline_closed_listening_resumes"),
+    pytest.param(1, 0, 0, 0, 0, "0 0 0 1 0 0 0", id="offline_idle_opens_menu"),
+    pytest.param(0, 0, 0, 0, 0, "0 0 0 0 0 1 0", id="offline_starting_wifi_config"),
+    pytest.param(0, 1, 0, 0, 0, "0 0 0 0 0 0 0", id="online_starting_ignored"),
+    pytest.param(1, 1, 0, 0, 1, "0 0 0 0 0 0 1", id="quiet_online_idle_soothing"),
+    pytest.param(1, 0, 0, 0, 1, "0 0 0 0 0 0 1", id="quiet_offline_idle_soothing"),
 ])
 def test_touch_entry_dispatches_standby_actions(touch_tool, state, online, closed, mode, quiet, expected):
     result = subprocess.run([str(touch_tool), *map(str, (state, online, closed, mode, quiet))],

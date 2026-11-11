@@ -3088,6 +3088,7 @@ void MemoriaProtocol::MarkTransportAlive(uint32_t websocket_attempt) {
 
 void MemoriaProtocol::ResetSessionState() {
     std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+    NotifyListeningClosed(false);
     if (!terminal_session_close_ && protocol_version_ == kProtocolVersionV2 &&
         !session_id_.empty()) {
         resumable_session_id_ = session_id_;

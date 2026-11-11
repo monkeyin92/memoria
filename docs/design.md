@@ -46,7 +46,11 @@ Illegal combinations made unrepresentable:
 
 Screen touch uses `TapWakeActionFor(TapFacts)`. Outside quiet hours, online idle starts a conversation with the local wake cue. Listening resumes only when its capture is closed and playback is idle. Starting while online, busy states, queued or active playback, and offline story playback ignore touch without a gesture stop, cue, or menu action. The capture-closed flag is read only in Listening. Quiet idle keeps the night-soothing path. Offline idle and startup retain menu and Wi-Fi provisioning behavior.
 
-Host tests compile the board touch entry, state classifier, and action dispatcher with fake peripherals. These checks do not verify physical touch, audible silence, or deep-sleep wake on hardware.
+Resuming closed capture clears the old WifiHold timer and restores `kConversing`, because Application can remain in Listening throughout standby. Quiet hours retain the existing closed-listening resume behavior. Session reset clears the capture-closed notification before the next session.
+
+An offline prompt batch owns a generation token from scheduling until completion or cancellation. Clicks stay busy between clips even when the audio queue is empty. Old callbacks release only their own token; queued audio keeps the tail busy after release. Online conversation start or resume silently consumes the offline recovery transition, so the next network sample cannot insert recovery prompts into the conversation. Recovery while idle still announces the restored network.
+
+Host tests compile the board touch entry, state classifier, and action dispatcher with fake peripherals. Lifecycle tests execute the production reset and board methods with the real offline menu state machine. These checks do not verify physical touch, audible silence, or deep-sleep wake on hardware.
 
 ### Temporary keep-awake test profile
 
