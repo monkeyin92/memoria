@@ -44,7 +44,7 @@
     "pyproject.toml",
     "services/session_runtime/action_authority.py",
     "services/companionship/anti_manipulation.py",
-    "docs/reviews/five-software-final-review-20261112.md",
+    "docs/acceptance.md#five-software-20261112",
     "docs/reviews/five-software-20261111/r5"
   ],
   "unchanged_paths_verified": true,

@@ -4220,3 +4220,41 @@ Changes (compliance confirmed 2026-11-11): see `docs/product.md` "儿童回复�
 
 Not verified: any of this on the robot. The R02 device run of the same day did not start (USB serial gave no output). Still open: the victim-support fixed script wording (needs re-synthesised, re-approved audio) and a U9 case for the bare-secret answer in the anti-manipulation set.
 
+
+
+<a id="five-software-20261112"></a>
+## 五项软件交付与 PR 591，2026-11-12
+
+[PR #591](https://github.com/monkeyin92/memoria/pull/591) 尚未完成合并。当前基线为 `35248264fd9bcfe38c187ce869fc8b07e282af6d`。本轮只修复合并所需的测试、CI 环境和文档引用，未推送、合并、回写 Notion、部署或操作设备。
+
+### 当前软件边界
+
+| 项目 | 已有软件证据 | 未验边界 |
+| --- | --- | --- |
+| P0-04 | R6 区分私有读取与旧 profile 生命周期权威。21 项新 PG+ASGI 回归覆盖撤回后的降级、切人、决策、终态清理及错误 actor/device/binding/fence、过期和关闭状态；原矩阵和独立复审通过。 | Retention 本身仍不可过期，原自然到期控制测试 runtime private-recall consent。线上、监护消息实际投递与设备链未验。 |
+| P2-06 | 原 continuity、tutor 和 recap 软件控制继续通过。S3 否定及转折控制通过，筛查器 66 项测试、40/40 正向 fixture 和独立复审通过。旧 bundle 当前实测 19/40、1/8，原 PM 判断未改。 | 原模型 bundle 仍失败。自动模型续接和真实措辞质量仍未验证。 |
+| P1-06 | Planner 实际调用在 LIMIT 前选择等价事实，保留独立 claim 和多源 episode。原子固定及未见集、真实 PG/HTTP、限额、超时、切人、撤销和缓存消费控制通过，独立复审通过。 | 真实 Qwen/生产 embedding、线上网关与设备召回未验。 |
+| P1-05 | 真实 Go 内部 HTTP、Bearer Control HTTP、SQLite 身份与 PG 会话权威链通过。旧代大序号、缺失 fence、过期、撤销、解绑、换管理员、断连和重连控制通过，独立复审通过。 | 非设备 session-only API 不在范围。客户端 UI、固件与设备验收未执行。 |
+| P2-04 | R6 在干净候选 2c4d4e61 上完成 900.007511 秒三进程窗口，180 个周期和 181 次资源采样。签名权威、真实音频、TCP、SIGKILL、慢写与旧 PCM、排空和清理通过。收据负控制及独立复审通过。 | 目标镜像 Trivy 为 0；历史整仓扫描及本机 govulncheck 仍 FAIL。RSS 增长未归因，不宣称无泄漏、容量、部署回滚或设备 terminate-no-reconnect 通过。 |
+
+### 修复、审查与计数
+
+原 Gemini 对 `b2ffc904` 提出 S2：撤回私密召回同意后，控制会话降级、切人、profile 刷新与 fail_session 清理被旧 profile TTL 阻塞。修复保持私密读取 fail-closed，只允许有效控制会话安全降级重签；真实 HTTP、签名和 PG epoch 回归覆盖。原 S3 为否定导向及保密同意回复漏检，后续又修复“不过我是 AI”的转折误判，保留身份正控和转折后否定导向负控。
+
+主协调者提供的最新 Gemini `35248264` 复审结论为 PASS + NOTES，实际 PG 核心回归 183 passed、0 skipped；扩大回归 591 passed、2 Darwin skipped。这是此前复审的证据，不是本次重新运行结果。main PR #590 整合后的 617 项主回归与这些选择存在重叠，不相加。最新 CI python-shards(1) 为 6 failed、6587 passed、1 skipped，python 汇总失败是依赖传播。本次局部验证不能据此宣称整片通过。
+
+本轮复现的根因分别为 Linux Go race 编译缺少 Opus 开发包、身份 HTTP 断言仍期待旧台词，以及三个独立报告违反文档聚合约束。它们不是上一轮已修复的 x/net 漏洞根因。Go 编译失败现在必须在 pytest 断言中显示真实 go.log，仍保留 -race 和非零退出失败判据。python-shards 显式读取 services/media_edge/go.mod 安装项目 Go 1.26.10，并安装 libopus-dev 与 pkg-config；没有证据表明 Go 版本是本次 Opus 编译错误的直接原因。身份前三条保持精确字符串比较，第四条喜欢回应保持原契约。
+
+### 长稳与安全边界
+
+900.007511 秒窗口严格归属于 `2c4d4e61163b3804debd0bc75f2b85af03822e9a`，16 项谓词和 11 项负控通过，180 周期、181 次采样。它不属于当前整树，未对合入 main 的提示词、回复安全及后续 Go/CI 改动重跑长稳。桥 RSS 增长未归因，不证明无泄漏或容量。
+
+[目标镜像收据](reviews/five-software-20261111/ci-fix/verification.json)记录本次 media-edge 镜像 Trivy HIGH/CRITICAL 且 ignore-unfixed 范围为 0，退出 0；不能外推整仓安全。历史整仓 Trivy 81 项仍为 FAIL，本机 govulncheck 的 GO-2026-6859 仍可达，门禁仍 FAIL。旧模型 bundle 为 19/40 次、1/8 例，仍 FAIL，不修改原 PM 判断或每例 5/5 门槛。真实模型、线上、硬件与回滚验收未完成，产品任务保持未完成。
+
+### 收据与原始归档
+
+[决策记录](reviews/five-software-20261111/decisions.tsv)、[R6 原始汇总](reviews/five-software-20261111/r6/summary.json)、[R6 验证](reviews/five-software-20261111/r6/verification.json)及[本轮验证收据](reviews/five-software-20261111/ci-followup/verification.json)为相对路径入口。JSON、TSV 及原始源码继续保留。
+
+原三个独立报告已被本节取代，完整原文保留于 Git 历史 `35248264:docs/reviews/`，并已 SHA-256 备份到主仓 ignored 目录 `/Users/monkeyin/projects/memoria/outputs/five-software-archive-20261112/pr591-followup/`，摘要见其中 report-sha256.json。此前实施日志 274 份和 CI 原始日志 26 份已由主协调者校验归档到 `/Users/monkeyin/projects/memoria/outputs/five-software-archive-20261112/`。这些本机归档不在 Git 中。
+
+本轮本机组合选择 20 passed、0 skipped；Linux 新进程完整身份套件 15 passed、0 skipped，四项 PG + Go HTTP 矩阵 4 passed、0 skipped；Ruff、593 文件 strict mypy、33 项模块预算和文档与 gitignore 两项检查通过。Linux 一次合并运行在 evolution_store.is_account_deleting 发生线程 TimeoutError，结果 1 failed、18 passed，原因未归因，失败日志和后续独立运行均保留于验证收据。未运行完整 CI shard 或对此提交重新独立审查。

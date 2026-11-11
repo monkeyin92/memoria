@@ -36,13 +36,15 @@ async def test_go_http_control_http_authority(tmp_path, postgres_runtime_with_co
     ready = tmp_path / "edge-url"
     output = (tmp_path / "go.log").open("w")
     binary = tmp_path / "edge.test"
-    subprocess.run(
+    compiled = subprocess.run(
         ["go", "test", "-c", "-race", "-o", str(binary), "."],
         cwd=Path(__file__).parents[2] / "media_edge",
         stdout=output,
         stderr=subprocess.STDOUT,
-        check=True,
+        check=False,
     )
+    output.flush()
+    assert compiled.returncode == 0, (tmp_path / "go.log").read_text()
     proc = subprocess.Popen(
         [str(binary), "-test.count=1", "-test.run=^TestAssistantR3HTTPFixture$"],
         cwd=Path(__file__).parents[2] / "media_edge",

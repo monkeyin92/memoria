@@ -376,4 +376,4 @@ uv run python -m services.companionship.anti_manipulation --dataset services/com
 
 ## 五项软件候选增量（2026-11-11）
 
-本轮候选的可复现命令、commit、失败与未验边界见 [实施报告](reviews/five-software-tasks-20261111.md)。旧包及旧报告保留原样。v2 筛查复算为 19/40 条、1/8 用例，仍未通过；不是新模型采样。四条英文原子 claim 的确定性替身经过真实 PG 编译与检索，不代表在线 Qwen 或 embedding 质量。五项完整软件完成谓词仍未全部满足，不能据此关闭设备或线上验收条目。
+本轮候选的可复现命令、commit、失败与未验边界见 [实施报告](acceptance.md#five-software-20261112)。旧包及旧报告保留原样。v2 筛查复算为 19/40 条、1/8 用例，仍未通过；不是新模型采样。四条英文原子 claim 的确定性替身经过真实 PG 编译与检索，不代表在线 Qwen 或 embedding 质量。五项完整软件完成谓词仍未全部满足，不能据此关闭设备或线上验收条目。
