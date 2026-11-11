@@ -1,0 +1,33 @@
+{
+  "candidate": "4e794afc08b3d318f477754894c3013086eea2f0",
+  "dirty": " M services/agent/src/voice_core/grpc_bridge.py\n M services/agent/src/voice_core/media_session_projection.py\n M services/agent/tests/unit/golden/media_session_barge_in.json\n M services/agent/tests/unit/golden/media_session_session_epoch_rotation.json\n?? scripts/software_soak_r5.py\n?? scripts/software_soak_r5_control.py\n?? scripts/software_soak_r5_provider.py\n?? services/media_edge/software_soak_r5_test.go\n",
+  "duration_s": 45,
+  "warmup": "Control/PG and bridge readiness before window-start",
+  "sample_interval_s": 5,
+  "traffic_interval_s": 5,
+  "fault_schedule_s": [
+    9.0,
+    18.0,
+    27.0
+  ],
+  "faults": [
+    "actual device TCP close and higher epoch reconnect",
+    "SIGKILL actual Python bridge and restart",
+    "8s unread WSS plus test socket Write delay 300ms; actual production queue and old PCM replay after stop"
+  ],
+  "positive_predicate": "actual final ASR text, Opus downlink and exact Control online speaking with matching session/stream/positive signed epoch",
+  "reject_predicate": "Bearer absent 401; nonexistent session 403; retired signed profile rejected; old PCM after actual generation stop refused",
+  "drain_predicate": "Edge connections/leases zero each cycle; Python buffers cleared at terminal close; children reaped and owned PG removed",
+  "external_fixture": "deterministic ASR/LLM/TTS only; production registry/runtime/admission/transport/fences",
+  "edge_binary_sha256": "1603cca2377624c1e09a9679a6cbcc47a24f35c3fa0d8993a25df90e8537f60b",
+  "python_sha256": "e2605291e058fdbe3102e8185d0ac5fe0e063398de617010a6af3a42a78f05e3",
+  "host": {
+    "loadavg": [
+      2.19482421875,
+      3.31982421875,
+      3.75341796875
+    ],
+    "cpu_count": 12
+  },
+  "claim": "one local software stability observation on shared host; no leak absence, capacity or model-quality claim"
+}

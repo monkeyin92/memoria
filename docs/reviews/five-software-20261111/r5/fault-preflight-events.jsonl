@@ -1,0 +1,5 @@
+{"event":"fault_tcp_recovered","session":"session_3","stream":105}
+{"event":"bridge_old_terminal","message":{"type":"session.error","version":2,"session_id":"session_5","stream_epoch":108,"control_sequence":4,"server_monotonic_ms":20962,"code":"voice_core_unavailable","retryable":true},"session":"session_5"}
+{"event":"fault_bridge_recovered","session":"session_5_recovery","stream":109}
+{"dropped":364,"event":"fault_slow_bounded_old_rejected","max_audio_queue":10,"new_generation":2,"old_generation":1,"session":"session_7_slow","stream":113}
+{"connections":0,"cycles":9,"elapsed_s":45.002518209,"event":"window_complete","leases":0}
