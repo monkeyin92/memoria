@@ -1,0 +1,2 @@
+ts	phase	decision	why	evidence	result
+2026-11-11	P0-04	Keep signed profile immutable; cap exported private capabilities	Live retention cannot be overridden by cached capability	p0-baseline.log	Reproduced true private capability with consent denied
