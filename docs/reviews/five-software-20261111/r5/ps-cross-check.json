@@ -1,0 +1,20 @@
+[
+  {
+    "process": "control",
+    "pid": 16508,
+    "ps_exit": 0,
+    "ps": "16508  88864 /Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/.venv/bin/python"
+  },
+  {
+    "process": "bridge",
+    "pid": 16509,
+    "ps_exit": 0,
+    "ps": "16509 230928 /Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/.venv/bin/python"
+  },
+  {
+    "process": "edge",
+    "pid": 16510,
+    "ps_exit": 0,
+    "ps": "16510  63120 /Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/outputs/five-software-r5-900-final/edge.test"
+  }
+]

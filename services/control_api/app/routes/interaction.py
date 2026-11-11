@@ -655,7 +655,7 @@ async def session_policy(
             detail={"code": "session_runtime_profile_unavailable"},
         )
     history_eligible = (
-        interaction_mode != "unknown_safe"
+        interaction_mode != "unknown_safe" and policy.get("memory_retention") != "ephemeral_only"
         and "memory_recall_private" in profile_capabilities
     )
     policy.update(
@@ -1088,7 +1088,7 @@ async def _companion_items(
                 occurred_after=recall.occurred_after,
                 occurred_before=recall.occurred_before,
                 include_candidates=False,
-                limit=8,
+                limit=8, distinct_facts=True,
             )
         )
 

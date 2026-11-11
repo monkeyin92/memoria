@@ -417,7 +417,8 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 ### [ ] P2-04 协议故障注入与长稳观测
 
 - 现状（`20260926-edge-flush-v1` 起上线，设备行为未验）：关闭前送达排队的 `session.error`；Opus 编解码器加锁；`services/media_edge/device_ws_fault_injection_test.go` 覆盖七种关闭路径加拒绝 hello，三轮 24 条连接后协程、连接表、租约与 Voice Core runtime 全部回收，变异验证与 `-race -count=20` 稳定。Python 侧离线进程退出与重启注入见 `services/agent/tests/unit/test_bridge_process_exit_injection.py`。
-- 待完成：预定义长稳窗口（内存、连接、延迟趋势；`scripts/offline_process_trend_sample.py` 最多三次采样，不是窗口）；govulncheck / Trivy 扫描当前候选（本机未安装工具）；设备上验证终止性拒绝不再续连。
+- 2026-11-12 本地软件收据：生命周期修复后的候选 `2c4d4e61` 在真实 Control HTTP、Python bridge、Go Edge 三进程窗口完成 900.007511 秒，保留 181 次三进程 RSS / FD / TCP 采样与 180 个已排空业务周期；TCP 重连、桥 SIGKILL / restart、慢写背压、实际旧代 PCM 拒绝均在同窗通过。最新 `35248264` 的 Gemini 复审为 PASS + NOTES；此间已包含 main 提示词与回复安全、Go 工具链和 CI 修复，未对当前整树重跑长稳。权威 profile、epoch 与生命周期修复、命令和边界见[实施报告](docs/acceptance.md#five-software-20261112)、[R6 软件汇总](docs/reviews/five-software-20261111/r6/summary.json)与[独立复审](docs/acceptance.md#five-software-20261112)。RSS 增长未归因，不构成无泄漏或容量结论。
+- 待完成：当前目标镜像 Trivy HIGH/CRITICAL 且 ignore-unfixed 范围为 0；历史整仓 Trivy 81 项和本机 govulncheck 仍 FAIL；桥 RSS 增长归因、设备上验证终止性拒绝不再续连及实际回滚验收。未执行生产发布、回滚或设备操作。
 - 完成条件：旧代无副作用，有效输出有交付或可解释终态，回滚可运行；预定义长稳窗口保留内存、连接和延迟趋势。先补测量 / 注入，不顺手改断线产品行为。
 
 ### [ ] P2-05 补齐唤醒计数，再采家庭噪声矩阵
@@ -522,3 +523,8 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 
 市场、融资、BP、产品战略和架构简化讨论已迁移至 [历史战略与融资分析](docs/strategy.md)。
 该文件不构成当前工程执行项、发布门禁或完成证据。
+
+
+### 2026-11-11 五项软件候选收据
+
+P0-04、P2-06、P1-06、P1-05、P2-04 约定的软件实现与本地验证已完成，并通过跨厂商复审，见 [实施报告](docs/acceptance.md#five-software-20261112)。各原产品条目仍有未验边界，继续保持未完成。软件筛查、确定性模型替身、R6 本地三进程长稳与漏洞扫描不替代真机、线上或真实模型验收。当前扫描门禁失败，不作发布放行。

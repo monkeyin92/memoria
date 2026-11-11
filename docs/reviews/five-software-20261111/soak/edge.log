@@ -1,0 +1,59 @@
+=== RUN   TestSoftwareSoakWindow
+2026/11/11 21:12:00 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=100 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":5.932583,"elapsed_s":0.005931917,"goroutines":5,"heap_bytes":990936,"leases":0}
+2026/11/11 21:12:05 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=101 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":7.778667,"elapsed_s":5.014485042,"goroutines":4,"heap_bytes":1094808,"leases":0}
+2026/11/11 21:12:10 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=102 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":8.19225,"elapsed_s":10.024997625,"goroutines":3,"heap_bytes":1201312,"leases":0}
+2026/11/11 21:12:15 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=103 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":8.755542,"elapsed_s":15.036108542,"goroutines":5,"heap_bytes":1291496,"leases":0}
+2026/11/11 21:12:20 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=104 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":10.066459,"elapsed_s":20.046715125,"goroutines":3,"heap_bytes":1382848,"leases":0}
+2026/11/11 21:12:25 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=105 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":3.9558750000000003,"elapsed_s":25.053142667,"goroutines":6,"heap_bytes":1469088,"leases":0}
+2026/11/11 21:12:30 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=106 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":3.7,"elapsed_s":30.059033709,"goroutines":6,"heap_bytes":1568688,"leases":0}
+2026/11/11 21:12:35 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=107 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":7.631875,"elapsed_s":35.067828375,"goroutines":4,"heap_bytes":1666072,"leases":0}
+2026/11/11 21:12:40 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=108 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":9.53725,"elapsed_s":40.079746375,"goroutines":4,"heap_bytes":1754424,"leases":0}
+2026/11/11 21:12:45 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=109 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":9.278292,"elapsed_s":45.090345834,"goroutines":4,"heap_bytes":1841552,"leases":0}
+2026/11/11 21:12:50 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=110 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":9.024291999999999,"elapsed_s":50.101730042,"goroutines":4,"heap_bytes":1926168,"leases":0}
+2026/11/11 21:12:55 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=111 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":3.0425,"elapsed_s":55.107057042,"goroutines":4,"heap_bytes":2013328,"leases":0}
+2026/11/11 21:13:00 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=112 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":8.772125,"elapsed_s":60.116490375,"goroutines":5,"heap_bytes":2097712,"leases":0}
+2026/11/11 21:13:05 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=113 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":7.125791,"elapsed_s":65.125903459,"goroutines":4,"heap_bytes":2188272,"leases":0}
+2026/11/11 21:13:10 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=114 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":3.197666,"elapsed_s":70.13135425,"goroutines":6,"heap_bytes":2278392,"leases":0}
+2026/11/11 21:13:15 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=115 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":3.909417,"elapsed_s":75.136292375,"goroutines":5,"heap_bytes":2373960,"leases":0}
+2026/11/11 21:13:20 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=116 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":5.027792,"elapsed_s":80.143190125,"goroutines":5,"heap_bytes":2470832,"leases":0}
+2026/11/11 21:13:25 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=117 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":7.862124999999999,"elapsed_s":85.152259375,"goroutines":3,"heap_bytes":2551064,"leases":0}
+2026/11/11 21:13:30 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=118 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":8.579791,"elapsed_s":90.163185417,"goroutines":6,"heap_bytes":2633400,"leases":0}
+2026/11/11 21:13:35 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=119 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":8.455833,"elapsed_s":95.172308417,"goroutines":4,"heap_bytes":2722688,"leases":0}
+2026/11/11 21:13:40 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=120 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":2.951333,"elapsed_s":100.177545792,"goroutines":4,"heap_bytes":2807576,"leases":0}
+2026/11/11 21:13:45 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=121 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":7.455875,"elapsed_s":105.187222417,"goroutines":4,"heap_bytes":2901592,"leases":0}
+2026/11/11 21:13:50 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=122 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":2.858667,"elapsed_s":110.19155975,"goroutines":4,"heap_bytes":3001376,"leases":0}
+2026/11/11 21:13:55 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=123 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":2.921542,"elapsed_s":115.196624417,"goroutines":4,"heap_bytes":3089088,"leases":0}
+2026/11/11 21:14:00 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=124 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":7.65025,"elapsed_s":120.206441875,"goroutines":4,"heap_bytes":3180256,"leases":0}
+2026/11/11 21:14:05 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=125 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":11.052583,"elapsed_s":125.219811125,"goroutines":3,"heap_bytes":1148136,"leases":0}
+2026/11/11 21:14:10 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=126 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":7.391291000000001,"elapsed_s":130.229672334,"goroutines":3,"heap_bytes":1250800,"leases":0}
+2026/11/11 21:14:15 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=127 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":8.547041,"elapsed_s":135.240671667,"goroutines":3,"heap_bytes":1353560,"leases":0}
+2026/11/11 21:14:20 WARN media edge device WSS socket error session=session_1 device=dev_1 epoch=128 phase=read close_code=1006 close_text="unexpected EOF"
+    software_soak_window_test.go:33: {"connections":0,"cycle_latency_ms":9.0965,"elapsed_s":140.252167584,"goroutines":3,"heap_bytes":1444784,"leases":0}

@@ -1,0 +1,14 @@
+assistant_snapshot_test.go:91:18: Error return value of `connection.Close` is not checked (errcheck)
+	connection.Close()
+	                ^
+software_soak_r4_test.go:151:23: Error return value of `response.Body.Close` is not checked (errcheck)
+			response.Body.Close()
+			                   ^
+software_soak_r5_test.go:155:22: Error return value of `response.Body.Close` is not checked (errcheck)
+		response.Body.Close()
+		                   ^
+software_soak_r5_test.go:176:28: Error return value of `response.Body.Close` is not checked (errcheck)
+		defer response.Body.Close()
+		                         ^
+4 issues:
+* errcheck: 4

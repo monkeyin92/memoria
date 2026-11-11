@@ -1164,29 +1164,30 @@ class MediaBridgeGrpcServer:
         turn_id: int = 0,
         generation_id: int = 0,
         tool_epoch: int = 0,
+        session_epoch: int | None = None,
         task_epoch: int = 0,
         context_version: int = 0,
     ) -> bool:
         connection = self._connections.get(session_id)
         if connection is None or connection.closed or not connection.session.accepts_input():
             return False
-        task_epoch, context_version = connection.session.observe_versions(
-            task_epoch,
-            context_version,
-        )
+        task_epoch, context_version = connection.session.observe_versions(task_epoch, context_version)
+        connection.client_sequence += 1
         current_fence = connection.session.fence
-        session_epoch = (
-            current_fence.session_epoch
-            if (turn_id, generation_id, tool_epoch)
-            == (current_fence.turn_id, current_fence.generation_id, current_fence.tool_epoch)
-            else 0
-        )
+        # Registry events have an identity epoch before the first media generation.
+        if session_epoch is None:
+            session_epoch = (
+                current_fence.session_epoch
+                if (turn_id, generation_id, tool_epoch)
+                == (current_fence.turn_id, current_fence.generation_id, current_fence.tool_epoch)
+                else 0
+            )
         return await self._enqueue(
             connection,
             media_pb2.CoreToMedia(
                 client=media_pb2.ClientEvent(
                     identity=_identity_to_proto(connection.session.identity),
-                    type=event_type,
+                    type=event_type, sequence=connection.client_sequence,
                     json_payload=json.dumps(
                         {
                             "v": 1,
@@ -1214,7 +1215,6 @@ class MediaBridgeGrpcServer:
                 )
             ),
         )
-
     async def emit_conversation_state(
         self,
         session_id: str,

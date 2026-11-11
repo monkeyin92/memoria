@@ -1080,3 +1080,37 @@ async def report_edge_session_close(
         actor_id=str(voice_session["user_id"]),
         expected_stream_epoch=body.stream_epoch,
     )
+
+
+@router.get("/{device_id}/session-state")
+async def get_device_session_state(
+    device_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> dict[str, object]:
+    from services.control_api.app.assistant_snapshot import project_assistant_snapshot
+
+    _require_capability(request, user, "device_settings_read")
+    _require_device_activation(request, account_id=user.user_id, device_id=device_id)
+    runtime = await _read_live_device_runtime_status(request, device_id=device_id)
+    now = datetime.now(UTC)
+    projected = project_assistant_snapshot(runtime, now=now)
+    if projected["status"] == "online":
+        authority = getattr(request.app.state, "session_runtime_service", None)
+        try:
+            if authority is None or runtime is None:
+                raise ValueError("session authority unavailable")
+            profile, context = await authority.current(
+                actor_id=user.user_id, session_id=str(runtime["session_id"]), now=now
+            )
+            snapshot = projected["snapshot"]
+            if (
+                profile.device_id != device_id
+                or profile.session_id != runtime["session_id"]
+                or context.session_epoch != snapshot["fence"]["session_epoch"]
+            ):
+                raise ValueError("device session authority mismatch")
+        except Exception as exc:
+            logger.warning("device session state authority unavailable %s", failure_log(exc))
+            projected = project_assistant_snapshot(None, now=now)
+    return {"device_id": device_id, **projected}

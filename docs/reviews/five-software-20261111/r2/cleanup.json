@@ -1,0 +1,7 @@
+{
+  "container": "memoria-r2-20261111",
+  "action": "docker rm -f memoria-r2-20261111",
+  "result": "removed",
+  "shared_container_touched": false,
+  "tests_use_synthetic_data": true
+}

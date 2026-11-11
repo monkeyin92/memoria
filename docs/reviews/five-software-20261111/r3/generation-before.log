@@ -1,0 +1,178 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________________ test_go_http_control_http_authority[revoked] _________________
+
+tmp_path = PosixPath('/private/var/folders/z8/pr32lh5n7w373gh8zx14gyp80000gn/T/pytest-of-monkeyin/pytest-399/test_go_http_control_http_auth0')
+postgres_runtime_with_consent = (<services.session_runtime.postgres_store.PostgresSessionRuntimeStore object at 0x115185f10>, 'postgresql://postgres:r3-local-only@127.0.0.1:55444/memoria_session_4e249dbc82')
+withdrawal = 'revoked'
+
+    @pytest.mark.parametrize("withdrawal", ["expired", "revoked", "unbound", "manager"])
+    async def test_go_http_control_http_authority(tmp_path, postgres_runtime_with_consent, withdrawal):
+        store, dsn = postgres_runtime_with_consent
+        ready = tmp_path / "edge-url"
+        output = (tmp_path / "go.log").open("w")
+        binary = tmp_path / "edge.test"
+        subprocess.run(
+            ["go", "test", "-c", "-race", "-o", str(binary), "."],
+            cwd=Path(__file__).parents[2] / "media_edge",
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            check=True,
+        )
+        proc = subprocess.Popen(
+            [str(binary), "-test.count=1", "-test.run=^TestAssistantR3HTTPFixture$"],
+            cwd=Path(__file__).parents[2] / "media_edge",
+            env={**os.environ, "MEMORIA_R3_EDGE_READY": str(ready)},
+            stdout=output,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            for _ in range(600):
+                if ready.exists() or proc.poll() is not None:
+                    break
+                await asyncio.sleep(0.1)
+            assert ready.exists(), (tmp_path / "go.log").read_text()
+            url = ready.read_text()
+            app, _ = _profile_app(tmp_path, category="adult")
+            app.dependency_overrides.clear()
+            app.state.settings = ControlSettings()
+            for user_id in ("person_a", "other"):
+                app.state.memory_store.create_auth_session(
+                    session_id=f"auth-{user_id}",
+                    user_id=user_id,
+                    refresh_hash=f"hash-{user_id}",
+                    expires_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+                    now=datetime.now(UTC).isoformat(),
+                )
+            token, _ = mint_memoria_access_token(
+                app.state.settings, user_id="person_a", session_id="auth-person_a"
+            )
+            other_token, _ = mint_memoria_access_token(
+                app.state.settings, user_id="other", session_id="auth-other"
+            )
+            del app.state.device_runtime_status_reader
+            app.state.settings.media_edge_internal_control_url = url
+            app.state.settings.media_edge_internal_control_token = (
+                "r3-local-internal-token-32-characters"
+            )
+            service = build_postgres_session_runtime_service(
+                store=store,
+                signing_key=_SIGNING_KEY,
+                profile_ttl=timedelta(seconds=3) if withdrawal == "expired" else timedelta(minutes=5),
+            )
+            app.state.session_runtime_service = service
+            now = datetime.now(UTC)
+            admin = await asyncpg.connect(dsn)
+            try:
+                await _seed_delegated_binding(
+                    admin,
+                    actor_id="person_a",
+                    subject_id="r3-other",
+                    device_id="dev_test_01",
+                    binding_id="r3-binding",
+                    declared_mode="self_use",
+                    subject_category="adult",
+                    age_band="adult",
+                )
+                await _seed_verified_device(
+                    admin, device_id="dev_test_01", binding_id="r3-binding", now=now
+                )
+                evidence, snapshot = await _seed_self_consent(
+                    admin,
+                    actor_id="person_a",
+                    device_id="dev_test_01",
+                    binding_id="r3-binding",
+                    capability="memory_recall_private",
+                    purpose="memory_recall",
+                    now=now,
+                )
+            finally:
+                await admin.close()
+            await service.start(
+                StartPersistentSessionCommand(
+                    session_id="session_1",
+                    actor_id="person_a",
+                    device_id="dev_test_01",
+                    expected_binding_version=1,
+                    idempotency_key="r3",
+                    now=datetime.now(UTC),
+                    profile_ttl=timedelta(seconds=2) if withdrawal == "expired" else None,
+                )
+            )
+            profile = await service.switch_subject(
+                SwitchPersistentSubjectCommand(
+                    session_id="session_1",
+                    actor_id="person_a",
+                    subject_id="person_a",
+                    requested_capabilities=("chat", "memory_recall_private"),
+                    now=datetime.now(UTC),
+                )
+            )
+            async with (
+                httpx.AsyncClient(base_url=url) as edge,
+                httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://control"
+                ) as client,
+            ):
+                assert (
+                    await edge.get("/v1/internal/device-runtime/status?device_id=dev_test_01")
+                ).status_code == 401
+
+                assert (await client.get("/v1/devices/dev_test_01/session-state")).status_code == 401
+                assert (
+                    await client.get(
+                        "/v1/devices/dev_test_01/session-state",
+                        headers={"Authorization": f"Bearer {other_token}"},
+                    )
+                ).status_code in (403, 404)
+                client.headers["Authorization"] = f"Bearer {token}"
+
+                async def read():
+                    response = await client.get("/v1/devices/dev_test_01/session-state")
+                    assert response.status_code == 200, response.text
+                    return response.json()
+
+                assert (await read())["status"] == "unknown"
+                event = {
+                    "identity": {"session_id": "session_1", "stream_epoch": 18},
+                    "type": "assistant_state",
+                    "sequence": 2,
+                    "generation_id": 1,
+                    "json_payload": __import__("base64")
+                    .b64encode(
+                        json.dumps(
+                            {
+                                "payload": {"phase": "speaking", "state": "listening_closed"},
+                                "session_epoch": profile.session_epoch,
+                            }
+                        ).encode()
+                    )
+                    .decode(),
+                }
+                await edge.post("/fixture/event", json=event)
+                actual = await read()
+                assert actual["status"] == "online", actual
+                assert actual["snapshot"]["sequence"] == 2
+                assert actual["snapshot"]["stream_epoch"] == 18
+                assert actual["snapshot"]["fence"]["generation_id"] == 1
+                for bad in (
+                    {"sequence": 1},
+                    {"sequence": 3, "generation_id": 0},
+                    {"identity": {"session_id": "wrong", "stream_epoch": 18}},
+                    {"identity": {"session_id": "session_1", "stream_epoch": 17}},
+                ):
+                    await edge.post("/fixture/event", json={**event, **bad})
+>                   assert (await read())["snapshot"] == actual["snapshot"]
+E                   AssertionError: assert {'fence': {'g...ence': 3, ...} == {'fence': {'g...ence': 2, ...}
+E
+E                     Omitting 4 identical items, use -vv to show
+E                     Differing items:
+E                     {'observed_at': '2026-11-11T14:04:39.451341Z'} != {'observed_at': '2026-11-11T14:04:39.290968Z'}
+E                     {'fence': {'generation_id': 0, 'session_epoch': 2, 'tool_epoch': 0, 'turn_id': 0}} != {'fence': {'generation_id': 1, 'session_epoch': 2, 'tool_epoch': 0, 'turn_id': 0}}
+E                     {'sequence': 3} != {'sequence': 2}
+E                     Use -v to get more diff
+
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/tests/test_assistant_http_r3.py:189: AssertionError
+=========================== short test summary info ============================
+FAILED services/control_api/tests/test_assistant_http_r3.py::test_go_http_control_http_authority[revoked]
+1 failed, 3 deselected in 5.41s

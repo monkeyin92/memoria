@@ -1,0 +1,14 @@
+INFO:memoria.media_bridge:media bridge Voice Core provider registry installed
+INFO:memoria.media_bridge:media bridge listening address=127.0.0.1:55380 bound_port=55380 mtls=False
+INFO:services.agent.src.voice_core.deep_denoiser:dtln output makeup gain=8.0 (18 dB)
+INFO:services.agent.src.voice_core.deep_denoiser:DTLN initialized source_commit=1de1f15a8b5b7e1c44905618ff2ef70ca8277fbc model_dir=/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/agent/models/dtln gpu=False
+INFO:services.agent.src.voice_core.two_stage_denoiser:Two-stage denoiser initialized: Stage1=disabled, Stage2=enabled
+INFO:services.agent.src.voice_core.media_session_aigc_notice:AIGC round started session=session_1 content_id=aigc-round-501b4976ce61468894adee03af460bde reason=device_wake provider=volcengine_doubao engine=seed-tts-2.0
+INFO:services.agent.src.runtime_publication:interaction_phase from=connecting to=user_speaking cause=vad_start session_id=session_1 turn_id=0 generation_id=0
+INFO:services.agent.src.runtime_publication:agent_audio_trace name=interaction_phase status=ok turn_id=None generation_id=None
+INFO:services.agent.src.voice_core.media_session_input:media vad start admitted session=session_1 stream_epoch=18 sample=0 silence_remaining_s=179.99918520799838 grace_active=False watchdog_armed=True vad_revision=1
+INFO:services.agent.src.runtime_publication:agent_audio_trace name=interaction_prefetch_started status=ok turn_id=None generation_id=None
+INFO:services.agent.src.runtime_publication:agent_audio_trace name=interaction_fast_model_warmup status=ok turn_id=None generation_id=None
+INFO:scripts.software_soak_r4_provider:fixture ASR session=session_1 stream=18 sequence=0 samples=320
+INFO:memoria.aigc.generation:{"close_reason": "session_closed", "content_id": "aigc-round-501b4976ce61468894adee03af460bde", "ended_at": "2026-11-11T14:18:56.517535+00:00", "engine": "seed-tts-2.0", "event": "aigc_round", "fallback_engine": "", "fallback_provider": "", "fallback_voice": "", "provider": "volcengine_doubao", "started_at": "2026-11-11T14:18:56.425414+00:00", "voice": "warm_companion"}
+INFO:services.agent.src.voice_core.media_session_connection:media_audio_buffers_cleared {"denoiser_frames":0,"overflow_dropped_frames":0,"pcm_tap_open":false,"queue_frames":0,"session_id":"session_1","silence_dropped_frames":0,"silence_dropped_samples":0,"stream_epoch":18}

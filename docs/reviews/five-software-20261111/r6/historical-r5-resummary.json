@@ -1,0 +1,230 @@
+{
+  "schema": "software-soak-r6",
+  "candidate": "85d254e7f66bceeaab2ce14e955e1221ef9e5266",
+  "server_http": {
+    "status_counts": {
+      "401": 2,
+      "403": 184,
+      "200": 550
+    },
+    "expected_denials": {
+      "401": 2,
+      "403": 184
+    },
+    "denial_evidence": "one readiness GET without Bearer; driver exact missing-session request; provider admission after asserted missing-session fetch",
+    "unexpected": [],
+    "malformed": [],
+    "scenario_receipts": 0,
+    "scenarios_valid": true,
+    "pass": true
+  },
+  "edge_binary_sha256": "1603cca2377624c1e09a9679a6cbcc47a24f35c3fa0d8993a25df90e8537f60b",
+  "start": "2026-11-11T14:37:23.204345+00:00",
+  "end": "2026-11-11T14:52:23.208540+00:00",
+  "actual_window_s": 900.004195,
+  "predicates": {
+    "clean_candidate": true,
+    "control_positive_each_cycle": true,
+    "control_server_http_validated": true,
+    "sample_coverage": true,
+    "http_no_unexpected_status": true,
+    "bridge_authority_clients_drained": true,
+    "completed_duration": true,
+    "three_process_resources": true,
+    "real_audio_and_transcripts": true,
+    "all_faults": true,
+    "actual_sigkill": true,
+    "bounded_slow_and_old_rejected": true,
+    "every_cycle_drained": true,
+    "old_issued_profile_rejected": true,
+    "unauthorized_401_and_bad_session_403": true,
+    "cleanup": true
+  },
+  "software_window_pass": true,
+  "event_counts": {
+    "http_request": 369,
+    "actual_transcript": 184,
+    "actual_opus_downlink": 183,
+    "control_positive": 184,
+    "cycle_pass": 180,
+    "fault_tcp_recovered": 1,
+    "bridge_old_terminal": 1,
+    "fault_bridge_recovered": 1,
+    "fault_slow_bounded_old_rejected": 1,
+    "window_complete": 1
+  },
+  "resources": {
+    "control": {
+      "pids": [
+        16508
+      ],
+      "sample_count": 181,
+      "ranges": {
+        "rss_bytes": {
+          "min": 88129536,
+          "max": 130301952,
+          "first": 101072896,
+          "last": 92012544
+        },
+        "fd_count": {
+          "min": 3,
+          "max": 10,
+          "first": 3,
+          "last": 9
+        },
+        "established_tcp": {
+          "min": 0,
+          "max": 3,
+          "first": 0,
+          "last": 2
+        }
+      },
+      "all_readable": true
+    },
+    "bridge": {
+      "pids": [
+        16509,
+        30083
+      ],
+      "sample_count": 181,
+      "ranges": {
+        "rss_bytes": {
+          "min": 104808448,
+          "max": 382124032,
+          "first": 104808448,
+          "last": 382124032
+        },
+        "fd_count": {
+          "min": 17,
+          "max": 26,
+          "first": 17,
+          "last": 24
+        },
+        "established_tcp": {
+          "min": 0,
+          "max": 3,
+          "first": 0,
+          "last": 2
+        }
+      },
+      "all_readable": true
+    },
+    "edge": {
+      "pids": [
+        16510
+      ],
+      "sample_count": 181,
+      "ranges": {
+        "rss_bytes": {
+          "min": 32768,
+          "max": 99418112,
+          "first": 32768,
+          "last": 99418112
+        },
+        "fd_count": {
+          "min": 3,
+          "max": 11,
+          "first": 3,
+          "last": 9
+        },
+        "established_tcp": {
+          "min": 0,
+          "max": 4,
+          "first": 0,
+          "last": 2
+        }
+      },
+      "all_readable": true
+    }
+  },
+  "faults": [
+    {
+      "event": "fault_tcp_recovered",
+      "session": "session_37",
+      "stream": 173
+    },
+    {
+      "event": "bridge_old_terminal",
+      "message": {
+        "type": "session.error",
+        "version": 2,
+        "session_id": "session_73",
+        "stream_epoch": 244,
+        "control_sequence": 4,
+        "server_monotonic_ms": 360933,
+        "code": "voice_core_unavailable",
+        "retryable": true
+      },
+      "session": "session_73"
+    },
+    {
+      "event": "fault_bridge_recovered",
+      "session": "session_73_recovery",
+      "stream": 245
+    },
+    {
+      "dropped": 363,
+      "event": "fault_slow_bounded_old_rejected",
+      "max_audio_queue": 10,
+      "new_generation": 2,
+      "old_generation": 1,
+      "session": "session_109_slow",
+      "stream": 317
+    }
+  ],
+  "http_status_counts": {
+    "401": 1,
+    "403": 1,
+    "200": 367
+  },
+  "http_unexpected_non_success": 0,
+  "cycle_latency_ms": {
+    "count": 180,
+    "p50": 256.04283300000003,
+    "p95": 279.43508299999996,
+    "max": 8831.392375
+  },
+  "cycle_goroutines": [
+    12,
+    14
+  ],
+  "samples_first_s": 0.09447833400918171,
+  "samples_last_s": 900.1660985000199,
+  "restarts": [
+    {
+      "old_pid": 16509,
+      "old_exit": -9,
+      "new_pid": 30083,
+      "at": "2026-11-11T14:43:24.020866+00:00",
+      "elapsed_s": 361.9944544589962
+    }
+  ],
+  "cleanup": {
+    "owned_pids": [
+      16508,
+      16509,
+      16510,
+      30083
+    ],
+    "all_reaped": true,
+    "exit_codes": [
+      -15,
+      -9,
+      0,
+      0
+    ],
+    "container": "memoria-r5-15854",
+    "remove_exit": 0
+  },
+  "raw_local_only": "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/outputs/five-software-r5-900-final",
+  "raw_available_in_new_clone": false,
+  "limits": "one shared-machine race-instrumented local window; deterministic provider; no leak absence, capacity, model quality, deployed gateway or hardware acceptance",
+  "artifacts": {
+    "config.json": "8f60501634370f1a82b1115068755e46d855fe388c353c976360ede797276591",
+    "result.json": "b0467f68a1f86aba7c5bc9f180da653a9455fed4290106adf3cff40ba3ca8472",
+    "edge.log": "3bbd782aefb747170d1d5abffc4d98f96581553bba18bb2e1b9e77fb06a6c096",
+    "bridge.log": "3423a6ccd8e63fc6bcb623ea8c1a1bfad2864a05a520665b0f6c7a67b72f78b9",
+    "control.log": "cd9129ca0c8382592636c00e6ba641f9b79f872ad9ec918dafcb74cbeef27e19",
+    "process.jsonl": "eb64c6335aabb2b5fbd54b0199e9801235b72595c63f15291c8b60fafe4367e1"
+  }
+}

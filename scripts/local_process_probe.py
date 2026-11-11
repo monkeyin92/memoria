@@ -23,10 +23,10 @@ from pathlib import Path
 _PROC = Path("/proc")
 _PROC_PIDTASKINFO = 4
 # Darwin struct proc_taskinfo is 96 bytes and rejects a shorter buffer at any
-# EINVAL; resident_size follows virtual_size at byte 24.
+# EINVAL; resident_size follows virtual_size at byte 8.
 _PROC_TASKINFO_SIZE = 96
-_PROC_TASKINFO_RSS_OFFSET = 24
-_PROC_TASKINFO_RSS_END = 32
+_PROC_TASKINFO_RSS_OFFSET = 8
+_PROC_TASKINFO_RSS_END = 16
 
 
 class UnreadableProcess(RuntimeError):

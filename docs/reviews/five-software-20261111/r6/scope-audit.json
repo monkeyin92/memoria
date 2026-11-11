@@ -1,0 +1,53 @@
+{
+  "baseline": "7f339217c25ccbd485a4677ef0b6cd23654b9900",
+  "candidate": "2c4d4e61163b3804debd0bc75f2b85af03822e9a",
+  "public_api": {
+    "services/session_runtime/service.py": {
+      "public_signatures_unchanged": true,
+      "public_methods": [
+        "binding_snapshot",
+        "close_session",
+        "commit_tool_effect",
+        "current",
+        "decide",
+        "fail_session",
+        "reconcile_tool_effect",
+        "renew",
+        "session_state",
+        "start",
+        "switch_subject"
+      ]
+    },
+    "services/control_api/app/multi_subject_runtime.py": {
+      "public_signatures_unchanged": true,
+      "public_methods": [
+        "active_manifest",
+        "control_session_id",
+        "decide",
+        "default_session_id",
+        "ensure_profile",
+        "is_control_session",
+        "refresh_profile",
+        "require_binding_member",
+        "resolve_subject",
+        "serialize_decision",
+        "serialize_profile",
+        "switch_subject"
+      ]
+    }
+  },
+  "unchanged_paths": [
+    "packages/contracts",
+    "uv.lock",
+    "services/media_edge/go.mod",
+    "services/media_edge/go.sum",
+    "pyproject.toml",
+    "services/session_runtime/action_authority.py",
+    "services/companionship/anti_manipulation.py",
+    "docs/acceptance.md#five-software-20261112",
+    "docs/reviews/five-software-20261111/r5"
+  ],
+  "unchanged_paths_verified": true,
+  "review_document_sha256": "9ce2b73837c9ded096518d771137086a676a722486ac2c542d7518c8f10087e0",
+  "formal_review": "pending parent-owned cross-provider re-review; no self-review verdict"
+}

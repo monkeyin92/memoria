@@ -11,6 +11,7 @@ from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.orchestration.assistant_emotion import (
     AssistantEmotion,
     AssistantEmotionFilter,
+    strip_bare_emotion_tags,
 )
 
 STRONG_BOUNDARY = set("。！？；\n")
@@ -54,6 +55,7 @@ def _punctuation_only(text: str) -> bool:
 
 def normalize_for_tts(text: str) -> tuple[str, str]:
     """Return (tts_text, canonical_text). Does not alter amounts/dates/order ids."""
+    text = strip_bare_emotion_tags(text)
     canonical = text
     t = _MD_STRIP.sub(lambda m: m.group(5) if m.group(5) else "", text)
     # A newline after a sentence ending is not a second sentence.

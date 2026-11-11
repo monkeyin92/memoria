@@ -1,0 +1,46 @@
+{
+  "pids": [
+    {
+      "pid": 16508,
+      "ps_exit_code": 1,
+      "ps_output": ""
+    },
+    {
+      "pid": 16509,
+      "ps_exit_code": 1,
+      "ps_output": ""
+    },
+    {
+      "pid": 16510,
+      "ps_exit_code": 1,
+      "ps_output": ""
+    },
+    {
+      "pid": 30083,
+      "ps_exit_code": 1,
+      "ps_output": ""
+    }
+  ],
+  "running_container_names": [
+    "toonflow-app-toonflow-1"
+  ],
+  "owned_pg_removed": true,
+  "control_exit": -15,
+  "old_bridge_exit": -9,
+  "edge_exit": 0,
+  "final_bridge_exit": 0,
+  "separate_control_test_container": {
+    "container": "memoria-r5-control-check-26191",
+    "image": "pgvector/pgvector:pg17",
+    "command": [
+      ".venv/bin/pytest",
+      "-o",
+      "addopts=",
+      "-q",
+      "-rs",
+      "services/control_api/tests/test_assistant_snapshot.py"
+    ],
+    "exit_code": 0,
+    "cleanup_exit": 0
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "/memoria-r6-regression",
+  "image_id": "sha256:02913d18924ecf2ccf196cd8275eec6b47711b578c320ab1d18f524a6b946c85",
+  "image": "pgvector/pgvector:pg17",
+  "ports": {
+    "5432/tcp": [
+      {
+        "HostIp": "127.0.0.1",
+        "HostPort": "56187"
+      }
+    ]
+  },
+  "purpose": "throwaway test cluster; per-test random databases; no shared/production data"
+}

@@ -1,0 +1,9 @@
+{
+  "extractor": "synthetic-projection-equivalence-r3",
+  "embedding": "none",
+  "raw_count": 10,
+  "distinct_count": 7,
+  "sources": 3,
+  "raw_unique_source_ratio": 0.3,
+  "distinct_unique_source_ratio": 0.42857142857142855
+}

@@ -1,0 +1,14 @@
+{
+  "backpressure_drop": 364,
+  "connections": 0,
+  "downlink_frames": 1080,
+  "elapsed_s": 895.256565167,
+  "event": "cycle_pass",
+  "goroutines": 12,
+  "heap_bytes": 9771880,
+  "latency_ms": 254.47587500000003,
+  "leases": 0,
+  "session": "session_180",
+  "stream": 458,
+  "uplink_frames": 185
+}

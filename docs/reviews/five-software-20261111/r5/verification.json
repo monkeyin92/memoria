@@ -1,0 +1,120 @@
+{
+  "candidate": "85d254e7f66bceeaab2ce14e955e1221ef9e5266",
+  "checks": [
+    {
+      "name": "ruff",
+      "command": [
+        ".venv/bin/ruff",
+        "check",
+        "."
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "mypy",
+      "command": [
+        ".venv/bin/mypy",
+        "services",
+        "--strict"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "budget",
+      "command": [
+        ".venv/bin/python",
+        "scripts/check_module_budget.py",
+        "check"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "go-race",
+      "command": [
+        "go",
+        "test",
+        "-C",
+        "services/media_edge",
+        "-race",
+        "-count=1",
+        "./..."
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "go-build",
+      "command": [
+        "go",
+        "build",
+        "-C",
+        "services/media_edge",
+        "-o",
+        "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/outputs/five-software-r5-mediaruntime",
+        "./cmd/mediaruntime"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "selected-python-tests",
+      "command": [
+        ".venv/bin/pytest",
+        "-o",
+        "addopts=",
+        "-q",
+        "services/agent/tests/unit/test_media_session_assistant_history.py",
+        "services/agent/tests/unit/test_media_session_audio_ingress.py",
+        "services/agent/tests/unit/test_media_session_delegation_lookup.py",
+        "services/agent/tests/unit/test_media_session_delegation_outcomes.py",
+        "services/agent/tests/unit/test_media_session_delegation_ownership.py",
+        "services/agent/tests/unit/test_media_session_device_turns.py",
+        "services/agent/tests/unit/test_media_session_echo_overlap.py",
+        "services/agent/tests/unit/test_media_session_endpoint_tails.py",
+        "services/agent/tests/unit/test_media_session_followups.py",
+        "services/agent/tests/unit/test_media_session_golden.py",
+        "services/agent/tests/unit/test_media_session_interruption.py",
+        "services/agent/tests/unit/test_media_session_lifecycle.py",
+        "services/agent/tests/unit/test_media_session_misc.py",
+        "services/agent/tests/unit/test_media_session_noise_edge_after_first_frame.py",
+        "services/agent/tests/unit/test_media_session_output_dispatch.py",
+        "services/agent/tests/unit/test_media_session_output_failures.py",
+        "services/agent/tests/unit/test_media_session_output_lifecycle.py",
+        "services/agent/tests/unit/test_media_session_owner_window.py",
+        "services/agent/tests/unit/test_media_session_playback_stop.py",
+        "services/agent/tests/unit/test_media_session_registry.py",
+        "services/agent/tests/unit/test_media_session_reply_cut_by_wordless_turn.py",
+        "services/agent/tests/unit/test_media_session_slow_reply.py",
+        "services/agent/tests/unit/test_media_session_superseded_audible_reply.py",
+        "services/agent/tests/unit/test_media_session_turn_pipeline.py",
+        "services/agent/tests/unit/test_media_session_unheard_reply_hold.py",
+        "services/agent/tests/unit/test_media_session_weather_followup.py",
+        "services/agent/tests/unit/test_media_profile_envelope_r5.py",
+        "services/agent/tests/unit/test_grpc_bridge.py",
+        "services/agent/tests/unit/test_run_media_bridge.py",
+        "services/control_api/tests/test_assistant_snapshot.py",
+        "scripts/tests/test_local_process_probe.py",
+        "services/agent/tests/unit/test_bridge_process_exit_injection.py"
+      ],
+      "exit_code": 0,
+      "passed": 452,
+      "skipped": 10,
+      "skip_explanation": "8 Control tests require a PG DSN and were subsequently run successfully with disposable PG; 2 /proc-only tests remain skipped on Darwin"
+    },
+    {
+      "name": "control-with-postgres",
+      "container": "memoria-r5-control-check-26191",
+      "image": "pgvector/pgvector:pg17",
+      "command": [
+        ".venv/bin/pytest",
+        "-o",
+        "addopts=",
+        "-q",
+        "-rs",
+        "services/control_api/tests/test_assistant_snapshot.py"
+      ],
+      "exit_code": 0,
+      "cleanup_exit": 0,
+      "passed": 8,
+      "skipped": 0
+    }
+  ]
+}

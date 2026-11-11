@@ -1,0 +1,113 @@
+{
+  "base": "35248264fd9bcfe38c187ce869fc8b07e282af6d",
+  "route": "self: authorized implementation child; no delegation",
+  "scope": "CI test prerequisites, exact HTTP expectations, documentation aggregation and references; no dependency or production changes",
+  "root_causes": {
+    "linux_compile": "Go1.26.10 go test -c -race fails: pkg-config cannot find opus.pc; adding libopus-dev resolves compilation. pkg-config already exists in reproduction image, declared explicitly as build dependency. Go version is pinned to project go.mod, not claimed as the observed failure.",
+    "identity": "PG reproduction: 1 failed,14 passed; three obsolete identity strings. Fourth affection response unchanged. Initial correction swapped name/human order (1 failed,18 passed), corrected without changing production.",
+    "documents": "Three independent Markdown reports outside allowed aggregates; consolidated in docs/acceptance.md#five-software-20261112, original backups SHA verified.",
+    "prior_fix": "These are distinct from previous x/net image scan fix."
+  },
+  "commands": [
+    {
+      "command": "docker exec -w /edge pr591-linux go test -c -race -o /tmp/edge.test .",
+      "before": "FAIL missing opus.pc",
+      "after": "PASS after apt-get install libopus-dev",
+      "logs": [
+        "linux-compile-before.log",
+        "linux-compile-after.log",
+        "linux-install.log"
+      ]
+    },
+    {
+      "command": "MEMORIA_TEST_POSTGRES_DSN=postgresql://postgres:postgres@127.0.0.1:54787/postgres uv run pytest --import-mode=importlib --no-cov services/control_api/tests/test_assistant_http_r3.py services/control_api/tests/test_interaction_response_plan.py tests/test_documentation_budget.py",
+      "result": "PASS:20 passed,0 skipped",
+      "log": "targeted-serial.log"
+    },
+    {
+      "command": "uv run pytest --import-mode=importlib --no-cov tests/test_documentation_budget.py scripts/tests/test_gitignore_tracked_files.py",
+      "result": "PASS:2 passed",
+      "log": "document-gitignore-final.log"
+    },
+    {
+      "command": "uv run ruff check services/control_api/tests/test_assistant_http_r3.py services/control_api/tests/test_interaction_response_plan.py",
+      "result": "PASS",
+      "log": "ruff.log"
+    },
+    {
+      "command": "uv run mypy services --strict",
+      "result": "PASS:593 source files",
+      "log": "mypy-all.log"
+    },
+    {
+      "command": "uv run python scripts/check_module_budget.py check",
+      "result": "PASS:33 budgets",
+      "log": "module-budget.log"
+    },
+    {
+      "command": "docker exec -w /repo/services/media_edge pr591-linux go test -race -count=1 -run '^TestAssistant' .",
+      "result": "PASS",
+      "log": "linux-go-race.log"
+    },
+    {
+      "command": "docker exec -w /repo -e MEMORIA_TEST_POSTGRES_DSN=postgresql://postgres:postgres@host.docker.internal:54787/postgres pr591-linux /root/.local/bin/uv run pytest --import-mode=importlib --no-cov services/control_api/tests/test_interaction_response_plan.py",
+      "result": "PASS:15 passed,0 skipped",
+      "log": "linux-identity-separate.log"
+    },
+    {
+      "command": "docker exec -w /repo -e MEMORIA_TEST_POSTGRES_DSN=postgresql://postgres:postgres@host.docker.internal:54787/postgres pr591-linux /root/.local/bin/uv run pytest --import-mode=importlib --no-cov services/control_api/tests/test_assistant_http_r3.py",
+      "result": "PASS:4 passed,0 skipped; real PG + Go HTTP, race compilation retained",
+      "log": "linux-http-separate.log"
+    }
+  ],
+  "environment_interference": "Host and Linux initial concurrent tests against same disposable PG reset global test role passwords: host 2 failed,17 passed,1 error; Linux4 failed,15 passed. Preserved targeted-after.log and linux-pg-http.log, rerun serially. No product changes for interference.",
+  "not_run": [
+    "full python shard (6587+ cases)",
+    "remote CI after this commit",
+    "fresh independent review after this commit",
+    "new soak",
+    "security rescans",
+    "Notion",
+    "push or merge",
+    "deployment or hardware"
+  ],
+  "raw_logs": "/Users/monkeyin/projects/memoria/outputs/five-software-archive-20261112/pr591-followup/logs/",
+  "original_ci_logs": [
+    "/tmp/memoria-pr591-job-130842819846.log",
+    "/tmp/memoria-pr591-job-130849446267.log"
+  ],
+  "additional_failure": {
+    "command": "Linux combined assistant_http_r3.py + interaction_response_plan.py serial run",
+    "result": "1 failed,18 passed in87.87s; four Go/PG HTTP and exact identity contract pass. Evolution-store-unavailable case raised TimeoutError in asyncio.to_thread(evolution_store.is_account_deleting). No assertion weakened and no production edits. Fresh-process full interaction suite PASS15,0skip; separate Go/PG matrix PASS4,0skip. Underlying one-off combined TimeoutError not attributed or fixed; preserved as a verification limit.",
+    "log": "linux-pg-http-serial.log"
+  },
+  "cleanup": "Removed only task-owned pr591-linux and pr591-pg containers and /tmp/pr591-source.tar. Existing worktree retained for parent integration. Logs archived with SHA256.",
+  "sha256": {
+    "docker-cleanup.log": "fe60e18fcd1bee768bf37e1c6e28fdbc080aa57f68d680655fe184583f1c6e68",
+    "document-gitignore-final.log": "471c77f65875e4c272e08d0f1104f654c2ee63bed8cefdd055594fbb60385d29",
+    "gitignore.log": "5b19689a97d618d5cdfce632de67285a8efa3c57100a80350a5bb7ca9e05ae34",
+    "identity-before-pg.log": "ec8e16986f9774fa4373e3dad79dfd7db1e016c5403c6fe1ca63390ecb35ff87",
+    "identity-before.log": "3bead48ab72b8db3508f3752efb70245be7e9b08df43ad8d55e1ce9447640c7a",
+    "linux-compile-after.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "linux-compile-before.log": "523aaafe20ba7cebb896f3d42803821632242bb3ae06ce09659bf80bc60fdd13",
+    "linux-fixture-go-logs.log": "9767c7c30bd6f39250bbfcad95933fa222a261f3288c4d47f0b7c0f571f91d6e",
+    "linux-go-race.log": "8752ae8666292817109fa43fc367d8803d166f00d085190adf9af7aee256cce8",
+    "linux-http-separate.log": "46ed3336e43820a1dfc04d02a3da3a47291a396a750996d8e09303a587860578",
+    "linux-identity-separate.log": "8b102ef61545b971ef088a6eb870397d7c50218e66a513a0a5f1dbee00485a1b",
+    "linux-install.log": "2f3fbb13791bcf8b15ac730eb55579f7542421d6fd5808c04114f881e200c3e2",
+    "linux-pg-http-serial.log": "3cc8bec10bf4a2f58efcbf3b050c45e9c1f4dacded48e9ced99272a0c8783a40",
+    "linux-pg-http.log": "5aef57d9ccbca8b78f2fc8ab88f6c462cb84692561b44a80ed417d934d320364",
+    "linux-python-install.log": "3a5c9162496f022df2f82d6d252a455568ab7c74e23d76644f9d84b8cf523cb8",
+    "linux-sync.log": "efbd407da5ca04ec5e1e5a0ad48ff745213ae4411dc69cdb2be3c6c36f6c5fe9",
+    "linux-versions.log": "03a0a77c59b00dca5a49ae978c968588702a526e15b56e43c6d6afd7601bb489",
+    "memoria-pr591-job-130842819846.log": "15718bc6fb600c627c27b85eb89f61abd98eebefd9b0417d53a23f2a265e9819",
+    "memoria-pr591-job-130849446267.log": "1773e4b0d3bb78b091359178d112ad229708048b6829d773ffede8565d20f81f",
+    "module-budget.log": "05fcfaf8e15804335e8d1c5f3b99e548517d69f2da21a1cbb90b0cd0b39ad27a",
+    "mypy-all.log": "a350fac10aae9349d316e2cd59df5286f52c4fc2645618de7b84d32d4f9a6884",
+    "mypy.log": "6b78939a43566f1a3732db6faeb8ccaf1b8616adc89e9db8ec5a66f2385ee326",
+    "pg-http-after.log": "28f89611b15306795798e787e3d8bb4bfcf34b64fa6756fab0e21feaedb2bbbf",
+    "ruff.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "targeted-after.log": "39ce4768c75a4826118dd7a7a2512210ab9fea4445b0af555002f13f51edc8f2",
+    "targeted-serial.log": "40b2a8acfa9d075ddd9a14959b1b55c3451a0a128ccb9e823841989557db4d95"
+  }
+}

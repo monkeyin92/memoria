@@ -1,0 +1,34 @@
+{
+  "candidate": "1941eccccaab85ee3e8833a4e67a552b2ca98b09",
+  "bridge_pid": 39479,
+  "control_pid": 39478,
+  "edge_pid": 39566,
+  "edge_binary_sha256": "2770e51108a58352af97ccea96b8cdfbdfa2f1665269d53852631d75eb3ab36b",
+  "production_source_changed": false,
+  "control_positive_gate": "requires online snapshot; unknown fails",
+  "cleanup": "owned children stopped and own container removed by finally",
+  "exit_code": 1,
+  "command": [
+    "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/outputs/five-software-r4-candidate-1941eccc/edge.test",
+    "-test.run=^TestSoftwareR4RealBridgePreflight$",
+    "-test.v",
+    "-test.timeout=90s"
+  ],
+  "external_fixture": "ASR/LLM/TTS FakeMediaProvider only",
+  "long_window_started": false,
+  "long_window_duration_s": 0,
+  "resource_samples": 0,
+  "counts": {
+    "positive_transcript": 1,
+    "control_authenticated_http_200_unknown": 1,
+    "control_unauthenticated_http_401": 1,
+    "required_control_online": 0,
+    "unexpected_positive_gate_failure": 1
+  },
+  "faults": {
+    "tcp_reconnect": "Earlier two-process diagnostic passed epochs 18 and 19; not a three-process window acceptance",
+    "bridge_restart": "not executed in three-process traffic",
+    "backpressure_and_old_generation_audio": "not executed in three-process traffic"
+  },
+  "boundary": "Provider-only registry default runtime has session_epoch=0 and no signed profile. This is an incomplete test composition, not an established production defect or an insurmountable architecture boundary."
+}

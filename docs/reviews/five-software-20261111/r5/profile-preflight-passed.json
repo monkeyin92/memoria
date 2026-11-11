@@ -1,0 +1,19 @@
+{
+  "candidate": "a30a6e4c62cc5e5a8283033034e5b8729dd6806e",
+  "bridge_pid": 73266,
+  "control_pid": 73265,
+  "edge_pid": 73345,
+  "edge_binary_sha256": "18a7994d3c15a3f543c93c79aeea9a7a99c11e081bf17036f08675a873bc8461",
+  "production_source_changed": false,
+  "control_positive_gate": "requires online snapshot; unknown fails",
+  "cleanup": "owned children stopped and own container removed by finally",
+  "exit_code": 0,
+  "command": [
+    "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/outputs/five-software-r5-envelope-preflight/edge.test",
+    "-test.run=^TestSoftwareR5RealBridgePreflight$",
+    "-test.v",
+    "-test.timeout=90s"
+  ],
+  "external_fixture": "ASR/LLM/TTS FakeMediaProvider only",
+  "long_window_started": false
+}

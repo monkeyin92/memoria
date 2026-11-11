@@ -432,6 +432,7 @@ func (c *DeviceConnection) ForwardCoreEvent(event *mediav1.CoreToMedia) {
 	case event.GetClient() != nil:
 		client := event.GetClient()
 		if client.GetType() == "assistant_state" {
+			c.observeAssistant(client)
 			state, ok := deviceAssistantCaptureState(client.GetJsonPayload())
 			if !ok {
 				return

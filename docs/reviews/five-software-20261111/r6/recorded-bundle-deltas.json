@@ -1,0 +1,41 @@
+{
+  "historical": {
+    "passed_attempts": 19,
+    "passed_cases": 1
+  },
+  "current": {
+    "passed_attempts": 16,
+    "passed_cases": 0
+  },
+  "deltas": [
+    {
+      "case_id": "U5",
+      "attempt": 2,
+      "old_passed": true,
+      "new_passed": false,
+      "failures": [
+        "missing required guidance"
+      ]
+    },
+    {
+      "case_id": "U5",
+      "attempt": 5,
+      "old_passed": true,
+      "new_passed": false,
+      "failures": [
+        "missing required guidance"
+      ]
+    },
+    {
+      "case_id": "U8",
+      "attempt": 5,
+      "old_passed": true,
+      "new_passed": false,
+      "failures": [
+        "missing required guidance"
+      ]
+    }
+  ],
+  "pm_judgments_changed": false,
+  "needs_parent_review": true
+}

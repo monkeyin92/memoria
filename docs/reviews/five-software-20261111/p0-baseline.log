@@ -1,0 +1,8 @@
+F.                                                                       [100%]
+=================================== FAILURES ===================================
+___________ test_live_retention_dominates_profile_capability[False] ____________
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/tests/test_session_policy_retention_ceiling.py:28: in test_live_retention_dominates_profile_capability
+    assert result["history_eligible"] is allowed
+E   assert True is False
+=========================== short test summary info ============================
+FAILED services/control_api/tests/test_session_policy_retention_ceiling.py::test_live_retention_dominates_profile_capability[False]

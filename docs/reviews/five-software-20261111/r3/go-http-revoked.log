@@ -1,0 +1,3 @@
+2026/11/11 22:06:13 WARN media edge device WSS socket error session=session_1 device=dev_test_01 epoch=18 phase=read err="read tcp 127.0.0.1:53039->127.0.0.1:53040: read: connection reset by peer"
+2026/11/11 22:06:13 WARN media edge device WSS socket error session=session_1 device=dev_test_01 epoch=19 phase=read close_code=1006 close_text="unexpected EOF"
+PASS

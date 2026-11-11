@@ -1,0 +1,3 @@
+ok  	memoria/services/media_edge	1.744s
+ok  	memoria/services/media_edge/cmd/mediaruntime	1.704s [no tests to run]
+?   	memoria/services/media_edge/gen/memoria/media/v1	[no test files]

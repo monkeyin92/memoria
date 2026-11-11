@@ -1,0 +1,16 @@
+{
+  "go_build_exit_code": 0,
+  "python_compileall_exit_code": 0,
+  "artifacts": [
+    {
+      "path": "/tmp/memoria-five-mediaruntime",
+      "bytes": 29928754,
+      "sha256": "5c12f4b1e049611e1db72f8e5d41a4bebe964171087b1c9828185328c397f935"
+    },
+    {
+      "path": "/tmp/memoria-five-software-final.test",
+      "bytes": 42991474,
+      "sha256": "38fb228001e516be77d3e5c884374ac0b937df0768aa7a3ca02f29becf51d0b2"
+    }
+  ]
+}

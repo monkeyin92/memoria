@@ -1,0 +1,33 @@
+{
+  "window_completed": true,
+  "duration_s": 45,
+  "exit_code": 0,
+  "restarts": [
+    {
+      "old_pid": 12967,
+      "old_exit": -9,
+      "new_pid": 13264,
+      "at": "2026-11-11T14:36:05.830293+00:00",
+      "elapsed_s": 22.3249972499907
+    }
+  ],
+  "wall_s": 47.58154179196572,
+  "control_pid": 12966,
+  "initial_bridge_pid": 12967,
+  "final_bridge_pid": 13264,
+  "edge_pid": 12968,
+  "start": "2026-11-11T14:35:44.991114+00:00",
+  "end": "2026-11-11T14:36:29.994547+00:00",
+  "actual_window_s": 45.003433,
+  "cleanup": {
+    "owned_pids": [
+      12966,
+      12967,
+      12968,
+      13264
+    ],
+    "all_reaped": true,
+    "container": "memoria-r5-12254",
+    "remove_exit": 0
+  }
+}

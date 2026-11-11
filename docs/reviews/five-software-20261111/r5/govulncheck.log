@@ -1,0 +1,63 @@
+=== Symbol Results ===
+
+Vulnerability #1: GO-2026-6859
+    HTTP/1 server crash due to MaxBytesReader header race in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6859
+  Standard library
+    Found in: net/http@go1.27.3
+    Fixed in: net/http@go1.27.4
+    Example traces found:
+      #1: bridge.go:26:2: media_edge.init calls credentials.init, which eventually calls http.CanonicalHeaderKey
+      #2: cmd/mediaruntime/main.go:377:30: mediaruntime.deviceCloseReporter.postOnce calls http.Client.Do
+      #3: cmd/mediaruntime/main.go:96:29: mediaruntime.runHealthcheck calls http.Client.Get
+      #4: device_ws_router.go:69:35: media_edge.DeviceWSServer.ServeHTTP calls websocket.Upgrader.Upgrade, which eventually calls http.Error
+      #5: gen/memoria/media/v1/media_grpc.pb.go:11:2: media.init calls grpc.init, which eventually calls http.HandleFunc
+      #6: bridge_supervisor.go:470:16: media_edge.VoiceCoreBridgeSupervisor.Close calls sync.Once.Do, which eventually calls http.Header.Add
+      #7: device_ws_router.go:39:49: media_edge.DeviceWSServer.ServeHTTP calls http.Header.Get
+      #8: server_http.go:356:16: media_edge.writeStatus calls http.Header.Set
+      #9: cmd/mediaruntime/main.go:370:33: mediaruntime.deviceCloseReporter.postOnce calls http.NewRequest
+      #10: bridge_supervisor.go:470:16: media_edge.VoiceCoreBridgeSupervisor.Close calls sync.Once.Do, which eventually calls http.ReadResponse
+      #11: bridge_supervisor.go:470:16: media_edge.VoiceCoreBridgeSupervisor.Close calls sync.Once.Do, which eventually calls http.Request.Write
+      #12: bridge_supervisor.go:470:16: media_edge.VoiceCoreBridgeSupervisor.Close calls sync.Once.Do, which eventually calls http.Response.Write
+      #13: cmd/mediaruntime/main.go:735:19: mediaruntime.main calls http.ServeMux.Handle
+      #14: server_http_router.go:29:16: media_edge.Server.handler calls http.ServeMux.HandleFunc
+      #15: cmd/mediaruntime/main.go:738:52: mediaruntime.main calls http.Server.ListenAndServe
+      #16: cmd/mediaruntime/main.go:726:47: mediaruntime.main calls http.Server.ListenAndServeTLS
+      #17: cmd/mediaruntime/main.go:752:26: mediaruntime.main calls http.Server.Shutdown
+      #18: cmd/mediaruntime/main.go:139:60: mediaruntime.buildHealthcheckClient calls http.Transport.Clone
+      #19: cmd/mediaruntime/main.go:101:40: mediaruntime.runHealthcheck calls http.body.Close
+      #20: device_ws_session.go:194:44: media_edge.DeviceConnection.run calls websocket.Conn.ReadMessage, which eventually calls http.body.Read
+      #21: cmd/mediaruntime/main.go:101:40: mediaruntime.runHealthcheck calls http.bodyEOFSignal.Close
+      #22: bridge.go:51:25: media_edge.newTraceparent calls rand.Read, which eventually calls http.bodyEOFSignal.Read
+      #23: device_ws_session.go:194:44: media_edge.DeviceConnection.run calls websocket.Conn.ReadMessage, which eventually calls http.bodyLocked.Read
+      #24: device_ws_shared_state.go:37:46: media_edge.init calls redis.NewScript, which eventually calls http.bufioFlushWriter.Write
+      #25: cmd/mediaruntime/main.go:101:40: mediaruntime.runHealthcheck calls http.cancelTimerBody.Close
+      #26: device_ws_session.go:194:44: media_edge.DeviceConnection.run calls websocket.Conn.ReadMessage, which eventually calls http.cancelTimerBody.Read
+      #27: bridge_supervisor.go:433:20: media_edge.VoiceCoreBridgeSupervisor.WriteMetrics calls fmt.Fprintf, which eventually calls http.checkConnErrorWriter.Write
+      #28: bridge_supervisor.go:433:20: media_edge.VoiceCoreBridgeSupervisor.WriteMetrics calls fmt.Fprintf, which eventually calls http.chunkWriter.Write
+      #29: device_ws_router.go:69:35: media_edge.DeviceWSServer.ServeHTTP calls websocket.Upgrader.Upgrade, which eventually calls http.connReader.Read
+      #30: cmd/mediaruntime/main.go:101:40: mediaruntime.runHealthcheck calls http2.transportResponseBody.Close, which eventually calls http.expectContinueReader.Close
+      #31: device_ws_session.go:194:44: media_edge.DeviceConnection.run calls websocket.Conn.ReadMessage, which eventually calls http.expectContinueReader.Read
+      #32: cmd/mediaruntime/main.go:101:40: mediaruntime.runHealthcheck calls http.gzipReader.Close
+      #33: device_ws_session.go:194:44: media_edge.DeviceConnection.run calls websocket.Conn.ReadMessage, which eventually calls http.gzipReader.Read
+      #34: device_ws_router.go:69:35: media_edge.DeviceWSServer.ServeHTTP calls websocket.Upgrader.Upgrade, which calls http.loggingConn.Close
+      #35: bridge.go:51:25: media_edge.newTraceparent calls rand.Read, which eventually calls http.loggingConn.Read
+      #36: bridge_supervisor.go:433:20: media_edge.VoiceCoreBridgeSupervisor.WriteMetrics calls fmt.Fprintf, which calls http.loggingConn.Write
+      #37: device_ws_session.go:194:44: media_edge.DeviceConnection.run calls websocket.Conn.ReadMessage, which eventually calls http.maxBytesReader.Read
+      #38: bridge_supervisor.go:470:16: media_edge.VoiceCoreBridgeSupervisor.Close calls sync.Once.Do, which eventually calls http.onceCloseListener.Close
+      #39: device_ws_router.go:69:35: media_edge.DeviceWSServer.ServeHTTP calls websocket.Upgrader.Upgrade, which eventually calls http.persistConn.Read
+      #40: device_ws_session.go:194:44: media_edge.DeviceConnection.run calls websocket.Conn.ReadMessage, which eventually calls http.persistConnWriter.ReadFrom
+      #41: bridge_supervisor.go:433:20: media_edge.VoiceCoreBridgeSupervisor.WriteMetrics calls fmt.Fprintf, which eventually calls http.persistConnWriter.Write
+      #42: cmd/mediaruntime/main.go:101:40: mediaruntime.runHealthcheck calls http2.transportResponseBody.Close, which eventually calls http.readTrackingBody.Close
+      #43: device_ws_session.go:194:44: media_edge.DeviceConnection.run calls websocket.Conn.ReadMessage, which eventually calls http.readTrackingBody.Read
+      #44: device_ws_session.go:194:44: media_edge.DeviceConnection.run calls websocket.Conn.ReadMessage, which eventually calls http.readWriteCloserBody.Read
+      #45: device_ws_router.go:69:35: media_edge.DeviceWSServer.ServeHTTP calls websocket.Upgrader.Upgrade, which calls http.response.Hijack
+      #46: bridge_supervisor.go:432:21: media_edge.VoiceCoreBridgeSupervisor.WriteMetrics calls fmt.Fprintln, which calls http.response.Write
+      #47: server_http.go:357:15: media_edge.writeStatus calls http.response.WriteHeader
+      #48: bridge.go:51:25: media_edge.newTraceparent calls rand.Read, which calls http.transportReadFromServerError.Error
+
+Your code is affected by 1 vulnerability from the Go standard library.
+This scan also found 0 vulnerabilities in packages you import and 2
+vulnerabilities in modules you require, but your code doesn't appear to call
+these vulnerabilities.
+Use '-show verbose' for more details.

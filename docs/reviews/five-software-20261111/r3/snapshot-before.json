@@ -1,0 +1,15 @@
+{
+  "baseline": "6c07a949",
+  "missing_fence_and_sequence": {
+    "status": "online",
+    "phase": "speaking",
+    "authority": "edge_python_assistant_state",
+    "snapshot": {
+      "session_id": "session",
+      "stream_epoch": 2,
+      "phase": "speaking",
+      "observed_at": "2026-11-11T13:59:46.793426+00:00"
+    },
+    "freshness_ms": 0
+  }
+}

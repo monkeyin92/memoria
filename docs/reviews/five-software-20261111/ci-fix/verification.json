@@ -1,0 +1,31 @@
+{
+  "base": "0f0bffba0b62ac64553d85bfdcca22f4c6d15691",
+  "raw_evidence": "/tmp/pr591-ci-fix",
+  "image_id": "sha256:e5d7adbad259ee7f0653f785cff099835a1e054af754ef0ceb6e01d6eb92ae82",
+  "trivy_version": "0.76.2",
+  "trivy_command": "trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format json --output /tmp/pr591-ci-fix/image-trivy.json memoria-media-edge:pr591-ci-fix",
+  "trivy_exit": 0,
+  "targets": [
+    {
+      "target": "memoria-media-edge:pr591-ci-fix (debian 13.7)",
+      "vulnerabilities": 0
+    },
+    {
+      "target": "usr/local/bin/memoria-media-edge",
+      "vulnerabilities": 0
+    }
+  ],
+  "lint_command": "GOTOOLCHAIN=go1.26.10 /tmp/pr591-ci-fix/golangci-lint-2.12.2-darwin-arm64/golangci-lint run",
+  "lint_exit": 0,
+  "race_command": "GOTOOLCHAIN=go1.26.10 go -C services/media_edge test -race -count=1 ./...",
+  "race_exit": 0,
+  "build_command": "GOTOOLCHAIN=go1.26.10 go -C services/media_edge build -o /tmp/pr591-ci-fix/media-edge126 ./cmd/mediaruntime",
+  "build_exit": 0,
+  "govulncheck": "Go 1.27.3: GO-2026-6859 remains reachable; no other imported/module vulnerabilities; historical repository scan not rerun",
+  "raw_hashes": {
+    "image-trivy.json": "e2194adb96df09ee9b1568a0817dec75bfa0609216effa5828654e3a66f63767",
+    "docker-build.log": "f65012cb34fb5b70d5e416d1aef4674959ab48acbf0d49e732463b61e3a3636e",
+    "govulncheck.log": "affd024e7af2c38245ba8b19add461486a15bae07963cdaf349a792316d5c2af",
+    "lint-incompatible-go127.log": "e081d321f54d6f37c98039d1ee09c94918ea2515c7b07db582e3c874a441298e"
+  }
+}
