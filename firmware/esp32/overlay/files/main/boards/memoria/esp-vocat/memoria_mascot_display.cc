@@ -57,8 +57,8 @@ constexpr int kPillRadius = 18;
 constexpr uint32_t kScreenBackgroundColor = memoria::kPillBackgroundRgb;
 constexpr uint32_t kScreenTextColor = 0xF7F8FC;
 constexpr uint32_t kScreenMutedColor = 0xAEB8CF;
-// This is the reversible video-style experiment. Set false to return to the
-// pre-rasterized dot face without changing the state mapper.
+// The robot's code-drawn face. Set false to return to the pre-rasterized dot
+// face without changing the state mapper.
 constexpr bool kPillAnimationExperiment = true;
 constexpr uint8_t kPillCaptionLift = 32;
 // The Wi-Fi connecting line shows no SSID.
@@ -664,6 +664,7 @@ void MemoriaMascotDisplay::UpdateIdleScreen(memoria::ScenePhase phase, uint32_t 
         if (screen_off_) {
             screen_off_ = false;
             dimmed_ = false;  // the doze dim below starts from a lit panel again
+            pill_tween_.Reset();  // the eyes open from a closed line: the robot wakes up
             backlight_->RestoreBrightness();
             ESP_LOGI(TAG, "screen on");
         }
@@ -806,22 +807,25 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 // FaceForFacts puts the crisis round on calm before anything else; the animator gives it the
                 // slow crisis blink only, no mouth and no held faces.
                 memoria::FaceFrame frame = face_animator_.Next(facts, caption_mix_ > 0, mouth, frame_now);
-                memoria::PillExpression pill_expression = memoria::PillExpression::kNeutral;
                 if (kPillAnimationExperiment) {
-                    // The pill experiment keeps eye positions fixed. It uses only the
-                    // state face and the coarse speaking expression.
-                    frame.eyes = memoria::EyeShape::kOpen;
-                    frame.mouth = memoria::MouthShape::kOpen;
-                    pill_expression = memoria::PillExpressionFor(frame.face, frame_now);
-                    const bool pill_expression_changed =
-                        !frame_shown_ || pill_expression != shown_pill_expression_;
-                    if (!frame_shown_ || frame != shown_frame_ || pill_expression_changed) {
-                        const memoria::PillFaceFrame pill = memoria::MakePillFaceFrame(
-                            frame.face, frame.eyes == memoria::EyeShape::kShut,
-                            frame.captioned ? kPillCaptionLift : static_cast<uint8_t>(0), frame_now);
+                    // The robot's face is drawn from numbers and eased between looks. The blink
+                    // comes from the animator, the mouth from the voice level, and a reply that
+                    // names a thinking look still talks, so the face never freezes mid-reply.
+                    const bool speaking = facts.state == memoria::kFaceStateSpeaking && !facts.crisis;
+                    const uint8_t lid = frame.eyes == memoria::EyeShape::kShut   ? 255
+                                        : frame.eyes == memoria::EyeShape::kHalf ? 150
+                                                                                 : 0;
+                    const uint8_t voice = mouth.wide ? 255 : (mouth.open ? 170 : 0);
+                    const memoria::PillFaceFrame target = memoria::MakePillFaceFrame(
+                        frame.face, lid, frame.captioned ? kPillCaptionLift : static_cast<uint8_t>(0),
+                        speaking, voice);
+                    const memoria::PillFaceFrame& pill = pill_tween_.Step(target, frame_now);
+                    if (!frame_shown_ || pill != shown_pill_) {
                         memoria::PaintPillFace(framebuffer_, width_, height_, pill);
+                        shown_pill_ = pill;
                         painted_pixels = static_cast<uint64_t>(width_) * static_cast<uint64_t>(height_);
                         painted = true;
+                        partial = frame_shown_ && frame.face == shown_frame_.face;
                         if (container_ != nullptr) {
                             lv_area_t area = {0, 0, width_ - 1, height_ - 1};
                             lv_obj_invalidate_area(container_, &area);
@@ -863,7 +867,6 @@ void MemoriaMascotDisplay::AnimationLoop() {
                 }
                 if (painted) {
                     shown_frame_ = frame;
-                    shown_pill_expression_ = pill_expression;
                     frame_shown_ = true;
                 }
             }
@@ -969,7 +972,7 @@ void MemoriaMascotDisplay::AnimationLoop() {
         }
 #endif
         uint32_t wanted_ms = scene_->FrameIntervalMs(NowMs());
-        if (face_animator_.animating() && wanted_ms > memoria::kFaceAnimationFrameMs) {
+        if ((face_animator_.animating() || pill_tween_.animating()) && wanted_ms > memoria::kFaceAnimationFrameMs) {
             wanted_ms = memoria::kFaceAnimationFrameMs;  // a blink takes four frames 40 ms apart, listening too
         }
         const TickType_t interval =
