@@ -2,7 +2,7 @@
 
 The machine record is [`current-runtime-inventory.json`](current-runtime-inventory.json). Dated sections in `HANDOFF.md` stay receipts. Use this page to capture a host and compare it with that file.
 
-The copy in git was `handoff_reconstruction`, assembled from dated HANDOFF receipts. On 2026-11-10 it was replaced with a `live_capture` read from `memoria-prod` (`/opt/memoria`, read-only). The firmware and miniprogram sections are not host-visible and remain carried from the 2026-11-04 handoff record; the file's `unknowns` says so.
+The copy in git was `handoff_reconstruction`, assembled from dated HANDOFF receipts. On 2026-11-10 it was replaced with a `live_capture` read from `memoria-prod` (`/opt/memoria`, read-only), and refreshed on 2026-11-11 after the bridge moved to the card 5 echo-window candidate. The firmware and miniprogram sections are not host-visible and remain carried from the 2026-11-04 handoff record; the file's `unknowns` says so.
 
 ## Choose an evidence class
 

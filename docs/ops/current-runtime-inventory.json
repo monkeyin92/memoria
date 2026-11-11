@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-11-10T07:49:18+00:00",
+  "captured_at": "2026-11-11T00:08:40+00:00",
   "components": [
     {
       "compose_chain": "/opt/memoria/releases/20261029-plan-head-start-v1/docker-compose.production.yml",
@@ -68,7 +68,7 @@
       }
     },
     {
-      "compose_chain": "/opt/memoria/releases/20261029-plan-head-start-v1/docker-compose.production.yml,/opt/memoria/component-releases/20261106-card5-committed-boundary-v1/pre-cutover-live.override.yml,/opt/memoria/component-releases/20261106-card5-committed-boundary-v1/agent-component.override.yml",
+      "compose_chain": "/opt/memoria/releases/20261029-plan-head-start-v1/docker-compose.production.yml,/opt/memoria/component-releases/20261110-card5-echo-window-v1/pre-cutover-live.override.yml,/opt/memoria/component-releases/20261110-card5-echo-window-v1/agent-component.override.yml",
       "container": "memoria-voice-core-media-bridge-1",
       "effective_flags": {
         "MEMORIA_RELEASE_COMMIT": "unknown",
@@ -79,16 +79,16 @@
         "TTS_PROVIDER": "doubao"
       },
       "health": "healthy",
-      "image_id": "sha256:77146b02ce281b143143fc2de5dc32902e4b49b6fe3bc857798c12d9a50e7ebe",
+      "image_id": "sha256:14a9d4a6ca4b9298b12526867fe1c4a69e426316a2cb7cba95a99e4d5f39b522",
       "image_id_complete": true,
-      "image_ref": "memoria-agent:20261106-card5-committed-boundary-v1",
-      "override_path": "/opt/memoria/component-releases/20261106-card5-committed-boundary-v1/agent-component.override.yml",
-      "override_sha256": "e44602e093e80728e9b8f5eb44d6ad6b1c16638ecd652869bd6e80fb9f390de0",
+      "image_ref": "memoria-agent:20261110-card5-echo-window-v1",
+      "override_path": "/opt/memoria/component-releases/20261110-card5-echo-window-v1/agent-component.override.yml",
+      "override_sha256": "4667f40ee7ae0c84d8321945497566f5bff8436ad9f57223dd40c418254e83ec",
       "registry_digest": "unknown",
       "restarts": 0,
-      "revision_commit": "b03756b3c5268c90596bd1acda32a7b314094d9a",
+      "revision_commit": "ad40fe60c4ef904f1a5fce1467dfa7d579214d4f",
       "role": "voice-core-media-bridge",
-      "started_at": "2026-11-07T09:18:44.897729001Z",
+      "started_at": "2026-11-10T16:11:08.990989296Z",
       "status": {
         "code": "unknown",
         "enabled": "unknown",
@@ -185,7 +185,7 @@
       {
         "method": "agent-component.rollback.override.yml",
         "role": "voice-core-media-bridge",
-        "target": "memoria-agent:rollback-20261106-card5-committed-boundary-v1-pre"
+        "target": "memoria-agent:rollback-20261110-card5-echo-window-v1-pre"
       },
       {
         "method": "release_ops.rollback",
