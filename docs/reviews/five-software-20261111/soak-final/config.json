@@ -1,0 +1,11 @@
+{
+  "candidate": "71c5131a08a5aca438e54fd4102df037a95ee3e5",
+  "duration_s": 900,
+  "interval_s": 5,
+  "bridge": "synthetic deviceTestCore",
+  "control": "not running",
+  "binary": "/tmp/memoria-five-software-final.test",
+  "binary_sha256": "38fb228001e516be77d3e5c884374ac0b937df0768aa7a3ca02f29becf51d0b2",
+  "race": true,
+  "dirty": "?? docs/reviews/five-software-20261111/atomic-eval.json\n?? docs/reviews/five-software-20261111/govulncheck.exit\n?? docs/reviews/five-software-20261111/govulncheck.json\n?? docs/reviews/five-software-20261111/govulncheck.stderr\n?? docs/reviews/five-software-20261111/govulncheck.txt\n?? docs/reviews/five-software-20261111/p2-after.json\n?? docs/reviews/five-software-20261111/p2-before.json\n?? docs/reviews/five-software-20261111/p2-changes.tsv\n?? docs/reviews/five-software-20261111/soak/\n"
+}

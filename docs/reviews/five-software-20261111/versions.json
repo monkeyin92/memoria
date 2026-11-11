@@ -1,0 +1,6 @@
+{
+  "python": "3.12.13 (main, Mar 25 2026, 03:16:06) [Clang 22.1.1 ]",
+  "go": "go version go1.27.3 darwin/arm64",
+  "trivy": "Version: 0.76.2",
+  "platform": "Darwin arm64"
+}

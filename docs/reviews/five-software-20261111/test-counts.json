@@ -1,0 +1,50 @@
+{
+  "integrated-tests": {
+    "passed": 577,
+    "skipped": 1,
+    "failed": 0,
+    "errors": 0
+  },
+  "runtime-consent-tests": {
+    "passed": 456,
+    "skipped": 0,
+    "failed": 0,
+    "errors": 0
+  },
+  "p0-pg": {
+    "passed": 18,
+    "skipped": 0,
+    "failed": 0,
+    "errors": 0
+  },
+  "p1-memory": {
+    "passed": 63,
+    "skipped": 0,
+    "failed": 0,
+    "errors": 0
+  },
+  "p1-phase-python": {
+    "passed": 33,
+    "skipped": 0,
+    "failed": 0,
+    "errors": 0
+  },
+  "p2-tests": {
+    "passed": 86,
+    "skipped": 0,
+    "failed": 0,
+    "errors": 0
+  },
+  "process-probe": {
+    "passed": 7,
+    "skipped": 2,
+    "failed": 0,
+    "errors": 0
+  },
+  "p2-tags-final": {
+    "passed": 34,
+    "skipped": 0,
+    "failed": 0,
+    "errors": 0
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "base": "23f75b4d7eb05f587ca7c44a27273e5a2a9a0d55",
+  "production_source_candidate": "71c5131a08a5aca438e54fd4102df037a95ee3e5",
+  "policy_matrix": "p0-pg.log",
+  "atomic_memory": "atomic-eval.json",
+  "bundle_before": "p2-before.json",
+  "bundle_after": "p2-after.json",
+  "bundle_verdicts": "p2-changes.tsv",
+  "go_race": "go-race.log",
+  "python_integration": "integrated-tests.log",
+  "runtime_consent": "runtime-consent-tests.log",
+  "scan_gate": "failed",
+  "software_task_set": "incomplete"
+}

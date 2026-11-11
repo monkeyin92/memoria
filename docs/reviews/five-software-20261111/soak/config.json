@@ -1,0 +1,10 @@
+{
+  "candidate": "e8348be7304cd600304b5365a0b353fef8417426",
+  "duration_s": 900,
+  "interval_s": 5,
+  "bridge": "synthetic deviceTestCore",
+  "control": "not running",
+  "binary": "/tmp/memoria-five-software-edge.test",
+  "race": true,
+  "dirty": "?? docs/reviews/five-software-20261111/p2-after.json\n?? docs/reviews/five-software-20261111/p2-before.json\n?? docs/reviews/five-software-20261111/p2-changes.tsv\n"
+}

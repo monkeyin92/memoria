@@ -1,0 +1,28 @@
+{
+  "window_completed": true,
+  "process_exit_code": 0,
+  "elapsed_s": 905.6666714999592,
+  "resource_sample_count": 179,
+  "completed_connection_cycles": 180,
+  "resources_measured": true,
+  "rss_first_bytes": 32768,
+  "rss_last_bytes": 47038464,
+  "rss_min_bytes": 32768,
+  "rss_max_bytes": 62930944,
+  "fd_min": 3,
+  "fd_max": 5,
+  "established_tcp_max_between_cycles": 0,
+  "connection_cycle_latency_p50_ms": 8.089020999999999,
+  "connection_cycle_latency_p95_ms": 10.109458,
+  "every_cycle_drained": true,
+  "final_cycle": {
+    "connections": 0,
+    "cycle_latency_ms": 5.490583,
+    "elapsed_s": 896.679435125,
+    "goroutines": 4,
+    "heap_bytes": 3093696,
+    "leases": 0
+  },
+  "production_bridge_verified": false,
+  "memory_leak_verdict": "inconclusive: one instrumented window with a synthetic core"
+}

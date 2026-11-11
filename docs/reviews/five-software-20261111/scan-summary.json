@@ -1,0 +1,24 @@
+{
+  "exit_code": 1,
+  "targets": [
+    {
+      "target": "services/media_edge/go.mod",
+      "count": 2,
+      "severity": {
+        "HIGH": 1,
+        "MEDIUM": 1
+      }
+    },
+    {
+      "target": "uv.lock",
+      "count": 79,
+      "severity": {
+        "HIGH": 38,
+        "MEDIUM": 32,
+        "LOW": 2,
+        "CRITICAL": 7
+      }
+    }
+  ],
+  "unique_ids": 81
+}
