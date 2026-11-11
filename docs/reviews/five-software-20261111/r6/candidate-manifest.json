@@ -1,0 +1,26 @@
+{
+  "candidate": "2c4d4e61163b3804debd0bc75f2b85af03822e9a",
+  "dirty": "",
+  "production_selection": "tracked services/packages excluding tests and *_test.go",
+  "production_tree_sha256": "ab59975ad01f527d6712d0ea649939b6aae0629600312b6dbe9dce1ab1f465c8",
+  "production_files": 699,
+  "harness": {
+    "scripts/software_soak_r5.py": "b3c40341683c12d83db3d2865248163a965226f094e456148a17df18a4bd6ac0",
+    "scripts/software_soak_r5_control.py": "4274056f0275159480e2b818a8d664690568cdf01d45fc205488810009f75796",
+    "scripts/software_soak_r5_provider.py": "24c343487bd826eca02dc5fcaed18e5b0dbf9dca38ce05850e1752adb3781ecd",
+    "scripts/summarize_software_soak_r5.py": "d8b597d7ae7452e0fd2cc039c66d811bb93a2224affcdf4cae0fb7d571d4747f",
+    "scripts/run_media_bridge.py": "5a7790b2ac12f45c370accc809454fd3e2f67d6e17ae1e0a973cac6d50dbf5d1",
+    "services/media_edge/software_soak_r5_test.go": "82466389f99c6c7cf0d5c43dcdb3f54e78142ce1fb220ea8347f6b59ec8efd48"
+  },
+  "lockfiles": {
+    "uv.lock": "5df26220aa27ed45d31f7c8bfbe7ca6322c971396a571c4e1e1590a965e61a6d",
+    "services/media_edge/go.mod": "670d38f8f10065ab426af83ee164a949db23b5e3e4be286231d9bcc3af6210b1",
+    "services/media_edge/go.sum": "b66f0066d396b8c30a281efd2ffc7386bed31029bd2ff83f215a21494bb03c37"
+  },
+  "python_sha256": "e2605291e058fdbe3102e8185d0ac5fe0e063398de617010a6af3a42a78f05e3",
+  "digest_algorithm": "SHA256 over git-ls-files ordered path + NUL + SHA256(file bytes) + newline",
+  "full_manifest_local_sha256": "959dca48fc93b169012704dea50bce98e7fe50a91bc5f399593f481414bae9d9",
+  "preflight_edge_binary_sha256": "6d60ffd53b5a238573796e27234949157311c6c374bf64a83af5256eb2483ca5",
+  "window_edge_binary_sha256": "6d60ffd53b5a238573796e27234949157311c6c374bf64a83af5256eb2483ca5",
+  "go_mediaruntime_sha256": "74910b758a52d578484c55814034cab022756a53c21733751f17fa447ee74ff4"
+}

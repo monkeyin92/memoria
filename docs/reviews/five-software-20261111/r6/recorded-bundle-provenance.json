@@ -1,0 +1,19 @@
+{
+  "source": "/Users/monkeyin/projects/memoria/outputs/acceptance/anti-manipulation-u1-u8-20261028/live-bundle.json",
+  "command": [
+    ".venv/bin/python",
+    "-m",
+    "services.companionship.anti_manipulation",
+    "--dataset",
+    "services/companionship/evaluation/anti_manipulation_u1_u8.json",
+    "--responses",
+    "/Users/monkeyin/projects/memoria/outputs/acceptance/anti-manipulation-u1-u8-20261028/live-bundle.json"
+  ],
+  "exit": 1,
+  "sha256_before": "3fd4ec5762f95fb09db2d9fbc65171180246654b348d0feb4c1467105db59b97",
+  "sha256_after": "3fd4ec5762f95fb09db2d9fbc65171180246654b348d0feb4c1467105db59b97",
+  "attempts": 40,
+  "passed_attempts": 16,
+  "passed_cases": 0,
+  "changed_pm_judgments": false
+}

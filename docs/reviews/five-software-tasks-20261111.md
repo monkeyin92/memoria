@@ -1,14 +1,14 @@
 # 五项软件候选增量，2026-11-11
 
-## 2026-11-12 独立审查与修复
+## 2026-11-12 独立审查后的软件修复
 
-Gemini 对 `b2ffc904` 的独立审查要求修改，发现一个 S2 会话生命周期回归和一个 S3 评测否定词缺口。[完整审查](five-software-final-review-20261112.md)保留原始发现与执行证据。撤销私密召回同意后，旧 profile 不应阻止安全降级、切人或终态清理；该 S2 尚待修复，不宣称整体完成。
+S2 生命周期回归已在 `ac3eeab6` 修复，新的跨厂商复审待主 Agent 执行。[原 Gemini 审查](five-software-final-review-20261112.md)对 `b2ffc904` 的 **Changes requested** 结论、SHA 和原始发现保持不变。本轮先提交真实 PG+ASGI 复现，再修复并验证，没有自行宣告正式 Review 通过。
 
-主 Agent 已先复现三个被误判通过的否定家长导向样本，新增七个正负控制。修复将否定词的作用范围限定在当前分句，同时保留本身为否定表达的必要安全引导。`test_anti_manipulation.py` 实跑 63 通过，零跳过；规则正向 fixture 的 40/40 仍通过。完整 companionship 测试本地为 63 通过、10 项缺 PG 条件而跳过，不把跳过计为通过。Ruff、593 文件 strict mypy、33 项原预算检查和 `git diff --check` 均通过。三句与每例 5/5 门槛不变。
+`current()` 和实际私有 action authority 继续 fail-closed。撤回同意后，仍有效的控制会话可以安全降级和重新签发；显式切人、剩余 chat/tutor 决策及失败启动清理恢复工作。新测试检查真实 HTTP payload、签名和 PG epoch、能力、状态。21 项新 PG+ASGI 回归、11 项收据控制、原有综合选择 801 项均通过，必需 PG 矩阵零跳过。这些计数互有包含，不相加。[R6 验证](five-software-20261111/r6/verification.json)记录精确命令。
 
-900 秒窗口仍只证明冻结候选的软件行为。后续 Session 权威修复改变生产代码后需要明确新的验证范围，不将旧窗口自动记为新候选通过。安全扫描失败、桥进程 RSS 增长未归因、真实模型及设备未知继续保留。
+主 Agent 的 `7f339217` S3 修复保持不变。其 63 项测试属于上述 801 项，正向 fixture 仍为 40/40。只读重评原 bundle 得到 16/40 次、0/8 例通过，原 SHA-256 未变。相对历史 19/40、1/8，U5#2、U5#5、U8#5 新增“缺少必要引导”失败，详见[独立保存的变化](five-software-20261111/r6/recorded-bundle-deltas.json)。原 PM 判断、三句和每例 5/5 门槛未改，这三个筛查变化交主 Agent 复核。
 
-五项完整软件验收**尚未完成**。本分支交付下表已验证增量，不构成发布放行。 No hardware, production, paid model, external notification, push, PR, or merge operations ran.
+干净候选 `2c4d4e61163b3804debd0bc75f2b85af03822e9a` 完成 45 秒故障预检和新的 900.007511 秒三进程窗口，[R6 summary](five-software-20261111/r6/summary.json)的 16 项谓词全通过。安全扫描仍 **FAIL**。桥 RSS 增长未归因，不证明泄漏或容量。新的独立复审、真实模型、生产和设备边界仍未验收，原产品任务复选项继续保持未完成。未执行 push、PR、merge、部署、生产 SSH、设备、外部通知或付费模型调用。
 
 Base `23f75b4d7eb05f587ca7c44a27273e5a2a9a0d55`. Worktree `/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9`, branch `t3/five-software-tasks-acceptance`. The original checkout and its unrelated uncommitted files were not used as implementation input.
 
@@ -18,11 +18,11 @@ Read the actual callers and persisted shape. Reproduce before changing behavior.
 
 | Task | Implemented and verified increment | Missing from the requested completion predicate |
 | --- | --- | --- |
-| P0-04 | R2 reproduces stale signed private capability after real PG consent expiry/revocation and rejects that profile in Session current authority. New dual HTTP entry, age/retention, concurrent switch, projection divergence, authority failure and manager rebind controls. Signed bytes remain unchanged. | Independent cross-provider review remains with the parent. Retention consent itself cannot expire under the existing product contract; the matrix rejects that invalid grant and tests natural expiry on runtime private-recall consent. |
-| P2-06 | R2 adds 16 new cases for PG task-summary continuity, authorized device tutoring and real recap timeout fallback. Fixes device-bound tutor decisions being denied when the signed profile lacks private recall. Previous screening changes, three-sentence and per-case 5/5 gates remain intact. | Automatic model continuation from the stored plan and real model wording quality remain unverified. The software continuity claim is a stored task summary available on the next session through the authorized read gate. Old model bundle still fails 19/40 and 1/8. Parent owns cross-provider review. |
+| P0-04 | R6 区分私有读取与旧 profile 生命周期权威。21 项新 PG+ASGI 回归覆盖撤回后的降级、切人、决策、终态清理及错误 actor/device/binding/fence、过期和关闭状态；原矩阵继续通过。 | 新候选跨厂商复审待主 Agent 执行。Retention 本身仍不可过期，原自然到期控制测试 runtime private-recall consent。 |
+| P2-06 | 原 continuity、tutor 和 recap 软件控制继续通过。保留 7f339217 的 S3 修复，63 项筛查测试和 40/40 正向 fixture 通过。旧 bundle 当前实测 16/40、0/8。 | 原模型 bundle 仍失败，三个筛查判定变化待主 Agent 复核；原 PM 判断未改。自动模型续接和真实措辞质量仍未验证，独立复审待执行。 |
 | P1-06 | R3 implements exact equivalent-projection selection in the real Planner recall caller, preserves independent claims and multi-source episodes, expands atomic fixed/unseen PG fixtures, and exercises real planner HTTP, budgets, subject switching and private consent revocation with ReplyPlan cache consumption. | Software predicate complete subject to parent cross-provider review. Real Qwen/production embedding, deployed gateway and device recall remain unverified. |
 | P1-05 | R3 combines real authenticated Go runtime HTTP with real Bearer Control HTTP, SQLite activation/auth and PG Session authority. Rejects stale generation with higher sequence, missing fences and stale private profiles; proves expiry, revocation, unbind, manager takeover, disconnect and reconnect. | Software device read predicate complete subject to parent cross-provider review. Session-only non-device API is outside scope. Client UI, firmware and device acceptance remain unverified. |
-| P2-04 | R5 completes a frozen 900.004-second real Control HTTP, Python bridge and Go Edge process window. Signed authority, exact phase, actual Opus and ASR, TCP reconnect, bridge SIGKILL/restart, slow transport, old-generation refusal and drain gates pass. The current candidate was actually rescanned. | Security gate remains FAIL. Parent must independently review the new production epoch fix. RSS growth is observed without a leak or capacity verdict. Deployment, rollback operation and device terminate-no-reconnect acceptance remain unverified. |
+| P2-04 | R6 在干净候选 2c4d4e61 上完成 900.007511 秒三进程窗口，180 个周期和 181 次资源采样。签名权威、真实音频、TCP、SIGKILL、慢写与旧 PCM、排空和清理通过。 | 新候选独立复审待执行。当前实际重扫门禁 FAIL。RSS 增长未归因，不宣称无泄漏、容量、部署回滚或设备 terminate-no-reconnect 通过。 |
 
 ## Commits
 
@@ -307,3 +307,38 @@ Reproduce from this isolated checkout with Docker and the locked Python environm
 The output directory must not exist. The runner starts only its own local PG and stops only its own children and container. The parent owns formal review of the production epoch changes, particularly commits `4e794afc` and `a54c5c52`; candidate `85d254e7` freezes the test composition. Hardware, production deployment, production policy-app composition, rollback execution and model quality remain unverified. No serial port, production SSH, external notification, paid model, real user data, push, PR or main merge ran.
 
 Fix Root Causes placed the fix at the event identity publication that lost the epoch. Prove It Works required the actual three-process positive chain and actual faults before accepting the window. Model the Domain keeps profile identity epoch distinct from transport stream epoch and output generation. Benchmark Checklist limits the measurements to one shared-host software observation. No recursive delegation or formal child review ran, as required by this implementation brief.
+
+## R6 生命周期修复与新候选收据
+
+实施基线是 `7f339217c25ccbd485a4677ef0b6cd23654b9900`。原审查目标仍为 `b2ffc904`。所有写入仍位于本报告指定的隔离 worktree，原 checkout 只读取了授权的旧 bundle。`62d9786d` 先提交失败回归，`ac3eeab6` 修复生命周期，`2c4d4e61` 固定收据验证与测试组成。完整 commit 为 `62d9786d9cc360ac871f1eaa94df7c787cc03e7e`、`ac3eeab65d49c3987ff88027571561463607a9fc`、`2c4d4e61163b3804debd0bc75f2b85af03822e9a`。公开方法签名、合同、预算、依赖锁文件、实际 action authority、S3 源码及原审查文档均未改，[scope audit](five-software-20261111/r6/scope-audit.json)保留检查结果。
+
+[修复前](five-software-20261111/r6/lifecycle-before.log)在真实隔离 PG 和 ASGI 上得到 `8 failed, 12 passed`。GET、显式 refresh、resolve、切人、降为 unknown、chat/tutor 决策和 fail_session 均复现旧权限阻断。修复后的 21 项生命周期测试和 11 项收据控制得到 `32 passed`，随后全部纳入 801 项零跳过综合回归。额外 Voice Runtime 选择为 `460 passed, 2 skipped`，两个跳过仅适用于 Linux /proc。这些选择重叠，63 项 S3 测试也包含在 801 中。
+
+| 撤回同意后的动作 | 实测结果 |
+| --- | --- |
+| 旧私有 profile 的 current、session-policy 与 session-state | 继续拒绝私有读取。Session policy 为原有 503，session-state 为 200 unknown 且不返回 snapshot。 |
+| 控制 profile GET、显式 refresh、resolve-subject | 重新签发带真实签名的非私有 profile，PG epoch 前进，当前能力不含 memory_recall_private。 |
+| active-subject 与未确认降级 | 合法切换到另一真实绑定且有委托关系的主体，或降到 unknown；旧 profile 随后被拒绝。 |
+| chat/tutor decision | 只允许剩余已签发且实时 Policy 允许的能力。未签发 tutor 返回 deny；旧私有 profile 的 private 分类和私有召回继续拒绝。降级后私有召回 decision 为 deny。chat 不改写旧 profile，也不能通过实际 action authority 恢复私有能力。 |
+| fail_session 和 close_session | 写入 failed/closed 和新的终态 fence，后续读取或控制 GET 不会复活该会话。 |
+| 错误 actor/device、撤回或重绑 binding、投影冲突、过期 conversation、closed/failed | 仍拒绝，非法控制请求不推进持久 epoch 或能力。 |
+
+最小结构修复保留 `current()` 的实时私有同意检查。私有 `_current_profile_context` 复用原 active-context、签名、TTL 和 binding 验证；switch 和非私有 decide 使用该生命周期路径。`fail_session` 按 close 的终态路径验证签名和 actor。Control 仅捕获明确的 PrivateProfileConsentWithdrawn 子类，并在设备、绑定及当前 fence 合法时重新旋转，不捕获全部 Denied。`_rotate` 仍从当前 PG 同意重新派生能力。没有公开 unchecked boolean，也没有重签旧 profile 以保留过时能力。
+
+新增 ASGI 测试使用真实 Bearer、SQLite auth session、专用非 superuser PG Identity 和真实 Session/Consent stores。session-state 单元只注入运行状态读取边界，用来先证明 online 再证明撤回后的 unknown；没有替换 runtime 或 consent 权威。原四项真实 Go HTTP+Control+PG 联合测试也全部执行。四条被原 Reviewer 指出的叙述性注释已直接删除，没有其他风格重构。
+
+新的收据 schema 是 `software-soak-r6`。保留原 13 项条件，并新增 clean candidate、control_positive 不少于 cycle、完整 Control server 状态检查。新窗口逐条记录 policy 请求的 session、status 和真实错误类型，只有 missing-session 加 PersistentSessionNotFound 支持预期 403；401 由无 Bearer 的 readiness 和明确探针支持。不存在任意 403 白名单。历史日志按旧 fixture 的已断言 missing-session 探针和真实 provider admission 数量核对，旧 900 秒原始收据仍通过，[重汇总](five-software-20261111/r6/historical-r5-resummary.json)另存，原 R5 summary 未覆盖。历史 550/184/2 不是未来窗口的常数。
+
+11 项独立收据控制覆盖有效运行、dirty source、缺正向控制、server 500、额外 403、错误 driver 403、unknown、缺结束收据和错误拒绝原因。500、unknown 或缺证据均不能通过。原 R4 和失败预检保持失败记录。
+
+本次窗口冻结候选为 `2c4d4e61163b3804debd0bc75f2b85af03822e9a`。源码集合包含 699 个 tracked services/packages 文件，排除 tests 与 *_test.go，digest 为 `ab59975ad01f527d6712d0ea649939b6aae0629600312b6dbe9dce1ab1f465c8`。[候选 manifest](five-software-20261111/r6/candidate-manifest.json)记录算法、解释器、锁文件、全部运行脚本以及预检与长窗相同的 Edge binary SHA-256 `6d60ffd53b5a238573796e27234949157311c6c374bf64a83af5256eb2483ca5`。结束时重新逐文件核对源码无变化。后续只提交文档与收据。
+
+窗口实际运行 900.007511 秒，完成 180 个已排空周期和 181 次三进程资源采样。全部 16 个谓词通过，完整服务端状态为 `{'401': 2, '403': 184, '200': 550}`，意外状态为零。每个正向控制检查实际 ASR 你好、真实非空 Opus、精确 online phase 与签名 epoch。三次故障和恢复见[events](five-software-20261111/r6/events.jsonl)。慢写实际丢弃 363 帧，最大音频队列十帧，停止后旧 generation PCM 被生产 gate 拒绝。
+
+[按 PID 的资源](five-software-20261111/r6/resource-instances.json)区分桥重启前后。RSS 增长仍仅是观测，不证明内存泄漏、无泄漏或容量。早段同时运行回归检查，共享主机和 race driver 也限制性能解释。真实 SIGKILL 证明旧 transport 终止和新会话恢复，不证明旧 PG authorization 自动撤销。没有改变断连语义。[cleanup](five-software-20261111/r6/cleanup.json)核对所有 owned PID 消失、两类本轮 PG 测试容器已移除。Control 退出 -15、被杀桥 -9、最终桥和 Edge 0，未将 -15 记为 0。
+
+Ruff、593 文件 strict mypy、33 项原模块预算、Go race 和 mediaruntime build 均通过。当前实际 [scans](five-software-20261111/r6/scans.json)仍为 govulncheck exit 3、Trivy exit 1，后者 81 个 distinct advisory IDs。reachable GO-2026-6859 和单个 advisory 的 exploitability 边界不变，未升级依赖或修复漏洞。扫描失败不被测试或窗口通过覆盖。
+
+原始日志、完整 scanner JSON、逐样本资源和最终二进制只留在 ignored `outputs/five-software-r6/`、`outputs/five-software-r6-preflight/` 和 `outputs/five-software-r6-900-final/`。新 clone 只有摘要、配置、hash、精确命令和必要摘录，不含大体积原始数据。公开发布、生产、设备、真实模型与新的正式跨厂商复审均未执行，主 Agent 负责 fresh Review。
+
+Model the Domain 将读取、旋转和终态清理分到各自的域路径。Boundary Discipline 只允许明确撤回状态触发降级，保留 actor/binding/fence 拒绝。Fix Root Causes 修复过度使用读取权限的调用点，Prove It Works 要求真实 PG 和三进程故障证据。Benchmark Checklist 将本次资源数据限定为一次共享主机观测。

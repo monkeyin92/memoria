@@ -1,0 +1,193 @@
+{
+  "candidate": "2c4d4e61163b3804debd0bc75f2b85af03822e9a",
+  "scans": [
+    {
+      "name": "govulncheck",
+      "command": [
+        "/tmp/memoria-five-tools/govulncheck",
+        "./..."
+      ],
+      "cwd": "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/media_edge",
+      "exit_code": 3,
+      "scanner_sha256": "b0115fa1c9289cd9a8960d2b7810eafa838c1ad1ed2cf39579ab46047338dcfc"
+    },
+    {
+      "name": "trivy",
+      "command": [
+        "/tmp/memoria-five-tools/trivy",
+        "filesystem",
+        "--scanners",
+        "vuln",
+        "--cache-dir",
+        "/tmp/memoria-five-trivy-cache",
+        "--skip-dirs",
+        ".venv",
+        "--skip-dirs",
+        ".git",
+        "--skip-dirs",
+        "outputs",
+        "--skip-dirs",
+        "firmware/.cache",
+        "--format",
+        "json",
+        "--output",
+        "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/outputs/five-software-r6/trivy.json",
+        "--exit-code",
+        "1",
+        "."
+      ],
+      "cwd": "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9",
+      "exit_code": 1,
+      "scanner_sha256": "7a15c426f963473a485a4f315e21f8e2c881269d500bf0de35da13a4421fa108"
+    }
+  ],
+  "trivy_targets": [
+    {
+      "target": ".cursor/skills/poteto-mode/scripts/bun.lock",
+      "class": "lang-pkgs",
+      "advisories": 0,
+      "ids": []
+    },
+    {
+      "target": "infra/sensevoice-asr/requirements.txt",
+      "class": "lang-pkgs",
+      "advisories": 0,
+      "ids": []
+    },
+    {
+      "target": "services/media_edge/go.mod",
+      "class": "lang-pkgs",
+      "advisories": 2,
+      "ids": [
+        "CVE-2026-78661",
+        "CVE-2026-97045"
+      ]
+    },
+    {
+      "target": "uv.lock",
+      "class": "lang-pkgs",
+      "advisories": 79,
+      "ids": [
+        "CVE-2025-71176",
+        "CVE-2026-101917",
+        "CVE-2026-101918",
+        "CVE-2026-102265",
+        "CVE-2026-102266",
+        "CVE-2026-102267",
+        "CVE-2026-102268",
+        "CVE-2026-102269",
+        "CVE-2026-102270",
+        "CVE-2026-102271",
+        "CVE-2026-102272",
+        "CVE-2026-102273",
+        "CVE-2026-102274",
+        "CVE-2026-102275",
+        "CVE-2026-103001",
+        "CVE-2026-104874",
+        "CVE-2026-111063",
+        "CVE-2026-111064",
+        "CVE-2026-111065",
+        "CVE-2026-111066",
+        "CVE-2026-111748",
+        "CVE-2026-111749",
+        "CVE-2026-111750",
+        "CVE-2026-112390",
+        "CVE-2026-112391",
+        "CVE-2026-112392",
+        "CVE-2026-112393",
+        "CVE-2026-112394",
+        "CVE-2026-112395",
+        "CVE-2026-112396",
+        "CVE-2026-112397",
+        "CVE-2026-112398",
+        "CVE-2026-112399",
+        "CVE-2026-112400",
+        "CVE-2026-112401",
+        "CVE-2026-112402",
+        "CVE-2026-112403",
+        "CVE-2026-112404",
+        "CVE-2026-112405",
+        "CVE-2026-112406",
+        "CVE-2026-112891",
+        "CVE-2026-112892",
+        "CVE-2026-112893",
+        "CVE-2026-112894",
+        "CVE-2026-112895",
+        "CVE-2026-112896",
+        "CVE-2026-112897",
+        "CVE-2026-112898",
+        "CVE-2026-112899",
+        "CVE-2026-112900",
+        "CVE-2026-112901",
+        "CVE-2026-112902",
+        "CVE-2026-114501",
+        "CVE-2026-114603",
+        "CVE-2026-123817",
+        "CVE-2026-59881",
+        "CVE-2026-69243",
+        "CVE-2026-69244",
+        "CVE-2026-69247",
+        "CVE-2026-69248",
+        "CVE-2026-69249",
+        "CVE-2026-96636",
+        "CVE-2026-96637",
+        "CVE-2026-96638",
+        "CVE-2026-96639",
+        "CVE-2026-96640",
+        "CVE-2026-96641",
+        "CVE-2026-96642",
+        "CVE-2026-96643",
+        "CVE-2026-96644",
+        "CVE-2026-96778",
+        "CVE-2026-97687",
+        "CVE-2026-97688",
+        "CVE-2026-97689",
+        "GHSA-537c-gmf6-5ccf",
+        "GHSA-6q48-6c7w-9gw2",
+        "GHSA-78g4-xqwv-q3g8",
+        "GHSA-pxh4-856f-4h89",
+        "GHSA-xmj3-9gf7-h52w"
+      ]
+    }
+  ],
+  "distinct_advisory_count": 81,
+  "gate": "FAIL",
+  "exploitability": "not individually verified",
+  "lockfiles_changed_since_r5": "",
+  "raw_sha256": {
+    "trivy.json": "337b6e1f7ef2ab17524c1324985a14a76b8a31de0ef9c8447c97ad5e04c77839",
+    "trivy.log": "c42b31cbb42c767876d593385f86eeb77f2534190ce25c3e729e346a5f8a3518",
+    "govulncheck.log": "85abcd718491ef056542e94ba62709fc1164c946e2a515ff63ce2ffe1c6ed89c"
+  },
+  "versions": {
+    "govulncheck": {
+      "command": [
+        "/tmp/memoria-five-tools/govulncheck",
+        "-version"
+      ],
+      "stdout": "Go: go1.27.3\nScanner: govulncheck@v1.9.0\nDB: https://vuln.go.dev\nDB updated: 2026-11-11 02:51:11 +0000 UTC\n\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "trivy": {
+      "command": [
+        "/tmp/memoria-five-tools/trivy",
+        "--version"
+      ],
+      "stdout": "Version: 0.76.2\n",
+      "stderr": "",
+      "exit_code": 0
+    },
+    "go": {
+      "command": [
+        "go",
+        "version"
+      ],
+      "stdout": "go version go1.27.3 darwin/arm64\n",
+      "stderr": "",
+      "exit_code": 0
+    }
+  },
+  "production_tree_sha256": "ab59975ad01f527d6712d0ea649939b6aae0629600312b6dbe9dce1ab1f465c8",
+  "scope": "Actual govulncheck Go callgraph and Trivy filesystem dependency rescan; no dependency upgrades; Python authority code is covered by runtime regressions, not a claim of scanner-proven authorization correctness."
+}

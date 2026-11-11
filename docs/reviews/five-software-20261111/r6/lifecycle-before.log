@@ -1,0 +1,132 @@
+FFFFFFF..F..........                                                     [100%]
+=================================== FAILURES ===================================
+__________________ test_withdrawal_allows_safe_rotation[get] ___________________
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/tests/test_consent_lifecycle_r6.py:191: in test_withdrawal_allows_safe_rotation
+    assert response.status_code == 200, response.text
+E   AssertionError: {"detail":{"code":"runtime_profile_rejected","reason":"denied"}}
+E   assert 403 == 200
+E    +  where 403 = <Response [403 Forbidden]>.status_code
+------------------------------ Captured log call -------------------------------
+ERROR    services.control_api.app.persistent_runtime_profile:persistent_runtime_profile.py:64 persistent Runtime Profile read failed session_id=device-control:dev_test_01:r6-binding:47082a7014d068c5
+Traceback (most recent call last):
+  File "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/app/persistent_runtime_profile.py", line 50, in current_persistent_runtime_profile
+    profile, context = await runtime_service.current(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/service.py", line 523, in current
+    await self._require_private_profile_consent(profile, now=now)
+  File "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/issue_authority.py", line 123, in _require_private_profile_consent
+    raise PersistentSessionDenied("private recall consent is no longer active")
+services.session_runtime.errors.PersistentSessionDenied: private recall consent is no longer active
+WARNING  services.control_api.app.routes.multi_subject:multi_subject.py:332 session runtime denied route=device_runtime_profile code=runtime_profile_rejected device_id=dev_test_01 session_id=None actor_id=person_a error_type=PersistentSessionDenied error_code=denied
+________________ test_withdrawal_allows_safe_rotation[refresh] _________________
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/tests/test_consent_lifecycle_r6.py:194: in test_withdrawal_allows_safe_rotation
+    profile = await control.refresh_profile(
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/app/multi_subject_runtime.py:818: in refresh_profile
+    profile = await self.ensure_profile(
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/app/multi_subject_runtime.py:720: in ensure_profile
+    current, _context = await self.sessions.current(
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/service.py:523: in current
+    await self._require_private_profile_consent(profile, now=now)
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/issue_authority.py:123: in _require_private_profile_consent
+    raise PersistentSessionDenied("private recall consent is no longer active")
+E   services.session_runtime.errors.PersistentSessionDenied: private recall consent is no longer active
+------------------------------ Captured log call -------------------------------
+ERROR    services.control_api.app.persistent_runtime_profile:persistent_runtime_profile.py:64 persistent Runtime Profile read failed session_id=device-control:dev_test_01:r6-binding:47082a7014d068c5
+Traceback (most recent call last):
+  File "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/app/persistent_runtime_profile.py", line 50, in current_persistent_runtime_profile
+    profile, context = await runtime_service.current(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/service.py", line 523, in current
+    await self._require_private_profile_consent(profile, now=now)
+  File "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/issue_authority.py", line 123, in _require_private_profile_consent
+    raise PersistentSessionDenied("private recall consent is no longer active")
+services.session_runtime.errors.PersistentSessionDenied: private recall consent is no longer active
+________________ test_withdrawal_allows_safe_rotation[resolve] _________________
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/tests/test_consent_lifecycle_r6.py:205: in test_withdrawal_allows_safe_rotation
+    assert response.status_code == 200, response.text
+E   AssertionError: {"detail":{"code":"subject_resolution_forbidden","reason":"denied"}}
+E   assert 403 == 200
+E    +  where 403 = <Response [403 Forbidden]>.status_code
+------------------------------ Captured log call -------------------------------
+ERROR    services.control_api.app.persistent_runtime_profile:persistent_runtime_profile.py:64 persistent Runtime Profile read failed session_id=device-control:dev_test_01:r6-binding:47082a7014d068c5
+Traceback (most recent call last):
+  File "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/app/persistent_runtime_profile.py", line 50, in current_persistent_runtime_profile
+    profile, context = await runtime_service.current(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/service.py", line 523, in current
+    await self._require_private_profile_consent(profile, now=now)
+  File "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/issue_authority.py", line 123, in _require_private_profile_consent
+    raise PersistentSessionDenied("private recall consent is no longer active")
+services.session_runtime.errors.PersistentSessionDenied: private recall consent is no longer active
+WARNING  services.control_api.app.routes.multi_subject:multi_subject.py:332 session runtime denied route=resolve_subject code=subject_resolution_forbidden device_id=dev_test_01 session_id=None actor_id=person_a error_type=PersistentSessionDenied error_code=denied
+_________________ test_withdrawal_allows_safe_rotation[switch] _________________
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/tests/test_consent_lifecycle_r6.py:213: in test_withdrawal_allows_safe_rotation
+    assert response.status_code == 200, response.text
+E   AssertionError: {"detail":{"code":"subject_switch_forbidden","reason":"denied"}}
+E   assert 403 == 200
+E    +  where 403 = <Response [403 Forbidden]>.status_code
+------------------------------ Captured log call -------------------------------
+ERROR    services.control_api.app.persistent_runtime_profile:persistent_runtime_profile.py:64 persistent Runtime Profile read failed session_id=r6-conversation
+Traceback (most recent call last):
+  File "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/app/persistent_runtime_profile.py", line 50, in current_persistent_runtime_profile
+    profile, context = await runtime_service.current(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/service.py", line 523, in current
+    await self._require_private_profile_consent(profile, now=now)
+  File "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/issue_authority.py", line 123, in _require_private_profile_consent
+    raise PersistentSessionDenied("private recall consent is no longer active")
+services.session_runtime.errors.PersistentSessionDenied: private recall consent is no longer active
+WARNING  services.control_api.app.routes.multi_subject:multi_subject.py:332 session runtime denied route=switch_active_subject code=subject_switch_forbidden device_id=None session_id=r6-conversation actor_id=person_a error_type=PersistentSessionDenied error_code=denied
+________________ test_withdrawal_allows_safe_rotation[unknown] _________________
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/tests/test_consent_lifecycle_r6.py:216: in test_withdrawal_allows_safe_rotation
+    profile = await service.switch_subject(
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/service.py:537: in switch_subject
+    current, current_context = await self.current(
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/service.py:523: in current
+    await self._require_private_profile_consent(profile, now=now)
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/issue_authority.py:123: in _require_private_profile_consent
+    raise PersistentSessionDenied("private recall consent is no longer active")
+E   services.session_runtime.errors.PersistentSessionDenied: private recall consent is no longer active
+------------------------------ Captured log call -------------------------------
+ERROR    services.control_api.app.persistent_runtime_profile:persistent_runtime_profile.py:64 persistent Runtime Profile read failed session_id=r6-conversation
+Traceback (most recent call last):
+  File "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/app/persistent_runtime_profile.py", line 50, in current_persistent_runtime_profile
+    profile, context = await runtime_service.current(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/service.py", line 523, in current
+    await self._require_private_profile_consent(profile, now=now)
+  File "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/issue_authority.py", line 123, in _require_private_profile_consent
+    raise PersistentSessionDenied("private recall consent is no longer active")
+services.session_runtime.errors.PersistentSessionDenied: private recall consent is no longer active
+___________ test_live_decision_after_withdrawal[chat-ephemeral-True] ___________
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/tests/test_consent_lifecycle_r6.py:275: in test_live_decision_after_withdrawal
+    assert response.status_code == 200, response.text
+E   AssertionError: {"detail":{"code":"policy_actor_mismatch"}}
+E   assert 403 == 200
+E    +  where 403 = <Response [403 Forbidden]>.status_code
+__________ test_live_decision_after_withdrawal[tutor-ephemeral-True] ___________
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/tests/test_consent_lifecycle_r6.py:275: in test_live_decision_after_withdrawal
+    assert response.status_code == 200, response.text
+E   AssertionError: {"detail":{"code":"policy_actor_mismatch"}}
+E   assert 403 == 200
+E    +  where 403 = <Response [403 Forbidden]>.status_code
+___________________ test_withdrawal_terminal_cleanup[failed] ___________________
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/tests/test_consent_lifecycle_r6.py:305: in test_withdrawal_terminal_cleanup
+    await service.fail_session(
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/service.py:813: in fail_session
+    profile, context = await self.current(
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/service.py:523: in current
+    await self._require_private_profile_consent(profile, now=now)
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/session_runtime/issue_authority.py:123: in _require_private_profile_consent
+    raise PersistentSessionDenied("private recall consent is no longer active")
+E   services.session_runtime.errors.PersistentSessionDenied: private recall consent is no longer active
+=========================== short test summary info ============================
+FAILED services/control_api/tests/test_consent_lifecycle_r6.py::test_withdrawal_allows_safe_rotation[get]
+FAILED services/control_api/tests/test_consent_lifecycle_r6.py::test_withdrawal_allows_safe_rotation[refresh]
+FAILED services/control_api/tests/test_consent_lifecycle_r6.py::test_withdrawal_allows_safe_rotation[resolve]
+FAILED services/control_api/tests/test_consent_lifecycle_r6.py::test_withdrawal_allows_safe_rotation[switch]
+FAILED services/control_api/tests/test_consent_lifecycle_r6.py::test_withdrawal_allows_safe_rotation[unknown]
+FAILED services/control_api/tests/test_consent_lifecycle_r6.py::test_live_decision_after_withdrawal[chat-ephemeral-True]
+FAILED services/control_api/tests/test_consent_lifecycle_r6.py::test_live_decision_after_withdrawal[tutor-ephemeral-True]
+FAILED services/control_api/tests/test_consent_lifecycle_r6.py::test_withdrawal_terminal_cleanup[failed]
+8 failed, 12 passed in 20.27s

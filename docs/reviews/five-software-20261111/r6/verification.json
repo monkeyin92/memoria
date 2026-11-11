@@ -1,0 +1,209 @@
+{
+  "candidate": "2c4d4e61163b3804debd0bc75f2b85af03822e9a",
+  "command": [
+    ".venv/bin/pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    "-rs",
+    "--tb=short",
+    "--junitxml=outputs/five-software-r6/regression.xml",
+    "services/session_runtime/tests",
+    "services/consent/tests",
+    "services/control_api/tests/test_consent_lifecycle_r6.py",
+    "services/control_api/tests/test_session_policy_retention_ceiling.py",
+    "services/control_api/tests/test_policy_authority_r2.py",
+    "services/control_api/tests/test_minor_tutoring_r2.py",
+    "services/control_api/tests/test_guardian_recap_timeout_r2.py",
+    "services/control_api/tests/test_policy_chain_runtime_profile.py",
+    "services/control_api/tests/test_policy_chain_subject_matrix.py",
+    "services/control_api/tests/test_policy_chain_fail_closed.py",
+    "services/control_api/tests/test_multi_subject_policy_decisions.py",
+    "services/control_api/tests/test_planner_catalog_r3.py",
+    "services/control_api/tests/test_assistant_snapshot.py",
+    "services/control_api/tests/test_assistant_http_r3.py",
+    "services/archive/tests/test_memory_catalog.py",
+    "services/archive/tests/test_postgres_memory_catalog.py",
+    "services/archive/tests/test_memory_evaluation.py",
+    "services/archive/tests/test_atomic_claim_unseen_evaluation.py",
+    "services/archive/tests/test_projection_equivalence_r3.py",
+    "services/companionship/tests",
+    "services/agent/tests/unit/test_assistant_emotion.py",
+    "services/agent/tests/unit/test_phrase_segmenter.py",
+    "services/agent/tests/unit/test_response_planner_client.py",
+    "services/agent/tests/unit/test_planner_network_r3.py",
+    "services/agent/tests/unit/test_media_profile_envelope_r5.py",
+    "services/agent/tests/unit/test_grpc_bridge.py",
+    "scripts/tests/test_summarize_software_soak_r6.py"
+  ],
+  "passed": 801,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "by_service": {
+    "session_runtime": 121,
+    "consent": 327,
+    "control_api": 77,
+    "archive": 77,
+    "companionship": 73,
+    "agent": 115,
+    "tests": 11
+  },
+  "anti_manipulation_cases": 63,
+  "new_lifecycle_cases": 21,
+  "new_receipt_cases": 11,
+  "commands_status": [
+    {
+      "name": "ruff",
+      "command": [
+        ".venv/bin/ruff",
+        "check",
+        "."
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "mypy",
+      "command": [
+        ".venv/bin/mypy",
+        "services",
+        "--strict"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "budget",
+      "command": [
+        ".venv/bin/python",
+        "scripts/check_module_budget.py",
+        "check"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "go-race",
+      "command": [
+        "go",
+        "test",
+        "-C",
+        "services/media_edge",
+        "-race",
+        "-count=1",
+        "./..."
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "go-build",
+      "command": [
+        "go",
+        "build",
+        "-C",
+        "services/media_edge",
+        "-o",
+        "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/outputs/five-software-r6/mediaruntime",
+        "./cmd/mediaruntime"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "test_count_note": "The 21 lifecycle and 63 anti-manipulation cases are subsets of 801; selections are not added as unique tests.",
+  "voice_runtime": {
+    "command": [
+      ".venv/bin/pytest",
+      "-o",
+      "addopts=",
+      "-q",
+      "services/agent/tests/unit/test_media_session_assistant_history.py",
+      "-rs",
+      "--junitxml=outputs/five-software-r6/voice-runtime-regression.xml",
+      "services/agent/tests/unit/test_media_session_audio_ingress.py",
+      "services/agent/tests/unit/test_media_session_delegation_lookup.py",
+      "services/agent/tests/unit/test_media_session_delegation_outcomes.py",
+      "services/agent/tests/unit/test_media_session_delegation_ownership.py",
+      "services/agent/tests/unit/test_media_session_device_turns.py",
+      "services/agent/tests/unit/test_media_session_echo_overlap.py",
+      "services/agent/tests/unit/test_media_session_endpoint_tails.py",
+      "services/agent/tests/unit/test_media_session_followups.py",
+      "services/agent/tests/unit/test_media_session_golden.py",
+      "services/agent/tests/unit/test_media_session_interruption.py",
+      "services/agent/tests/unit/test_media_session_lifecycle.py",
+      "services/agent/tests/unit/test_media_session_misc.py",
+      "services/agent/tests/unit/test_media_session_noise_edge_after_first_frame.py",
+      "services/agent/tests/unit/test_media_session_output_dispatch.py",
+      "services/agent/tests/unit/test_media_session_output_failures.py",
+      "services/agent/tests/unit/test_media_session_output_lifecycle.py",
+      "services/agent/tests/unit/test_media_session_owner_window.py",
+      "services/agent/tests/unit/test_media_session_playback_stop.py",
+      "services/agent/tests/unit/test_media_session_registry.py",
+      "services/agent/tests/unit/test_media_session_reply_cut_by_wordless_turn.py",
+      "services/agent/tests/unit/test_media_session_slow_reply.py",
+      "services/agent/tests/unit/test_media_session_superseded_audible_reply.py",
+      "services/agent/tests/unit/test_media_session_turn_pipeline.py",
+      "services/agent/tests/unit/test_media_session_unheard_reply_hold.py",
+      "services/agent/tests/unit/test_media_session_weather_followup.py",
+      "services/agent/tests/unit/test_media_profile_envelope_r5.py",
+      "services/agent/tests/unit/test_grpc_bridge.py",
+      "services/agent/tests/unit/test_run_media_bridge.py",
+      "services/control_api/tests/test_assistant_snapshot.py",
+      "scripts/tests/test_local_process_probe.py",
+      "services/agent/tests/unit/test_bridge_process_exit_injection.py"
+    ],
+    "passed": 460,
+    "skipped": [
+      {
+        "test": "test_linux_reads_rss_and_the_caught_sigterm_bit",
+        "reason": "Darwin reads no /proc at all"
+      },
+      {
+        "test": "test_established_tcp_count_reads_this_processes_own_sockets",
+        "reason": "no /proc to list"
+      }
+    ],
+    "failures": 0,
+    "errors": 0,
+    "overlap": "Overlaps the 801-test selection; do not sum as unique coverage."
+  },
+  "final_checks": [
+    {
+      "name": "ruff",
+      "command": [
+        ".venv/bin/ruff",
+        "check",
+        "."
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "mypy",
+      "command": [
+        ".venv/bin/mypy",
+        "services",
+        "--strict"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "budget",
+      "command": [
+        ".venv/bin/python",
+        "scripts/check_module_budget.py",
+        "check"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "logs_sha256": {
+    "lifecycle-before.log": "20c7c6a07dc0daa25b9036acd5f5ccdd2884cf54817b8165894b9fe49bbc3dee",
+    "lifecycle-after.log": "939223b6b64c1e8ce5fe2d5af7d0d0af1eedc730fc17cde7c714afb24935cf2d",
+    "regression.log": "24ac2225d362120114c4299be14365da6f194102af37b6d000bb502b9a63865e",
+    "regression.xml": "dcdbecb9cc2e1eb5014f3df61d53f4a3c07f4d6ebf393636c7cf412d342ad9c2",
+    "voice-runtime-regression.log": "5f4181119a726e707b996270d62c3894e86f5df3538b13d977ad6fc22f1e2e68",
+    "voice-runtime-regression.xml": "5e781c884776ac6171a4bd38879c1c1e28a261537da14480a1c95c82dbe940ce",
+    "ruff-final.log": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+    "mypy-final.log": "a350fac10aae9349d316e2cd59df5286f52c4fc2645618de7b84d32d4f9a6884",
+    "budget-final.log": "05fcfaf8e15804335e8d1c5f3b99e548517d69f2da21a1cbb90b0cd0b39ad27a",
+    "go-race.log": "9c1a2987a6aa61053ea3c1f189eb98075aac1ddce71efddd44dfc60d52117121",
+    "go-build.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

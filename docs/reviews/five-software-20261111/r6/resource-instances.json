@@ -1,0 +1,118 @@
+{
+  "control:54773": {
+    "name": "control",
+    "pid": 54773,
+    "samples": 181,
+    "elapsed_s": [
+      0.09758237504865974,
+      900.1505618750234
+    ],
+    "metrics": {
+      "rss_bytes": {
+        "first": 113819648,
+        "last": 87130112,
+        "min": 86343680,
+        "max": 132825088
+      },
+      "fd_count": {
+        "first": 3,
+        "last": 9,
+        "min": 3,
+        "max": 10
+      },
+      "established_tcp": {
+        "first": 0,
+        "last": 2,
+        "min": 0,
+        "max": 3
+      }
+    }
+  },
+  "bridge:54774": {
+    "name": "bridge",
+    "pid": 54774,
+    "samples": 73,
+    "elapsed_s": [
+      0.09758237504865974,
+      360.11503500002436
+    ],
+    "metrics": {
+      "rss_bytes": {
+        "first": 104660992,
+        "last": 297943040,
+        "min": 104660992,
+        "max": 297943040
+      },
+      "fd_count": {
+        "first": 17,
+        "last": 24,
+        "min": 17,
+        "max": 24
+      },
+      "established_tcp": {
+        "first": 0,
+        "last": 2,
+        "min": 0,
+        "max": 2
+      }
+    }
+  },
+  "edge:54776": {
+    "name": "edge",
+    "pid": 54776,
+    "samples": 181,
+    "elapsed_s": [
+      0.09758237504865974,
+      900.1505618750234
+    ],
+    "metrics": {
+      "rss_bytes": {
+        "first": 32768,
+        "last": 98713600,
+        "min": 32768,
+        "max": 109871104
+      },
+      "fd_count": {
+        "first": 3,
+        "last": 9,
+        "min": 3,
+        "max": 11
+      },
+      "established_tcp": {
+        "first": 0,
+        "last": 2,
+        "min": 0,
+        "max": 4
+      }
+    }
+  },
+  "bridge:65394": {
+    "name": "bridge",
+    "pid": 65394,
+    "samples": 108,
+    "elapsed_s": [
+      365.1730281250202,
+      900.1505618750234
+    ],
+    "metrics": {
+      "rss_bytes": {
+        "first": 143196160,
+        "last": 381108224,
+        "min": 143196160,
+        "max": 381108224
+      },
+      "fd_count": {
+        "first": 19,
+        "last": 24,
+        "min": 19,
+        "max": 26
+      },
+      "established_tcp": {
+        "first": 2,
+        "last": 2,
+        "min": 2,
+        "max": 3
+      }
+    }
+  }
+}
