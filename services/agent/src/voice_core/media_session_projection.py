@@ -1164,6 +1164,7 @@ class MediaSessionProjectionMixin:
             event_int("turn_id"),
             event_int("generation_id"),
             event_int("tool_epoch"),
+            event_int("session_epoch"),
         )
         task_epoch, context_version = self._event_versions(context, fence)
         if event_type == "assistant_state":
@@ -1200,6 +1201,7 @@ class MediaSessionProjectionMixin:
             turn_id=event_int("turn_id"),
             generation_id=event_int("generation_id"),
             tool_epoch=event_int("tool_epoch"),
+            session_epoch=fence.session_epoch,
             task_epoch=task_epoch,
             context_version=context_version,
         )

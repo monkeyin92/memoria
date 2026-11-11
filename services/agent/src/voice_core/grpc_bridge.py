@@ -1164,6 +1164,7 @@ class MediaBridgeGrpcServer:
         turn_id: int = 0,
         generation_id: int = 0,
         tool_epoch: int = 0,
+        session_epoch: int | None = None,
         task_epoch: int = 0,
         context_version: int = 0,
     ) -> bool:
@@ -1176,12 +1177,13 @@ class MediaBridgeGrpcServer:
         )
         connection.client_sequence += 1
         current_fence = connection.session.fence
-        session_epoch = (
-            current_fence.session_epoch
-            if (turn_id, generation_id, tool_epoch)
-            == (current_fence.turn_id, current_fence.generation_id, current_fence.tool_epoch)
-            else 0
-        )
+        if session_epoch is None:
+            session_epoch = (
+                current_fence.session_epoch
+                if (turn_id, generation_id, tool_epoch)
+                == (current_fence.turn_id, current_fence.generation_id, current_fence.tool_epoch)
+                else 0
+            )
         return await self._enqueue(
             connection,
             media_pb2.CoreToMedia(
