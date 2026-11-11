@@ -40,7 +40,13 @@ def reaped_pid() -> int:
 
 @pytest.fixture
 def sleeper() -> int:
-    process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; print('ready', flush=True); time.sleep(60)"],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert process.stdout is not None
+    assert process.stdout.readline().strip() == "ready"
     try:
         yield process.pid
     finally:
@@ -127,8 +133,12 @@ def test_trend_sample_reports_an_unmeasured_socket_count_instead_of_zero() -> No
 
 def test_trend_sample_exits_non_zero_when_rss_cannot_be_read(reaped_pid: int) -> None:
     completed = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "offline_process_trend_sample.py"),
-         "--pid", str(reaped_pid)],
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "offline_process_trend_sample.py"),
+            "--pid",
+            str(reaped_pid),
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -140,7 +150,9 @@ def test_trend_sample_exits_non_zero_when_rss_cannot_be_read(reaped_pid: int) ->
 
 
 def test_live_rss_matches_operating_system_units(sleeper: int) -> None:
-    expected = int(subprocess.check_output(["ps", "-p", str(sleeper), "-o", "rss="], text=True)) * 1024
+    expected = (
+        int(subprocess.check_output(["ps", "-p", str(sleeper), "-o", "rss="], text=True)) * 1024
+    )
     actual = probe.rss_bytes(sleeper)
     assert actual is not None
     assert 0.5 * expected <= actual <= 2 * expected

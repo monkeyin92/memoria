@@ -233,11 +233,17 @@ async def test_stream_reply_strips_tag_and_binds_plan() -> None:
     await runtime.close()
 
 
-@pytest.mark.parametrize("text", ["[caring]你好。", "你好[happy]呀。", "[普通说明]你好。"])
-def test_bare_tags_across_every_stream_split(text):
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("[caring]你好。", "你好。"),
+        ("你好[happy]呀。", "你好呀。"),
+        ("[普通说明]你好。", "[普通说明]你好。"),
+    ],
+)
+def test_bare_tags_across_every_stream_split(text, expected):
     from services.agent.src.orchestration.assistant_emotion import (
         AssistantEmotionFilter,
-        strip_bare_emotion_tags,
     )
 
     for index in range(len(text) + 1):
@@ -246,7 +252,7 @@ def test_bare_tags_across_every_stream_split(text):
             "".join(filter_.feed(chunk) or "" for chunk in (text[:index], text[index:]))
             + filter_.flush()
         )
-        assert output == strip_bare_emotion_tags(text)
+        assert output == expected
 
 
 def test_incomplete_non_control_bracket_text_survives_flush():
