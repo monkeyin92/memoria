@@ -7,6 +7,7 @@ This window does not run the production Python bridge or Control service.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -32,6 +33,7 @@ def main() -> int:
                 "bridge": "synthetic deviceTestCore",
                 "control": "not running",
                 "binary": args.binary,
+                "binary_sha256": hashlib.sha256(Path(args.binary).read_bytes()).hexdigest(),
                 "race": True,
                 "dirty": subprocess.check_output(["git", "status", "--porcelain"], text=True),
             },

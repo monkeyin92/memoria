@@ -137,3 +137,10 @@ def test_trend_sample_exits_non_zero_when_rss_cannot_be_read(reaped_pid: int) ->
     assert completed.returncode != 0
     assert completed.stdout == ""
     assert "cannot read resident memory" in completed.stderr
+
+
+def test_live_rss_matches_operating_system_units(sleeper: int) -> None:
+    expected = int(subprocess.check_output(["ps", "-p", str(sleeper), "-o", "rss="], text=True)) * 1024
+    actual = probe.rss_bytes(sleeper)
+    assert actual is not None
+    assert 0.5 * expected <= actual <= 2 * expected
