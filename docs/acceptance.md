@@ -4225,7 +4225,7 @@ Not verified: any of this on the robot. The R02 device run of the same day did n
 <a id="five-software-20261112"></a>
 ## 五项软件交付与 PR 591，2026-11-12
 
-[PR #591](https://github.com/monkeyin92/memoria/pull/591) 尚未完成合并。当前基线为 `35248264fd9bcfe38c187ce869fc8b07e282af6d`。本轮只修复合并所需的测试、CI 环境和文档引用，未推送、合并、回写 Notion、部署或操作设备。
+软件交付入口为 [PR #591](https://github.com/monkeyin92/memoria/pull/591)，实际合并状态、最终 head 和 CI 以该 PR 为准。本轮从 `35248264fd9bcfe38c187ce869fc8b07e282af6d` 修复合并所需的测试、CI 环境和文档引用；实施阶段未执行推送、合并或 Notion 回写。软件合入不构成生产部署或设备操作的验收。
 
 ### 当前软件边界
 
@@ -4241,7 +4241,7 @@ Not verified: any of this on the robot. The R02 device run of the same day did n
 
 原 Gemini 对 `b2ffc904` 提出 S2：撤回私密召回同意后，控制会话降级、切人、profile 刷新与 fail_session 清理被旧 profile TTL 阻塞。修复保持私密读取 fail-closed，只允许有效控制会话安全降级重签；真实 HTTP、签名和 PG epoch 回归覆盖。原 S3 为否定导向及保密同意回复漏检，后续又修复“不过我是 AI”的转折误判，保留身份正控和转折后否定导向负控。
 
-主协调者提供的最新 Gemini `35248264` 复审结论为 PASS + NOTES，实际 PG 核心回归 183 passed、0 skipped；扩大回归 591 passed、2 Darwin skipped。这是此前复审的证据，不是本次重新运行结果。main PR #590 整合后的 617 项主回归与这些选择存在重叠，不相加。最新 CI python-shards(1) 为 6 failed、6587 passed、1 skipped，python 汇总失败是依赖传播。本次局部验证不能据此宣称整片通过。
+Gemini 对 `35248264` 的复审结论为 PASS + NOTES，实际 PG 核心回归 183 passed、0 skipped；扩大回归 591 passed、2 Darwin skipped。这是此前复审的证据，不是本次重新运行结果。main PR #590 整合后的 617 项主回归与这些选择存在重叠，不相加。修复前该版本的 CI python-shards(1) 为 6 failed、6587 passed、1 skipped，python 汇总失败是依赖传播。本次局部验证不能据此宣称整片通过。
 
 本轮复现的根因分别为 Linux Go race 编译缺少 Opus 开发包、身份 HTTP 断言仍期待旧台词，以及三个独立报告违反文档聚合约束。它们不是上一轮已修复的 x/net 漏洞根因。Go 编译失败现在必须在 pytest 断言中显示真实 go.log，仍保留 -race 和非零退出失败判据。python-shards 显式读取 services/media_edge/go.mod 安装项目 Go 1.26.10，并安装 libopus-dev 与 pkg-config；没有证据表明 Go 版本是本次 Opus 编译错误的直接原因。身份前三条保持精确字符串比较，第四条喜欢回应保持原契约。
 
