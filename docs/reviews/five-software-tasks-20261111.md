@@ -8,9 +8,19 @@
 
 主 Agent 复核了 `7f339217` 产生的三个新增失败。U5#2、U5#5、U8#5 都包含“不过我是 AI”；其中“不”属于转折词，未否定身份声明。新增两个身份正控制和一个转折后的否定导向负控制，修复前为 2 failed、8 passed，修复后筛查器 66 项测试全通过，正向 fixture 仍为 40/40。[新保存的旧包重评](five-software-20261111/r6/recorded-bundle-after-concessive-fix.json)恢复为 19/40 次、1/8 例，整体仍失败。原 bundle SHA、PM 判断、三句和每例 5/5 门槛不变。R6 的历史 16/40 收据保持原样，不再作为当前判定。
 
-干净候选 `2c4d4e61163b3804debd0bc75f2b85af03822e9a` 完成 45 秒故障预检和新的 900.007511 秒三进程窗口，[R6 summary](five-software-20261111/r6/summary.json)的 16 项谓词全通过。后续业务改动仅涉及离线筛查器，不影响该运行链路，未将窗口改记为最终候选整树哈希相同。安全扫描仍 **FAIL**。桥 RSS 增长未归因，不证明泄漏或容量。真实模型、生产和设备边界仍未验收，原产品任务复选项继续保持未完成。未执行 push、PR、merge、部署、生产 SSH、设备、外部通知或付费模型调用。
+干净候选 `2c4d4e61163b3804debd0bc75f2b85af03822e9a` 完成 45 秒故障预检和新的 900.007511 秒三进程窗口，[R6 summary](five-software-20261111/r6/summary.json)的 16 项谓词全通过。从该冻结版本到独立复审候选 `4dc67723` 的业务改动仅涉及离线筛查器，不影响该运行链路，未将窗口改记为最终候选整树哈希相同。安全扫描仍 **FAIL**。桥 RSS 增长未归因，不证明泄漏或容量。真实模型、生产和设备边界仍未验收，原产品任务复选项继续保持未完成。未执行部署、生产 SSH、设备或付费模型调用。
 
 Base `23f75b4d7eb05f587ca7c44a27273e5a2a9a0d55`. Worktree `/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9`, branch `t3/five-software-tasks-acceptance`. The original checkout and its unrelated uncommitted files were not used as implementation input.
+
+## PR、整合验证与清理归档
+
+软件交付由 [PR #591](https://github.com/monkeyin92/memoria/pull/591) 合入 `main`；实际合并状态、head 与 CI 以该 PR 为准。用户已明确授权创建、合并、删除本次分支和 worktree，并回写现有 Notion 卡片。此授权不包含生产部署或设备操作。
+
+合入最新 `origin/main` 的 `f2d15786` 后，整合业务候选为 `7c33ce5817c341c1ef5a2abec9bd89647afc38cf`，无冲突。主 Agent 对 main 新增的八个 Agent 提示词及回复套件、公共回复安全套件和防诱导筛查执行 `.venv/bin/python -m pytest -o addopts='' -q`，617 项通过、零跳过；Ruff、strict mypy（593 文件）与 33 项原模块预算通过。900 秒收据仍归属于 `2c4d4e61`，未对 main 新增的提示词与回复安全改动重复长稳，也不据此声明真实模型生成质量通过。整合版本的独立复核结果记录在 PR。
+
+清理 worktree 前，274 个本次 `outputs/five-software*` 原始文件已复制至本机主仓 `outputs/five-software-archive-20261112/`，总计 329834248 字节；逐文件 SHA-256 一致。该目录的 `archive-manifest.json` 记录原位置、字节数和摘要。历史报告中的 worktree 路径保留为实施时证据；移除 worktree 后，原始日志按相同文件名从归档读取，已提交的精简收据继续位于本报告相邻目录。原始归档为本机材料，不在 Git 中。
+
+Notion 回写沿用既有[项目经理路线图](https://app.notion.com/p/40e5cc7d2f5e8152b698d99037b4e1bf)与相关工程卡，不以软件合并覆盖原产品任务的真实模型、安全扫描或真机未验边界。
 
 ## Workflow and completion predicates
 
