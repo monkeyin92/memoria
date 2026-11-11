@@ -324,25 +324,23 @@ int main() {
     assert out.splitlines() == ["1 allowed", "0 protected", "1 allowed", "1 allowed"]
 
 
-def test_board_wires_pat_and_tap_to_the_shared_policy() -> None:
-    # The policy lives in the header; the board asks it on every event and
-    # logs the decision and the per-sample reason, which the 2026-10-21 logs
-    # lacked.
+def test_board_wires_pat_and_tap_to_their_policies() -> None:
+    # Pat uses the gesture policy. Screen touch uses the wake-only policy.
     source = BOARD_SOURCE.read_text(encoding="utf-8")
     for required in (
         "memoria::PatGestureFacts facts;",
-        "memoria::TapGestureFacts facts;",
+        "memoria::TapFacts{",
         "memoria::PatGestureDecisionFor(facts)",
-        "memoria::ScreenTapDecisionFor(",
+        "memoria::TapWakeActionFor(",
         "memoria::PatReactionName(reaction)",
         "memoria::PatIgnoreName(memoria::PatIgnore::kNone)",
         "memoria::PatIgnoreReasonName(result.kind, result.ignore)",
-        "memoria::ScreenTapDecisionName(decision)",
+        "memoria::TapWakeActionName(action)",
     ):
         assert required in source, required
     for line in (
         "Device pat (accepted) kind=%s score=%d state=%d decision=%s silent=%d",
-        "Screen tap (accepted) hold_ms=%u state=%d decision=%s",
+        "screen tap hold_ms=%u action=%s state=%d offline=%s",
         "pat motion watcher armed 20 ms poll",
         "Device pat ignored (score: %d, reason=%s) state=%d touch_mute=%d",
     ):

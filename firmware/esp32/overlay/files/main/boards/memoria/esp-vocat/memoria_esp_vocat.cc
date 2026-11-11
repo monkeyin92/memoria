@@ -688,24 +688,6 @@ private:
         });
     }
 
-    void OnScreenTapGesture(std::uint32_t hold_ms, bool offline_wants_tap) {
-        auto& app = Application::GetInstance();
-        const auto state = app.GetDeviceState();
-        const bool crisis_playback = state == kDeviceStateSpeaking && !PlaybackMayStop();
-        memoria::TapGestureFacts facts;
-        facts.state = state;
-        facts.speaking_crisis_playback = crisis_playback;
-        facts.wifi_configuring = state == kDeviceStateWifiConfiguring;
-        facts.offline_wants_tap = offline_wants_tap;
-        const auto decision = memoria::ScreenTapDecisionFor(facts);
-        ESP_LOGI(kScreenTapTag, "Screen tap (accepted) hold_ms=%u state=%d decision=%s", hold_ms,
-                 static_cast<int>(state), memoria::ScreenTapDecisionName(decision));
-        if (decision != memoria::ScreenTapDecision::kStopSpeaking) {
-            return;  // protected playback, or a tap the power policy owns
-        }
-        StopSpeakingForGesture(memoria::PatGestureDecision::kStopSpeaking, "screen tap");
-    }
-
     static void imu_event_task(void* arg) {
         auto* self = static_cast<MemoriaEspVocat*>(arg);
         if (self == nullptr) {
@@ -839,6 +821,13 @@ private:
     }
 
     memoria::TapDevice TapDeviceFor(DeviceState state) const {
+        // Local clips can play while Application remains idle.
+        const auto offline_mode = offline_menu_.mode();
+        if (!Application::GetInstance().GetAudioService().IsPlaybackIdle() ||
+            offline_mode == memoria::OfflineMode::kPlaying ||
+            offline_mode == memoria::OfflineMode::kPendingOnlineAfterStory) {
+            return memoria::TapDevice::kBusy;
+        }
         if (state == kDeviceStateStarting) {
             return memoria::TapDevice::kStarting;
         }
@@ -846,7 +835,8 @@ private:
             return state == kDeviceStateIdle ? memoria::TapDevice::kIdle
                                              : memoria::TapDevice::kBusy;
         }
-        if (listening_capture_closed_.load(std::memory_order_relaxed)) {
+        if (state == kDeviceStateListening &&
+            listening_capture_closed_.load(std::memory_order_relaxed)) {
             return memoria::TapDevice::kListeningClosed;
         }
         return memoria::TapDevice::kBusy;
@@ -1021,16 +1011,6 @@ private:
         const auto device = TapDeviceFor(state);
         const bool idle = device == memoria::TapDevice::kIdle;
 
-        if (online) {
-            ESP_LOGI(kScreenTapTag, "screen tap dropped (online voice-only control) state=%d hold_ms=%u",
-                     static_cast<int>(state), static_cast<unsigned>(hold_ms));
-            return;
-        }
-
-        // A driven conversation answers the tap; otherwise the power policy
-        // below keeps its wake, offline-menu and Wi-Fi behaviour.
-        OnScreenTapGesture(hold_ms, offline_menu_.WantsTap(online, idle));
-
         const auto action = memoria::TapWakeActionFor(memoria::TapFacts{
             .device = device,
             .in_quiet_hours = power.in_quiet_hours(BeijingMinuteNowOrZero()),
@@ -1085,7 +1065,7 @@ private:
     // USB wake runs the screen tap action for a computer that cannot touch the glass.
     // Pairing and start-up return first. TapDeviceFor treats listening with capture
     // closed as the standby face, and the shared dispatch resumes that session.
-    // Quiet hours, the offline menu, and the online drop stay on the glass path.
+    // Quiet hours and the offline menu stay on the glass path.
     // An idle robot that is already online still starts a conversation from this command.
     // TODO(release-blocker): remove USB serial wake before final firmware; it opens the mic without a screen tap
     void HandleUsbWake() {

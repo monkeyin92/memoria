@@ -1650,7 +1650,7 @@ def test_protected_generation_refuses_a_local_gesture_stop() -> None:
     # protocol, and neither waits on the server to stop.
     assert "memoria::PlaybackStopRegistry::GetInstance().allowed()" in board
     assert "protocol_->" not in board
-    stop = board[board.index("void StopSpeakingForGesture(") : board.index("void OnScreenTapGesture(")]
+    stop = board[board.index("void StopSpeakingForGesture(") : board.index("static void imu_event_task(")]
     assert "app.AbortSpeaking(kAbortReasonNone)" in stop
     assert "app.StartListening()" in stop
     assert "protected playback, the sentence plays to its end" in stop

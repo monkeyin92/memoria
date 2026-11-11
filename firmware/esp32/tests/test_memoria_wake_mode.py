@@ -178,17 +178,10 @@ def test_board_tap_handler_uses_power_policy_and_never_ends_the_conversation() -
     assert "WakeWordInvoke(wake_source)" in dispatch
     assert "offline_menu_" in source
     assert "HoldDurationMsOnRelease" in source
-    # 2026-10-21 field test: a tap while the companion spoke did nothing. The
-    # tap now asks the shared policy; only that policy can stop the reply the
-    # child was listening to, through the same local stop as BOOT.
-    assert "OnScreenTapGesture(hold_ms" in handler
-    tap = _function(source, "void OnScreenTapGesture(std::uint32_t hold_ms, bool offline_wants_tap)")
-    assert "ScreenTapDecisionFor" in tap
-    assert 'StopSpeakingForGesture(memoria::PatGestureDecision::kStopSpeaking, "screen tap")' in tap
-    stop = _function(source, "void StopSpeakingForGesture(memoria::PatGestureDecision decision, const char* source)")
-    assert "app.AbortSpeaking(kAbortReasonNone)" in stop
-    assert "app.StartListening()" in stop
-    assert "kCrisisKeepPlayback" in stop
+    assert "OnScreenTapGesture" not in handler
+    assert "if (online)" not in handler
+    assert "online voice-only control" not in handler
+    assert "StopSpeakingForGesture" not in handler
     # It never ends the conversation or closes the transport.
     for forbidden in ("StopListening", "ToggleChatState", "CloseAudioChannel"):
         assert forbidden not in handler, f"a tap must not call {forbidden}"
