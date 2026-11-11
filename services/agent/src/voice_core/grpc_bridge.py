@@ -1171,12 +1171,10 @@ class MediaBridgeGrpcServer:
         connection = self._connections.get(session_id)
         if connection is None or connection.closed or not connection.session.accepts_input():
             return False
-        task_epoch, context_version = connection.session.observe_versions(
-            task_epoch,
-            context_version,
-        )
+        task_epoch, context_version = connection.session.observe_versions(task_epoch, context_version)
         connection.client_sequence += 1
         current_fence = connection.session.fence
+        # Registry events have an identity epoch before the first media generation.
         if session_epoch is None:
             session_epoch = (
                 current_fence.session_epoch

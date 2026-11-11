@@ -91,7 +91,7 @@
           "protocol": "media-v1",
           "sequence": 2,
           "server_monotonic_ms": "<time>",
-          "session_epoch": 0,
+          "session_epoch": 1,
           "session_id": "golden-epoch-rotation",
           "stream_epoch": 1,
           "task_epoch": 0,

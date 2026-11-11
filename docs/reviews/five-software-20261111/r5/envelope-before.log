@@ -1,0 +1,32 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___________ test_registry_preserves_signed_epoch_in_client_envelope ____________
+
+    @pytest.mark.asyncio
+    async def test_registry_preserves_signed_epoch_in_client_envelope():
+        bridge = MediaBridgeGrpcServer()
+        registry = MediaVoiceCoreRegistry(bridge=bridge, provider_factory=lambda _: FakeMediaProvider())
+        registry.install()
+        identity = SessionIdentity("profile-envelope", stream_epoch=18)
+        connection = open_bridge_connection(bridge, identity)
+        context = await registry.open_session(identity)
+        try:
+            bind_owner_policy(context.runtime)
+            connection = bridge._connections[identity.session_id]
+            while not connection.outgoing.empty():
+                connection.outgoing.get_nowait()
+            task = context.runtime.publish_assistant_state("user_speaking")
+            assert task is not None
+            await task
+            events = []
+            while not connection.outgoing.empty():
+                events.append(connection.outgoing.get_nowait())
+            state = next(event.client for event in events if event.HasField("client"))
+            payload = json.loads(state.json_payload)
+>           assert payload["session_epoch"] > 0
+E           assert 0 > 0
+
+services/agent/tests/unit/test_media_profile_envelope_r5.py:34: AssertionError
+=========================== short test summary info ============================
+FAILED services/agent/tests/unit/test_media_profile_envelope_r5.py::test_registry_preserves_signed_epoch_in_client_envelope
+1 failed in 0.08s
