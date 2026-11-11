@@ -28,6 +28,7 @@ from packages.contracts.generated.python.multi_subject_contracts import (
     SubjectCategoryValue,
 )
 
+from services.policy.action_authorizer import ActionAuthorizationError
 from services.policy.context import PolicyContext
 from services.policy.production_wiring import ConsentDiscovery
 from services.session_runtime.errors import (
@@ -94,6 +95,34 @@ class SessionIssueAuthorityMixin:
             purpose: PurposeValue,
             now: datetime,
         ) -> ConsentDiscovery: ...
+
+    async def _require_private_profile_consent(
+        self, profile: RuntimeProfileSignedV2, *, now: datetime
+    ) -> None:
+        actor_id = profile.actor_id
+        if "memory_recall_private" in profile.capabilities:
+            try:
+                async with self._store.action_transaction(
+                    actor_id=actor_id,
+                    device_id=profile.device_id,
+                    subject_id=profile.active_subject_id,
+                ) as connection:
+                    discovery = await self._discover_current_consent(
+                        connection,
+                        actor_id=actor_id,
+                        subject_id=profile.active_subject_id,
+                        resource_owner_id=profile.active_subject_id,
+                        device_id=profile.device_id,
+                        binding_id=profile.binding_id,
+                        binding_version=profile.binding_version,
+                        capability="memory_recall_private",
+                        purpose="memory_recall",
+                        now=now,
+                    )
+                    if not any(item.is_effective_at(now) for item in discovery.consent_evidence):
+                        raise PersistentSessionDenied("private recall consent is no longer active")
+            except (asyncpg.PostgresError, ActionAuthorizationError) as exc:
+                raise PersistentSessionUnavailable(str(exc)) from exc
 
     async def _build_issue(
         self,

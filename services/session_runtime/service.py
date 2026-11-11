@@ -495,13 +495,12 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
         """Load the usable profile/context pair on a single read snapshot.
 
         Profile, context, TTL and the device-binding fence are all evaluated
-        inside one read-only transaction, so one ``current()`` call costs one
-        connection instead of two -- and the fence authorizes the same snapshot
+        inside one read-only transaction. Private consent is rechecked through
+        its current action authority. The binding fence authorizes the snapshot
         it read the profile from, which narrows the check-then-use window left
-        by the previous two-transaction shape.  The close-only path deliberately
+        by separate reads. The close-only path deliberately
         stays on ``_active_profile_context`` without the fence: closure is
-        terminal cleanup, not a new authorization, and a withdrawn device must
-        still be closable.
+        terminal cleanup, so a withdrawn device remains closable.
         """
         try:
             async with self._store.read_transaction(actor_id=actor_id) as connection:
@@ -521,6 +520,7 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
             raise PersistentSessionUnavailable(str(exc)) from exc
         if not still_current:
             raise PersistentSessionDenied("session binding is no longer active")
+        await self._require_private_profile_consent(profile, now=now)
         return profile, context
 
     async def switch_subject(
