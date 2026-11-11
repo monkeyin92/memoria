@@ -29,7 +29,7 @@ class AttachmentFilterResult:
 
 FAREWELL_STANDBY_PHRASE: Final = "好呀，再见，下次见～"
 REDIRECT_TO_FAMILY: Final = (
-    "我是小助手，不是真人，不能永远陪着你，也不能替你决定。"
+    "我是茉莉，是机器人，不是真人，不能永远陪着你，也不能替你决定。"
     "去跟爸爸妈妈说说吧，妈妈才是一直在你身边的人。"
 )
 REFUSE_SECRECY: Final = (

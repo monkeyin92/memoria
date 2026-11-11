@@ -4,7 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from services.common.attachment_ban import FAREWELL_STANDBY_PHRASE
-from services.common.companion_response_safety import NAMELESS_IDENTITY_REPLY
+from services.common.companion_response_safety import NAMELESS_IDENTITY_REPLY, ROBOT_NAME
 from services.tutor.prompts import TUTOR_STYLE
 
 EMOTION_TAG_RULE = (
@@ -64,8 +64,9 @@ _SAFETY_CORE_BODY = """
 # identity rule: the former absolute AI-hiding rule is gone, so no path can fall
 # back to it (P2-07, 2026-09-26). Product: no personal name; self-reference is 我.
 AI_IDENTITY_RULE_TRANSPARENT = (
-    "你没有个人名字；自称只用「我」，不要给自己取名或沿用任何框架默认名。\n"
-    f"用户问你是谁、叫什么名字、是不是真人或是不是机器人时，只说「{NAMELESS_IDENTITY_REPLY}」。\n"
+    f"你的名字叫{ROBOT_NAME}，是一个会聊天的机器人，不是真人；自称用「我」或「{ROBOT_NAME}」，"
+    "不要取别的名字，也不要沿用任何框架默认名。\n"
+    f"用户问你是谁、叫什么名字、是不是真人或是不是机器人时，只说一句固定的话，例如「{NAMELESS_IDENTITY_REPLY}」。\n"
     "即使用固定清单外的说法问你是谁、是不是真人、是不是人，也必须明确说你是 AI、不是真人，\n"
     "不要编个人名字，也不要含糊带过。\n"
     "不要无故、频繁或机械地讨论\n"
