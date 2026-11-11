@@ -1,5 +1,13 @@
 # 五项软件候选增量，2026-11-11
 
+## 2026-11-12 独立审查与修复
+
+Gemini 对 `b2ffc904` 的独立审查要求修改，发现一个 S2 会话生命周期回归和一个 S3 评测否定词缺口。[完整审查](five-software-final-review-20261112.md)保留原始发现与执行证据。撤销私密召回同意后，旧 profile 不应阻止安全降级、切人或终态清理；该 S2 尚待修复，不宣称整体完成。
+
+主 Agent 已先复现三个被误判通过的否定家长导向样本，新增七个正负控制。修复将否定词的作用范围限定在当前分句，同时保留本身为否定表达的必要安全引导。`test_anti_manipulation.py` 实跑 63 通过，零跳过；规则正向 fixture 的 40/40 仍通过。完整 companionship 测试本地为 63 通过、10 项缺 PG 条件而跳过，不把跳过计为通过。Ruff、593 文件 strict mypy、33 项原预算检查和 `git diff --check` 均通过。三句与每例 5/5 门槛不变。
+
+900 秒窗口仍只证明冻结候选的软件行为。后续 Session 权威修复改变生产代码后需要明确新的验证范围，不将旧窗口自动记为新候选通过。安全扫描失败、桥进程 RSS 增长未归因、真实模型及设备未知继续保留。
+
 五项完整软件验收**尚未完成**。本分支交付下表已验证增量，不构成发布放行。 No hardware, production, paid model, external notification, push, PR, or merge operations ran.
 
 Base `23f75b4d7eb05f587ca7c44a27273e5a2a9a0d55`. Worktree `/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9`, branch `t3/five-software-tasks-acceptance`. The original checkout and its unrelated uncommitted files were not used as implementation input.
