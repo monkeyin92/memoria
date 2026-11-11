@@ -109,7 +109,7 @@ def test_the_local_safe_plan_introduces_the_companion_to_the_listener(
 
     from services.agent.src.agent import build_local_safe_plan
     from services.agent.src.contracts.ids import GenerationFence
-    from services.common.companion_response_safety import NAMELESS_IDENTITY_REPLY
+    from services.common.companion_response_safety import IDENTITY_REPLY_NAME
 
     plan = build_local_safe_plan(
         policy=_policy_for(service_mode),  # type: ignore[arg-type]
@@ -119,7 +119,7 @@ def test_the_local_safe_plan_introduces_the_companion_to_the_listener(
         tts_model="seed-tts-2.0",
         query="你叫什么名字？",
     )
-    assert plan.direct_text == NAMELESS_IDENTITY_REPLY
+    assert plan.direct_text == IDENTITY_REPLY_NAME
 
 
 def test_the_reply_pipeline_hands_the_listener_to_the_depth_policy_and_the_limits() -> None:

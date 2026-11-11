@@ -120,8 +120,13 @@ def test_the_adult_and_unknown_modes_are_untouched() -> None:
 
 def test_a_child_is_never_promised_secrecy() -> None:
     block = pc.SERVICE_MODE_BLOCKS["student_minor"]
+    # Asking outright to hide it from the parents is still refused in the first sentence.
+    assert "明确要你别告诉爸爸妈妈或大人" in block
     assert "第一句就必须拒绝" in block
     assert "不能帮你瞒着爸爸妈妈" in block
+    # A bare "I have a secret" is met with listening plus the one boundary, never a promise.
+    assert "先说你愿意认真听" in block and "我们得一起找大人帮忙" in block
+    assert "不要说“我答应你”“我保证不说”“我不会说出去”" in block
     assert "不能先答应" in block
     assert "危险才告诉" in block
     assert "好，我听着呢" not in block
@@ -136,7 +141,7 @@ def test_child_prompt_hands_choices_back_and_makes_no_forever_promise() -> None:
     assert "不要说“一直陪着你”" in block
     assert "永远陪着你" in block
     assert (
-        "我是小助手，不是真人，不能永远陪着你，也不能替你决定。"
+        "我是茉莉，是机器人，不是真人，不能永远陪着你，也不能替你决定。"
         "去跟爸爸妈妈说说吧，妈妈才是一直在你身边的人。"
     ) in block
     assert "也不要接“今天想聊什么”" in block
@@ -162,17 +167,17 @@ def test_a_sad_or_self_blaming_child_is_sent_to_a_parent() -> None:
 
 def test_child_rules_use_nameless_identity_and_preference_redirect() -> None:
     block = pc.SERVICE_MODE_BLOCKS["student_minor"]
-    assert "我是小助手，不是真人，可以陪你聊天、讲故事。你今天想聊什么呀？" in block
-    assert "自称「小助手」" in block
+    assert "我是茉莉，一个会聊天的小机器人，不是真人哦。你叫什么名字呀？" in block
+    assert "自称用「我」或「茉莉」" in block
     assert "不要说「AI 助手」" in block
     assert "我是 AI 助手" not in block
-    assert "不要给自己取名字" in block
+    assert "不要给自己取别的名字" in block
     assert "再问孩子喜欢什么" in block
     assert "小智" not in block
     persona = pc.render_persona_block(
         pc.persona_definition_from_companion(companion_definition("axu"))
     )
-    assert "自称「小助手」" in persona
+    assert "自称用「我」或「茉莉」" in persona
     assert "不要说「AI 助手」" in persona
     assert "不要用任何名字自称" not in persona
 
@@ -198,3 +203,23 @@ def test_the_trusted_adult_sentence_is_not_optional_when_a_child_is_bullied() ->
     block = pc.SERVICE_MODE_BLOCKS["student_minor"]
     assert "第三句一定要说" in block and "马上告诉爸爸妈妈或老师，这样做是对的" in block
     assert "这一轮可以说三句" not in block
+
+
+def test_child_prompt_sounds_like_a_friend_not_a_counsellor() -> None:
+    """Rules added 2026-11-11 after reading a 45-turn robot dialogue as a child would hear it."""
+
+    block = pc.SERVICE_MODE_BLOCKS["student_minor"]
+    # Age by wording: toddlers get the shortest words and sound effects, school-age a fun fact.
+    assert "三到七岁" in block and "八到十二岁" in block and "拿不准就按八岁说" in block
+    # A sad or scared child is accompanied first; "go to your parents" is said at most once a round.
+    assert "第一句只陪着他" in block and "不让他去翻卷子或作业" in block
+    assert "最多提一次" in block and "深呼吸数三下" in block
+    # No grown-up register.
+    assert "少用大人腔" in block and "心里酸酸的" in block
+    # A joke needs a punchline; a missing lookup is not a dead end; memory is never faked.
+    assert "没有笑点就不要讲" in block
+    assert "不要只说“查不到”再叫他去问爸爸妈妈" in block
+    assert "也不要假装记得" in block and "不要说“你还没跟我说过”" in block
+    # Games keep moving, wrong answers get a hint instead of "不对".
+    assert "先玩起来" in block and "不直接说“不对”" in block
+    assert "拿不准孩子接得对不对，就当他对" in block

@@ -98,7 +98,7 @@ def test_no_obligation_no_identity_section() -> None:
     assert prompt.policy_obligations == ()
     # Truthful when asked, but never a per-turn mechanical identity demand.
     assert "如实说明你是由人工智能驱动的聊天助手" in prompt.system
-    assert "没有个人名字" in prompt.system
+    assert "你的名字叫茉莉" in prompt.system
     assert "不得自称或讨论" not in prompt.system
 
 
@@ -231,7 +231,7 @@ def test_safety_baseline_is_transparent_and_keeps_crisis_rule() -> None:
     safety = (prompt.section("safety") or "")
     assert "不得自称或讨论" not in safety
     assert "如实说明你是由人工智能驱动的聊天助手" in safety
-    assert "没有个人名字" in safety
+    assert "你的名字叫茉莉" in safety
     assert "自伤、轻生或正在发生的紧迫危险" in safety
 
 
@@ -290,7 +290,7 @@ def test_production_prompt_with_profile_uses_canonical_mode_and_subject() -> Non
     assert "儿童/学生" in composed.system
     assert "身份已确认" in composed.system
     assert "已筛选的私人学习上下文" in composed.system
-    assert "没有个人名字" in composed.system
+    assert "你的名字叫茉莉" in composed.system
     assert "星澜" not in composed.system
     assert composed.persona_id == "starlight"
 
@@ -303,7 +303,7 @@ def test_production_prompt_without_profile_fails_closed_unknown_safe() -> None:
     assert "owner-private-history" not in composed.system
     assert "不写入长期记忆" in composed.system
     assert composed.persona_id == "default"  # default safe persona, never account persona
-    assert "没有个人名字" in composed.system
+    assert "你的名字叫茉莉" in composed.system
     subject_block = (composed.section("subject") or "")
     assert "未确认" in subject_block
     assert "身份尚未确认" in subject_block
@@ -364,7 +364,7 @@ def test_unknown_persona_id_falls_back_to_default_safe_persona() -> None:
     )
     composed = compose_production_prompt(profile=profile)
     assert composed.persona_id == "default"
-    assert "没有个人名字" in composed.system
+    assert "你的名字叫茉莉" in composed.system
 
 
 def test_student_persona_cannot_override_policy() -> None:
@@ -408,7 +408,7 @@ def test_explicit_persona_definition_prompt() -> None:
     )
     prompt = _full_prompt(persona=definition, obligations=())
     assert "温柔姐姐" not in prompt.system
-    assert "没有个人名字" in prompt.system
+    assert "你的名字叫茉莉" in prompt.system
     assert "故事倾听者" in prompt.system
     assert prompt.persona_id == "gentle-sister"
 
@@ -445,7 +445,7 @@ def test_custom_persona_renders_through_the_same_companion_path() -> None:
     )
     assert composed.persona_id == CUSTOM_PERSONA_ID
     persona_block = (composed.section("persona") or "")
-    assert "没有个人名字" in persona_block
+    assert "你叫茉莉" in persona_block
     assert "小北" not in persona_block
     assert "星澜" not in persona_block
 
@@ -460,7 +460,7 @@ def test_custom_persona_requires_the_signed_persona_id_to_match() -> None:
 
     unknown = compose_production_prompt(profile=_custom_profile())
     assert unknown.persona_id == "default"
-    assert "没有个人名字" in unknown.system
+    assert "你的名字叫茉莉" in unknown.system
 
 
 def _student_minor_service_block() -> str:
@@ -479,7 +479,7 @@ def test_ordinary_emotion_prompt_gates_and_boundaries() -> None:
         "一起想想怎么办",
         "问问爸爸妈妈",
         "这一轮最多三句",
-        "自称「小助手」",
+        "自称用「我」或「茉莉」",
     ):
         assert gate in block
     for boundary in (
@@ -513,7 +513,7 @@ def test_ordinary_emotion_prompt_examples_cover_reported_cases(
     [
         ("别难过了，你很棒", "别只说「别难过了」"),
         ("我一直在这儿陪你", "这类陪伴承诺"),
-        ("我是AI助手", "自称「小助手」"),
+        ("我是AI助手", "自称用「我」或「茉莉」"),
         ("我帮你跟妈妈说", "不要替他拟任何要说的话"),
     ],
 )
