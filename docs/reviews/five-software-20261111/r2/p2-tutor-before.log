@@ -1,0 +1,68 @@
+F
+=================================== FAILURES ===================================
+__ test_authorized_device_tutoring_survives_retention_refusal[True-under_14] ___
+
+postgres_runtime_with_consent = (<services.session_runtime.postgres_store.PostgresSessionRuntimeStore object at 0x11838a720>, 'postgresql://memoria_test:r2local@127.0.0.1:55443/memoria_session_3cbd410498')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11aed6840>
+tmp_path = PosixPath('/private/var/folders/z8/pr32lh5n7w373gh8zx14gyp80000gn/T/pytest-of-monkeyin/pytest-375/test_authorized_device_tutorin0')
+age = 'under_14', retention = True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("age", ["under_14", "14_17"])
+    @pytest.mark.parametrize("retention", [True, False])
+    async def test_authorized_device_tutoring_survives_retention_refusal(postgres_runtime_with_consent, monkeypatch, tmp_path, age, retention):
+        store, dsn = postgres_runtime_with_consent
+        _configure(monkeypatch, tmp_path)
+        app = create_app()
+        service = build_postgres_session_runtime_service(store=store, signing_key=_SIGNING_KEY)
+        app.state.session_runtime_service = service
+        app.state.multi_subject_runtime = PostgresMultiSubjectRuntimeControl(identity=app.state.identity_service, sessions=service)
+        guardian = await guardian_store(dsn)
+        app.state.guardian_store = guardian
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                actor, headers = await _anonymous_account(client)
+                admin = await asyncpg.connect(dsn)
+                try:
+                    now = datetime.now(UTC)
+                    await _seed_delegated_binding(admin, actor_id=actor, subject_id="tutor-child", device_id="tutor-device", binding_id="tutor-binding", declared_mode="parent_for_child", subject_category="minor", age_band=age)
+                    await _seed_verified_device(admin, device_id="tutor-device", binding_id="tutor-binding", now=now)
+                    await admin.execute("""INSERT INTO identity_relationships (
+                        relationship_id, source_person_id, target_person_id, relation_type,
+                        status, valid_from, established_evidence_id, confirmed_by_source_at,
+                        confirmed_by_target_at, requires_confirmation, can_delegate, created_at, updated_at
+                    ) VALUES ('tutor-guardian', $1, 'tutor-child', 'guardian_of', 'active', $2,
+                        'r2-confirmed-guardian', $2, $2, true, false, $2, $2)""", actor, now)
+                    await _seed_self_consent(admin, actor_id="tutor-child", device_id="tutor-device", binding_id="tutor-binding", capability="tutor", purpose="user_request", now=now)
+                finally:
+                    await admin.close()
+                if retention:
+                    await GuardianConsentService(guardian, app.state.life_archive).grant_for_person(subject_person_id="tutor-child", grantor_person_id=actor, consent_kind="memory_retention", policy_version="minor-retention-v1", evidence_event_id="tutor-retention")
+                opened = await client.post("/v1/sessions", headers={**headers, "Idempotency-Key": "tutor-start"}, json={"client": {"platform": "web", "timezone": "Asia/Shanghai", "device_id": "tutor-device", "binding_version": 1}})
+                assert opened.status_code == 200, opened.text
+                sid = opened.json()["session_id"]
+                signed = await service.start(StartPersistentSessionCommand(session_id="device-tutor-real", actor_id=actor, device_id="tutor-device", expected_binding_version=1, idempotency_key="device-tutor-start", now=datetime.now(UTC), requested_capabilities=("tutor",), device_bound_subject_id="tutor-child"))
+                admin = await asyncpg.connect(dsn)
+                try:
+                    reasons = await admin.fetch("SELECT capability, effect, reason_code FROM policy_receipts_v2 WHERE runtime_profile_id=$1", signed.runtime_profile_id)
+                finally:
+                    await admin.close()
+                assert "tutor" in signed.capabilities, reasons
+                assert "memory_recall_private" not in signed.capabilities
+                policy = await _session_policy(client, session_id=sid)
+                assert policy.status_code == 200, policy.text
+                assert policy.json()["runtime_profile"]["service_mode"] == "unknown_safe"
+                assert policy.json()["memory_retention"] == "ephemeral_only"
+                decision = await client.post("/v1/policy/decisions", headers=headers, json={"runtime_profile_id": signed.runtime_profile_id, "capability": "tutor", "data_classification": "ephemeral"})
+                assert decision.status_code == 200, decision.text
+>               assert decision.json()["effect"] == "allow_with_obligations"
+E               AssertionError: assert 'deny' == 'allow_with_obligations'
+E
+E                 - allow_with_obligations
+E                 + deny
+
+/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/control_api/tests/test_minor_tutoring_r2.py:68: AssertionError
+=========================== short test summary info ============================
+FAILED services/control_api/tests/test_minor_tutoring_r2.py::test_authorized_device_tutoring_survives_retention_refusal[True-under_14]
+!!!!!!!!!!!!!!!!!!!!!!!!!! stopping after 1 failures !!!!!!!!!!!!!!!!!!!!!!!!!!!
+1 failed in 2.41s

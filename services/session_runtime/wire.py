@@ -128,9 +128,9 @@ def _subject_presence_from_profile(
 ) -> SubjectPresence:
     """Recover device-bound presence from a signed profile at action time.
 
-    Policy grants ``memory_recall_private`` to a subject other than the actor
-    only for the device's own bound subject, so a confirmed profile carrying it
-    for another person can only have been issued device-bound.
+    Policy grants private recall and tutoring for another subject only to
+    that subject's bound device. Either signed capability preserves this
+    evidence without requiring retention consent for basic tutoring.
     """
 
     subject_id = profile.active_subject_id
@@ -138,7 +138,7 @@ def _subject_presence_from_profile(
         subject_id is not None
         and subject_id != actor_id
         and profile.speaker_state.value == "confirmed"
-        and any(item.value == "memory_recall_private" for item in profile.capabilities)
+        and any(item.value in {"memory_recall_private", "tutor"} for item in profile.capabilities)
     ):
         return "device_bound"
     return "resolved"
