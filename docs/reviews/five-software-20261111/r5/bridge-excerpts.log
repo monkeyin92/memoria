@@ -1,0 +1,6 @@
+INFO:scripts.software_soak_r5_provider:old issued profile rejected session=session_1 old_epoch=1 current_epoch=2
+INFO:scripts.software_soak_r5_provider:verified profile session=session_1 device=dev_test_01 stream=100 profile=rp-e728d703-0bca-4170-9b45-69ee7080dc80 epoch=2 actor=person_a binding=r5-binding subject=None
+INFO:services.agent.src.voice_core.media_session_connection:media_audio_buffers_cleared {"denoiser_frames":0,"overflow_dropped_frames":0,"pcm_tap_open":false,"queue_frames":0,"session_id":"session_37","silence_dropped_frames":0,"silence_dropped_samples":0,"stream_epoch":173}
+INFO:services.agent.src.voice_core.media_session_connection:media_audio_buffers_cleared {"denoiser_frames":0,"overflow_dropped_frames":0,"pcm_tap_open":false,"queue_frames":0,"session_id":"session_109_slow","silence_dropped_frames":0,"silence_dropped_samples":0,"stream_epoch":317}
+INFO:services.agent.src.voice_core.media_session_connection:media_audio_buffers_cleared {"denoiser_frames":0,"overflow_dropped_frames":0,"pcm_tap_open":false,"queue_frames":0,"session_id":"session_180","silence_dropped_frames":0,"silence_dropped_samples":0,"stream_epoch":458}
+INFO:scripts.software_soak_r5_provider:fixture authority clients after registry drain remaining=0

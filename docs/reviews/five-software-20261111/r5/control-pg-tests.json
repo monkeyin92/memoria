@@ -1,0 +1,14 @@
+{
+  "container": "memoria-r5-control-check-26191",
+  "image": "pgvector/pgvector:pg17",
+  "command": [
+    ".venv/bin/pytest",
+    "-o",
+    "addopts=",
+    "-q",
+    "-rs",
+    "services/control_api/tests/test_assistant_snapshot.py"
+  ],
+  "exit_code": 0,
+  "cleanup_exit": 0
+}

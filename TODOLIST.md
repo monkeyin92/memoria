@@ -415,7 +415,8 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 ### [ ] P2-04 协议故障注入与长稳观测
 
 - 现状（`20260926-edge-flush-v1` 起上线，设备行为未验）：关闭前送达排队的 `session.error`；Opus 编解码器加锁；`services/media_edge/device_ws_fault_injection_test.go` 覆盖七种关闭路径加拒绝 hello，三轮 24 条连接后协程、连接表、租约与 Voice Core runtime 全部回收，变异验证与 `-race -count=20` 稳定。Python 侧离线进程退出与重启注入见 `services/agent/tests/unit/test_bridge_process_exit_injection.py`。
-- 待完成：预定义长稳窗口（内存、连接、延迟趋势；`scripts/offline_process_trend_sample.py` 最多三次采样，不是窗口）；govulncheck / Trivy 扫描当前候选（本机未安装工具）；设备上验证终止性拒绝不再续连。
+- 2026-11-11 本地软件收据：候选 `85d254e7` 的真实 Control HTTP、Python bridge、Go Edge 三进程窗口完成 900.004 秒，保留 181 次三进程 RSS / FD / TCP 采样与 180 个已排空业务周期；TCP 重连、桥 SIGKILL / restart、慢写背压、实际旧代 PCM 拒绝均在同窗通过。权威 profile 装配与事件 epoch 修复、命令和边界见[实施报告](docs/reviews/five-software-tasks-20261111.md)与[软件汇总](docs/reviews/five-software-20261111/r5/summary.json)。RSS 增长不构成无泄漏或容量结论。
+- 待完成：新增生产 epoch 修复的独立 Review；当前候选 govulncheck / Trivy 实际重扫仍失败，分别退出 3 / 1；设备上验证终止性拒绝不再续连及实际回滚验收。未执行生产发布、回滚或设备操作。
 - 完成条件：旧代无副作用，有效输出有交付或可解释终态，回滚可运行；预定义长稳窗口保留内存、连接和延迟趋势。先补测量 / 注入，不顺手改断线产品行为。
 
 ### [ ] P2-05 补齐唤醒计数，再采家庭噪声矩阵
@@ -524,4 +525,4 @@ edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃
 
 ### 2026-11-11 五项软件候选收据
 
-P0-04、P2-06、P1-06、P1-05、P2-04 的本轮代码、命令与未完成谓词见 [实施报告](docs/reviews/five-software-tasks-20261111.md)。各原条目继续保持未完成。软件筛查、确定性模型替身、单进程 Edge 长稳与漏洞扫描不替代真机、线上或真实模型验收。当前扫描门禁失败，不作发布放行。
+P0-04、P2-06、P1-06、P1-05、P2-04 的本轮代码、命令与未完成谓词见 [实施报告](docs/reviews/five-software-tasks-20261111.md)。各原条目继续保持未完成。软件筛查、确定性模型替身、R5 本地三进程长稳与漏洞扫描不替代真机、线上或真实模型验收。当前扫描门禁失败，不作发布放行。

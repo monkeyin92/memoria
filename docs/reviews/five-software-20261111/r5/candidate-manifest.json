@@ -1,0 +1,23 @@
+{
+  "candidate": "85d254e7f66bceeaab2ce14e955e1221ef9e5266",
+  "production_tree_sha256": "79cb69e9deb125a2bb91c38e13d7a681908ed386d4e53a15e1d57ae64ac5f878",
+  "production_files": 699,
+  "harness": {
+    "scripts/run_media_bridge.py": "5a7790b2ac12f45c370accc809454fd3e2f67d6e17ae1e0a973cac6d50dbf5d1",
+    "scripts/software_soak_r5.py": "57e0908e779d36a7953f7b2942b55b4009df42cab886b0652c4f68a080b9c709",
+    "scripts/software_soak_r5_control.py": "428ffcc3ba40fdcc9f095fdb6e391f63e954a35ead3e170c37885e0ffc68ac36",
+    "scripts/software_soak_r5_provider.py": "24c343487bd826eca02dc5fcaed18e5b0dbf9dca38ce05850e1752adb3781ecd",
+    "scripts/summarize_software_soak_r5.py": "ad00e3d9f6c6bbebc16f7d2fb545e3d1056dd764059eb3a462ad99b0efab56a2"
+  },
+  "lockfiles": {
+    "services/media_edge/go.mod": "670d38f8f10065ab426af83ee164a949db23b5e3e4be286231d9bcc3af6210b1",
+    "services/media_edge/go.sum": "b66f0066d396b8c30a281efd2ffc7386bed31029bd2ff83f215a21494bb03c37",
+    "uv.lock": "5df26220aa27ed45d31f7c8bfbe7ca6322c971396a571c4e1e1590a965e61a6d"
+  },
+  "changed_production_since_f79aa4f5": [
+    "services/agent/src/voice_core/grpc_bridge.py",
+    "services/agent/src/voice_core/media_session_projection.py"
+  ],
+  "production_selection": "tracked services and packages files, excluding tests and *_test.go",
+  "go_mediaruntime_sha256": "d77757b2cdf058ddc621aa11c282526827b548cfa5a234681e746f676f06c5fb"
+}

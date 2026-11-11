@@ -1,0 +1,43 @@
+[
+  {
+    "name": "govulncheck",
+    "command": [
+      "/tmp/memoria-five-tools/govulncheck",
+      "./..."
+    ],
+    "cwd": "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/services/media_edge",
+    "version": "Go: go1.27.3\nScanner: govulncheck@v1.9.0\nDB: https://vuln.go.dev\nDB updated: 2026-11-11 02:51:11 +0000 UTC\n\n",
+    "scanner_sha256": "b0115fa1c9289cd9a8960d2b7810eafa838c1ad1ed2cf39579ab46047338dcfc",
+    "exit_code": 3
+  },
+  {
+    "name": "trivy",
+    "command": [
+      "/tmp/memoria-five-tools/trivy",
+      "filesystem",
+      "--scanners",
+      "vuln",
+      "--cache-dir",
+      "/tmp/memoria-five-trivy-cache",
+      "--skip-dirs",
+      ".venv",
+      "--skip-dirs",
+      ".git",
+      "--skip-dirs",
+      "outputs",
+      "--skip-dirs",
+      "firmware/.cache",
+      "--format",
+      "json",
+      "--output",
+      "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9/outputs/five-software-r5-trivy-final.json",
+      "--exit-code",
+      "1",
+      "."
+    ],
+    "cwd": "/Users/monkeyin/.t3/worktrees/memoria/t3-c1dc1f05-cae0d497c53627a9",
+    "version": "Version: 0.76.2\n",
+    "scanner_sha256": "7a15c426f963473a485a4f315e21f8e2c881269d500bf0de35da13a4421fa108",
+    "exit_code": 1
+  }
+]

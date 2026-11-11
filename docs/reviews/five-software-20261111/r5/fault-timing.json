@@ -1,0 +1,23 @@
+[
+  {
+    "event": "fault_tcp_recovered",
+    "planned_trigger_s": 180,
+    "completed_cycle_by_elapsed_s": 180.338330667,
+    "session": "session_37",
+    "stream": 173
+  },
+  {
+    "event": "fault_bridge_recovered",
+    "planned_trigger_s": 360,
+    "completed_cycle_by_elapsed_s": 361.116608083,
+    "session": "session_73_recovery",
+    "stream": 245
+  },
+  {
+    "event": "fault_slow_bounded_old_rejected",
+    "planned_trigger_s": 540,
+    "completed_cycle_by_elapsed_s": 548.833506833,
+    "session": "session_109_slow",
+    "stream": 317
+  }
+]

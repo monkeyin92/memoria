@@ -1,0 +1,15 @@
+{
+  "all_server_http_statuses": {
+    "401": 2,
+    "403": 184,
+    "200": 550
+  },
+  "by_method_path_status": {
+    "GET /v1/devices/dev_test_01/session-state 401": 2,
+    "POST /fixture/session-policy 403": 184,
+    "POST /fixture/session-policy 200": 183,
+    "GET /v1/devices/dev_test_01/session-state 200": 185,
+    "POST /fixture/start 200": 182
+  },
+  "latency_coverage": "Go driver requests and complete cycles; policy fetches have status counts only"
+}

@@ -1,0 +1,86 @@
+{
+  "runs": [
+    {
+      "directory": "outputs/five-software-r5-audio-preflight",
+      "window_completed": false,
+      "exit_code": 1,
+      "duration_s": 0,
+      "edge_binary_sha256": "a8cd25bd319cb3bec100a8ed8163218c350ffe635d93116f1ccd905475b7fba5",
+      "candidate_head_only": "4e794afc08b3d318f477754894c3013086eea2f0",
+      "raw_local_only": true
+    },
+    {
+      "directory": "outputs/five-software-r5-envelope-preflight",
+      "window_completed": false,
+      "exit_code": 0,
+      "duration_s": 0,
+      "edge_binary_sha256": "18a7994d3c15a3f543c93c79aeea9a7a99c11e081bf17036f08675a873bc8461",
+      "candidate_head_only": "a30a6e4c62cc5e5a8283033034e5b8729dd6806e",
+      "raw_local_only": true
+    },
+    {
+      "directory": "outputs/five-software-r5-fault-preflight",
+      "window_completed": false,
+      "exit_code": 1,
+      "duration_s": 0,
+      "edge_binary_sha256": "29a2811afcdd3e06a6182c1d14ebf680ce1295a7a91c915d298f47e579da9ebc",
+      "candidate_head_only": "4e794afc08b3d318f477754894c3013086eea2f0",
+      "raw_local_only": true
+    },
+    {
+      "directory": "outputs/five-software-r5-fault-preflight2",
+      "window_completed": false,
+      "exit_code": 1,
+      "duration_s": 0,
+      "edge_binary_sha256": "34a0b1205398d95cc82f7004a18be5878894d50ae187474a986d5d559a4a05b2",
+      "candidate_head_only": "4e794afc08b3d318f477754894c3013086eea2f0",
+      "raw_local_only": true
+    },
+    {
+      "directory": "outputs/five-software-r5-fault-preflight3",
+      "window_completed": false,
+      "exit_code": 1,
+      "duration_s": 0,
+      "edge_binary_sha256": "94cc3201b082cb6c831b15383996e9d293c45b1d3476c0d69ab2bc489ec1d63a",
+      "candidate_head_only": "4e794afc08b3d318f477754894c3013086eea2f0",
+      "raw_local_only": true
+    },
+    {
+      "directory": "outputs/five-software-r5-fault-preflight4",
+      "window_completed": true,
+      "exit_code": 0,
+      "duration_s": 45.003312,
+      "edge_binary_sha256": "f843d553f0ae7704d03261b533c169ded62424e1b2e1c2aa2bdfe590d2c09bd1",
+      "candidate_head_only": "4e794afc08b3d318f477754894c3013086eea2f0",
+      "raw_local_only": true
+    },
+    {
+      "directory": "outputs/five-software-r5-final-preflight",
+      "window_completed": false,
+      "exit_code": null,
+      "duration_s": 0,
+      "edge_binary_sha256": null,
+      "candidate_head_only": null,
+      "raw_local_only": true
+    },
+    {
+      "directory": "outputs/five-software-r5-freeze-preflight",
+      "window_completed": true,
+      "exit_code": 0,
+      "duration_s": 45.003433,
+      "edge_binary_sha256": "1603cca2377624c1e09a9679a6cbcc47a24f35c3fa0d8993a25df90e8537f60b",
+      "candidate_head_only": "4e794afc08b3d318f477754894c3013086eea2f0",
+      "raw_local_only": true
+    },
+    {
+      "directory": "outputs/five-software-r5-profile-preflight",
+      "window_completed": false,
+      "exit_code": 1,
+      "duration_s": 0,
+      "edge_binary_sha256": "18a7994d3c15a3f543c93c79aeea9a7a99c11e081bf17036f08675a873bc8461",
+      "candidate_head_only": "a30a6e4c62cc5e5a8283033034e5b8729dd6806e",
+      "raw_local_only": true
+    }
+  ],
+  "note": "Early profile preflight candidate is HEAD only, with dirty implementation. Its inherited production_source_changed=false field is incorrect. The clean frozen 900s config is authoritative."
+}
