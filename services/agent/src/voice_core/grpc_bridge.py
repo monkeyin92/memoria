@@ -1174,6 +1174,7 @@ class MediaBridgeGrpcServer:
             task_epoch,
             context_version,
         )
+        connection.client_sequence += 1
         current_fence = connection.session.fence
         session_epoch = (
             current_fence.session_epoch
@@ -1186,7 +1187,7 @@ class MediaBridgeGrpcServer:
             media_pb2.CoreToMedia(
                 client=media_pb2.ClientEvent(
                     identity=_identity_to_proto(connection.session.identity),
-                    type=event_type,
+                    type=event_type, sequence=connection.client_sequence,
                     json_payload=json.dumps(
                         {
                             "v": 1,
@@ -1214,7 +1215,6 @@ class MediaBridgeGrpcServer:
                 )
             ),
         )
-
     async def emit_conversation_state(
         self,
         session_id: str,

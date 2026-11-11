@@ -85,6 +85,7 @@ type DeviceConnection struct {
 
 	lane *devicePriorityLane
 
+	assistantSnapshot  *AssistantSnapshot
 	stateMu            sync.Mutex
 	runtime            *VoiceCoreMediaRuntime
 	session            *Session
@@ -395,6 +396,9 @@ func (c *DeviceConnection) nextServerSequence() uint64 {
 func (c *DeviceConnection) setCurrentFence(fence deviceFence) {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
+	if c.currentFence != fence {
+		c.assistantSnapshot = nil
+	}
 	c.currentFence = fence
 }
 

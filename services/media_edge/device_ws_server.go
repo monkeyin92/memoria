@@ -171,22 +171,23 @@ func (s *DeviceWSServer) connectionForRequest(request OpenSessionRequest) *Devic
 // hello/capability negotiation. It deliberately distinguishes the requested
 // audio setting from the effective mode accepted by Edge.
 type DeviceRuntimeStatus struct {
-	DeviceID               string `json:"device_id"`
-	Connected              bool   `json:"connected"`
-	SessionID              string `json:"session_id,omitempty"`
-	StreamEpoch            uint64 `json:"stream_epoch,omitempty"`
-	ProtocolVersion        uint64 `json:"protocol_version,omitempty"`
-	FirmwareVersion        string `json:"firmware_version,omitempty"`
-	BoardProfile           string `json:"board_profile,omitempty"`
-	RuntimeProfileVersion  uint64 `json:"runtime_profile_version,omitempty"`
-	SettingsVersion        uint64 `json:"settings_version,omitempty"`
-	AppliedProfileVersion  uint64 `json:"applied_profile_version,omitempty"`
-	AppliedSettingsVersion uint64 `json:"applied_settings_version,omitempty"`
-	ProfileAppliedAt       string `json:"profile_applied_at,omitempty"`
-	AudioModeRequested     string `json:"audio_mode_requested,omitempty"`
-	AudioModeEffective     string `json:"audio_mode_effective,omitempty"`
-	AECProfileVersion      uint64 `json:"aec_profile_version,omitempty"`
-	ConnectedAt            string `json:"connected_at,omitempty"`
+	AssistantState         *AssistantSnapshot `json:"assistant_state,omitempty"`
+	DeviceID               string             `json:"device_id"`
+	Connected              bool               `json:"connected"`
+	SessionID              string             `json:"session_id,omitempty"`
+	StreamEpoch            uint64             `json:"stream_epoch,omitempty"`
+	ProtocolVersion        uint64             `json:"protocol_version,omitempty"`
+	FirmwareVersion        string             `json:"firmware_version,omitempty"`
+	BoardProfile           string             `json:"board_profile,omitempty"`
+	RuntimeProfileVersion  uint64             `json:"runtime_profile_version,omitempty"`
+	SettingsVersion        uint64             `json:"settings_version,omitempty"`
+	AppliedProfileVersion  uint64             `json:"applied_profile_version,omitempty"`
+	AppliedSettingsVersion uint64             `json:"applied_settings_version,omitempty"`
+	ProfileAppliedAt       string             `json:"profile_applied_at,omitempty"`
+	AudioModeRequested     string             `json:"audio_mode_requested,omitempty"`
+	AudioModeEffective     string             `json:"audio_mode_effective,omitempty"`
+	AECProfileVersion      uint64             `json:"aec_profile_version,omitempty"`
+	ConnectedAt            string             `json:"connected_at,omitempty"`
 }
 
 // RuntimeStatus returns only an accepted live connection. A disconnected
@@ -211,6 +212,7 @@ func (s *DeviceWSServer) RuntimeStatus(deviceID string) DeviceRuntimeStatus {
 	if connection.state.Load() != deviceConnAccepted {
 		return status
 	}
+	status.AssistantState = connection.assistantSnapshot
 	status.Connected = true
 	status.SessionID = connection.sessionID
 	status.StreamEpoch = uint64(connection.epoch)

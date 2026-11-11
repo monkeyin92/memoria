@@ -1080,3 +1080,17 @@ async def report_edge_session_close(
         actor_id=str(voice_session["user_id"]),
         expected_stream_epoch=body.stream_epoch,
     )
+
+
+@router.get("/{device_id}/session-state")
+async def get_device_session_state(
+    device_id: str,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> dict[str, object]:
+    from services.control_api.app.assistant_snapshot import project_assistant_snapshot
+
+    _require_capability(request, user, "device_settings_read")
+    _require_device_activation(request, account_id=user.user_id, device_id=device_id)
+    runtime = await _read_live_device_runtime_status(request, device_id=device_id)
+    return {"device_id": device_id, **project_assistant_snapshot(runtime, now=datetime.now(UTC))}
