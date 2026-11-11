@@ -68,6 +68,14 @@ if TYPE_CHECKING:
     )
 
 
+class PrivateProfileConsentWithdrawn(PersistentSessionDenied):
+    """A live profile requires downgrade after private consent withdrawal."""
+
+    def __init__(self, profile: RuntimeProfileSignedV2) -> None:
+        super().__init__("private recall consent is no longer active")
+        self.profile = profile
+
+
 class SessionIssueAuthorityMixin:
     """Build, persist and validate one signed Runtime Profile."""
 
@@ -120,7 +128,7 @@ class SessionIssueAuthorityMixin:
                         now=now,
                     )
                     if not any(item.is_effective_at(now) for item in discovery.consent_evidence):
-                        raise PersistentSessionDenied("private recall consent is no longer active")
+                        raise PrivateProfileConsentWithdrawn(profile)
             except (asyncpg.PostgresError, ActionAuthorizationError) as exc:
                 raise PersistentSessionUnavailable(str(exc)) from exc
 

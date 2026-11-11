@@ -492,16 +492,15 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
         session_id: str,
         now: datetime,
     ) -> tuple[RuntimeProfileSignedV2, SessionRuntimeContext]:
-        """Load the usable profile/context pair on a single read snapshot.
+        """Load current authority and reject stale private-read consent."""
+        profile, context = await self._current_profile_context(actor_id=actor_id, session_id=session_id, now=now)
+        await self._require_private_profile_consent(profile, now=now)
+        return profile, context
 
-        Profile, context, TTL and the device-binding fence are all evaluated
-        inside one read-only transaction. Private consent is rechecked through
-        its current action authority. The binding fence authorizes the snapshot
-        it read the profile from, which narrows the check-then-use window left
-        by separate reads. The close-only path deliberately
-        stays on ``_active_profile_context`` without the fence: closure is
-        terminal cleanup, so a withdrawn device remains closable.
-        """
+    async def _current_profile_context(
+        self, *, actor_id: str, session_id: str, now: datetime,
+    ) -> tuple[RuntimeProfileSignedV2, SessionRuntimeContext]:
+        """Validate active identity, signature, TTL and binding for lifecycle work."""
         try:
             async with self._store.read_transaction(actor_id=actor_id) as connection:
                 profile, context = await self._load_active_profile_context(
@@ -509,6 +508,8 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
                     session_id=session_id,
                 )
                 self._require_current_profile(profile, now=now)
+                if profile.actor_id != actor_id:
+                    raise PersistentSessionDenied("runtime profile actor mismatch")
                 still_current = await self._store.binding_is_current(
                     connection,
                     device_id=profile.device_id,
@@ -520,7 +521,6 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
             raise PersistentSessionUnavailable(str(exc)) from exc
         if not still_current:
             raise PersistentSessionDenied("session binding is no longer active")
-        await self._require_private_profile_consent(profile, now=now)
         return profile, context
 
     async def switch_subject(
@@ -534,7 +534,7 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
         )
         if not requested:
             raise PersistentSessionDenied("no Session capability was requested")
-        current, current_context = await self.current(
+        current, current_context = await self._current_profile_context(
             actor_id=command.actor_id,
             session_id=command.session_id,
             now=command.now,
@@ -810,13 +810,12 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
         reason_code: str,
         now: datetime,
     ) -> None:
-        profile, context = await self.current(
-            actor_id=actor_id,
-            session_id=session_id,
-            now=now,
+        profile, context = await self._active_profile_context(
+            actor_id=actor_id, session_id=session_id,
         )
         if profile.actor_id != actor_id:
             raise PersistentSessionDenied("only the profile actor may fail Session start")
+        self._require_profile_signature(profile)
         event = SessionEvent.model_validate(
             {
                 "event_id": f"event-{uuid.uuid4()}",
@@ -1134,13 +1133,14 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
         self._require_current_profile(requested, now=now)
         if requested.actor_id != actor_id:
             raise PersistentSessionDenied("runtime profile actor mismatch")
-        current, current_context = await self.current(
-            actor_id=actor_id,
-            session_id=requested.session_id,
+        current, current_context = await self._current_profile_context(
+            actor_id=actor_id, session_id=requested.session_id,
             now=now,
         )
         if current.runtime_profile_id != requested.runtime_profile_id:
             raise PersistentSessionDenied("runtime profile is stale")
+        if capability == "memory_recall_private" or data_classification == "private":
+            await self._require_private_profile_consent(requested, now=now)
         try:
             async with self._store.action_transaction(
                 actor_id=actor_id,

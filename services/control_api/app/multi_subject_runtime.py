@@ -30,6 +30,7 @@ from services.session_runtime.commands import (
     StartPersistentSessionCommand,
     SwitchPersistentSubjectCommand,
 )
+from services.session_runtime.issue_authority import PrivateProfileConsentWithdrawn
 from services.session_runtime.postgres_store import SessionRuntimeConflict
 from services.session_runtime.profile_service import (
     InMemoryRuntimeAuthority,
@@ -716,12 +717,18 @@ class PostgresMultiSubjectRuntimeControl:
             binding_id=manifest.binding_id,
             actor_id=actor_id,
         )
+        private_consent_withdrawn = False
         try:
             current, _context = await self.sessions.current(
                 actor_id=actor_id,
                 session_id=resolved_session_id,
                 now=now,
             )
+        except PrivateProfileConsentWithdrawn as exc:
+            if not self.is_control_session(resolved_session_id):
+                raise
+            current = exc.profile
+            private_consent_withdrawn = True
         except PersistentSessionNotFound:
             if await self.sessions.session_state(
                 actor_id=actor_id,
@@ -779,7 +786,7 @@ class PostgresMultiSubjectRuntimeControl:
                     requested_capabilities=_REQUESTED_CAPABILITIES,
                 )
             )
-        if not await self._persona_snapshot_is_current(
+        if private_consent_withdrawn or not await self._persona_snapshot_is_current(
             manifest,
             current=current,
             actor_id=actor_id,

@@ -14,7 +14,6 @@ import (
 	"time"
 )
 
-// Opt-in cross-process gate. Unlike the old window no deviceTestCore is used.
 func TestSoftwareR4RealBridgePreflight(t *testing.T) {
 	address := os.Getenv("MEMORIA_R4_BRIDGE")
 	if address == "" {
@@ -111,7 +110,6 @@ func TestSoftwareR4RealBridgePreflight(t *testing.T) {
 		writeDeviceJSON(t, conn, hello)
 		deviceReadAccepted(t, conn)
 		writeDeviceJSON(t, conn, deviceVADEvent{deviceEventBase: deviceEventBase{Type: "vad.start", Version: 2, StreamEpoch: epoch, ControlSequence: 1, DeviceMonotonicMS: 1}, SamplePosition: 0, Probability: 0.99, NearEndRMS: 500})
-		// Uplink traverses Opus decoder, real gRPC, registry, ASR fixture and back.
 		encoder, err := newOpusEncoder(16000, 1)
 		if err != nil {
 			t.Fatal(err)

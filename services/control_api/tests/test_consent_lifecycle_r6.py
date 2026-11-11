@@ -181,6 +181,20 @@ async def persisted(env, sid):
 async def test_withdrawal_allows_safe_rotation(lifecycle, action):
     app, service, control, client, *_ = lifecycle
     old = await issue(lifecycle, control_session=action in {"get", "refresh", "resolve"})
+    if action == "switch":
+        admin = await asyncpg.connect(lifecycle[4])
+        try:
+            await admin.execute(
+                "INSERT INTO identity_device_binding_roles (binding_id, person_id, role, status, permissions_json, granted_at) VALUES ('r6-binding', 'actor-b', 'member', 'active', '[]', now())"
+            )
+            await admin.execute("""INSERT INTO identity_relationships (
+                relationship_id, source_person_id, target_person_id, relation_type,
+                status, valid_from, established_evidence_id, confirmed_by_source_at,
+                confirmed_by_target_at, requires_confirmation, can_delegate, created_at, updated_at
+            ) VALUES ('r6-delegate', 'person_a', 'actor-b', 'delegate_for', 'active', now(),
+                'r6-confirmed-delegate', now(), now(), true, true, now(), now())""")
+        finally:
+            await admin.close()
     await revoke(lifecycle)
     with pytest.raises(PersistentSessionDenied):
         await service.current(actor_id="person_a", session_id=old.session_id, now=datetime.now(UTC))
@@ -208,7 +222,7 @@ async def test_withdrawal_allows_safe_rotation(lifecycle, action):
         assert response.json()["runtime_profile_id"] == payload["runtime_profile_id"]
     elif action == "switch":
         response = await client.post(
-            f"/v1/sessions/{old.session_id}/active-subject", json={"person_id": "person_a"}
+            f"/v1/sessions/{old.session_id}/active-subject", json={"person_id": "actor-b"}
         )
         assert response.status_code == 200, response.text
         payload = response.json()
@@ -227,6 +241,9 @@ async def test_withdrawal_allows_safe_rotation(lifecycle, action):
     assert verify_runtime_profile_payload(payload, signing_key=_SIGNING_KEY)
     assert "memory_recall_private" not in payload["capabilities"]
     assert "chat" in payload["capabilities"]
+    if action == "switch":
+        assert payload["active_subject_id"] == "actor-b"
+        assert "tutor" not in payload["capabilities"]
     row, stored = await persisted(lifecycle, old.session_id)
     assert stored == payload
     assert row["state"] == "active"
@@ -470,3 +487,36 @@ async def test_expired_conversation_cannot_rotate_or_decide(lifecycle):
             now=old.expires_at,
         )
     assert (await persisted(lifecycle, old.session_id))[0]["session_epoch"] == old.session_epoch
+
+
+async def test_chat_does_not_restore_unsigned_tutor_or_private_capability(lifecycle):
+    app, service, control, client, *_ = lifecycle
+    old = await issue(lifecycle)
+    limited = await service.switch_subject(
+        SwitchPersistentSubjectCommand(
+            session_id=old.session_id,
+            actor_id="person_a",
+            subject_id="person_a",
+            now=datetime.now(UTC),
+            requested_capabilities=("chat", "memory_recall_private"),
+        )
+    )
+    await revoke(lifecycle)
+    for cap, effect in (("chat", "allow"), ("tutor", "deny")):
+        response = await client.post(
+            "/v1/policy/decisions",
+            json={
+                "runtime_profile_id": limited.runtime_profile_id,
+                "capability": cap,
+                "data_classification": "ephemeral",
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["effect"] == effect
+        if cap == "tutor":
+            assert response.json()["reason_code"] == "capability_not_in_runtime_profile"
+    assert (await persisted(lifecycle, limited.session_id))[1] == limited.model_dump(mode="json")
+    with pytest.raises(PersistentSessionDenied):
+        await service.current(
+            actor_id="person_a", session_id=limited.session_id, now=datetime.now(UTC)
+        )

@@ -103,7 +103,6 @@ async def test_unseen_task_summary_survives_next_session_only_with_retention(
         second = await adapter._confirm_subject(harness)
         assert second.session_id != first.session_id
         assert second.envelope["active_subject_id"] == first.envelope["active_subject_id"]
-        # The parent actor cannot impersonate the child for tutoring.
         tutor = await client.post(
             "/v1/policy/decisions",
             headers=headers,
