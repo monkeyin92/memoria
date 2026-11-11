@@ -49,7 +49,8 @@ struct PowerPolicy {
 };
 
 inline TapWakeAction TapWakeActionFor(TapFacts facts) {
-    if (facts.online) {
+    if (facts.device == TapDevice::kBusy ||
+        (facts.online && facts.device == TapDevice::kStarting)) {
         return TapWakeAction::kIgnore;
     }
     if (facts.device == TapDevice::kStarting) {
@@ -61,7 +62,7 @@ inline TapWakeAction TapWakeActionFor(TapFacts facts) {
     if (facts.device == TapDevice::kIdle && facts.in_quiet_hours) {
         return TapWakeAction::kNightSoothing;
     }
-    if (facts.offline_wants_tap) {
+    if (!facts.online && facts.offline_wants_tap) {
         return TapWakeAction::kOfflineMenu;
     }
     if (facts.device == TapDevice::kIdle) {

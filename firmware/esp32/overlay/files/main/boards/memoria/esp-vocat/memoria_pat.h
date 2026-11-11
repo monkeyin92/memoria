@@ -266,49 +266,6 @@ inline const char* PatGestureDecisionName(PatGestureDecision decision) {
     }
 }
 
-// The touch task mutes the IMU while the screen is pressed, so a tap is
-// decided on release. The board keeps its power-policy navigation (wake,
-// offline menu, Wi-Fi setup); only a driven conversation element changes.
-enum class ScreenTapDecision : std::uint8_t {
-    kNone = 0,
-    kTapNavigation = 1,  // power policy decides: wake, offline menu, Wi-Fi setup
-    kStopSpeaking = 2,
-    kCrisisKeepPlayback = 3,
-};
-
-struct TapGestureFacts {
-    int state = kPatStateIdle;
-    bool speaking_crisis_playback = false;
-    bool wifi_configuring = false;
-    bool offline_wants_tap = false;
-};
-
-inline ScreenTapDecision ScreenTapDecisionFor(const TapGestureFacts& facts) {
-    if (facts.state == kPatStateSpeaking) {
-        return facts.speaking_crisis_playback ? ScreenTapDecision::kCrisisKeepPlayback
-                                              : ScreenTapDecision::kStopSpeaking;
-    }
-    if (facts.state == kPatStateIdle || facts.wifi_configuring ||
-        facts.state == kPatStateStarting || facts.offline_wants_tap) {
-        return ScreenTapDecision::kTapNavigation;
-    }
-    return ScreenTapDecision::kNone;
-}
-
-inline const char* ScreenTapDecisionName(ScreenTapDecision decision) {
-    switch (decision) {
-        case ScreenTapDecision::kTapNavigation:
-            return "tap_navigation";
-        case ScreenTapDecision::kStopSpeaking:
-            return "stop_speaking";
-        case ScreenTapDecision::kCrisisKeepPlayback:
-            return "crisis_keep_playback";
-        case ScreenTapDecision::kNone:
-        default:
-            return "none";
-    }
-}
-
 }  // namespace memoria
 
 #endif  // MEMORIA_PAT_H

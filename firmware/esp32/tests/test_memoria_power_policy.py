@@ -138,30 +138,28 @@ def test_listening_closed_tap_resumes_without_a_new_wake(tool: pathlib.Path) -> 
     ]
 
 
-def test_busy_tap_reaches_the_offline_menu_only_when_it_wants_the_tap(tool: pathlib.Path) -> None:
-    assert _run(tool, "tap busy 0 0", "tap busy 0 1", "tap busy 1 0") == [
-        "ignore",
-        "offline",
-        "ignore",
-    ]
+@pytest.mark.parametrize("online", [0, 1])
+@pytest.mark.parametrize("quiet", [0, 1])
+@pytest.mark.parametrize("wants", [0, 1])
+def test_busy_tap_has_no_action(tool, online, quiet, wants) -> None:
+    assert _run(tool, f"tap busy {quiet} {wants} {online}") == ["ignore"]
 
 
-def test_online_tap_is_completely_ignored(tool: pathlib.Path) -> None:
-    """When online, screen taps are complete no-ops: interaction is voice-only."""
+def test_online_standby_tap_wakes_or_resumes(tool: pathlib.Path) -> None:
     assert _run(
         tool,
         "tap idle 0 0 1",
-        "tap idle 1 0 1",
-        "tap starting 0 1 1",
-        "tap busy 0 1 1",
+        "tap idle 0 1 1",
         "tap held 0 0 1",
-    ) == [
-        "ignore",
-        "ignore",
-        "ignore",
-        "ignore",
-        "ignore",
-    ]
+        "tap held 1 1 1",
+    ) == ["start", "start", "resume", "resume"]
+
+
+def test_online_startup_is_ignored_and_quiet_idle_keeps_night_policy(tool) -> None:
+    assert _run(
+        tool, "tap starting 0 1 1", "tap starting 1 0 1",
+        "tap idle 1 0 1", "tap idle 1 1 1",
+    ) == ["ignore", "ignore", "night", "night"]
 
 
 def test_idle_keep_awake_park_does_not_want_the_mic_open(tool: pathlib.Path) -> None:
@@ -209,3 +207,148 @@ def test_tap_debounce_is_wrap_safe(tool: pathlib.Path) -> None:
         "debounce 1000 750 250",
         "debounce 50 4294967096 250",
     ) == ["yes", "no", "yes", "yes"]
+
+
+BOARD = FIRMWARE_ROOT / "overlay/files/main/boards/memoria/esp-vocat/memoria_esp_vocat.cc"
+
+
+def _board_method(source: str, signature: str) -> str:
+    start = source.index(signature)
+    brace = source.index("{", start)
+    depth = 1
+    end = brace + 1
+    while depth:
+        depth += (source[end] == "{") - (source[end] == "}")
+        end += 1
+    return source[start:end]
+
+
+@pytest.fixture(scope="module")
+def touch_tool():
+    """Compile the real board entry, classifier and dispatch with fake peripherals."""
+    compiler = shutil.which("g++") or shutil.which("clang++")
+    if compiler is None:
+        pytest.skip("no host C++ compiler available")
+    board = BOARD.read_text(encoding="utf-8")
+    methods = "\n".join(_board_method(board, signature) for signature in (
+        "memoria::TapDevice TapDeviceFor(DeviceState state) const",
+        "void HandleScreenTouchRelease(std::uint32_t hold_ms)",
+        "void DispatchTapWakeAction(",
+    ))
+    harness = r'''
+#include "memoria_power_policy.h"
+#include "memoria_offline_menu.h"
+#include <cstdlib>
+#include <cstdio>
+#define ESP_LOGI(...) ((void)0)
+#define ESP_OK 0
+int cues=0, wakes=0, resumes=0, menus=0, gestures=0, configs=0, sleeps=0;
+bool online=false, quiet=false, playing=false;
+struct Audio { bool IsPlaybackIdle() { return !playing; } };
+enum DeviceState { kDeviceStateStarting, kDeviceStateIdle, kDeviceStateWifiConfiguring,
+                   kDeviceStateListening, kDeviceStateSpeaking, kDeviceStateConnecting };
+DeviceState current;
+int64_t esp_timer_get_time() { return 10000000; }
+int BeijingMinuteNowOrZero() { return 0; }
+struct Display { void ShowNotification(const char*, int) {} };
+struct Application {
+    static Application& GetInstance() { static Application app; return app; }
+    DeviceState GetDeviceState() { return current; }
+    Audio& GetAudioService() { static Audio audio; return audio; }
+    template<class F> void Schedule(F f) { f(); }
+    void WakeWordInvoke(const char*) { ++wakes; }
+};
+namespace memoria {
+bool ActivationNetworkErrorPageVisible() { return false; }
+struct MemoriaBootstrap {
+    static MemoriaBootstrap& GetInstance() { static MemoriaBootstrap b; return b; }
+    bool active() { return false; }
+    int Refresh(Display*) { return ESP_OK; }
+};
+PowerPolicyRegistry& PowerPolicyRegistry::GetInstance() { static PowerPolicyRegistry p; return p; }
+bool PowerPolicyRegistry::NoteTap(std::uint32_t) { return true; }
+bool PowerPolicyRegistry::in_quiet_hours(std::uint16_t) const { return quiet; }
+void PowerPolicyRegistry::SetPhase(PowerPhase) {}
+void SendListeningResume() { ++resumes; }
+}
+struct FakeMenu {
+    memoria::OfflineMode mode_ = memoria::OfflineMode::kInactive;
+    memoria::OfflineMode mode() const { return mode_; }
+    bool WantsTap(bool net, bool idle) { return mode_ != memoria::OfflineMode::kInactive || (!net && idle); }
+    memoria::OfflineMenuOutput OnTap(unsigned, unsigned, bool, bool) { ++menus; return {}; }
+    void OnNetworkSample(unsigned, bool, bool) {}
+};
+struct Board {
+    std::atomic<bool> listening_capture_closed_{false};
+    std::atomic<unsigned> wifi_hold_since_ms_{0};
+    static constexpr unsigned kWifiHoldNotArmed = 0;
+    FakeMenu offline_menu_;
+    std::atomic<unsigned> offline_prompt_generation_{0};
+    Display* display_ = nullptr;
+    int64_t last_qr_refresh_us_ = 0;
+    void MuteImuForTouch() {}
+    static bool NetworkLooksOnline() { return online; }
+    Display* GetDisplay() { static Display d; return &d; }
+    void OnScreenTapGesture(unsigned, bool) { ++gestures; }
+    void EnterWifiConfigMode() { ++configs; }
+    void EnterTapDeepSleep() { ++sleeps; }
+    void PlayLocalAssetClip(const char*) { ++cues; }
+    void ApplyOfflineMenuOutput(const memoria::OfflineMenuOutput&) {}
+    void SyncOfflineMenuScreen() {}
+''' + methods + r'''
+};
+int main(int argc, char** argv) {
+    if (argc != 6 && argc != 7) return 2;
+    playing = argc == 7 && atoi(argv[6]);
+    current = static_cast<DeviceState>(atoi(argv[1]));
+    online = atoi(argv[2]);
+    Board b;
+    b.listening_capture_closed_.store(atoi(argv[3]));
+    b.offline_menu_.mode_ = static_cast<memoria::OfflineMode>(atoi(argv[4]));
+    quiet = atoi(argv[5]);
+    b.HandleScreenTouchRelease(50);
+    printf("%d %d %d %d %d %d %d\n", wakes, resumes, cues, menus, gestures, configs, sleeps);
+}
+'''
+    with tempfile.TemporaryDirectory() as tmp:
+        source = pathlib.Path(tmp) / "touch.cc"
+        source.write_text(harness, encoding="utf-8")
+        binary = pathlib.Path(tmp) / "touch"
+        subprocess.run([compiler, "-std=c++20", "-I", str(MEMORIA_DIR), str(source), "-o", str(binary)], check=True)
+        yield binary
+
+
+@pytest.mark.parametrize("state,online,closed,mode,quiet,expected", [
+    pytest.param(1, 1, 0, 0, 0, "1 0 1 0 0 0 0", id="online_idle_starts_with_cue"),
+    pytest.param(3, 1, 1, 0, 0, "0 1 1 0 0 0 0", id="online_closed_listening_resumes"),
+    pytest.param(3, 0, 1, 0, 0, "0 1 1 0 0 0 0", id="offline_closed_listening_resumes"),
+    pytest.param(1, 0, 0, 0, 0, "0 0 0 1 0 0 0", id="offline_idle_opens_menu"),
+    pytest.param(0, 0, 0, 0, 0, "0 0 0 0 0 1 0", id="offline_starting_wifi_config"),
+    pytest.param(0, 1, 0, 0, 0, "0 0 0 0 0 0 0", id="online_starting_ignored"),
+    pytest.param(1, 1, 0, 0, 1, "0 0 0 0 0 0 1", id="quiet_online_idle_soothing"),
+    pytest.param(1, 0, 0, 0, 1, "0 0 0 0 0 0 1", id="quiet_offline_idle_soothing"),
+])
+def test_touch_entry_dispatches_standby_actions(touch_tool, state, online, closed, mode, quiet, expected):
+    result = subprocess.run([str(touch_tool), *map(str, (state, online, closed, mode, quiet))],
+                            text=True, capture_output=True, check=True)
+    assert result.stdout.strip() == expected
+
+
+@pytest.mark.parametrize("online", [0, 1])
+@pytest.mark.parametrize("state,mode,closed", [
+    (state, mode, closed)
+    for state, mode in [(4, 0), (4, 4), (5, 0), (5, 4), (3, 0), (1, 5), (1, 6)]
+    for closed in ([0] if state == 3 else [0, 1])
+])
+def test_touch_during_playback_or_busy_has_no_effect(touch_tool, online, state, mode, closed):
+    result = subprocess.run([str(touch_tool), *map(str, (state, online, closed, mode, 0))],
+                            text=True, capture_output=True, check=True)
+    assert result.stdout.strip() == "0 0 0 0 0 0 0"
+
+
+@pytest.mark.parametrize("online", [0, 1])
+@pytest.mark.parametrize("state,closed,mode", [(1, 0, 0), (1, 0, 4), (3, 1, 0)])
+def test_touch_ignores_queued_or_active_audio_even_in_standby(touch_tool, online, state, closed, mode):
+    result = subprocess.run([str(touch_tool), *map(str, (state, online, closed, mode, 0, 1))],
+                            text=True, capture_output=True, check=True)
+    assert result.stdout.strip() == "0 0 0 0 0 0 0"

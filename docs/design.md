@@ -44,6 +44,14 @@ Illegal combinations made unrepresentable:
 - Mic cannot be wanted open while phase is WifiHold or DeepSleep.
 - Night tap cannot open a conversation channel.
 
+Screen touch uses `TapWakeActionFor(TapFacts)`. Outside quiet hours, online idle starts a conversation with the local wake cue. Listening resumes only when its capture is closed and playback is idle. Starting while online, busy states, queued or active playback, and offline story playback ignore touch without a gesture stop, cue, or menu action. The capture-closed flag is read only in Listening. Quiet idle keeps the night-soothing path. Offline idle and startup retain menu and Wi-Fi provisioning behavior.
+
+Resuming closed capture clears the old WifiHold timer and restores `kConversing`, because Application can remain in Listening throughout standby. Quiet hours retain the existing closed-listening resume behavior. Session reset clears the capture-closed notification before the next session.
+
+An offline prompt batch owns a generation token from scheduling until completion or cancellation. Clicks stay busy between clips even when the audio queue is empty. Old callbacks release only their own token; queued audio keeps the tail busy after release. Online conversation start or resume silently consumes the offline recovery transition, so the next network sample cannot insert recovery prompts into the conversation. Recovery while idle still announces the restored network.
+
+Host tests compile the board touch entry, state classifier, and action dispatcher with fake peripherals. Lifecycle tests execute the production reset and board methods with the real offline menu state machine. These checks do not verify physical touch, audible silence, or deep-sleep wake on hardware.
+
 ### Temporary keep-awake test profile
 
 The diagram above is the product firmware. `CONFIG_MEMORIA_KEEP_AWAKE` defaults to n, so product and bench images still take the edges into chip deep sleep.
@@ -252,7 +260,7 @@ Candidate A (separate `memoria_offline_menu.h`) is the base. Candidate B (extend
 
 ### Resolved product calls (were "待技术部定")
 
-1. Long-press stop while playing: replay current item (#14/#15/#16) then #17; restart 30s idle timer.
+1. While playing, screen touch has no action, including long press. Menu selection remains available after playback finishes.
 2. Network drop while idle/standby (not in conversation): play nothing; background retry only. Next tap if still offline: #1+#2+#3 then menu.
 3. Menu idle into deep sleep: stop reconnecting. On wake: retry 20s; if still offline, play #1+#2+#3 then menu.
 
