@@ -83,6 +83,8 @@ elif args[:3] == ['ilm', 'rule', 'export']:
     else:
         data = json.loads(state.read_text())
         if not data.get('Rules'):
+            if os.environ['EMPTY'] == 'missing':
+                empty_error = 'mc: <ERROR> Unable to get lifecycle configuration. The lifecycle configuration does not exist.'
             print(empty_error, file=sys.stderr)
             sys.exit(1)
         print(json.dumps(data, indent=1))
@@ -99,7 +101,7 @@ else:
 class OffsiteMirrorTest(unittest.TestCase):
     def run_mirror(self, initial=None, failure='', days=None, drift=None,
                    watermark='', source=None, version='offsite/fixture versioning is enabled',
-                   readback='', export=''):
+                   readback='', export='', empty='zero'):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             bin_dir = root / 'bin'
@@ -137,7 +139,7 @@ class OffsiteMirrorTest(unittest.TestCase):
             env = {
                 'PATH': str(bin_dir), 'CALLS': str(log), 'STATE': str(state),
                 'IMPORTED': str(root / 'imported'), 'READBACK': readback, 'EXPORT': export,
-                'VERSION': version, 'FAILURE': failure, 'DRIFT': json.dumps(drift),
+                'EMPTY': empty, 'VERSION': version, 'FAILURE': failure, 'DRIFT': json.dumps(drift),
                 'MINIO_ROOT_USER': 'fixture', 'MINIO_ROOT_PASSWORD': 'fixture',
                 'MEMORIA_OFFSITE_S3_ENDPOINT': 'https://fixture.invalid',
                 'MEMORIA_OFFSITE_S3_ACCESS_KEY': 'fixture',
@@ -195,12 +197,14 @@ class OffsiteMirrorTest(unittest.TestCase):
                 self.assertEqual(success, 'previous-success\n')
 
     def test_empty_configuration_can_be_created_after_export(self):
-        result, calls, success, final = self.run_mirror()
-        self.assertEqual(result.returncode, 9, result.stderr)
-        self.assertEqual(calls.count('ilm rule export'), 2)
-        self.assertLess(calls.index('ilm rule export'), calls.index('ilm rule import'))
-        self.assertEqual(final, policy())
-        self.assertTrue(success)
+        for empty in ['zero', 'missing']:
+            with self.subTest(empty=empty):
+                result, calls, success, final = self.run_mirror(empty=empty)
+                self.assertEqual(result.returncode, 9, result.stderr)
+                self.assertEqual(calls.count('ilm rule export'), 2)
+                self.assertLess(calls.index('ilm rule export'), calls.index('ilm rule import'))
+                self.assertEqual(final, policy())
+                self.assertTrue(success)
 
     def test_owned_policy_can_be_adjusted_to_selected_days(self):
         for days in range(1, 8):
