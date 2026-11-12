@@ -21,7 +21,7 @@ def policy(days=7, **changes):
 
 
 class OffsiteMirrorTest(unittest.TestCase):
-    def run_mirror(self, initial=None, failure='', days=None, drift=False, watermark='', source=None, return_state=False):
+    def run_mirror(self, initial=None, failure='', days=None, drift=False, watermark='', source=None, return_state=False, version='offsite/fixture versioning is enabled'):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             bin_dir = root / 'bin'
@@ -44,7 +44,9 @@ args = [a for a in sys.argv[1:] if a != '--no-color']
 with open(os.environ['CALLS'], 'a') as f: f.write(' '.join(args) + '\\n')
 state = Path(os.environ['STATE'])
 failure = os.environ['FAILURE']
-if args[:2] == ['version', 'info']: print('Enabled')
+if args[:2] == ['version', 'info']:
+    print(os.environ['VERSION'])
+    if failure == 'version': sys.exit(6)
 elif args[:3] == ['ilm', 'rule', 'import']:
     data = json.load(sys.stdin)
     if not data.get('Rules'):
@@ -78,7 +80,7 @@ elif args[0] == 'mirror' and failure == 'mirror': sys.exit(5)
             script.write_text(source)
             env = {
                 'PATH': str(bin_dir), 'CALLS': str(log), 'STATE': str(state),
-                'FAILURE': failure, 'DRIFT': 'yes' if drift else 'no',
+                'VERSION': version, 'FAILURE': failure, 'DRIFT': 'yes' if drift else 'no',
                 'MINIO_ROOT_USER': 'fixture', 'MINIO_ROOT_PASSWORD': 'fixture',
                 'MEMORIA_OFFSITE_S3_ENDPOINT': 'https://fixture.invalid',
                 'MEMORIA_OFFSITE_S3_ACCESS_KEY': 'fixture',
@@ -92,6 +94,25 @@ elif args[0] == 'mirror' and failure == 'mirror': sys.exit(5)
             output = (result, log.read_text() if log.exists() else '',
                       (root / 'success').read_text() if (root / 'success').exists() else '')
             return (*output, json.loads(state.read_text())) if return_state else output
+
+    def test_version_info_uses_the_pinned_lowercase_output(self):
+        result, calls, success = self.run_mirror(policy())
+        self.assertEqual(result.returncode, 9, result.stderr)
+        self.assertIn('mirror --', calls)
+        self.assertTrue(success)
+
+    def test_failed_or_unknown_version_output_cannot_import(self):
+        for version, failure, code in [
+                ('Enabled', '', 2), ('offsite/fixture versioning is suspended', '', 2),
+                ('offsite/fixture is un-versioned', '', 2),
+                ('offsite/fixture versioning is enabled', 'version', 6)]:
+            with self.subTest(version=version, failure=failure):
+                result, calls, success = self.run_mirror(policy(), version=version, failure=failure)
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertIn('version', result.stderr)
+                self.assertNotIn('ilm rule', calls)
+                self.assertNotIn('mirror ', calls)
+                self.assertEqual(success, '')
 
     def test_foreign_and_mixed_rules_preserve_policy_and_watermark(self):
         foreign = policy(30, ID='logs-30d')
