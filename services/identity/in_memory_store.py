@@ -29,6 +29,7 @@ from services.identity.domain import (
     TransferIntent,
 )
 from services.identity.repository import AuditEvent, OutboxEvent
+from services.identity.subject_release import BindingRevocation, SubjectRelease
 
 
 class InMemoryIdentityStore:
@@ -45,6 +46,7 @@ class InMemoryIdentityStore:
         self._idempotency: dict[tuple[str, str], IdempotencyRecord] = {}
         self._audit: list[AuditEvent] = []
         self._outbox: dict[str, OutboxEvent] = {}
+        self._subject_releases: set[tuple[str, str]] = set()
 
     async def initialize(self) -> None:
         return None
@@ -486,6 +488,9 @@ class InMemoryIdentityStore:
         scope: str = "api",
     ) -> DeviceBinding:
         with self._lock:
+            for subject in binding.roles:
+                if self._persons[subject.person_id].status != "active":
+                    raise BindingVersionConflictError("subject is released or unavailable")
             versions = [
                 item.binding_version
                 for item in self._bindings.values()
@@ -647,6 +652,40 @@ class InMemoryIdentityStore:
                 )
             )
 
+    async def revoke_binding(self, binding_id: str, *, at: datetime, actor_person_id: str,
+                             audit_event: AuditEvent | None = None, outbox_event: OutboxEvent | None = None) -> BindingRevocation:
+        with self._lock:
+            binding = self._bindings[binding_id]
+            if binding.status != "active":
+                raise BindingVersionConflictError("binding is no longer active")
+            revoked = await self.transition_binding(binding_id, status="revoked",
+                valid_until=at if at > binding.valid_from else None, at=at,
+                actor_person_id=actor_person_id, audit_event=audit_event, outbox_event=outbox_event)
+            subjects = []
+            for subject in binding.primary_subject_ids:
+                if subject == binding.account_owner_person_id:
+                    continue
+                person = self._persons[subject]
+                attested = any(r.source_person_id == actor_person_id and r.target_person_id == subject
+                    and r.relation_type in {"guardian_of", "delegate_for"} and r.status in {"active", "pending"}
+                    and r.established_evidence_id in {"guardian_attestation_v1:device_binding", "delegate_attestation_v1:device_binding", "guardian_declaration_v1:device_binding"}
+                    for r in self._relationships.values())
+                served = any(b.status == "active" and any(r.person_id == subject and r.status == "active" for r in b.roles) for b in self._bindings.values())
+                outcome = "adult_kept" if person.subject_category == "adult" else "not_attested" if not attested else "still_served" if served else "released"
+                if outcome == "released":
+                    self._persons[subject] = replace(person, status="disabled", updated_at=at)
+                    self._subject_releases.add((binding.account_owner_person_id, subject))
+                subjects.append(SubjectRelease(subject, outcome))
+            return BindingRevocation(revoked, tuple(subjects))
+
+    async def pending_subject_releases(self, *, limit: int = 100) -> tuple[tuple[str, str], ...]:
+        with self._lock:
+            return tuple(sorted(self._subject_releases))[:limit]
+
+    async def complete_subject_release(self, account_id: str, subject_id: str) -> None:
+        with self._lock:
+            self._subject_releases.discard((account_id, subject_id))
+
     async def transition_binding(
         self,
         binding_id: str,
@@ -663,6 +702,8 @@ class InMemoryIdentityStore:
             binding = self._bindings.get(binding_id)
             if binding is None:
                 raise IdentityNotFoundError(f"binding {binding_id} does not exist")
+            if status == "active" and any(self._persons[r.person_id].status != "active" for r in binding.roles):
+                raise BindingVersionConflictError("subject is released or unavailable")
             transitioned = replace(
                 binding,
                 status=status,
@@ -763,6 +804,9 @@ class InMemoryIdentityStore:
         scope: str = "api",
     ) -> DeviceBinding:
         with self._lock:
+            for subject in binding.roles:
+                if self._persons[subject.person_id].status != "active":
+                    raise BindingVersionConflictError("subject is released or unavailable")
             if idempotency_record is not None:
                 self._write_idempotency_locked(idempotency_record)
             stored = self._transfers.get(intent.transfer_id)

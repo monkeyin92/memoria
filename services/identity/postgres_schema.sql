@@ -1378,6 +1378,152 @@ $$;
 -- a category/evidence CHECK, so an erased age is the domain's ``unknown``
 -- value, not SQL NULL: the real band is gone and the row no longer reads as a
 -- child or a verified adult.
+CREATE TABLE IF NOT EXISTS identity_subject_releases (
+    account_id text NOT NULL,
+    subject_id text NOT NULL,
+    released_at timestamptz NOT NULL,
+    completed_at timestamptz,
+    PRIMARY KEY (account_id, subject_id)
+);
+ALTER TABLE identity_subject_releases ENABLE ROW LEVEL SECURITY;
+ALTER TABLE identity_subject_releases FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS identity_owner_full ON identity_subject_releases;
+CREATE POLICY identity_owner_full ON identity_subject_releases TO memoria_identity_owner
+    USING (current_user = 'memoria_identity_owner') WITH CHECK (current_user = 'memoria_identity_owner');
+
+CREATE OR REPLACE FUNCTION identity_subject_still_served(p_subject text, p_except_owner text DEFAULT NULL)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, public SET row_security = on AS $$
+    SELECT EXISTS (
+        SELECT 1 FROM identity_device_bindings b
+        JOIN identity_device_binding_roles r USING (binding_id)
+        WHERE r.person_id = p_subject AND r.status = 'active' AND b.status = 'active'
+          AND (p_except_owner IS NULL OR b.account_owner_person_id <> p_except_owner)
+    );
+$$;
+
+CREATE OR REPLACE FUNCTION identity_lock_binding_subjects(p_device text, p_subjects text[])
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public SET row_security = on AS $$
+DECLARE v_subject text;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended(p_device, 0));
+    FOR v_subject IN SELECT DISTINCT unnest(p_subjects) ORDER BY 1 LOOP
+        PERFORM pg_advisory_xact_lock(hashtextextended('subject:' || v_subject, 0));
+        IF NOT EXISTS (SELECT 1 FROM identity_persons WHERE person_id = v_subject AND status = 'active') THEN
+            RAISE EXCEPTION 'subject is released or unavailable' USING ERRCODE = 'IB409';
+        END IF;
+    END LOOP;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION identity_binding_subject_guard()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public SET row_security = on AS $$
+DECLARE v_device text; v_subject text;
+BEGIN
+    IF TG_TABLE_NAME = 'identity_device_bindings' THEN
+        v_device := NEW.device_id;
+        PERFORM pg_advisory_xact_lock(hashtextextended(v_device, 0));
+        FOR v_subject IN SELECT DISTINCT person_id FROM identity_device_binding_roles
+            WHERE binding_id = NEW.binding_id ORDER BY person_id LOOP
+            PERFORM pg_advisory_xact_lock(hashtextextended('subject:' || v_subject, 0));
+            IF NEW.status = 'active' AND NOT EXISTS (
+                SELECT 1 FROM identity_persons WHERE person_id = v_subject AND status = 'active'
+            ) THEN
+                RAISE EXCEPTION 'subject is released' USING ERRCODE = 'IB409';
+            END IF;
+        END LOOP;
+    ELSE
+        SELECT device_id INTO v_device FROM identity_device_bindings WHERE binding_id = NEW.binding_id;
+        PERFORM pg_advisory_xact_lock(hashtextextended(v_device, 0));
+        PERFORM pg_advisory_xact_lock(hashtextextended('subject:' || NEW.person_id, 0));
+        IF NEW.status = 'active' AND NOT EXISTS (
+            SELECT 1 FROM identity_persons WHERE person_id = NEW.person_id AND status = 'active'
+        ) THEN
+            RAISE EXCEPTION 'subject is released' USING ERRCODE = 'IB409';
+        END IF;
+    END IF;
+    RETURN NEW;
+END
+$$;
+DROP TRIGGER IF EXISTS identity_binding_subject_lock ON identity_device_bindings;
+CREATE TRIGGER identity_binding_subject_lock BEFORE INSERT OR UPDATE ON identity_device_bindings
+FOR EACH ROW EXECUTE FUNCTION identity_binding_subject_guard();
+DROP TRIGGER IF EXISTS identity_role_subject_lock ON identity_device_binding_roles;
+CREATE TRIGGER identity_role_subject_lock BEFORE INSERT OR UPDATE ON identity_device_binding_roles
+FOR EACH ROW EXECUTE FUNCTION identity_binding_subject_guard();
+
+CREATE OR REPLACE FUNCTION identity_revoke_binding(p_binding text, p_actor text, p_at timestamptz)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public SET row_security = on AS $$
+DECLARE v_device text; v_subject text; v_outcome text; v_result jsonb := '[]'; v_binding identity_device_bindings;
+BEGIN
+    IF p_actor IS DISTINCT FROM NULLIF(current_setting('app.identity_actor', true), '')
+       OR NOT identity_binding_manage_allowed(p_actor, p_binding) THEN
+        RAISE EXCEPTION 'binding manage denied' USING ERRCODE = 'IB403';
+    END IF;
+    SELECT device_id INTO v_device FROM identity_device_bindings WHERE binding_id = p_binding;
+    PERFORM pg_advisory_xact_lock(hashtextextended(v_device, 0));
+    FOR v_subject IN SELECT DISTINCT person_id FROM identity_device_binding_roles
+        WHERE binding_id = p_binding ORDER BY person_id LOOP
+        PERFORM pg_advisory_xact_lock(hashtextextended('subject:' || v_subject, 0));
+    END LOOP;
+    SELECT * INTO v_binding FROM identity_device_bindings WHERE binding_id = p_binding FOR UPDATE;
+    IF v_binding.status <> 'active' THEN
+        RAISE EXCEPTION 'binding is no longer active' USING ERRCODE = 'IB409';
+    END IF;
+    UPDATE identity_device_bindings SET status = 'revoked',
+        valid_until = CASE WHEN p_at > valid_from THEN p_at ELSE valid_until END
+        WHERE binding_id = p_binding;
+    UPDATE identity_device_binding_roles SET status = 'revoked', ended_at = p_at
+        WHERE binding_id = p_binding AND status = 'active';
+    FOR v_subject IN SELECT person_id FROM identity_device_binding_roles
+        WHERE binding_id = p_binding AND role = 'primary_subject' AND person_id <> v_binding.account_owner_person_id
+        ORDER BY person_id LOOP
+        IF EXISTS (SELECT 1 FROM identity_persons WHERE person_id = v_subject AND subject_category = 'adult') THEN
+            v_outcome := 'adult_kept';
+        ELSIF NOT EXISTS (
+            SELECT 1 FROM identity_relationships WHERE source_person_id = p_actor
+            AND target_person_id = v_subject AND relation_type IN ('guardian_of', 'delegate_for')
+            AND status IN ('active', 'pending') AND established_evidence_id IN (
+                'guardian_attestation_v1:device_binding', 'delegate_attestation_v1:device_binding',
+                'guardian_declaration_v1:device_binding')
+        ) THEN v_outcome := 'not_attested';
+        ELSIF identity_subject_still_served(v_subject) THEN v_outcome := 'still_served';
+        ELSE
+            v_outcome := 'released';
+            UPDATE identity_persons SET status = 'disabled', updated_at = p_at WHERE person_id = v_subject;
+            INSERT INTO identity_subject_releases(account_id, subject_id, released_at)
+                VALUES (v_binding.account_owner_person_id, v_subject, p_at) ON CONFLICT DO NOTHING;
+        END IF;
+        v_result := v_result || jsonb_build_array(jsonb_build_object('subject_id', v_subject, 'outcome', v_outcome));
+    END LOOP;
+    RETURN v_result;
+END
+$$;
+
+CREATE OR REPLACE FUNCTION identity_pending_subject_releases(p_limit integer)
+RETURNS TABLE(account_id text, subject_id text) LANGUAGE sql SECURITY DEFINER
+SET search_path = pg_catalog, public SET row_security = on AS $$
+    SELECT account_id, subject_id FROM identity_subject_releases
+    WHERE completed_at IS NULL ORDER BY released_at LIMIT greatest(0, least(p_limit, 1000));
+$$;
+CREATE OR REPLACE FUNCTION identity_complete_subject_release(p_account text, p_subject text)
+RETURNS void LANGUAGE sql SECURITY DEFINER
+SET search_path = pg_catalog, public SET row_security = on AS $$
+    UPDATE identity_subject_releases SET completed_at = now()
+    WHERE account_id = p_account AND subject_id = p_subject;
+$$;
+REVOKE ALL ON FUNCTION identity_subject_still_served(text,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity_binding_subject_guard() FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity_lock_binding_subjects(text,text[]) FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity_revoke_binding(text,text,timestamptz) FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity_pending_subject_releases(integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity_complete_subject_release(text,text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION identity_lock_binding_subjects(text,text[]), identity_revoke_binding(text,text,timestamptz),
+    identity_pending_subject_releases(integer), identity_complete_subject_release(text,text) TO memoria_identity;
+
 CREATE OR REPLACE FUNCTION identity_redact_bound_subject(
     p_person_id text,
     p_actor_person_id text,
@@ -1408,13 +1554,8 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'identity_redact_bound_subject: actor did not attest this person';
     END IF;
-    IF EXISTS (
-        SELECT 1 FROM identity_device_binding_roles role
-        JOIN identity_device_bindings b ON b.binding_id = role.binding_id
-        WHERE role.person_id = p_person_id
-          AND role.status = 'active'
-          AND b.status = 'active'
-    ) THEN
+    PERFORM pg_advisory_xact_lock(hashtextextended('subject:' || p_person_id, 0));
+    IF identity_subject_still_served(p_person_id) THEN
         RAISE EXCEPTION 'identity_redact_bound_subject: a device still serves this person';
     END IF;
     -- The account owner and every verified adult keep their own identity;

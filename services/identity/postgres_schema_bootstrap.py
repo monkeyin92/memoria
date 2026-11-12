@@ -42,6 +42,7 @@ _REQUIRED_TABLES = frozenset(
         "identity_idempotency_records",
         "identity_persona_assignments",
         "identity_custom_personas",
+        "identity_subject_releases",
     }
 )
 

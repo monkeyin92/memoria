@@ -65,6 +65,7 @@ from services.identity.service_helpers import (
     _new_id,
     _now,
 )
+from services.identity.subject_release import BindingRevocation
 from services.identity.transfers import IdentityTransferMixin
 
 
@@ -641,7 +642,7 @@ class IdentityService(IdentityPersonaMixin, IdentityTransferMixin, IdentityRelat
         actor_person_id: str,
         reason: str = "unbind",
         now: datetime | None = None,
-    ) -> DeviceBinding:
+    ) -> BindingRevocation:
         """Unbind a device; the revoked version stays in the audit trail."""
         timestamp = _now(now)
         current = await self._require_active_binding(
@@ -655,10 +656,8 @@ class IdentityService(IdentityPersonaMixin, IdentityTransferMixin, IdentityRelat
             timestamp=timestamp,
             extra={"revoke_reason": reason},
         )
-        revoked = await self._store.transition_binding(
+        revoked = await self._store.revoke_binding(
             current.binding_id,
-            status="revoked",
-            valid_until=timestamp if timestamp > current.valid_from else None,
             at=timestamp,
             audit_event=audit,
             outbox_event=outbox,

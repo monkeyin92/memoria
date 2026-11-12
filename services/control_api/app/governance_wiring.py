@@ -129,6 +129,8 @@ def install_subject_deletion(
         purge_chat_usage=purge_chat_usage,
         redact_identity=redact,
         persona=app.state.persona_engine,
+        pending_releases=app.state.identity_store.pending_subject_releases,
+        complete_release=app.state.identity_store.complete_subject_release,
     )
     app.state.subject_deletion = service
     return service

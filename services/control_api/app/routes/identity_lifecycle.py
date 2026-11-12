@@ -669,10 +669,7 @@ async def unbind_device(
         getattr(request.app.state, "subject_deletion", None),
     )
     try:
-        manifest = await identity.get_active_manifest(
-            device_id, actor_person_id=user.user_id
-        )
-        binding = await identity.revoke_binding(
+        revocation = await identity.revoke_binding(
             device_id=device_id,
             actor_person_id=user.user_id,
             reason=body.reason,
@@ -684,6 +681,7 @@ async def unbind_device(
             forbidden="binding_forbidden",
             conflict="binding_conflict",
         ) from exc
+    binding = revocation.binding
     device_released = await _release_fleet_binding(
         request, device_id=device_id, binding_id=binding.binding_id
     )
@@ -691,67 +689,25 @@ async def unbind_device(
     identity_cleared = "not_applicable"
     subject_deletion = "not_requested"
     child_layers_purged = "not_applicable"
-    if manifest is not None and manifest.account_owner_id == user.user_id:
-        subject_ids = tuple(
-            subject_id
-            for subject_id in manifest.primary_subject_ids
-            if subject_id != user.user_id
+    released = tuple(s.subject_id for s in revocation.subjects if s.outcome == "released")
+    if released:
+        withdrawn = await _withdraw_bound_subject_consents(
+            request, user=user, binding_id=binding.binding_id, subject_ids=released,
         )
-        if subject_ids:
-            # #283: unbind always erases the data and clears the child's
-            # identity row. There is no keep switch any more; old clients that
-            # still send purge_subject_data get the same result.
-            withdrawn = await _withdraw_bound_subject_consents(
-                request,
-                user=user,
-                binding_id=manifest.binding_id,
-                subject_ids=subject_ids,
-            )
-            child_layers = getattr(request.app.state, "child_layer_store", None)
-            if child_layers is not None:
-                child_layers_purged = "completed"
-                for subject_id in subject_ids:
-                    try:
-                        await child_layers.purge_both_layers(subject_id=subject_id)
-                    except Exception:
-                        logger.exception("child layer purge after unbind failed")
-                        child_layers_purged = "pending"
-            identity_cleared = "completed"
-            for subject_id in subject_ids:
+        subject_deletion = identity_cleared = child_layers_purged = "pending"
+        if deletion is not None:
+            subject_deletion = identity_cleared = child_layers_purged = "completed"
+            for subject_id in released:
                 try:
-                    person = await identity.get_person(
-                        subject_id, actor_person_id=user.user_id
-                    )
-                    if person.subject_category == "adult":
-                        # A verified adult member keeps their own row.
-                        continue
-                    await identity.redact_bound_subject(
-                        person_id=subject_id, actor_person_id=user.user_id
-                    )
-                except IdentityNotFoundError:
-                    # Already gone, or a person this owner cannot read.
-                    continue
-                except IdentityAccessDeniedError:
-                    logger.info(
-                        "unbind left a subject identity in place: not attested by this owner"
+                    await forget_subject_plans(request.app.state, subject_id)
+                    await deletion.delete_subject(
+                        SubjectScope(account_id=user.user_id, subject_id=subject_id), redact_identity=True,
                     )
                 except Exception:
-                    logger.exception("identity clear after unbind failed")
-                    identity_cleared = "pending"
-            if deletion is not None:
-                subject_deletion = "completed"
-                for subject_id in subject_ids:
-                    await forget_subject_plans(request.app.state, subject_id)
-                    try:
-                        await deletion.delete_subject(
-                            SubjectScope(account_id=user.user_id, subject_id=subject_id),
-                            # Unbound now, so the name is no longer needed either.
-                            redact_identity=True,
-                        )
-                    except Exception:
-                        # Checkpointed and fenced; the deletion worker resumes it.
-                        logger.exception("subject deletion after unbind is incomplete")
-                        subject_deletion = "pending"
+                    logger.exception("subject deletion after unbind is incomplete")
+                    subject_deletion = identity_cleared = child_layers_purged = "pending"
+    elif any(s.outcome == "still_served" for s in revocation.subjects):
+        subject_deletion = "retained_still_served"
     return {
         "binding_id": binding.binding_id,
         "status": binding.status,

@@ -23,6 +23,7 @@ from services.identity.domain import (
 from services.identity.postgres_helpers import _timestamp
 from services.identity.postgres_rows import _binding
 from services.identity.repository import AuditEvent, OutboxEvent
+from services.identity.subject_release import BindingRevocation, SubjectRelease
 
 
 class PostgresIdentityBindingMixin:
@@ -58,6 +59,7 @@ class PostgresIdentityBindingMixin:
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                     binding.device_id,
                 )
+                await _lock_binding_subjects(connection, binding, previous_binding_id)
                 if previous_binding_id is not None:
                     previous = await connection.fetchrow(
                         "SELECT * FROM identity_device_bindings WHERE binding_id = $1",
@@ -342,6 +344,33 @@ class PostgresIdentityBindingMixin:
                     bindings.append(_binding(row, roles))
             return tuple(bindings)
 
+    async def revoke_binding(self, binding_id: str, *, at: datetime, actor_person_id: str,
+                             audit_event: AuditEvent | None = None, outbox_event: OutboxEvent | None = None) -> BindingRevocation:
+        pool = await self._ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(connection, actor_person_id=actor_person_id, scope="api")
+                try:
+                    raw = await connection.fetchval("SELECT identity_revoke_binding($1,$2,$3)", binding_id, actor_person_id, at)
+                except asyncpg.PostgresError as exc:
+                    if exc.sqlstate == "IB409":
+                        raise BindingVersionConflictError("binding is no longer active") from exc
+                    raise
+                row = await connection.fetchrow("SELECT * FROM identity_device_bindings WHERE binding_id=$1", binding_id)
+                roles = await connection.fetch("SELECT * FROM identity_device_binding_roles WHERE binding_id=$1", binding_id)
+                return BindingRevocation(_binding(row, roles), tuple(SubjectRelease(**s) for s in json.loads(raw)))
+
+    async def pending_subject_releases(self, *, limit: int = 100) -> tuple[tuple[str, str], ...]:
+        pool = await self._ready()
+        async with pool.acquire() as connection:
+            rows = await connection.fetch("SELECT * FROM identity_pending_subject_releases($1)", limit)
+            return tuple((r["account_id"], r["subject_id"]) for r in rows)
+
+    async def complete_subject_release(self, account_id: str, subject_id: str) -> None:
+        pool = await self._ready()
+        async with pool.acquire() as connection:
+            await connection.execute("SELECT identity_complete_subject_release($1,$2)", account_id, subject_id)
+
     async def transition_binding(
         self,
         binding_id: str,
@@ -397,6 +426,22 @@ class PostgresIdentityBindingMixin:
                 )
                 result = _binding(updated, roles)
                 return result
+
+
+async def _lock_binding_subjects(connection: asyncpg.Connection, binding: DeviceBinding, previous_id: str | None) -> None:
+    subjects = {r.person_id for r in binding.roles}
+    if previous_id is not None:
+        subjects.update(await connection.fetchval(
+            "SELECT array_agg(person_id) FROM identity_device_binding_roles WHERE binding_id=$1", previous_id,
+        ) or ())
+    try:
+        await connection.execute(
+            "SELECT identity_lock_binding_subjects($1,$2::text[])", binding.device_id, sorted(subjects),
+        )
+    except asyncpg.PostgresError as exc:
+        if exc.sqlstate == "IB409":
+            raise BindingVersionConflictError("subject is released or unavailable") from exc
+        raise
 
 
 async def _insert_binding(
