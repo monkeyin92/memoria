@@ -36,11 +36,15 @@ Page({
     leavePage("/pages/home/index");
   },
 
-  onLoad(options) {
-    const redirect =
-      typeof options.redirect === "string" && options.redirect.startsWith("/")
-        ? options.redirect
-        : "/pages/home/index";
+  onLoad(options = {}) {
+    let redirect = "/pages/home/index";
+    try {
+      const value = typeof options.redirect === "string" ? options.redirect : "";
+      const target = value.startsWith("/") ? value : decodeURIComponent(value);
+      if (target.startsWith("/") && !target.startsWith("//") && !/[\\\r\n]/.test(target)) {
+        redirect = target;
+      }
+    } catch {}
     this.setData({
       redirect,
       reasonHint: reasonText(options.reason),
@@ -95,13 +99,15 @@ Page({
       wx.switchTab({ url: routeOf(redirect) });
       return;
     }
-    const pages = getCurrentPages();
+    const pages = typeof getCurrentPages === "function" ? getCurrentPages() : [];
     const previous = pages[pages.length - 2];
-    if (previous?.route === "pages/attention/index" &&
-        redirect === `/pages/attention/index?id=${encodeURIComponent(previous.options?.id || "")}`) {
-      wx.navigateBack({ delta: 1 });
-      return;
-    }
+    try {
+      if (previous?.route === "pages/attention/index" &&
+          redirect === `/pages/attention/index?id=${encodeURIComponent(decodeURIComponent(previous.options?.id || ""))}`) {
+        wx.navigateBack({ delta: 1 });
+        return;
+      }
+    } catch {}
     wx.redirectTo({ url: redirect });
   },
 });

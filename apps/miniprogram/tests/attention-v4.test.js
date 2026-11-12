@@ -406,7 +406,7 @@ test("login returns to the original attention page and refreshes its failed read
     assert.equal(h.page.data.alertResult.errorKind, "auth");
     h.page.openAttentionLogin();
     const navigation = h.wxCalls.find((call) => call.name === "navigateTo");
-    const query = Object.fromEntries(new URLSearchParams(navigation.args[0].url.split("?")[1]));
+    const query = Object.fromEntries(navigation.args[0].url.split("?")[1].split("&").map((part) => part.split("=")));
     auth = loadPage("pages/auth/index", options);
     auth.page.onLoad(query);
     global.getCurrentPages = () => [{ route: "pages/home/index" }, { route: "pages/attention/index", options: { id: "n1" } }, { route: "pages/auth/index" }];
@@ -430,10 +430,51 @@ test("login still redirects a different attention target and ordinary non-tab pa
   for (const redirect of ["/pages/attention/index?id=n2", "/pages/persona-custom/index"]) {
     const h = loadPage("pages/auth/index", fx.authed());
     try {
-      h.page.setData({ redirect });
+      h.page.onLoad({ redirect: encodeURIComponent(redirect) });
       global.getCurrentPages = () => [{ route: "pages/attention/index", options: { id: "n1" } }, { route: "pages/auth/index" }];
       h.page.finishLogin();
       assert.deepEqual(h.wxCalls.filter((call) => call.name === "redirectTo").map((call) => call.args[0]), [{ url: redirect }]);
     } finally { h.restore(); }
   }
+});
+
+test("an encoded notification id is decoded once for reads, login return and acknowledgement", async () => {
+  const id = "提醒/50%+&=?%2F";
+  const rawId = encodeURIComponent(id);
+  const reads = [];
+  const saves = [];
+  const h = await openAttention({ id: rawId }, {
+    getGuardianNotification: async (value) => { reads.push(value); return { ...fx.SAFETY_ALERT, notification_id: id }; },
+    markGuardianNotificationRead: async (value) => { saves.push(value); return {}; },
+  });
+  let auth;
+  try {
+    assert.deepEqual(reads, [id]);
+    h.page.openAttentionLogin();
+    const url = h.wxCalls.find((call) => call.name === "navigateTo").args[0].url;
+    const query = Object.fromEntries(url.split("?")[1].split("&").map((part) => part.split("=")));
+    auth = loadPage("pages/auth/index", fx.authed());
+    auth.page.onLoad(query);
+    global.getCurrentPages = () => [{ route: "pages/attention/index", options: { id: rawId } }, { route: "pages/auth/index" }];
+    auth.page.finishLogin();
+    assert.deepEqual(navigations(auth), [{ delta: 1 }]);
+    assert.equal(auth.wxCalls.filter((call) => call.name === "redirectTo").length, 0);
+    auth.restore();
+    auth = null;
+    await h.page.acknowledge();
+    assert.deepEqual(saves, [id]);
+  } finally { auth?.restore(); h.restore(); }
+});
+
+test("a malformed notification id shows the empty card without a request", async () => {
+  const reads = [];
+  const h = await openAttention({ id: "%E0%A4%A" }, {
+    getGuardianNotification: async (id) => { reads.push(id); return fx.SAFETY_ALERT; },
+  });
+  try {
+    assert.deepEqual(reads, []);
+    assert.equal(h.page.data.alertResult.status, "not_found");
+    assert.equal(h.page.data.alert, null);
+    assert.doesNotMatch(visibleText(renderPage("pages/attention/index", h.page.data)), /孩子说到了自己/);
+  } finally { h.restore(); }
 });

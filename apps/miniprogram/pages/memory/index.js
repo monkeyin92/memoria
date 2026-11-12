@@ -232,6 +232,32 @@ function privatePartitionsClear() {
   };
 }
 
+function safetyStateClear() {
+  return {
+    safetyBanner: null,
+    safetyReadStatus: "not_found",
+    safetyReadErrorKind: "",
+    crisisPush: { enabled: false, templateId: "", explanation: "" },
+  };
+}
+
+function bindingSnapshot(binding) {
+  if (!binding) return "";
+  return JSON.stringify([
+    binding.binding_id, binding.device_id, binding.binding_version, binding.status,
+    binding.declared_mode, binding.account_owner_id, binding.primary_subject_ids,
+    binding.guardian_ids, binding.delegate_ids, binding.member_ids,
+    binding.device_admin_ids, binding.emergency_contact_ids, binding.roles,
+  ]);
+}
+
+function bindingIncludesUser(binding, userId) {
+  return binding.account_owner_id === userId ||
+    ["primary_subject_ids", "guardian_ids", "delegate_ids", "member_ids", "device_admin_ids", "emergency_contact_ids"]
+      .some((key) => Array.isArray(binding[key]) && binding[key].includes(userId)) ||
+    (Array.isArray(binding.roles) && binding.roles.some((role) => role.person_id === userId));
+}
+
 Page({
   data: {
     statusBarStyle: statusBarStyle(),
@@ -269,8 +295,7 @@ Page({
    * 这台机器人是给孩子用的（parent_for_child，生效中），登录账号是绑定人：孩子的话按产品决定
    * 不给家长看原文，回顾页改为「哪些天聊过 + AI 概括」。与成长小结页取同一个孩子。
    */
-  _guardianSubject() {
-    const binding = this._reviewBinding || api.readBindingManifest?.() || null;
+  _guardianSubject(binding = api.readBindingManifest?.() || null) {
     if (!binding || binding.declared_mode !== "parent_for_child" || binding.status !== "active") {
       return "";
     }
@@ -286,6 +311,14 @@ Page({
     }
   },
 
+  _isReviewCurrent(context) {
+    return this._reviewRequest === context &&
+      api.isAuthEpochCurrent(context.authEpoch) &&
+      api.hasAuthenticatedSession() &&
+      api.currentIdentity()?.user_id === context.userId &&
+      bindingSnapshot(api.readBindingManifest?.() || null) === context.bindingSnapshot;
+  },
+
   onShow() {
     if (typeof this.getTabBar === "function" && this.getTabBar()) { this.getTabBar().setData({ selected: 1 }); }
     const authenticated = api.hasAuthenticatedSession();
@@ -294,26 +327,16 @@ Page({
       this._enterGuestState();
       return;
     }
-    return this.loadDays().then(() => this._loadCrisisSafety());
+    return this.loadDays();
   },
 
-  async _loadCrisisSafety() {
-    if (this._bindingUnconfirmed || !api.hasAuthenticatedSession()) return;
-    if (!this._guardianSubject()) {
-      this.setData({
-        safetyBanner: null,
-        safetyReadStatus: "not_found",
-        safetyReadErrorKind: "",
-        crisisPush: { enabled: false, templateId: "", explanation: "" },
-      });
-      return;
-    }
-    const authEpoch = api.currentAuthEpoch();
+  async _loadCrisisSafety(context) {
+    if (!this._isReviewCurrent(context) || context.kind !== "guardian") return;
     const [unread, crisisPush] = await Promise.all([
       loadUnreadSafetyAlerts(api),
       guardianPush.loadCrisisPushConfig(api),
     ]);
-    if (!api.isAuthEpochCurrent(authEpoch)) return;
+    if (!this._isReviewCurrent(context)) return;
     this.setData({
       safetyBanner:
         unread.status === "ok"
@@ -331,8 +354,7 @@ Page({
   },
 
   retrySafetyRead() {
-    if (this._bindingUnconfirmed) return this.loadDays().then(() => this._loadCrisisSafety());
-    return this._loadCrisisSafety();
+    return this.loadDays();
   },
 
   openSafetyLogin() {
@@ -355,6 +377,7 @@ Page({
   },
 
   onUnload() {
+    this._reviewRequest = null;
     if (this._unsubscribeAuthCleared) {
       this._unsubscribeAuthCleared();
       this._unsubscribeAuthCleared = null;
@@ -362,8 +385,7 @@ Page({
   },
 
   _enterGuestState() {
-    this._reviewBinding = null;
-    this._bindingUnconfirmed = true;
+    this._reviewRequest = null;
     this.setData({
       authenticated: false,
       days: [],
@@ -393,20 +415,22 @@ Page({
 
   onPullDownRefresh() {
     if (!api.hasAuthenticatedSession()) {
+      this._enterGuestState();
       wx.stopPullDownRefresh();
       return;
     }
-    this.loadDays().finally(() => wx.stopPullDownRefresh());
+    return this.loadDays().finally(() => wx.stopPullDownRefresh());
   },
 
   /*
    * 旧 daily_summaries 读接口关闭后，改用两层记录里的近期摘要。先看当前设备绑定
    * 的孩子，再看账号的监护关系；两处都没有就走空状态，不把失败变成错误文案。
    */
-  async _recentChildSummaries(authEpoch, requestedMinorId = "") {
+  async _recentChildSummaries(context, requestedMinorId = "") {
+    if (!this._isReviewCurrent(context)) return [];
     if (typeof api.getChildSessionSummaries !== "function") return [];
-    const boundChild = boundChildFromManifest(api.readBindingManifest?.() || null);
-    let minorId = requestedMinorId || this.data.guardianSubjectId || boundChild?.personId || "";
+    const boundChild = boundChildFromManifest(context.binding);
+    let minorId = requestedMinorId || boundChild?.personId || "";
     if (!minorId && typeof api.getGuardianLinks === "function") {
       try {
         const links = await api.getGuardianLinks();
@@ -418,45 +442,59 @@ Page({
         return [];
       }
     }
-    if (!minorId || !api.isAuthEpochCurrent(authEpoch)) return [];
+    if (!minorId || !this._isReviewCurrent(context)) return [];
     try {
       const payload = await api.getChildSessionSummaries(minorId, 3);
-      if (!api.isAuthEpochCurrent(authEpoch)) return [];
+      if (!this._isReviewCurrent(context)) return [];
       return normalizeSessionSummaries(payload);
     } catch {
       return [];
     }
   },
 
-  /*
-   * 私人回顾统一加载（PR-19）：days 与 conversation review 共用 authEpoch 晚到保护。
-   * 一对一产品里登录账号就是设备使用者本人，回顾只看账号自己的数据，
-   * 由服务端按登录账号鉴权，不再走 Runtime Profile 门禁。
-   * 加载失败时清空全部私人分区，不展示陈旧投影。
-   */
   async loadDays() {
     const identity = api.currentIdentity();
-    if (!identity) return "guest";
-    const authEpoch = api.currentAuthEpoch();
-    this._bindingUnconfirmed = true;
-    this.setData({ ...privatePartitionsClear(), loading: true, error: "", guardianMode: true });
+    if (!identity || !api.hasAuthenticatedSession()) {
+      this._enterGuestState();
+      return "guest";
+    }
+    let binding = api.readBindingManifest?.() || null;
+    const context = {
+      authEpoch: api.currentAuthEpoch(),
+      userId: identity.user_id,
+      bindingSnapshot: bindingSnapshot(binding),
+      binding,
+      kind: "pending",
+    };
+    this._reviewRequest = context;
+    this.setData({
+      ...privatePartitionsClear(), ...safetyStateClear(),
+      authenticated: true, loading: true, error: "", guardianMode: true,
+      guardianSubjectId: "", guardianError: "",
+    });
     try {
-      let binding = api.readBindingManifest?.() || null;
       if (!binding) {
         const result = await api.syncDeviceBindings();
-        if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
-        if (result.status !== "empty" && (result.status !== "ready" || !result.binding)) {
+        const current = api.readBindingManifest?.() || null;
+        context.bindingSnapshot = bindingSnapshot(current);
+        if (!this._isReviewCurrent(context)) return "stale";
+        if (!result || (result.contextChanged && !result.binding) ||
+            !((result.status === "empty" && !result.binding && !current) ||
+              (result.status === "ready" && result.binding &&
+               (!current || bindingSnapshot(current) === bindingSnapshot(result.binding))))) {
           throw new Error("无法确认设备绑定，请稍后重试。");
         }
         binding = result.binding;
       }
-      this._reviewBinding = binding;
-      const guardianSubject = this._guardianSubject();
+      const guardianSubject = this._guardianSubject(binding);
       if (binding && (binding.status !== "active" ||
-          (binding.declared_mode !== "self_use" && !guardianSubject))) {
+          !bindingIncludesUser(binding, context.userId) ||
+          !["self_use", "parent_for_child", "child_for_parent", "family_shared"].includes(binding.declared_mode) ||
+          (binding.declared_mode === "parent_for_child" && !guardianSubject))) {
         throw new Error("无法确认设备绑定，请稍后重试。");
       }
-      this._bindingUnconfirmed = false;
+      context.binding = binding;
+      context.kind = guardianSubject ? "guardian" : "adult";
       let guardianDays = null;
       let childMemories = null;
       let recentChildSummaries = [];
@@ -467,20 +505,21 @@ Page({
         } catch (error) {
           guardianError = guardianErrorMessage(error);
         }
+        if (!this._isReviewCurrent(context)) return "stale";
         try {
           childMemories = await api.getGuardianChildMemories(guardianSubject, 20);
         } catch (error) {
           guardianError = guardianError || guardianErrorMessage(error);
         }
-        recentChildSummaries = await this._recentChildSummaries(authEpoch, guardianSubject);
-        if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
+        if (!this._isReviewCurrent(context)) return "stale";
+        recentChildSummaries = await this._recentChildSummaries(context, guardianSubject);
+        if (!this._isReviewCurrent(context)) return "stale";
       }
       const guardianDataUnavailable = Boolean(guardianSubject && guardianDays === null);
       let daysUnavailable = false;
       const daysPromise = guardianSubject
         ? Promise.resolve({ items: [] })
-        : Promise.resolve()
-            .then(() => api.getMemoryDays(identity.user_id, 30))
+        : Promise.resolve(api.getMemoryDays(context.userId, 30))
             .catch(() => {
               daysUnavailable = true;
               return { items: [] };
@@ -491,7 +530,7 @@ Page({
           ? Promise.resolve({})
           : api.getConversationReview(),
       ]);
-      if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
+      if (!this._isReviewCurrent(context)) return "stale";
       const review = normalizeConversationReview(reviewResult);
       // 孩子用的机器人：「记住的事」是孩子的，不是登录账号自己的；孩子的候选只有家长能确认。
       const memories = guardianSubject ? normalizeChildMemories(childMemories) : review;
@@ -507,11 +546,11 @@ Page({
           conversationSessionsUnavailable = true;
         }
       }
-      if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
+      if (!this._isReviewCurrent(context)) return "stale";
       let recentDays = [];
       if (daysUnavailable) {
-        const summaries = await this._recentChildSummaries(authEpoch);
-        if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
+        const summaries = await this._recentChildSummaries(context);
+        if (!this._isReviewCurrent(context)) return "stale";
         recentDays = summaries.map(normalizeRecentSummary);
       }
       this.setData({
@@ -545,17 +584,19 @@ Page({
         conversationTurns: [],
         conversationLoading: false,
       });
+      await this._loadCrisisSafety(context);
+      if (!this._isReviewCurrent(context)) return "stale";
       return "ok";
     } catch (error) {
-      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      if (!this._isReviewCurrent(context)) return "stale";
       this.setData({
         ...privatePartitionsClear(),
-        ...(this._bindingUnconfirmed ? { safetyBanner: null, safetyReadStatus: "failed", safetyReadErrorKind: "network" } : {}),
+        ...(context.kind === "pending" ? { safetyBanner: null, safetyReadStatus: "failed", safetyReadErrorKind: "network" } : {}),
         error: error?.message || "回顾暂时无法加载。",
       });
       return "error";
     } finally {
-      if (api.isAuthEpochCurrent(authEpoch)) this.setData({ loading: false });
+      if (this._isReviewCurrent(context)) this.setData({ loading: false });
     }
   },
 
@@ -571,8 +612,15 @@ Page({
     const sessionId = event?.currentTarget?.dataset?.sessionId;
     if (!sessionId || this.data.conversationLoading) return;
     const authEpoch = api.currentAuthEpoch();
+    const context = this._reviewRequest;
+    const snapshot = bindingSnapshot(api.readBindingManifest?.() || null);
+    const userId = api.currentIdentity()?.user_id;
     this._conversationRequestSeq = (this._conversationRequestSeq || 0) + 1;
     const requestSeq = this._conversationRequestSeq;
+    const isCurrent = () => requestSeq === this._conversationRequestSeq &&
+      context === this._reviewRequest && api.isAuthEpochCurrent(authEpoch) &&
+      api.hasAuthenticatedSession() && api.currentIdentity()?.user_id === userId &&
+      snapshot === bindingSnapshot(api.readBindingManifest?.() || null);
     this.setData({
       conversationLoading: true,
       selectedConversationSessionId: sessionId,
@@ -581,20 +629,20 @@ Page({
     });
     try {
       const result = await api.getConversationHistory(sessionId, 20);
-      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      if (!isCurrent()) return;
       this.setData({ conversationTurns: result.turns || [] });
     } catch (error) {
-      if (!api.isAuthEpochCurrent(authEpoch) || requestSeq !== this._conversationRequestSeq) return;
+      if (!isCurrent()) return;
       this.setData({
         selectedConversationSessionId: "",
         conversationTurns: [],
         error: error?.message || "对话详情暂时无法加载。",
       });
     } finally {
-      if (requestSeq !== this._conversationRequestSeq) return;
-      if (api.isAuthEpochCurrent(authEpoch)) {
+      if (requestSeq !== this._conversationRequestSeq || context !== this._reviewRequest) return;
+      if (isCurrent()) {
         this.setData({ conversationLoading: false });
-      } else {
+      } else if (!api.isAuthEpochCurrent(authEpoch)) {
         this.setData({
           conversationLoading: false,
           selectedConversationSessionId: "",
