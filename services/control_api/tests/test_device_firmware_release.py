@@ -226,8 +226,8 @@ async def test_a_damaged_release_is_never_offered(
         image = await client.get(
             _image_path(2), headers=_signed_headers(device_key, path=_image_path(2))
         )
-    assert release.status_code == 204
-    assert image.status_code == 404
+    assert release.status_code == 503
+    assert image.status_code == 503
 
 
 def test_image_hash_is_checked_again_when_the_file_changes(tmp_path: Path) -> None:
