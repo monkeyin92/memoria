@@ -62,6 +62,8 @@ export_policy() {
   fi
 }
 
+# mc's zero-rule export error, formatted by cmd/error.go and pkg/v3/console.
+empty_ilm_error='mc: <ERROR> Unable to export lifecycle configuration: lifecycle configuration not set.'
 export_policy
 if [ "$export_status" -eq 0 ]; then
   current_days="${actual_ilm#*'"Days": '}"
@@ -86,17 +88,27 @@ if [ "$export_status" -eq 0 ]; then
     exit 2
   fi
 elif [ "$export_status" -ne 1 ] ||
-     [ "$actual_ilm" != 'mc: <ERROR> Unable to export lifecycle configuration: lifecycle configuration not set.' ]; then
+     [ "$actual_ilm" != "$empty_ilm_error" ]; then
   echo "offsite lifecycle ownership query failed; refusing import" >&2
   exit "$export_status"
 fi
 
 expected_ilm="$(retention_policy "$offsite_retention_days" "$offsite_retention_days" Enabled)"
-printf '%s\n' "$expected_ilm" | mc ilm rule import "offsite/$MEMORIA_OFFSITE_S3_BUCKET"
+if printf '%s\n' "$expected_ilm" | mc ilm rule import "offsite/$MEMORIA_OFFSITE_S3_BUCKET"; then
+  :
+else
+  import_status=$?
+  echo "offsite lifecycle import failed; stopping sync" >&2
+  exit "$import_status"
+fi
 
 while :; do
   export_policy
   if [ "$export_status" -ne 0 ]; then
+    if [ "$export_status" -eq 1 ] && [ "$actual_ilm" = "$empty_ilm_error" ]; then
+      echo "offsite lifecycle readback is empty (policy drift); stopping sync" >&2
+      exit 2
+    fi
     echo "offsite lifecycle readback query failed; stopping sync" >&2
     exit "$export_status"
   fi
