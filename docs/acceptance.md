@@ -24,14 +24,14 @@
 两项 followup 同步修复。
 
 - 身份缓存跨 owner 清理，mounted onboarding 继续 emit。
-- backup 对生命周期所有权与真实 `compactRules` 做 fail-closed 校验；未启用 bucket lifecycle。N+N 保留规则不保证物理删除时间 ≤7 天。
+- backup 对生命周期所有权与固定版本 mc 的紧凑 JSON `Rules` 输出 做 fail-closed 校验；未启用 bucket lifecycle。N+N 保留规则不保证物理删除时间 ≤7 天。
 
 父任务记录的验证结果如下，各套件范围存在重叠，不合计通过数。
 
 | 范围 | 结果与边界 |
 | --- | --- |
 | PostgreSQL | 大套 1093 pass、0 fail、0 skip；最终 loopback 兼容小修后相关 PG 107 pass，与大套重叠。 |
-| 小程序 | 827 pass、0 fail、1 skip；缺 Chrome 的 layout 用例未运行。必需的页面 failed-load 测试已补齐，原先 2 条失败的 settled 测试已删除。 |
+| 小程序 | 827 pass、0 fail、1 skip；缺 Chrome 的 layout 用例未运行。必需的页面 failed-load 测试已补齐，移除 settled 门禁的变异会使新增的 2 条回归失败。 |
 | Python 与结构 | 严格 Mypy 覆盖 598 source files，全 Ruff、14 项 layer、budget、docs 检查及 diff 检查通过。 |
 | Go 与天气 | 父任务全 suite 与子任务 vet、race 通过；父任务天气相关 44 pass。 |
 | 发布与备份 | 父任务发布 CI 相关测试 166 pass，含 `/tmp` 与 rollback 场景；backup 16 pass。这是本地测试记录，不是远端 CI 或发布成功收据。 |
@@ -41,7 +41,7 @@
 
 `unknownclock`、`conservativeapprox` 保持不改；Babel dependency 与 global PG lock 无适用证据，不升级为缺陷；interval ledger 与 SLO direction 不扩范围。已有 compliance、runbooks、strategy 的对应改动仍为专项契约入口，此处只聚合验收结果。
 
-原始执行证据为 `outputs/acceptance/deep-audit-fixes/execution.md`、`execution.tsv`，属于 Git ignored 数据，本工作树没有副本，fresh clone 也不提供。父任务负责在清理前转存主仓 `outputs/`；本记录不声称已完成转存。
+原始执行证据为 `outputs/acceptance/deep-audit-fixes/execution.md`、`execution.tsv`，属于 Git ignored 数据，不随 fresh clone 提供。父任务负责在清理前转存主仓 `outputs/`；本记录不声称已完成转存。
 
 ## 来源文件
 
