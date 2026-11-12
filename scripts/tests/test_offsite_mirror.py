@@ -12,24 +12,11 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parents[2] / 'infra/backup/offsite-mirror.sh'
 PRIMARY_SHA256 = 'bd63c09d507c03a64c5a9cbd89b2b921abb6a8b0715d02e9abbfa9bcddd71c70'
 
-# Captured with encoding/json.MarshalIndent on the complete official source:
-# https://github.com/minio/minio-go/blob/v7.0.90/pkg/lifecycle/lifecycle.go
-# SHA256 bd63c09d507c03a64c5a9cbd89b2b921abb6a8b0715d02e9abbfa9bcddd71c70.
-# The fixture is independent of offsite-mirror.sh's policy generator.
-PINNED_EXPORT = '''{
- "Rules": [
-  {
-   "Expiration": {
-    "Days": 7
-   },
-   "ID": "memoria-offsite-retention",
-   "NoncurrentVersionExpiration": {
-    "NoncurrentDays": 7
-   },
-   "Status": "Enabled"
-  }
- ]
-}'''
+COLORJSON_SHA256 = '6a1738ef28f44cb006d2df5d9d14179251d8c3a5e1045e8dbff6b6afc5c0efb9'
+
+# colorjson v1.0.8 encode.go returns Marshal directly for piped stdout.
+# The full lifecycle type comes from minio-go v7.0.90, independently of the shell.
+PINNED_EXPORT = '{"Rules":[{"Expiration":{"Days":7},"ID":"memoria-offsite-retention","NoncurrentVersionExpiration":{"NoncurrentDays":7},"Status":"Enabled"}]}'
 
 
 def policy(days=7, **changes):
@@ -41,11 +28,16 @@ def policy(days=7, **changes):
     return data
 
 
-def verify_primary_contract(source):
+def verify_primary_contract(source, colorjson_source):
     """Use an exact, separately downloaded upstream file. Never fetch or install."""
     data = source.read_bytes()
     if hashlib.sha256(data).hexdigest() != PRIMARY_SHA256:
         raise ValueError('expected the exact official minio-go v7.0.90 lifecycle.go')
+    encoder = colorjson_source.read_bytes()
+    if hashlib.sha256(encoder).hexdigest() != COLORJSON_SHA256:
+        raise ValueError('expected the exact official colorjson v1.0.8 encode.go')
+    if b'if !isatty.IsTerminal(os.Stdout.Fd()) {\n\t\treturn b, err\n\t}' not in encoder:
+        raise AssertionError('colorjson non-TTY branch must return compact Marshal output')
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         (root / 'lifecycle.go').write_bytes(data.replace(b'package lifecycle', b'package main', 1))
@@ -55,7 +47,7 @@ func main() {
  var cfg Configuration
  raw := `<LifecycleConfiguration><Rule><Expiration><Days>7</Days></Expiration><ID>memoria-offsite-retention</ID><NoncurrentVersionExpiration><NoncurrentDays>7</NoncurrentDays></NoncurrentVersionExpiration><Status>Enabled</Status></Rule></LifecycleConfiguration>`
  if err := xml.Unmarshal([]byte(raw), &cfg); err != nil { panic(err) }
- output, err := json.MarshalIndent(cfg, "", " "); if err != nil { panic(err) }
+ output, err := json.Marshal(cfg); if err != nil { panic(err) }
  counts := []int{}
  for _, input := range []string{`{"Rule":[{"ID":"memoria-offsite-retention"}]}`, `{"Rules":[]}`, string(output)} {
   decoded := NewConfiguration()
@@ -73,7 +65,7 @@ func main() {
     if proof != {'Export': PINNED_EXPORT, 'RuleCounts': [0, 0, 1]}:
         raise AssertionError(f'primary serializer disagrees with fixture: {proof!r}')
     print(f'PASS official lifecycle.go SHA256 {PRIMARY_SHA256}')
-    print('PASS exact MarshalIndent fixture; Rule=0 rules, empty Rules=0, valid Rules=1')
+    print('PASS pinned colorjson non-TTY branch; compact lifecycle fixture; Rule=0, empty Rules=0, valid Rules=1')
 
 
 # Primary contracts at mc RELEASE.2025-04-16T18-13-26Z:
@@ -125,7 +117,7 @@ elif args[:3] == ['ilm', 'rule', 'export']:
                 empty_error = 'mc: <ERROR> Unable to get lifecycle configuration. The lifecycle configuration does not exist.'
             print(empty_error, file=sys.stderr)
             sys.exit(1)
-        print(json.dumps(data, indent=1))
+        print(json.dumps(data, separators=(',', ':')))
 elif args[0] == 'mirror':
     if failure == 'mirror': sys.exit(5)
 elif args[0] == 'cp':
@@ -228,6 +220,7 @@ class OffsiteMirrorTest(unittest.TestCase):
                 result, calls, success, final = self.run_mirror(initial, watermark='previous-success\n')
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn('ownership', result.stderr)
+                self.assertIn('actual lifecycle export:', result.stderr)
                 self.assertNotIn('ilm rule import', calls)
                 self.assertNotIn('mirror ', calls)
                 self.assertNotIn('cleanup', calls)
@@ -254,11 +247,12 @@ class OffsiteMirrorTest(unittest.TestCase):
 
     def test_unknown_export_format_cannot_authorize_import(self):
         for raw in ['Expiry', json.dumps(policy()), PINNED_EXPORT.replace('"Rules"', '"Rule"'),
-                    PINNED_EXPORT.replace('"Days": 7', '"Days": "7"')]:
+                    PINNED_EXPORT.replace('"Days":7', '"Days":"7"')]:
             with self.subTest(raw=raw):
                 result, calls, success, final = self.run_mirror(policy(), export=raw)
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn('ownership', result.stderr)
+                self.assertIn('actual lifecycle export:', result.stderr)
                 self.assertNotIn('ilm rule import', calls)
                 self.assertNotIn('mirror ', calls)
                 self.assertEqual(final, policy())
@@ -320,7 +314,7 @@ class OffsiteMirrorTest(unittest.TestCase):
                      policy(NoncurrentVersionExpiration={'NoncurrentDays': 7, 'NewerNoncurrentVersions': 2}),
                      policy(Filter={'Tag': {'Key': 'x', 'Value': 'y'}})]:
             with self.subTest(data=data):
-                result, calls, success, _ = self.run_mirror(policy(), readback=json.dumps(data, indent=1))
+                result, calls, success, _ = self.run_mirror(policy(), readback=json.dumps(data, separators=(',', ':')))
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn('readback differs', result.stderr)
                 self.assertEqual(calls.count('ilm rule export'), 2)
@@ -333,6 +327,7 @@ class OffsiteMirrorTest(unittest.TestCase):
         result, calls, success, _ = self.run_mirror(policy(), readback='Expiry')
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn('unknown format', result.stderr)
+        self.assertIn('actual lifecycle export: Expiry', result.stderr)
         self.assertNotIn('mirror ', calls)
         self.assertEqual(success, '')
 
@@ -380,7 +375,7 @@ class OffsiteMirrorTest(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) == 3 and sys.argv[1] == '--verify-primary-lifecycle':
-        verify_primary_contract(Path(sys.argv[2]))
+    if len(sys.argv) == 4 and sys.argv[1] == '--verify-primary-lifecycle':
+        verify_primary_contract(Path(sys.argv[2]), Path(sys.argv[3]))
     else:
         unittest.main()

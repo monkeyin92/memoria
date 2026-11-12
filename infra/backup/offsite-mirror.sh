@@ -48,10 +48,10 @@ else
   exit "$version_status"
 fi
 
-# Only recognize this subset of the pinned mc/minio-go serializer. Comparing
-# the entire output preserves spaces inside strings and rejects extra rules.
+# Piped mc export uses colorjson's compact non-TTY branch. Exact comparison
+# preserves spaces inside strings and rejects extra rules.
 retention_policy() {
-  printf '{\n "Rules": [\n  {\n   "Expiration": {\n    "Days": %s\n   },\n   "ID": "memoria-offsite-retention",\n   "NoncurrentVersionExpiration": {\n    "NoncurrentDays": %s\n   },\n   "Status": "%s"\n  }\n ]\n}' "$1" "$2" "$3"
+  printf '{"Rules":[{"Expiration":{"Days":%s},"ID":"memoria-offsite-retention","NoncurrentVersionExpiration":{"NoncurrentDays":%s},"Status":"%s"}]}' "$1" "$2" "$3"
 }
 
 export_policy() {
@@ -75,12 +75,10 @@ policy_is_empty() {
 
 export_policy
 if [ "$export_status" -eq 0 ]; then
-  current_days="${actual_ilm#*'"Days": '}"
-  current_days="${current_days%%'
-'*}"
-  noncurrent_days="${actual_ilm#*'"NoncurrentDays": '}"
-  noncurrent_days="${noncurrent_days%%'
-'*}"
+  current_days="${actual_ilm#*'"Days":'}"
+  current_days="${current_days%%\}*}"
+  noncurrent_days="${actual_ilm#*'"NoncurrentDays":'}"
+  noncurrent_days="${noncurrent_days%%\}*}"
   case "$current_days:$noncurrent_days" in
     *[!0-9:]*|:*|*:|0:*|*:0) current_days="" ;;
   esac
@@ -94,6 +92,7 @@ if [ "$export_status" -eq 0 ]; then
   fi
   if [ "$owned" != true ]; then
     echo "offsite lifecycle ownership cannot be proven from pinned mc export; refusing import (foreign rules or unknown format)" >&2
+    printf 'actual lifecycle export: %s\n' "$actual_ilm" >&2
     exit 2
   fi
 elif ! policy_is_empty; then
@@ -122,6 +121,7 @@ while :; do
   fi
   if [ "$actual_ilm" != "$expected_ilm" ]; then
     echo "offsite lifecycle readback differs from the required pinned mc output (policy drift or unknown format); stopping sync" >&2
+    printf 'actual lifecycle export: %s\n' "$actual_ilm" >&2
     exit 2
   fi
   test -s /backup-staging/LATEST
