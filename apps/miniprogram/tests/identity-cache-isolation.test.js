@@ -200,6 +200,21 @@ test('same owner cold-start token refresh preserves the mounted onboarding snaps
   } finally { controller.dispose(); }
 });
 
+test('current BLE scan still emits its networks and reports its error', async () => {
+  login('u_parent');
+  const snapshots = [];
+  const controller = new OnboardingController({ onChange: (value) => snapshots.push(value) });
+  const network = { ssid: 'current-owner-wifi', rssi: -40, security: 'wpa2', channel: 6, saved: false };
+  try {
+    controller._transport = { request: async () => ({ networks: [network] }), dispose() {} };
+    assert.deepEqual(await controller.loadWifiNetworks(), [network]);
+    assert.deepEqual(snapshots.at(-1).wifiNetworks, [network]);
+    controller._transport.request = async () => { throw new Error('current-scan-error'); };
+    assert.deepEqual(await controller.loadWifiNetworks(), []);
+    assert.equal(snapshots.at(-1).error, 'current-scan-error');
+  } finally { controller.dispose(); }
+});
+
 for (const result of ['networks', 'error']) {
   test(`late BLE scan ${result} cannot refill a controller after identity reset`, async () => {
     login('u_parent');
