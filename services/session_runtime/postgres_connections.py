@@ -49,7 +49,9 @@ async def _database_identity(connection: asyncpg.Connection, role: str) -> str |
         """
         SELECT pg_catalog.json_build_array(
             control.system_identifier::text, database.oid::text, database.datname,
-            pg_catalog.inet_server_addr()::text, pg_catalog.inet_server_port()
+            CASE WHEN pg_catalog.inet_server_addr() IN ('127.0.0.1'::inet, '::1'::inet)
+                 THEN 'loopback' ELSE pg_catalog.inet_server_addr()::text END,
+            pg_catalog.inet_server_port()
         )::text
         FROM pg_catalog.pg_control_system() AS control, pg_catalog.pg_database AS database
         WHERE database.datname = pg_catalog.current_database()

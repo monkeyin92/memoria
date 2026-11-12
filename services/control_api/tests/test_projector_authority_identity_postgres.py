@@ -277,3 +277,24 @@ async def test_proven_global_absence_is_a_safe_skip(authority):
     assert await f.close(device_id="device-1", session_id="absent", reason="erase",
                          subject_id=f.child, binding_ids=None) is False
     assert f.requests == []
+
+async def test_database_identity_accepts_ipv4_and_ipv6_loopback_but_not_other_endpoints(authority):
+    from services.session_runtime.postgres_connections import _database_identity
+
+    class AddressReadback:
+        def __init__(self, connection, address):
+            self.connection = connection
+            self.address = address
+
+        async def fetchval(self, query):
+            return await self.connection.fetchval(
+                query.replace("pg_catalog.inet_server_addr()", f"'{self.address}'::inet")
+            )
+
+    async with authority.runtime_store.projector_transaction() as connection:
+        ipv4 = await _database_identity(AddressReadback(connection, "127.0.0.1"), "memoria_session_projector")
+        ipv6 = await _database_identity(AddressReadback(connection, "::1"), "memoria_session_projector")
+        remote = await _database_identity(AddressReadback(connection, "192.0.2.1"), "memoria_session_projector")
+        assert ipv4 == ipv6
+        assert ipv4 is not None
+        assert ipv4 != remote
