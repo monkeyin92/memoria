@@ -14,11 +14,11 @@
 - **生产主机（2026-10-05 起）**：整套服务 01:33–01:40（CST）从旧机 122.51.108.140 迁到 110.42.235.198（原 pocketSparks 生产机，与 hr-tracker、MySQL 等共用，40 GB 盘、3.7 GiB 内存）；ssh 别名 `memoria-prod` 指新机，旧机别名 `memoria-prod-old`（旧机 10-06 到期，到期后别名和 known_hosts 条目可删）。Control API 绑 `127.0.0.1:18791`（hr-tracker 占 8791），由 `MEMORIA_CONTROL_API_PORT` 参数化。对外域名是 `aginice.cn`（你 10-05 说「域名换成aginice.cn这个域名，之前那个不用了」；证书到 2027-01-02，**2026-12-19 前换证**；`aigcnice.com` 仍解析到旧机，旧机到期后失效，已定不做桥、不动 DNS）。客户端当时已切完（之后的版本见下面「设备固件」「小程序体验版」两条）：小程序体验版 `0.2.20261005.3`，固件 build 24，机器人只连 `aginice.cn:8443`。详见「2026-10-05 服务迁移到 110.42.235.198」「2026-10-05 域名切换到 aginice.cn」两节。
 - **产品定位（2026-10-04 起）**：聚焦儿童青少年（陪伴、关怀、教学导师）；老年人与年轻人方向先删去，不进工程队列、验收与对外叙事（README「产品定位」已改写）；代码里已有的长辈、成人服务模式暂留、不再投入，是否清理另行决定；更早各节里的老年相关记录是当时的历史收据，不改。
 
-## 2026-11-12 深审软件修复候选（未发布）
+## 2026-11-12 深审软件修复（未部署）
 
-本轮 12 项及 2 项 followup 已完成软件修复与本地验证。源候选 `e26a798b1b0b03a33daa254e0717c8bce305276a`，基线 `71353afe`；本记录写入时尚未创建 PR，合并状态由父任务取得实际收据后更新。范围、父任务验证记录和排除项见 [本轮验收](docs/acceptance.md#2026-11-12-深审软件修复候选)。
+本轮 12 项及 2 项 followup 已完成软件修复与本地验证。源候选 `e26a798b1b0b03a33daa254e0717c8bce305276a`，基线 `71353afe`；交付 [PR #592](https://github.com/monkeyin92/memoria/pull/592)，合并状态与提交以该 PR 的 GitHub 收据为准。范围、父任务验证记录和排除项见 [本轮验收](docs/acceptance.md#2026-11-12-深审软件修复)。
 
-`code` 与本地 `wired` 已验证，生产 `wired`、`enabled` 和本候选 `device_verified` 未验收。本轮没有生产变更、部署、线上擦除、bucket lifecycle 启用、小程序上传或设备操作，也没有依赖升级。N-11 仍在 [未完成队列](TODOLIST.md)，历史设备收据不能替代本候选设备验收。原始执行证据 `outputs/acceptance/deep-audit-fixes/execution.md` 与 `execution.tsv` 被 Git 忽略，不随 fresh clone 提供；父任务负责在清理工作树前转存主仓 `outputs/`。
+`code` 与本地 `wired` 已验证，生产 `wired`、`enabled` 和本候选 `device_verified` 未验收。本轮没有生产变更、部署、线上擦除、bucket lifecycle 启用、小程序上传或设备操作，也没有依赖升级。N-11 仍在 [未完成队列](TODOLIST.md)，历史设备收据不能替代本候选设备验收。原始执行证据 `outputs/acceptance/deep-audit-fixes/execution.md` 与 `execution.tsv` 被 Git 忽略，不随 fresh clone 提供；清理前转存至主仓 `/Users/monkeyin/projects/memoria/outputs/acceptance/deep-audit-fixes/`，不随分支清理删除。
 
 ## 2026-11-11 卡 5 门禁通过（bridge overlay `20261110-card5-echo-window-v1`）
 

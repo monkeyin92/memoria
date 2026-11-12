@@ -2,9 +2,9 @@
 
 本文件由 `scripts/consolidate_docs.py` 按类型归并生成。每个来源章节保留原文和来源路径。
 
-## 2026-11-12 深审软件修复候选
+## 2026-11-12 深审软件修复
 
-源候选 `e26a798b1b0b03a33daa254e0717c8bce305276a`，基线 `71353afe`。以下软件验证与独立终审结果来自父任务记录，本次文档收尾未重跑软件套件。发布状态见 [交接入口](../HANDOFF.md#2026-11-12-深审软件修复候选未发布)。
+源候选 `e26a798b1b0b03a33daa254e0717c8bce305276a`，基线 `71353afe`。以下软件验证与独立终审结果来自父任务记录，本次文档收尾未重跑软件套件。交付 [PR #592](https://github.com/monkeyin92/memoria/pull/592)，发布边界见 [交接入口](../HANDOFF.md#2026-11-12-深审软件修复未部署)。
 
 本轮已确认的 12 项软件修复如下。
 
@@ -41,7 +41,7 @@
 
 `unknownclock`、`conservativeapprox` 保持不改；Babel dependency 与 global PG lock 无适用证据，不升级为缺陷；interval ledger 与 SLO direction 不扩范围。已有 compliance、runbooks、strategy 的对应改动仍为专项契约入口，此处只聚合验收结果。
 
-原始执行证据为 `outputs/acceptance/deep-audit-fixes/execution.md`、`execution.tsv`，属于 Git ignored 数据，不随 fresh clone 提供。父任务负责在清理前转存主仓 `outputs/`；本记录不声称已完成转存。
+原始执行证据为 `outputs/acceptance/deep-audit-fixes/execution.md`、`execution.tsv`，属于 Git ignored 数据，不随 fresh clone 提供。清理前转存至主仓 `/Users/monkeyin/projects/memoria/outputs/acceptance/deep-audit-fixes/`，不随分支清理删除。
 
 ## 来源文件
 
