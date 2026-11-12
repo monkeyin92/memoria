@@ -17,6 +17,17 @@ const binding = require('../utils/device-binding');
 const labels = require('../utils/subject-label');
 const consent = require('../utils/child-consent');
 const onboarding = require('../utils/device-onboarding/session-store');
+const { OnboardingController } = require('../utils/device-onboarding/onboarding-controller');
+function session(id = 'old-session') {
+  return {
+    onboarding_session_id: id, state: 'qr_verified', state_version: 1, activation_version: 0,
+    expires_at: '2099-01-01T00:00:00Z',
+    device: { device_id: 'dev_01', display_tail: 'ABCD', model: 'memoria',
+      firmware_version: '0.1.0', claim_status: 'unclaimed' },
+    provisioning: { transport: 'ble', ble_name: 'MEM-ABCD',
+      service_uuid: '12345678-1234-4234-8234-1234567890ab', protocol_version: 1 },
+  };
+}
 function login(id, account_type = 'registered') {
   app.setAuthenticatedIdentity({ user_id: id, account_type, access_token: `token-${id}`, expires_in: 3600 });
 }
@@ -87,16 +98,104 @@ test('late discovery and onboarding responses cannot refill a switched identity'
 });
 test('onboarding controller synchronously drops owned state and fences a late resume', async () => {
   login('u_parent');
-  const { OnboardingController } = require('../utils/device-onboarding/onboarding-controller');
-  const controller = new OnboardingController();
+  const snapshots = [];
+  const controller = new OnboardingController({ onChange: (value) => snapshots.push(value) });
   controller._session = { onboarding_session_id: 'old-session' };
   const resumed = controller.resume('old-session');
   const request = requests.pop();
   login('u_other');
   assert.equal(controller.session, null);
   assert.equal(controller.state, 'prepare');
-  request.success({ statusCode: 200, data: {} });
+  request.success({ statusCode: 200, data: session() });
   assert.equal(await resumed, null);
   assert.equal(controller.session, null);
+  controller.startScan();
+  assert.equal(snapshots.at(-1).state, 'scan');
   assertEmpty();
+  controller.dispose();
+});
+
+for (const entry of ['401-same-owner', 'guest-promotion', 'first-login']) {
+  test(`${entry} keeps the mounted controller emitting and subscribed`, async () => {
+    if (entry !== 'first-login') login('u_parent', entry === 'guest-promotion' ? 'anonymous' : 'registered');
+    const snapshots = [];
+    const controller = new OnboardingController({ onChange: (value) => snapshots.push(value) });
+    try {
+      if (entry === '401-same-owner') {
+        const pending = api.syncDeviceBindings();
+        requests.pop().success({ statusCode: 401, data: {} });
+        await pending;
+      }
+      login('u_parent');
+      controller.startScan();
+      assert.equal(snapshots.at(-1).state, 'scan');
+      const pending = controller.resume('new-session');
+      requests.pop().success({ statusCode: 200, data: session('new-session') });
+      assert.equal((await pending).onboarding_session_id, 'new-session');
+      assert.equal(snapshots.at(-1).session.onboarding_session_id, 'new-session');
+      app.clearAuthenticatedIdentity();
+      assert.equal(snapshots.at(-1).state, 'prepare');
+      assert.equal(snapshots.at(-1).session, null);
+      assert.equal(snapshots.at(-1).busy, false);
+    } finally { controller.dispose(); }
+    const count = snapshots.length;
+    app.clearAuthenticatedIdentity();
+    controller.startScan();
+    assert.equal(snapshots.length, count);
+  });
+}
+
+test('identity reset clears BLE, secrets and progress to the cold controller snapshot', () => {
+  login('u_parent');
+  const snapshots = [];
+  const controller = new OnboardingController({ onChange: (value) => snapshots.push(value) });
+  const cold = snapshots[0];
+  const disposed = [];
+  try {
+    controller._session = session();
+    controller._claim = { device_id: 'dev_01' };
+    controller._binding = { device_id: 'dev_01' };
+    controller._activation = { status: 'pending_manifest' };
+    controller._wifiNetworks = [{ ssid: 'private' }];
+    controller._network = { ssid: 'private', phase: 'joining' };
+    controller._bootstrapPop = 'private-pop';
+    controller._state = 'activation';
+    controller._busy = true;
+    controller._error = 'old error';
+    controller._errorCode = 'OLD_ERROR';
+    controller._activationSince = Date.now();
+    controller.setWifiCredentials({ ssid: 'private', password: 'private-password' });
+    const bytes = controller._wifiPassword._bytes;
+    controller._adapter = { dispose: () => disposed.push('adapter') };
+    controller._transport = { dispose: () => disposed.push('transport') };
+    controller.startActivationPolling();
+    app.clearAuthenticatedIdentity();
+    assert.deepEqual(snapshots.at(-1), cold);
+    assert.deepEqual(disposed, ['transport', 'adapter']);
+    assert.equal(controller._wifiPassword.length, 0);
+    assert.equal(bytes.every((byte) => byte === 0), true);
+    assert.equal(controller._wifiSsid, '');
+    assert.equal(controller._bootstrapPop, '');
+    assert.equal(controller._activationTimer, null);
+  } finally { controller.dispose(); }
+});
+
+test('same owner cold-start token refresh preserves the mounted onboarding snapshot', async () => {
+  login('u_parent'); seed();
+  delete require.cache[require.resolve('../app')];
+  require('../app'); app.onLaunch();
+  const snapshots = [];
+  const controller = new OnboardingController({ onChange: (value) => snapshots.push(value) });
+  try {
+    const pending = controller.resume('old-session');
+    requests.pop().success({ statusCode: 200, data: session() });
+    assert.equal((await pending).onboarding_session_id, 'old-session');
+    const before = controller.snapshot();
+    const count = snapshots.length;
+    login('u_parent');
+    assert.deepEqual(controller.snapshot(), before);
+    assert.equal(snapshots.length, count);
+    assert.equal(consent.hasChildInfoConsent(), true);
+    assert.equal(binding.readBindingManifest().account_owner_id, 'u_parent');
+  } finally { controller.dispose(); }
 });
