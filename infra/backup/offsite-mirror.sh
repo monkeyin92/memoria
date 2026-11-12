@@ -41,7 +41,7 @@ mc version info "offsite/$MEMORIA_OFFSITE_S3_BUCKET" | grep -q 'Enabled'
 
 # This dedicated bucket's complete policy is owned by this script. mc's pinned
 # export serializer omits an empty Filter and emits these fields in this order.
-expected_ilm='{"Rule":[{"Expiration":{"Days":'"$offsite_retention_days"'},"ID":"memoria-offsite-retention","NoncurrentVersionExpiration":{"NoncurrentDays":'"$offsite_retention_days"'},"Status":"Enabled"}]}'
+expected_ilm='{"Rules":[{"Expiration":{"Days":'"$offsite_retention_days"'},"ID":"memoria-offsite-retention","NoncurrentVersionExpiration":{"NoncurrentDays":'"$offsite_retention_days"'},"Status":"Enabled"}]}'
 printf '%s\n' "$expected_ilm" | mc ilm rule import "offsite/$MEMORIA_OFFSITE_S3_BUCKET"
 
 while :; do
