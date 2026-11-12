@@ -7,13 +7,16 @@ import (
 	"time"
 )
 
-// ErrStaleStopFence identifies a stop for a non-current generation in the
+// ErrStaleStopFence identifies a stop for a past or cancelled generation in the
 // same session epoch. Protocol and transport failures retain their own errors.
 var ErrStaleStopFence = errors.New("generation cancel fence is stale")
 
 func stopFenceError(expected, current Fence) error {
 	if expected.SessionID != current.SessionID || expected.SessionEpoch != current.SessionEpoch {
 		return fmt.Errorf("stop fence belongs to another session epoch")
+	}
+	if !expected.monotonic(current) {
+		return fmt.Errorf("stop fence is ahead of the current generation")
 	}
 	return ErrStaleStopFence
 }

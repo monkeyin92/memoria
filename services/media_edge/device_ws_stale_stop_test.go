@@ -10,7 +10,7 @@ import (
 
 func TestDeviceWSSStaleStopsKeepServingCurrentGeneration(t *testing.T) {
 	for _, kind := range []string{"button", "keyword"} {
-		for _, invalid := range []string{"", "epoch", "fence_epoch", "shape", "unknown", "sequence"} {
+		for _, invalid := range []string{"", "epoch", "fence_epoch", "shape", "unknown", "sequence", "future_generation", "future_turn", "future_tool"} {
 			t.Run(kind+"/"+invalid, func(t *testing.T) {
 				env := newDeviceTestEnv(t, func(s *DeviceWSServer) { s.SessionCloseReportHook = func(DeviceSessionCloseReport) {} })
 				conn, _ := env.dial(t, env.token(t, func(c *DeviceMediaClaims) { c.DeviceSettings.AllowedBargeIn = []string{"button", "keyword"} }), "client_1")
@@ -41,6 +41,13 @@ func TestDeviceWSSStaleStopsKeepServingCurrentGeneration(t *testing.T) {
 					stop["unexpected"] = true
 				case "sequence":
 					stop["control_sequence"] = 1 << 32
+				case "future_generation":
+					stop["expected_fence"].(map[string]any)["generation_id"] = 9
+				case "future_turn":
+					stop["expected_fence"].(map[string]any)["turn_id"] = 2
+				case "future_tool":
+					stop["expected_fence"].(map[string]any)["generation_id"] = 2
+					stop["expected_fence"].(map[string]any)["tool_epoch"] = 1
 				}
 				writeRawDeviceJSON(t, conn, stop)
 				if invalid != "" {
