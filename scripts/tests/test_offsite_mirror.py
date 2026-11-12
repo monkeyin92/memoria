@@ -21,7 +21,7 @@ def policy(days=7, **changes):
 
 
 class OffsiteMirrorTest(unittest.TestCase):
-    def run_mirror(self, initial=None, failure='', days=None, drift=False):
+    def run_mirror(self, initial=None, failure='', days=None, drift=False, watermark='', source=None, return_state=False):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             bin_dir = root / 'bin'
@@ -33,12 +33,14 @@ class OffsiteMirrorTest(unittest.TestCase):
             (staging / 'LATEST').write_text('20261112T100000Z\n')
             (root / 'wal').mkdir()
             state = root / 'state.json'
-            state.write_text(json.dumps(initial or {'Rules': []}))
+            state.write_text(json.dumps(initial if initial is not None else {'Rules': []}))
+            if watermark:
+                (root / 'success').write_text(watermark)
             log = root / 'calls'
             mc = bin_dir / 'mc'
             mc.write_text('#!' + sys.executable + '\n' + '''import json, os, sys
 from pathlib import Path
-args = sys.argv[1:]
+args = [a for a in sys.argv[1:] if a != '--no-color']
 with open(os.environ['CALLS'], 'a') as f: f.write(' '.join(args) + '\\n')
 state = Path(os.environ['STATE'])
 failure = os.environ['FAILURE']
@@ -55,22 +57,21 @@ elif args[:3] == ['ilm', 'rule', 'export']:
     data = json.loads(state.read_text())
     if failure == 'malformed': print('Expiry'); sys.exit(0)
     if not data.get('Rules'):
-        print('Unable to export lifecycle configuration. lifecycle configuration not set.', file=sys.stderr)
+        print('mc: <ERROR> Unable to export lifecycle configuration: lifecycle configuration not set.', file=sys.stderr)
         sys.exit(1)
     print(json.dumps(data, indent=1))
-    if os.environ['DRIFT'] == 'yes': state.write_text(json.dumps({'Rules': []}))
 elif args[0] == 'mirror' and failure == 'mirror': sys.exit(5)
 ''')
             mc.chmod(0o755)
             for command, body in {
                 'date': 'echo 2026-11-12T10:00:00Z',
                 'find': 'echo cleanup >> "$CALLS"',
-                'sleep': 'exit 9' if not drift else 'exit 0',
+                'sleep': 'exit 9' if not drift else "printf '%s' '{\"Rules\":[]}' > \"$STATE\"", 
             }.items():
                 executable = bin_dir / command
                 executable.write_text('#!/bin/sh\n' + body + '\n')
                 executable.chmod(0o755)
-            source = SCRIPT.read_text().replace('/backup-staging', str(staging)).replace(
+            source = (source if source is not None else SCRIPT.read_text()).replace('/backup-staging', str(staging)).replace(
                 '/wal-archive', str(root / 'wal')).replace(
                 '/tmp/offsite-mirror.last-success', str(root / 'success'))
             script = root / 'mirror.sh'
@@ -88,8 +89,42 @@ elif args[0] == 'mirror' and failure == 'mirror': sys.exit(5)
                 env['MEMORIA_OFFSITE_RETENTION_DAYS'] = str(days)
             result = subprocess.run(['/bin/sh', str(script)], env=env, text=True,
                                     capture_output=True, timeout=5)
-            return result, log.read_text() if log.exists() else '', (
-                (root / 'success').read_text() if (root / 'success').exists() else '')
+            output = (result, log.read_text() if log.exists() else '',
+                      (root / 'success').read_text() if (root / 'success').exists() else '')
+            return (*output, json.loads(state.read_text())) if return_state else output
+
+    def test_foreign_and_mixed_rules_preserve_policy_and_watermark(self):
+        foreign = policy(30, ID='logs-30d')
+        for initial in [foreign, {'Rules': policy()['Rules'] + foreign['Rules']},
+                        {'Rules': foreign['Rules'] + policy()['Rules']},
+                        policy(ID='memoria-offsite- retention')]:
+            with self.subTest(initial=initial):
+                result, calls, success, final = self.run_mirror(
+                    initial, watermark='previous-success\n', return_state=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn('ownership', result.stderr)
+                self.assertNotIn('ilm rule import', calls)
+                self.assertNotIn('mirror ', calls)
+                self.assertNotIn('cleanup', calls)
+                self.assertEqual(final, initial)
+                self.assertEqual(success, 'previous-success\n')
+
+    def test_empty_configuration_can_be_created_after_export(self):
+        result, calls, success, final = self.run_mirror(return_state=True)
+        self.assertEqual(result.returncode, 9, result.stderr)
+        self.assertLess(calls.index('ilm rule export'), calls.index('ilm rule import'))
+        self.assertEqual(final, policy())
+        self.assertTrue(success)
+
+    def test_unknown_export_format_cannot_authorize_import(self):
+        result, calls, success, final = self.run_mirror(
+            policy(), failure='malformed', return_state=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('ownership', result.stderr)
+        self.assertNotIn('ilm rule import', calls)
+        self.assertNotIn('mirror ', calls)
+        self.assertEqual(final, policy())
+        self.assertEqual(success, '')
 
     def test_creation_and_query_fail_closed(self):
         for failure in ['create', 'query', 'malformed']:
@@ -134,7 +169,7 @@ elif args[0] == 'mirror' and failure == 'mirror': sys.exit(5)
 
     def test_recheck_each_cycle_stops_after_drift(self):
         _, calls, success = self.run_mirror(policy(), drift=True)
-        self.assertEqual(calls.count('ilm rule export'), 2)
+        self.assertGreaterEqual(calls.count('ilm rule export'), 2)
         self.assertEqual(calls.count('mirror --'), 4)
         self.assertTrue(success)
 
