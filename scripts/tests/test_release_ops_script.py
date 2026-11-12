@@ -2257,7 +2257,7 @@ def _run_component_functions(
         f'"${{COMMIT:-}}" == {COMPONENT_STACK_COMMIT} ]] || exit 91\n'
     )
     if failure:
-        guard += "exit 92\n" if failure == "all" else '[[ "$3" == *rollback* ]] || exit 92\n'
+        guard += "exit 92\n" if failure == "all" else '[[ "${3##*/}" == *rollback* ]] || exit 92\n'
     wrapper.write_text(
         (
             ("exit 0\n" if legacy == "early-exit" else "")
@@ -2275,8 +2275,8 @@ def _run_component_functions(
     end = script.index(
         "\n{\n  printf", script.index('record_component_override "$override"', start)
     )
-    fragment = script[start:end].replace("/root/memoria-release/release-ops.sh", str(wrapper))
-    fragment = fragment.replace("/tmp/", str(host.tmp) + "/")
+    fragment = script[start:end].replace("/tmp/", str(host.tmp) + "/")
+    fragment = fragment.replace("/root/memoria-release/release-ops.sh", str(wrapper))
     env = {k: v for k, v in os.environ.items() if not k.startswith("MEMORIA_")}
     env.update(
         PATH=str(host.bin),
@@ -2339,20 +2339,20 @@ def _assert_component_result(
 ) -> None:
     service = "control-api" if role == "control" else "voice-core-media-bridge"
     compose = [call for call in calls if call["argv"][:2] == ["docker", "compose"]]
-    assert len(compose) == (2 if failure else 1), result.stderr
+    assert len(compose) == (2 if failure else 1), "compose count: " + result.stderr
     for call, expected in zip(compose, [override, rollback], strict=False):
         args = call["argv"]
         files = [args[i + 1] for i, arg in enumerate(args) if arg == "--file"]
         assert files == [
             str(host.release_dir(COMPONENT_STACK) / "docker-compose.production.yml"),
             str(expected),
-        ]
+        ], "compose files"
         assert call["release_tag"] == COMPONENT_STACK
         assert call["release_commit"] == COMPONENT_STACK_COMMIT
         assert "--no-deps" in args and args[-1] == service
     if failure == "all":
         assert result.returncode != 0
-        assert "rollback=FAILED" in result.stderr
+        assert "rollback=FAILED" in result.stderr, "rollback failure report"
         assert "rollback=PASS" not in result.stderr
         return
     assert result.returncode == (92 if failure else 0), result.stderr
@@ -2360,7 +2360,7 @@ def _assert_component_result(
         assert "rollback=PASS" in result.stderr
     persisted = rollback if failure else override
     origin = host.tmp / f"memoria-contract-{persisted.name}"
-    assert origin.is_file()
+    assert origin.is_file(), "override origin"
     assert origin.read_bytes() == persisted.read_bytes()
     assert origin.stat().st_mode & 0o777 == 0o600
     sha = hashlib.sha256(persisted.read_bytes()).hexdigest()
@@ -2468,5 +2468,15 @@ def test_component_host_contract_detects_production_mutations(
         failure=failure,
         source=head + body,
     )
-    with pytest.raises(AssertionError):
+    assert calls, "component test infrastructure did not execute Docker stub"
+    assert "does not support record-override" not in result.stderr
+    expected_failure = {
+        "wrong-service": "compose count",
+        "drop-tag": "compose count",
+        "drop-commit": "compose count",
+        "rollback-chain": "compose files",
+        "original-prefix": "override origin",
+        "false-pass": "rollback failure report",
+    }[mutation]
+    with pytest.raises(AssertionError, match=expected_failure):
         _assert_component_result(host, result, calls, override, rollback, role, failure)
