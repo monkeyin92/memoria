@@ -2293,7 +2293,7 @@ def _run_component_functions(
         stack_commit=COMPONENT_STACK_COMMIT,
         stack_release_tag=COMPONENT_STACK,
         stack_release_commit=COMPONENT_STACK_COMMIT,
-        release_tag="contract",
+        release_tag=image.split(":", 1)[1],
         release_commit="b" * 40,
         target_image=image,
         control_container="memoria-control-api-1",
@@ -2302,7 +2302,7 @@ def _run_component_functions(
     env.pop("TAG", None)
     env.pop("COMMIT", None)
     result = subprocess.run(
-        ["/bin/bash", "-c", "set -Eeuo pipefail\n" + fragment],
+        [str(host.bin / "bash"), "-c", "set -Eeuo pipefail\n" + fragment],
         env=env,
         capture_output=True,
         text=True,
@@ -2359,7 +2359,8 @@ def _assert_component_result(
     if failure:
         assert "rollback=PASS" in result.stderr
     persisted = rollback if failure else override
-    origin = host.tmp / f"memoria-contract-{persisted.name}"
+    image = CONTROL_IMAGE if role == "control" else BRIDGE_IMAGE
+    origin = host.tmp / f"memoria-{image.split(':', 1)[1]}-{persisted.name}"
     assert origin.is_file(), "override origin"
     assert origin.read_bytes() == persisted.read_bytes()
     assert origin.stat().st_mode & 0o777 == 0o600
