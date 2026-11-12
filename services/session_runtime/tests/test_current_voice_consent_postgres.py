@@ -36,6 +36,7 @@ async def test_current_rejects_revoked_chat_consent_on_real_authorities(
     runtime_store = PostgresSessionRuntimeStore(
         dsn=database.role_dsn("memoria_session_api"),
         action_dsn=database.role_dsn("memoria_action_executor"),
+        projector_dsn=database.role_dsn("memoria_session_projector"),
     )
     await runtime_store.initialize()
     runtime = build_postgres_session_runtime_service(
@@ -128,16 +129,14 @@ async def test_current_rejects_revoked_chat_consent_on_real_authorities(
             await runtime.session_state(actor_id="parent", session_id=downgraded.session_id)
             == "active"
         )
-        from services.session_runtime.errors import PersistentSessionSubjectChanged
-
-        with pytest.raises(PersistentSessionSubjectChanged):
-            await runtime.close_session(
-                actor_id="parent",
-                session_id="voice-session",
-                reason_code="wrong_subject",
-                expected_subject_id="another-child",
-                now=datetime.now(UTC),
-            )
+        assert await runtime.close_subject_session(
+            session_id="voice-session",
+            device_id="device-1",
+            subject_id="another-child",
+            binding_ids=None,
+            reason_code="wrong_subject",
+            now=datetime.now(UTC),
+        ) is None
         assert (
             await runtime.session_state(actor_id="parent", session_id="voice-session") == "active"
         )
@@ -153,14 +152,14 @@ async def test_current_rejects_revoked_chat_consent_on_real_authorities(
             )
         )
         assert unknown.active_subject_id is None
-        with pytest.raises(PersistentSessionSubjectChanged):
-            await runtime.close_session(
-                actor_id="parent",
-                session_id="unknown-session",
-                reason_code="unconfirmed_subject",
-                expected_subject_id=child,
-                now=datetime.now(UTC),
-            )
+        assert await runtime.close_subject_session(
+            session_id="unknown-session",
+            device_id="device-1",
+            subject_id=child,
+            binding_ids=None,
+            reason_code="unconfirmed_subject",
+            now=datetime.now(UTC),
+        ) is None
         assert (
             await runtime.session_state(actor_id="parent", session_id="unknown-session") == "active"
         )
@@ -238,22 +237,23 @@ async def test_current_rejects_revoked_chat_consent_on_real_authorities(
             )
             assert result.status_code == 410, result.text
             assert result.json()["detail"]["reason"] == "closed"
-        replay = await runtime.close_session(
-            actor_id="parent",
+        replay = await runtime.close_subject_session(
             session_id="voice-session",
+            device_id="device-1",
+            subject_id=child,
+            binding_ids=None,
             reason_code="consent_withdrawn",
-            expected_subject_id=child,
             now=datetime.now(UTC),
         )
-        assert replay.already_closed
-        with pytest.raises(PersistentSessionSubjectChanged):
-            await runtime.close_session(
-                actor_id="parent",
-                session_id="voice-session",
-                reason_code="wrong_subject",
-                expected_subject_id="another-child",
-                now=datetime.now(UTC),
-            )
+        assert replay is not None and replay.already_closed
+        assert await runtime.close_subject_session(
+            session_id="voice-session",
+            device_id="device-1",
+            subject_id="another-child",
+            binding_ids=None,
+            reason_code="wrong_subject",
+            now=datetime.now(UTC),
+        ) is None
         control.close()
     finally:
         await admin.close()

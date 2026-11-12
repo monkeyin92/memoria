@@ -419,10 +419,11 @@ class PostgresSessionRuntimeStore:
         dsn: str,
         action_dsn: str,
         bootstrap_dsn: str | None = None,
+        projector_dsn: str | None = None,
         connect_timeout_seconds: float = 5.0,
         command_timeout_seconds: float = 10.0,
     ) -> None:
-        self._dsn = dsn
+        self._dsn, self._projector_dsn = dsn, projector_dsn
         self._action_dsn = action_dsn
         self._bootstrap_dsn = bootstrap_dsn
         self._connect_timeout_seconds = connect_timeout_seconds
@@ -785,6 +786,20 @@ class PostgresSessionRuntimeStore:
                     "SELECT set_config('app.session_actor', $1, true)",
                     actor_id,
                 )
+                yield connection
+        finally:
+            await connection.close()
+
+    @asynccontextmanager
+    async def projector_transaction(self) -> AsyncIterator[asyncpg.Connection]:
+        """Read-only snapshot as the one role that sees every actor's rows."""
+        if self._projector_dsn is None:
+            raise SessionRuntimeAuthorityUnavailable("Session projector DSN is not configured")
+        connection = await self._connect(self._projector_dsn,
+                                         application_name="memoria-session-projector")
+        try:
+            async with connection.transaction(isolation="repeatable_read", readonly=True):
+                await connection.execute("SET LOCAL ROLE memoria_session_projector")
                 yield connection
         finally:
             await connection.close()

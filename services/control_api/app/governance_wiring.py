@@ -138,7 +138,7 @@ def install_subject_deletion(
         return await asyncio.to_thread(count)
 
     async def terminate(scope: SubjectScope) -> int:
-        return await session_terminator.terminate_subject(scope.subject_id, actor_id=scope.account_id)
+        return await session_terminator.terminate_subject(scope.subject_id)
 
     service = SubjectDeletionService(
         ledger=ledger,

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import ssl
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 
 import httpx
@@ -9,7 +11,6 @@ from fastapi import HTTPException
 
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.session_directory import SessionDirectory, SessionDirectoryUnavailable
-from services.session_runtime.errors import PersistentSessionSubjectChanged
 from services.session_runtime.postgres_store import SessionRuntimeConflict
 from services.session_runtime.service import (
     PersistentSessionDenied,
@@ -92,49 +93,10 @@ async def close_active_device_session(
     return bool(value["delivered"])
 
 
-async def close_media_session_pipeline(
-    *,
-    store: MemoryStore,
-    runtime_service: PostgresSessionRuntimeService | None,
-    directory: SessionDirectory | None,
-    settings: object,
-    device_id: str,
-    session_id: str,
-    reason: str,
-    actor_id: str,
-    close_edge_socket: bool = False,
-    expected_stream_epoch: int | None = None,
-    expected_subject_id: str | None = None,
-    expected_binding_ids: frozenset[str] | None = None,
-) -> dict[str, object]:
-    """Close authority, routing and Edge before checkpointing the projection."""
-
-    row = store.get_device_media_session(session_id=session_id)
-    if row is None or row["device_id"] != device_id:
-        raise HTTPException(status_code=404, detail={"code": "media_session_not_found"})
-    if expected_stream_epoch is not None and int(row["stream_epoch"]) != expected_stream_epoch:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "media_session_epoch_mismatch"},
-        )
-    if runtime_service is None:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "session_runtime_authority_unavailable"},
-        )
-    already_closed = False
+@contextmanager
+def _close_authority_errors(session_id: str) -> Iterator[None]:
     try:
-        result = await runtime_service.close_session(
-            actor_id=actor_id,
-            session_id=session_id,
-            reason_code=reason,
-            now=datetime.now(UTC),
-            expected_subject_id=expected_subject_id,
-            expected_binding_ids=expected_binding_ids,
-        )
-        already_closed = result.already_closed
-    except PersistentSessionSubjectChanged:
-        raise
+        yield
     except PersistentSessionNotFound as exc:
         raise HTTPException(
             status_code=404,
@@ -160,6 +122,119 @@ async def close_media_session_pipeline(
             status_code=503,
             detail={"code": "session_runtime_authority_unavailable"},
         ) from exc
+
+
+def _require_runtime(
+    runtime_service: PostgresSessionRuntimeService | None,
+) -> PostgresSessionRuntimeService:
+    if runtime_service is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "session_runtime_authority_unavailable"},
+        )
+    return runtime_service
+
+
+async def close_media_session_pipeline(
+    *,
+    store: MemoryStore,
+    runtime_service: PostgresSessionRuntimeService | None,
+    directory: SessionDirectory | None,
+    settings: object,
+    device_id: str,
+    session_id: str,
+    reason: str,
+    actor_id: str,
+    close_edge_socket: bool = False,
+    expected_stream_epoch: int | None = None,
+) -> dict[str, object]:
+    """Close authority, routing and Edge before checkpointing the projection."""
+
+    row = store.get_device_media_session(session_id=session_id)
+    if row is None or row["device_id"] != device_id:
+        raise HTTPException(status_code=404, detail={"code": "media_session_not_found"})
+    if expected_stream_epoch is not None and int(row["stream_epoch"]) != expected_stream_epoch:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "media_session_epoch_mismatch"},
+        )
+    runtime = _require_runtime(runtime_service)
+    with _close_authority_errors(session_id):
+        result = await runtime.close_session(
+            actor_id=actor_id,
+            session_id=session_id,
+            reason_code=reason,
+            now=datetime.now(UTC),
+        )
+    return await _finish_close(
+        store=store,
+        directory=directory,
+        settings=settings,
+        device_id=device_id,
+        session_id=session_id,
+        reason=reason,
+        close_edge_socket=close_edge_socket,
+        expected_stream_epoch=expected_stream_epoch,
+        already_closed=result.already_closed,
+    )
+
+
+async def close_subject_media_session(
+    *,
+    store: MemoryStore,
+    runtime_service: PostgresSessionRuntimeService | None,
+    directory: SessionDirectory | None,
+    settings: object,
+    device_id: str,
+    session_id: str,
+    reason: str,
+    subject_id: str,
+    binding_ids: frozenset[str] | None = None,
+) -> bool:
+    """Stop one session iff its signed authority names this subject.
+
+    ``False`` only when the authority says the session is not this subject's;
+    anything unreadable, unverifiable or not yet stopped raises.
+    """
+
+    runtime = _require_runtime(runtime_service)
+    with _close_authority_errors(session_id):
+        result = await runtime.close_subject_session(
+            session_id=session_id,
+            device_id=device_id,
+            subject_id=subject_id,
+            binding_ids=binding_ids,
+            reason_code=reason,
+            now=datetime.now(UTC),
+        )
+    if result is None:
+        return False
+    await _finish_close(
+        store=store,
+        directory=directory,
+        settings=settings,
+        device_id=device_id,
+        session_id=session_id,
+        reason=reason,
+        close_edge_socket=True,
+        expected_stream_epoch=None,
+        already_closed=result.already_closed,
+    )
+    return True
+
+
+async def _finish_close(
+    *,
+    store: MemoryStore,
+    directory: SessionDirectory | None,
+    settings: object,
+    device_id: str,
+    session_id: str,
+    reason: str,
+    close_edge_socket: bool,
+    expected_stream_epoch: int | None,
+    already_closed: bool,
+) -> dict[str, object]:
     if directory is not None:
         try:
             await directory.expire(session_id)

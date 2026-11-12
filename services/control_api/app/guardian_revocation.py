@@ -37,7 +37,6 @@ def guardian_revocation_hook(
                 )
             await terminator.terminate_subject(
                 event.subject_person_id,
-                actor_id=event.grantor_person_id,
                 reason="consent_withdrawn",
                 binding_ids=binding_ids,
             )

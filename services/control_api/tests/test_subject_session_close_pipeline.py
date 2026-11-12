@@ -31,15 +31,12 @@ class ScopedAuthority:
     def __init__(self, authority, subjects):
         self.authority, self.subjects = authority, subjects
 
-    async def close_session(self, *, expected_subject_id=None, **kwargs):
-        from services.session_runtime.errors import PersistentSessionSubjectChanged
-
-        if (
-            expected_subject_id is not None
-            and self.subjects.get(kwargs["session_id"]) != expected_subject_id
-        ):
-            raise PersistentSessionSubjectChanged("subject changed")
-        return await self.authority.close_session(**kwargs)
+    async def close_subject_session(self, *, session_id, subject_id, reason_code, now, **kwargs):
+        if self.subjects.get(session_id) != subject_id:
+            return None
+        return await self.authority.close_session(
+            actor_id="parent", session_id=session_id, reason_code=reason_code, now=now
+        )
 
 
 def seed(store, session_id, active_subject):
@@ -89,7 +86,7 @@ async def test_subject_close_calls_edge_and_preserves_switched_unknown_and_other
     directory = Directory()
     connections = RealtimeConnectionRegistry()
     close = partial(
-        device_session_close.close_media_session_pipeline,
+        device_session_close.close_subject_media_session,
         store=store,
         runtime_service=ScopedAuthority(
             authority,
@@ -108,9 +105,9 @@ async def test_subject_close_calls_edge_and_preserves_switched_unknown_and_other
         ),
     )
     terminator = AccountSessionTerminator(
-        store=store, connections=connections, close_device_session=close
+        store=store, connections=connections, close_subject_session=close
     )
-    assert await terminator.terminate_subject("person_a", actor_id="parent") == 2
+    assert await terminator.terminate_subject("person_a") == 2
     assert len(calls) == 2
     assert calls[0].url.path == "/v1/internal/device-runtime/session-close"
     assert calls[0].read() == b'{"device_id":"dev_test_01","session_id":"session-close-1"}'
@@ -137,7 +134,7 @@ async def test_edge_failure_leaves_projection_and_saga_retryable(tmp_path, monke
         lambda **kwargs: original(transport=httpx.MockTransport(edge), **kwargs),
     )
     close = partial(
-        device_session_close.close_media_session_pipeline,
+        device_session_close.close_subject_media_session,
         store=store,
         runtime_service=ScopedAuthority(authority, {"session-close-1": "person_a"}),
         directory=Directory(),
@@ -147,12 +144,12 @@ async def test_edge_failure_leaves_projection_and_saga_retryable(tmp_path, monke
         ),
     )
     terminator = AccountSessionTerminator(
-        store=store, connections=RealtimeConnectionRegistry(), close_device_session=close
+        store=store, connections=RealtimeConnectionRegistry(), close_subject_session=close
     )
     store.delete_voice_sessions(user_id="person_a")
 
     async def terminate(scope):
-        return await terminator.terminate_subject(scope.subject_id, actor_id=scope.account_id)
+        return await terminator.terminate_subject(scope.subject_id)
 
     service, parts = _service(tmp_path)
     service._terminate_sessions = terminate

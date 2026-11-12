@@ -32,11 +32,11 @@ from services.consent.bound_subject import GUARDIAN_MEMORY_CAPABILITIES, MINOR_S
 from services.policy.action_authorizer import ActionAuthorizationError
 from services.policy.context import PolicyContext
 from services.policy.production_wiring import ConsentDiscovery
+from services.session_runtime.commands import SessionCloseResult
 from services.session_runtime.errors import (
     PersistentSessionDenied,
     PersistentSessionExpired,
     PersistentSessionNotFound,
-    PersistentSessionSubjectChanged,
     PersistentSessionUnavailable,
 )
 from services.session_runtime.postgres_authorities import (
@@ -46,6 +46,8 @@ from services.session_runtime.postgres_authorities import (
 )
 from services.session_runtime.postgres_store import (
     PostgresSessionRuntimeStore,
+    SessionRuntimeAuthorityUnavailable,
+    SessionRuntimeConflict,
     SessionRuntimeContext,
 )
 from services.session_runtime.profile_service import (
@@ -107,17 +109,73 @@ class SessionIssueAuthorityMixin:
             now: datetime,
         ) -> ConsentDiscovery: ...
 
-    def _require_subject_for_close(self, profile: RuntimeProfileSignedV2 | None, subject_id: str | None,
-                                   binding_ids: frozenset[str] | None = None) -> None:
-        if subject_id is None and binding_ids is None:
-            return
+        async def _commit_close(
+            self,
+            profile: RuntimeProfileSignedV2,
+            context: SessionRuntimeContext,
+            *,
+            reason_code: str,
+            now: datetime,
+        ) -> SessionCloseResult: ...
+
+    async def close_subject_session(
+        self,
+        *,
+        session_id: str,
+        device_id: str,
+        subject_id: str,
+        binding_ids: frozenset[str] | None,
+        reason_code: str,
+        now: datetime,
+    ) -> SessionCloseResult | None:
+        """Close this subject's session as the actor its signed profile names.
+
+        Reads any actor's current profile through the projector role, so neither
+        a projection nor an RLS-hidden row picks the target or the actor.
+        ``None`` only when no session authority exists or the verified profile
+        names another subject or binding.  A tampered or inconsistent profile,
+        an unreadable authority, a failed target, or a lost CAS against a
+        concurrent rotation raises, so the caller retries instead of reporting
+        the stream stopped.
+        """
+        reason_code = self._close_reason(reason_code)
+        try:
+            async with self._store.projector_transaction() as connection:
+                stored = await self._store.context_any_state(connection, session_id=session_id)
+                profile = None if stored is None else await self._store.profile_by_id(
+                    connection, runtime_profile_id=stored[0].current_runtime_profile_id)
+        except (SessionRuntimeAuthorityUnavailable, asyncpg.PostgresError) as exc:
+            raise PersistentSessionUnavailable(str(exc)) from exc
+        if stored is None:
+            return None
+        context, state = stored
         if profile is None:
-            raise PersistentSessionSubjectChanged("close subject is unavailable")
+            raise PersistentSessionUnavailable("session context has no current profile")
         self._require_profile_signature(profile)
-        if binding_ids is not None and profile.binding_id not in binding_ids:
-            raise PersistentSessionSubjectChanged("close binding is outside the grant scope")
-        if subject_id is not None and (profile.active_subject_id != subject_id or profile.speaker_state != "confirmed"):
-            raise PersistentSessionSubjectChanged("close subject is no longer confirmed")
+        if (
+            (binding_ids is not None and profile.binding_id not in binding_ids)
+            or profile.active_subject_id != subject_id
+            or profile.speaker_state != "confirmed"
+        ):
+            return None
+        if (profile.actor_id, profile.device_id) != (context.actor_id, context.device_id):
+            raise PersistentSessionUnavailable("current profile disagrees with its context")
+        if profile.device_id != device_id:
+            raise PersistentSessionUnavailable("device projection disagrees with session authority")
+        if state == "closed":
+            return SessionCloseResult(applied=False, already_closed=True)
+        if state != "active":
+            raise SessionRuntimeConflict("session is not active and cannot be closed")
+        if profile.session_epoch != context.session_epoch:
+            raise PersistentSessionUnavailable("current profile epoch is inconsistent")
+        return await self._commit_close(profile, context, reason_code=reason_code, now=now)
+
+    @staticmethod
+    def _close_reason(reason_code: str) -> str:
+        reason_code = reason_code.strip()
+        if not reason_code or len(reason_code) > 64:
+            raise ValueError("reason_code must be a bounded non-blank string")
+        return reason_code
 
     async def _require_profile_consent(self, profile: RuntimeProfileSignedV2, *, now: datetime) -> None:
         required = {capability for capability in GUARDIAN_MEMORY_CAPABILITIES if capability in profile.capabilities}

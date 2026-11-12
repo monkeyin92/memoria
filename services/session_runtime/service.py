@@ -870,14 +870,10 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
         session_id: str,
         reason_code: str,
         now: datetime,
-        expected_subject_id: str | None = None,
-        expected_binding_ids: frozenset[str] | None = None,
     ) -> SessionCloseResult:
-        """Close once, optionally requiring the same confirmed subject."""
+        """Close once as the actor the stored profile names."""
 
-        reason_code = reason_code.strip()
-        if not reason_code or len(reason_code) > 64:
-            raise ValueError("reason_code must be a bounded non-blank string")
+        reason_code = self._close_reason(reason_code)
         try:
             profile, context = await self._active_profile_context(
                 actor_id=actor_id, session_id=session_id,
@@ -886,12 +882,7 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
             # The session is not active. Distinguish an idempotent
             # already-closed replay from an unknown or failed authority.
             async with self._store.read_transaction(actor_id=actor_id) as connection:
-                stored = await self._store.context_any_state(
-                    connection,
-                    session_id=session_id,
-                )
-                closed_profile = await self._store.profile_by_id(connection, runtime_profile_id=stored[0].current_runtime_profile_id) if stored is not None and (expected_subject_id is not None or expected_binding_ids is not None) else None
-            self._require_subject_for_close(closed_profile, expected_subject_id, expected_binding_ids)
+                stored = await self._store.context_any_state(connection, session_id=session_id)
             if stored is None or stored[0].actor_id != actor_id:
                 raise PersistentSessionNotFound(session_id) from None
             if stored[1] == "closed":
@@ -899,16 +890,25 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
             raise SessionRuntimeConflict(
                 "session is not active and cannot be closed",
             ) from None
-        self._require_subject_for_close(profile, expected_subject_id, expected_binding_ids)
         if profile.actor_id != actor_id:
             raise PersistentSessionDenied("only the profile actor may close a Session")
         self._require_profile_signature(profile)
+        return await self._commit_close(profile, context, reason_code=reason_code, now=now)
 
+    async def _commit_close(
+        self,
+        profile: RuntimeProfileSignedV2,
+        context: SessionRuntimeContext,
+        *,
+        reason_code: str,
+        now: datetime,
+    ) -> SessionCloseResult:
+        """Commit session_closed as the profile actor; the SQL CAS rejects a rotated head."""
         event = SessionEvent.model_validate(
             {
                 "event_id": f"event-{uuid.uuid4()}",
                 "event_type": "session_closed",
-                "session_id": session_id,
+                "session_id": context.session_id,
                 "session_epoch": context.session_epoch + 1,
                 "device_id": profile.device_id,
                 "binding_id": profile.binding_id,
@@ -919,7 +919,7 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
                 "event_sequence": context.profile_revision + 1,
                 "active_subject_id": None,
                 "runtime_profile_id": profile.runtime_profile_id,
-                "actor_id": actor_id,
+                "actor_id": profile.actor_id,
                 "subject_revision": 0,
                 "occurred_at": now.isoformat(),
                 "payload": {
@@ -938,7 +938,7 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
         )
         try:
             async with self._store.action_transaction(
-                actor_id=actor_id,
+                actor_id=profile.actor_id,
                 device_id=profile.device_id,
                 subject_id=context.active_subject_id,
             ) as connection:

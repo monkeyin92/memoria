@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 from services.control_api.app.database import MemoryStore
-from services.session_runtime.errors import PersistentSessionSubjectChanged
 
 
 class RealtimeConnections(Protocol):
@@ -76,11 +75,11 @@ class AccountSessionTerminator:
         *,
         store: MemoryStore,
         connections: RealtimeConnections,
-        close_device_session: Callable[..., Awaitable[dict[str, object]]] | None = None,
+        close_subject_session: Callable[..., Awaitable[bool]] | None = None,
     ) -> None:
         self._store = store
         self._connections = connections
-        self._close_device_session = close_device_session
+        self._close_subject_session = close_subject_session
 
     async def terminate_account(self, account_id: str) -> int:
         sessions = await asyncio.to_thread(
@@ -102,29 +101,21 @@ class AccountSessionTerminator:
         )
         return len(sessions)
 
-    async def terminate_subject(self, subject_id: str, *, actor_id: str | None = None,
-                                reason: str = "subject_data_deleted", binding_ids: frozenset[str] | None = None) -> int:
+    async def terminate_subject(self, subject_id: str, *, reason: str = "subject_data_deleted",
+                                binding_ids: frozenset[str] | None = None) -> int:
         session_ids = await asyncio.to_thread(self._store.open_device_media_session_ids)
         if not session_ids:
             return 0
-        close_device_session = self._close_device_session
-        if close_device_session is None:
+        close_subject_session = self._close_subject_session
+        if close_subject_session is None:
             raise RuntimeError("device session close authority is not configured")
         closed = set()
         for session_id in session_ids:
             row = await asyncio.to_thread(self._store.get_device_media_session, session_id=session_id)
             if row is None:
                 continue
-            voice = await asyncio.to_thread(self._store.get_voice_session_by_id, session_id=session_id)
-            owner = str(voice["user_id"]) if voice is not None else actor_id
-            if not owner:
-                raise RuntimeError("device session owner is unavailable")
-            try:
-                await close_device_session(device_id=str(row["device_id"]), session_id=session_id, actor_id=owner,
-                    reason=reason, close_edge_socket=True, expected_subject_id=subject_id,
-                    expected_binding_ids=binding_ids)
-            except PersistentSessionSubjectChanged:
-                continue
-            closed.add(session_id)
+            if await close_subject_session(device_id=str(row["device_id"]), session_id=session_id,
+                    reason=reason, subject_id=subject_id, binding_ids=binding_ids):
+                closed.add(session_id)
         await self._connections.close_sessions(closed)
         return len(closed)

@@ -49,7 +49,7 @@ from services.control_api.app.child_compliance_wiring import install_child_compl
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_registry import DeviceRegistry
-from services.control_api.app.device_session_close import close_media_session_pipeline
+from services.control_api.app.device_session_close import close_subject_media_session
 from services.control_api.app.governance_wiring import (
     account_data_governance,
     claim_bound_child_subject_ids,
@@ -489,6 +489,7 @@ async def _install_session_runtime(w: Wiring) -> None:
                 settings.session_runtime_bootstrap_database_url.get_secret_value().strip()
                 or None
             ),
+            projector_dsn=settings.session_runtime_projector_database_url.get_secret_value().strip(),
         )
         app.state.session_runtime_store = session_runtime_store
         w.resources.add(session_runtime_store.close)
@@ -703,9 +704,8 @@ async def _wire_services(w: Wiring) -> None:
         challenge_ttl_ms=settings.device_challenge_ttl_ms,
     )
     session_terminator = AccountSessionTerminator(
-        store=store,
-        connections=app.state.realtime_connections,
-        close_device_session=partial(close_media_session_pipeline, store=store,
+        store=store, connections=app.state.realtime_connections,
+        close_subject_session=partial(close_subject_media_session, store=store,
             runtime_service=getattr(app.state, "session_runtime_service", None),
             directory=app.state.session_directory, settings=settings),
     )
