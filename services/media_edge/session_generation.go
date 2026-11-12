@@ -2,9 +2,21 @@ package mediaedge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
+
+// ErrStaleStopFence identifies a stop for a non-current generation in the
+// same session epoch. Protocol and transport failures retain their own errors.
+var ErrStaleStopFence = errors.New("generation cancel fence is stale")
+
+func stopFenceError(expected, current Fence) error {
+	if expected.SessionID != current.SessionID || expected.SessionEpoch != current.SessionEpoch {
+		return fmt.Errorf("stop fence belongs to another session epoch")
+	}
+	return ErrStaleStopFence
+}
 
 func (s *Session) AdvanceGeneration(fence Fence) error {
 	s.mu.Lock()
@@ -60,7 +72,10 @@ func (s *Session) CancelGeneration(eventID string, expected *Fence) (current, ca
 		return Fence{}, Fence{}, false, fmt.Errorf("session is not active")
 	}
 	if !s.generationActive || (expected != nil && !expected.Equal(s.Generation)) {
-		return Fence{}, Fence{}, false, fmt.Errorf("generation cancel fence is stale")
+		if expected != nil {
+			return Fence{}, Fence{}, false, stopFenceError(*expected, s.Generation)
+		}
+		return Fence{}, Fence{}, false, ErrStaleStopFence
 	}
 	if s.Generation.GenerationID == ^uint64(0) {
 		return Fence{}, Fence{}, false, fmt.Errorf("generation_id cannot advance")

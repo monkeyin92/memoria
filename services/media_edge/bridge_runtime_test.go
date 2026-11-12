@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -1027,5 +1028,37 @@ func TestVoiceCoreMediaRuntimeExecutesOnlyCurrentTypedFloorEffects(t *testing.T)
 	case <-forwarded:
 		t.Fatal("unproven Go-authoritative floor effect reached the terminator")
 	default:
+	}
+}
+
+func TestRuntimeStopClassifiesCancellationThatAlreadyWon(t *testing.T) {
+	for _, keyword := range []bool{false, true} {
+		t.Run(fmt.Sprint(keyword), func(t *testing.T) {
+			session := runtimeSession(t, 2)
+			current := Fence{SessionID: "s", TurnID: 1, GenerationID: 1, SessionEpoch: 1}
+			if err := session.AdvanceGeneration(current); err != nil {
+				t.Fatal(err)
+			}
+			core := newFakeCoreStream()
+			core.setCurrentFence(current)
+			runtime, err := NewVoiceCoreMediaRuntime(context.Background(), session, core, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, _, err := session.CancelGeneration("winner", &current); err != nil {
+				t.Fatal(err)
+			}
+			if keyword {
+				err = runtime.SendKeyword("停一下", 0.9, 10, 20, true, current)
+			} else {
+				_, err = runtime.CancelGeneration("late", "device.button.stop", &current, 0)
+			}
+			if !errors.Is(err, ErrStaleStopFence) {
+				t.Fatalf("late stop error = %v", err)
+			}
+			if core.stopCount() != 0 {
+				t.Fatal("late stop forwarded")
+			}
+		})
 	}
 }

@@ -7,6 +7,7 @@ package mediaedge
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -197,22 +198,15 @@ func (c *DeviceConnection) handleKeyword(envelope deviceControlEnvelope, runtime
 	}
 	end := event.Evidence.DetectedSample + durationSamples
 	fence := event.ExpectedFence.toFence(c.sessionID)
-	if event.HardStop {
-		// A local stop keyword races server-side cancels: if the generation
-		// it names is already cancelled or superseded, the device's own
-		// flush was the whole stop. Treat it as stale instead of failing the
-		// transport the way an invalid control would.
-		if current, active := runtime.session.GenerationSnapshot(); !active || !current.Equal(fence) {
-			c.server.metrics.staleGeneration.Add(1)
-			slog.Info("media edge ignored stale keyword hard stop", "session", c.sessionID, "device", c.deviceID, "epoch", c.epoch, "keyword", event.KeywordID, "generation", event.ExpectedFence.GenerationID)
-			c.clearPlaybackActive("device_keyword_stop", event.ExpectedFence)
-			return true
-		}
-	}
 	if err := runtime.SendKeyword(
 		event.KeywordID, float32(event.Confidence),
 		event.Evidence.DetectedSample, end, event.HardStop, fence,
 	); err != nil {
+		if event.HardStop && errors.Is(err, ErrStaleStopFence) {
+			c.server.metrics.staleGeneration.Add(1)
+			c.clearPlaybackActive("device_keyword_stop", event.ExpectedFence)
+			return true
+		}
 		c.server.metrics.controlRejected.Add(1)
 		c.sendSessionError("keyword_rejected", true)
 		return false
@@ -259,6 +253,11 @@ func (c *DeviceConnection) handleButtonStop(envelope deviceControlEnvelope, runt
 	if _, err := runtime.CancelGeneration(
 		eventID, "device.button.stop", expected, event.DeviceMonotonicMS,
 	); err != nil {
+		if errors.Is(err, ErrStaleStopFence) {
+			c.server.metrics.staleGeneration.Add(1)
+			c.clearPlaybackActive("device_button_stop", event.ExpectedFence)
+			return true
+		}
 		c.server.metrics.controlRejected.Add(1)
 		c.sendSessionError("stop_rejected", true)
 		return false

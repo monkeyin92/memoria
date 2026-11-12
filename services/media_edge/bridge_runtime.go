@@ -300,7 +300,7 @@ func (r *VoiceCoreMediaRuntime) CancelGeneration(eventID, reason string, expecte
 	}
 	core := stopper.CurrentFence()
 	if expected != nil && !expected.Equal(core) {
-		return Fence{}, fmt.Errorf("expected stop fence does not match Voice Core")
+		return Fence{}, stopFenceError(*expected, core)
 	}
 	current, cancelled, replayed, err := r.session.CancelGeneration(eventID, &core)
 	if err != nil {
