@@ -39,14 +39,19 @@ mc alias set --quiet offsite "$MEMORIA_OFFSITE_S3_ENDPOINT" \
 mc stat "offsite/$MEMORIA_OFFSITE_S3_BUCKET" >/dev/null
 mc version info "offsite/$MEMORIA_OFFSITE_S3_BUCKET" | grep -q 'Enabled'
 
-# Configure lifecycle expiration policy (<= 7 days) if not already present
-if ! mc ilm rule list "offsite/$MEMORIA_OFFSITE_S3_BUCKET" 2>/dev/null | grep -q -E 'Expiry|Expire|expiration'; then
-  mc ilm rule add --expire-days "$offsite_retention_days" \
-    --noncurrent-expire-days "$offsite_retention_days" \
-    "offsite/$MEMORIA_OFFSITE_S3_BUCKET" || echo "warning: could not set ILM rule on offsite bucket" >&2
-fi
+# This dedicated bucket's complete policy is owned by this script. mc's pinned
+# export serializer omits an empty Filter and emits these fields in this order.
+expected_ilm='{"Rule":[{"Expiration":{"Days":'"$offsite_retention_days"'},"ID":"memoria-offsite-retention","NoncurrentVersionExpiration":{"NoncurrentDays":'"$offsite_retention_days"'},"Status":"Enabled"}]}'
+printf '%s\n' "$expected_ilm" | mc ilm rule import "offsite/$MEMORIA_OFFSITE_S3_BUCKET"
 
 while :; do
+  # Capture the command status separately; a pipeline would hide query failure.
+  actual_ilm="$(mc ilm rule export "offsite/$MEMORIA_OFFSITE_S3_BUCKET")"
+  actual_ilm="$(printf '%s' "$actual_ilm" | tr -d '[:space:]')"
+  if [ "$actual_ilm" != "$expected_ilm" ]; then
+    echo "offsite lifecycle readback does not match the required full-bucket expiration policy" >&2
+    exit 2
+  fi
   test -s /backup-staging/LATEST
   latest="$(tr -d '\r\n' </backup-staging/LATEST)"
   case "$latest" in
