@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { loadPage } = require("../scripts/mp-harness/runtime");
+const path = require("node:path");
+const { loadPage, createWx, setPath } = require("../scripts/mp-harness/runtime");
 const { renderPage } = require("../scripts/mp-harness/render");
 const fx = require("../scripts/mp-harness/fixtures");
 const { canonicalManifest } = require("./manifest-fixtures");
@@ -108,6 +109,7 @@ test("overlapping cold syncs cannot share confirmation state", async () => {
   try {
     const first = h.page.onShow();
     const second = h.page.onShow();
+    h.state.binding = CHILD;
     firstSync.resolve({ status: "ready", binding: CHILD });
     await first;
     secondSync.resolve({ status: "error", binding: null });
@@ -126,7 +128,7 @@ test("a late cold sync cannot replace a more recent self-use selection", async (
     const first = h.page.onShow();
     h.state.binding = SELF;
     await h.page.onShow();
-    sync.resolve({ status: "ready", binding: CHILD });
+    sync.resolve({ status: "ready", binding: SELF, contextChanged: true });
     await first;
     assert.equal(h.page.data.guardianMode, false);
     assert.equal(h.page.data.safetyBanner, null);
@@ -160,7 +162,10 @@ for (const entry of ["onShow", "onPullDownRefresh", "loginForReview", "retrySafe
   for (const target of ["child", "adult"]) {
     test(`${entry} recovers failed cold binding and refreshes ${target} safety state`, async () => {
       let result = { status: "error", binding: null };
-      const h = openContext(null, { syncDeviceBindings: async () => result });
+      const h = openContext(null, { syncDeviceBindings: async () => {
+        h.state.binding = result.status === "ready" ? result.binding : null;
+        return result;
+      } });
       try {
         await h.page.onShow();
         assert.equal(h.page.data.safetyReadStatus, "failed");
@@ -180,10 +185,14 @@ for (const entry of ["onShow", "onPullDownRefresh", "loginForReview", "retrySafe
 
 for (const change of ["binding", "identity", "epoch", "logout", "authclear", "unload"]) {
   for (const outcome of ["resolve", "reject"]) {
-    test(`pending review ${outcome} is discarded after ${change}`, async () => {
+    test(`superseded review ${outcome} makes zero writes after ${change}`, async () => {
       const review = deferred();
       const started = deferred();
-      const h = openContext(SELF, { getConversationReview: () => { started.resolve(); return review.promise; } });
+      let reads = 0;
+      const h = openContext(SELF, { getConversationReview: () => {
+        if (++reads > 1) return { actual_heard: [{ text: "本轮回顾" }] };
+        started.resolve(); return review.promise;
+      } });
       try {
         const load = h.page.onShow();
         await started.promise;
@@ -193,6 +202,7 @@ for (const change of ["binding", "identity", "epoch", "logout", "authclear", "un
         if (change === "logout") h.state.loggedIn = false;
         if (change === "authclear") h.clearAuth();
         if (change === "unload") h.page.onUnload();
+        if (!["authclear", "unload"].includes(change)) await h.page.onShow();
         const before = JSON.parse(JSON.stringify(h.page.data));
         const writes = h.setDataLog.length;
         if (outcome === "resolve") review.resolve(ADULT_REVIEW);
@@ -255,11 +265,15 @@ for (const outcome of ["resolve", "reject"]) {
 
 for (const change of ["authclear", "unload", "logout", "binding"]) {
   for (const outcome of ["resolve", "reject"]) {
-    test(`pending safety ${outcome} makes no page writes after ${change}`, async () => {
+    test(`superseded safety ${outcome} makes zero writes after ${change}`, async () => {
       const safety = deferred();
       const started = deferred();
+      let reads = 0;
       const h = openContext(CHILD, {
-        getUnreadGuardianNotifications: () => { started.resolve(); return safety.promise; },
+        getUnreadGuardianNotifications: () => {
+          if (++reads > 1) return { newest: null, others_count: 0 };
+          started.resolve(); return safety.promise;
+        },
       });
       try {
         const load = h.page.onShow();
@@ -268,6 +282,7 @@ for (const change of ["authclear", "unload", "logout", "binding"]) {
         if (change === "unload") h.page.onUnload();
         if (change === "logout") h.state.loggedIn = false;
         if (change === "binding") h.state.binding = { ...CHILD, binding_version: 2, primary_subject_ids: ["u_parent", "p_other"] };
+        if (["logout", "binding"].includes(change)) await h.page.onShow();
         const before = JSON.parse(JSON.stringify(h.page.data));
         const writes = h.setDataLog.length;
         if (outcome === "resolve") safety.resolve({ newest: fx.SAFETY_ALERT });
@@ -328,6 +343,449 @@ for (const change of ["child", "unload", "authclear"]) {
         assert.equal(h.setDataLog.length, writes);
         assert.doesNotMatch(h.text(), /旧账号原话|旧对话详情失败/);
       } finally { history.resolve({}); h.restore(); }
+    });
+  }
+}
+
+async function flush() {
+  for (let tick = 0; tick < 20; tick++) await Promise.resolve();
+}
+
+function realRuntime(binding = SELF) {
+  const root = path.resolve(__dirname, "..");
+  const clearModules = () => {
+    for (const key of Object.keys(require.cache)) {
+      if (key.startsWith(root + path.sep) && !key.includes("/scripts/")) delete require.cache[key];
+    }
+  };
+  clearModules();
+  const globals = new Map(["wx", "App", "Page", "Component", "getApp", "getCurrentPages"].map((key) => [key, global[key]]));
+  const { wx, calls } = createWx();
+  const requests = [];
+  wx.request = (options) => requests.push(options);
+  global.wx = wx;
+  let definition;
+  global.App = (value) => { definition = value; };
+  require(path.join(root, "app.js"));
+  const app = { ...definition, globalData: structuredClone(definition.globalData), _authClearedListeners: new Set() };
+  global.getApp = () => app;
+  global.Component = () => {};
+  global.getCurrentPages = () => [];
+  const api = require(path.join(root, "utils/api.js"));
+  app.setAuthenticatedIdentity({ user_id: "u_parent", account_type: "registered", access_token: "token", expires_in: 3600 });
+  if (binding) api.selectDeviceBinding(binding);
+  const page = (name) => {
+    let value;
+    global.Page = (def) => { value = def; };
+    require(path.join(root, `pages/${name}/index.js`));
+    const instance = { ...value, data: structuredClone(value.data), writes: [] };
+    instance.setData = (patch) => {
+      instance.writes.push(structuredClone(patch));
+      for (const [key, item] of Object.entries(patch)) setPath(instance.data, key, structuredClone(item));
+    };
+    instance.getTabBar = () => ({ setData() {} });
+    instance.onLoad?.();
+    return instance;
+  };
+  const memory = page("memory");
+  const reply = (request, data, statusCode = 200) => {
+    assert.ok(request && !request.answered, "a pending real wx.request must exist");
+    request.answered = true;
+    request.success({ statusCode, data });
+  };
+  const pending = (part) => requests.find((request) => !request.answered && request.url.includes(part));
+  const respond = (request) => {
+    if (request.url.includes("conversation-review")) return { ...ADULT_REVIEW, memory_candidates: [{ claim_id: "same-claim", value: "成人候选" }] };
+    if (request.url.includes("conversation-history")) return { turns: [{ owner_text: "本轮详情" }] };
+    if (request.url.includes("conversation-sessions")) return { items: [{ session_id: "session", turn_count: 1 }] };
+    if (request.url.includes("/memories?")) return { candidates: [{ claim_id: "same-claim", value: "孩子候选" }], confirmed: [] };
+    if (request.url.includes("/notifications/unread")) return { newest: fx.SAFETY_ALERT, others_count: 0 };
+    if (request.url.includes("/push-config")) return { enabled: false };
+    return { items: [] };
+  };
+  const finish = async (promise, answer = respond) => {
+    let settled = false;
+    let result;
+    let failure;
+    promise.then((value) => { settled = true; result = value; }, (error) => { settled = true; failure = error; });
+    for (let round = 0; round < 24 && !settled; round++) {
+      await flush();
+      for (const request of requests.filter((item) => !item.answered && !item.held)) reply(request, answer(request));
+    }
+    await flush();
+    assert.equal(settled, true, "the page operation must settle within the bounded request drain");
+    if (failure) throw failure;
+    return result;
+  };
+  const text = () => renderPage("pages/memory/index", memory.data).replace(/<head>[\s\S]*?<\/head>/, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  return {
+    app, api, wx, calls, requests, memory, page, pending, reply, finish, text, response: respond,
+    restore() {
+      memory.onUnload();
+      clearModules();
+      for (const [key, value] of globals) {
+        if (value === undefined) delete global[key];
+        else global[key] = value;
+      }
+    },
+  };
+}
+
+for (const binding of [{ ...SELF, binding_version: 2 }, CHILD]) {
+  test(`real runtime warm home sync recovers the active ${binding.declared_mode} review`, async (t) => {
+    const h = realRuntime();
+    try {
+      const home = h.page("home");
+      home.onShow();
+      await flush();
+      const sync = h.pending("/v1/device-bindings");
+      const load = h.memory.onShow();
+      await flush();
+      const oldReview = h.pending("conversation-review");
+      h.reply(sync, { bindings: [binding] });
+      await flush();
+      assert.equal(h.api.readBindingManifest().binding_version, binding.binding_version);
+      h.reply(oldReview, ADULT_REVIEW);
+      assert.equal(await h.finish(load, (request) => request.url.includes("conversation-review")
+        ? { actual_heard: [{ text: "本轮成人回顾" }] } : h.response(request)), "ok");
+      assert.equal(h.memory.data.loading, false);
+      assert.equal(h.memory.data.guardianMode, binding.declared_mode === "parent_for_child");
+      if (binding.declared_mode === "parent_for_child") {
+        assert.equal(h.memory.data.guardianSubjectId, "p_child");
+        assert.deepEqual(h.memory.data.heardTurns, []);
+        assert.equal(h.memory.data.safetyReadStatus, "ok");
+        assert.doesNotMatch(h.text(), /成人私密原话|正在读取回顾/);
+      } else {
+        assert.match(h.text(), /本轮成人回顾/);
+        assert.doesNotMatch(h.text(), /成人私密原话/);
+        assert.equal(h.requests.filter((request) => request.url.includes("/memory/days?") && request.url.endsWith("limit=30")).length, 2);
+      }
+      t.diagnostic(JSON.stringify({ loading: h.memory.data.loading, guardianSubjectId: h.memory.data.guardianSubjectId, visibleText: h.text() }));
+    } finally { h.restore(); }
+  });
+}
+
+test("real runtime token expiry during the active review enters a settled guest page", async (t) => {
+  const h = realRuntime();
+  try {
+    const load = h.memory.onShow();
+    await flush();
+    h.app.globalData.accessTokenExpiresAt = Date.now() + 1000;
+    await h.finish(load);
+    assert.equal(h.memory.data.loading, false);
+    assert.equal(h.memory.data.authenticated, false);
+    assert.match(h.text(), /微信登录后打开/);
+    assert.doesNotMatch(h.text(), /成人私密原话|正在读取回顾/);
+    t.diagnostic(JSON.stringify({ authenticated: h.memory.data.authenticated, loading: h.memory.data.loading, visibleText: h.text() }));
+  } finally { h.restore(); }
+});
+
+test("real runtime cold ready cannot authorize a child after concurrent unbind clears its cache", async (t) => {
+  const h = realRuntime(null);
+  try {
+    const unbind = h.api.unbindDevice(CHILD.device_id);
+    const load = h.memory.onShow();
+    await flush();
+    h.reply(h.pending("/v1/device-bindings"), { bindings: [CHILD] });
+    await Promise.resolve();
+    h.reply(h.pending("/binding/unbind"), { unbound: true });
+    await unbind;
+    assert.equal(h.api.readBindingManifest(), null);
+    assert.equal(await h.finish(load), "error");
+    assert.equal(h.memory.data.loading, false);
+    assert.equal(h.memory.data.guardianSubjectId, "");
+    assert.deepEqual(h.memory.data.memoryCandidates, []);
+    assert.equal(h.requests.some((request) => request.url.includes("/v1/guardian/minors/")), false);
+    assert.equal(h.requests.some((request) => request.url.includes("/v1/archive/") || request.url.includes("/v1/memory/days")), false);
+    assert.match(h.text(), /无法确认设备绑定|点击重试/);
+    t.diagnostic(JSON.stringify({ manifest: h.api.readBindingManifest(), loading: h.memory.data.loading, guardianSubjectId: h.memory.data.guardianSubjectId, visibleText: h.text() }));
+  } finally { h.restore(); }
+});
+
+for (const outcome of ["resolve", "reject"]) {
+  test(`real runtime active detail ${outcome} after same-epoch refresh unlocks the next detail`, async (t) => {
+    const h = realRuntime();
+    try {
+      await h.finish(h.memory.onShow());
+      const detail = h.memory.openConversation({ currentTarget: { dataset: { sessionId: "session" } } });
+      await flush();
+      const old = h.pending("conversation-history");
+      h.api.selectDeviceBinding({ ...SELF, binding_version: 2 });
+      h.reply(old, outcome === "resolve" ? { turns: [{ owner_text: "旧详情" }] } : { detail: "旧详情失败" }, outcome === "resolve" ? 200 : 500);
+      await detail;
+      assert.equal(h.memory.data.conversationLoading, false);
+      assert.equal(h.memory.data.selectedConversationSessionId, "");
+      assert.deepEqual(h.memory.data.conversationTurns, []);
+      assert.doesNotMatch(h.text(), /旧详情/);
+      t.diagnostic(JSON.stringify({ afterOldDetail: { loading: h.memory.data.conversationLoading, selected: h.memory.data.selectedConversationSessionId, turns: h.memory.data.conversationTurns } }));
+      await h.finish(h.memory.openConversation({ currentTarget: { dataset: { sessionId: "session" } } }));
+      assert.equal(h.memory.data.conversationLoading, false);
+      assert.match(h.text(), /本轮详情/);
+      t.diagnostic(JSON.stringify({ afterNextDetail: { loading: h.memory.data.conversationLoading, selected: h.memory.data.selectedConversationSessionId, turns: h.memory.data.conversationTurns } }));
+    } finally { h.restore(); }
+  });
+}
+
+test("real runtime active owner retries once then fails closed and remains manually retryable", async (t) => {
+  const h = realRuntime();
+  try {
+    const load = h.memory.onShow();
+    let reviews = 0;
+    await h.finish(load, (request) => {
+      if (request.url.includes("conversation-review")) {
+        reviews++;
+        h.api.selectDeviceBinding({ ...SELF, binding_version: reviews + 1 });
+      }
+      return { ...ADULT_REVIEW, items: [] };
+    });
+    assert.equal(reviews, 2, "only one automatic retry is permitted");
+    assert.equal(h.memory.data.loading, false);
+    assert.equal(h.memory.data.guardianMode, true);
+    assert.equal(h.memory.data.guardianSubjectId, "");
+    assert.equal(h.memory.data.safetyBanner, null);
+    assert.match(h.text(), /无法确认设备绑定.*点击重试|点击重试.*无法确认设备绑定/);
+    assert.doesNotMatch(h.text(), /成人私密原话|这里还空空的|正在读取回顾/);
+    t.diagnostic(JSON.stringify({ reviews, loading: h.memory.data.loading, visibleText: h.text() }));
+    assert.equal(await h.finish(h.memory.retrySafetyRead()), "ok");
+    assert.match(h.text(), /成人私密原话/);
+    assert.equal(h.memory.data.loading, false);
+  } finally { h.restore(); }
+});
+
+for (const outcome of ["resolve", "reject"]) {
+  test(`real runtime old adult confirmation ${outcome} cannot affect a new child's same-claim lock`, async (t) => {
+    const h = realRuntime();
+    try {
+      await h.finish(h.memory.onShow());
+      const event = { currentTarget: { dataset: { claimId: "same-claim" } } };
+      const oldConfirm = h.memory.confirmCandidate(event);
+      await flush();
+      const old = h.pending("/archive/memories/same-claim/review");
+      old.held = true;
+      h.api.selectDeviceBinding(CHILD);
+      await h.finish(h.memory.onShow());
+      h.memory.showMemories();
+      const newConfirm = h.memory.confirmCandidate(event);
+      await flush();
+      const current = h.pending("/minors/p_child/memories/same-claim/review");
+      assert.ok(current);
+      current.held = true;
+      const writes = h.memory.writes.length;
+      const before = structuredClone(h.memory.data);
+      const toasts = h.calls.filter((call) => call.name === "showToast").length;
+      h.reply(old, outcome === "resolve" ? {} : { detail: "旧成人审核失败" }, outcome === "resolve" ? 200 : 500);
+      await h.finish(oldConfirm);
+      assert.deepEqual(h.memory.data, before);
+      assert.equal(h.memory.writes.length, writes);
+      assert.equal(h.calls.filter((call) => call.name === "showToast").length, toasts);
+      assert.equal(h.memory.data.reviewingClaimId, "same-claim");
+      t.diagnostic(JSON.stringify({ writesFromOldConfirmation: h.memory.writes.length - writes, activeChildClaim: h.memory.data.reviewingClaimId, error: h.memory.data.error }));
+      current.held = false;
+      await h.finish(newConfirm);
+      assert.equal(h.memory.data.reviewingClaimId, "");
+      assert.equal(h.memory.data.error, "");
+      assert.ok(h.calls.some((call) => call.name === "showToast" && call.args[0].title === "已确认，会记住"));
+    } finally { h.restore(); }
+  });
+}
+
+for (const change of ["binding", "account", "newload", "unload"]) {
+  test(`real runtime retract modal cannot submit the old claim after ${change}`, async () => {
+    const h = realRuntime(CHILD);
+    try {
+      await h.finish(h.memory.onShow());
+      let modal;
+      h.wx.showModal = (options) => { modal = options; };
+      const retract = h.memory.retractMemory({ currentTarget: { dataset: { claimId: "same-claim", pending: true } } });
+      await flush();
+      assert.ok(modal);
+      if (change === "binding") h.api.selectDeviceBinding({ ...CHILD, binding_version: 2, primary_subject_ids: ["p_other"] });
+      if (change === "account") h.app.setAuthenticatedIdentity({ user_id: "u_other", account_type: "registered", access_token: "other-token", expires_in: 3600 });
+      if (change === "newload") await h.finish(h.memory.onShow());
+      if (change === "unload") h.memory.onUnload();
+      const writes = h.memory.writes.length;
+      modal.success({ confirm: true });
+      await h.finish(retract);
+      assert.equal(h.memory.writes.length, writes);
+      assert.equal(h.requests.filter((request) => request.method === "POST" && request.url.includes("/memories/")).length, 0);
+      assert.equal(h.memory.data.reviewingClaimId, "");
+    } finally { h.restore(); }
+  });
+}
+
+for (const stage of ["child-days", "child-memories", "child-summaries", "adult-review", "adult-sessions", "guardian-links", "fallback-summaries", "safety", "push"]) {
+  for (const outcome of ["resolve", "reject"]) {
+    test(`active owner recovers binding drift during ${stage} ${outcome}`, async () => {
+      const blocked = deferred();
+      const started = deferred();
+      const child = ["child-days", "child-memories", "child-summaries", "safety", "push"].includes(stage);
+      const methods = {
+        "child-days": "getGuardianChildDays", "child-memories": "getGuardianChildMemories",
+        "child-summaries": "getChildSessionSummaries", "adult-review": "getConversationReview",
+        "adult-sessions": "getConversationSessions", "guardian-links": "getGuardianLinks",
+        "fallback-summaries": "getChildSessionSummaries", safety: "getUnreadGuardianNotifications", push: "getGuardianPushConfig",
+      };
+      let reads = 0;
+      const overrides = {};
+      if (["guardian-links", "fallback-summaries"].includes(stage)) {
+        overrides.getMemoryDays = async () => { throw new Error("days unavailable"); };
+        overrides.getGuardianLinks = async () => [{ minorUserId: "p_child", status: "active" }];
+      }
+      overrides[methods[stage]] = async () => {
+        if (++reads > 1) return { items: [], newest: null };
+        started.resolve();
+        return blocked.promise;
+      };
+      const h = openContext(child ? CHILD : SELF, overrides);
+      try {
+        const load = h.page.onShow();
+        await started.promise;
+        h.state.binding = child ? SELF : CHILD;
+        if (outcome === "resolve") blocked.resolve({ ...ADULT_REVIEW, newest: fx.SAFETY_ALERT, items: [{ text: "过期小结", day: "2026-10-14" }] });
+        else blocked.reject(new Error("过期响应失败"));
+        assert.equal(await load, "ok");
+        assert.equal(h.page.data.loading, false);
+        assert.equal(h.page.data.guardianMode, !child);
+        assert.equal(h.page.data.guardianSubjectId, child ? "" : "p_child");
+        assert.doesNotMatch(h.text(), /过期小结|过期响应失败|正在读取回顾/);
+        if (child) {
+          assert.equal(h.page.data.safetyBanner, null);
+          assert.match(h.text(), /成人私密原话/);
+        } else {
+          assert.deepEqual(h.page.data.heardTurns, []);
+          assert.match(h.text(), /这里只有摘要/);
+        }
+      } finally { blocked.resolve({}); h.restore(); }
+    });
+  }
+}
+
+for (const outcome of ["resolve", "reject"]) {
+  test(`active owner safety ${outcome} after session expiry clears all private partitions`, async () => {
+    const safety = deferred();
+    const started = deferred();
+    const h = openContext(CHILD, { getUnreadGuardianNotifications: () => { started.resolve(); return safety.promise; } });
+    try {
+      const load = h.page.onShow();
+      await started.promise;
+      h.state.loggedIn = false;
+      if (outcome === "resolve") safety.resolve({ newest: fx.SAFETY_ALERT });
+      else safety.reject(new Error("request:fail timeout"));
+      assert.equal(await load, "guest");
+      assert.equal(h.page.data.loading, false);
+      assert.equal(h.page.data.authenticated, false);
+      assert.deepEqual(h.page.data.days, []);
+      assert.equal(h.page.data.safetyBanner, null);
+      assert.match(h.text(), /微信登录后打开/);
+      assert.doesNotMatch(h.text(), /有一条需要你关注|正在读取回顾/);
+    } finally { safety.resolve({}); h.restore(); }
+  });
+}
+
+for (const outcome of ["resolve", "reject"]) {
+  test(`real runtime superseded detail ${outcome} cannot clear the next detail's lock`, async () => {
+    const h = realRuntime();
+    try {
+      await h.finish(h.memory.onShow());
+      const event = { currentTarget: { dataset: { sessionId: "session" } } };
+      const oldDetail = h.memory.openConversation(event);
+      await flush();
+      const old = h.pending("conversation-history");
+      old.held = true;
+      await h.finish(h.memory.onShow());
+      const newDetail = h.memory.openConversation(event);
+      await flush();
+      const current = h.requests.find((request) => !request.answered && request !== old && request.url.includes("conversation-history"));
+      assert.ok(current);
+      const writes = h.memory.writes.length;
+      const before = structuredClone(h.memory.data);
+      h.reply(old, outcome === "resolve" ? { turns: [{ owner_text: "旧详情" }] } : { detail: "旧详情失败" }, outcome === "resolve" ? 200 : 500);
+      await oldDetail;
+      assert.deepEqual(h.memory.data, before);
+      assert.equal(h.memory.writes.length, writes);
+      assert.equal(h.memory.data.conversationLoading, true);
+      await h.finish(newDetail);
+      assert.equal(h.memory.data.conversationLoading, false);
+      assert.match(h.text(), /本轮详情/);
+    } finally { h.restore(); }
+  });
+}
+
+for (const method of ["openConversation", "confirmCandidate", "retractMemory"]) {
+  test(`real runtime ${method} captures its binding before awaiting the login gate`, async () => {
+    const h = realRuntime(method === "openConversation" ? SELF : CHILD);
+    try {
+      await h.finish(h.memory.onShow());
+      const operation = h.memory[method]({ currentTarget: { dataset: { sessionId: "session", claimId: "same-claim" } } });
+      h.api.selectDeviceBinding({ ...CHILD, binding_version: 2, primary_subject_ids: ["p_other"] });
+      const writes = h.memory.writes.length;
+      const requests = h.requests.length;
+      await operation;
+      assert.equal(h.memory.writes.length, writes);
+      assert.equal(h.requests.length, requests);
+    } finally { h.restore(); }
+  });
+}
+
+for (const change of ["newload", "unload", "authclear"]) {
+  for (const outcome of ["resolve", "reject"]) {
+    test(`real runtime old retract ${outcome} makes zero writes after ${change}`, async () => {
+      const h = realRuntime(CHILD);
+      try {
+        await h.finish(h.memory.onShow());
+        h.wx.showModal = (options) => options.success({ confirm: true });
+        const event = { currentTarget: { dataset: { claimId: "same-claim", pending: true } } };
+        const retract = h.memory.retractMemory(event);
+        await flush();
+        const old = h.pending("/minors/p_child/memories/same-claim/review");
+        assert.ok(old);
+        old.held = true;
+        let confirm;
+        if (change === "newload") {
+          await h.finish(h.memory.onShow());
+          confirm = h.memory.confirmCandidate(event);
+          await flush();
+        }
+        if (change === "unload") h.memory.onUnload();
+        if (change === "authclear") h.app.clearAuthenticatedIdentity();
+        const writes = h.memory.writes.length;
+        const before = structuredClone(h.memory.data);
+        const toasts = h.calls.filter((call) => call.name === "showToast").length;
+        h.reply(old, outcome === "resolve" ? {} : { detail: "旧撤回失败" }, outcome === "resolve" ? 200 : 500);
+        await retract;
+        assert.deepEqual(h.memory.data, before);
+        assert.equal(h.memory.writes.length, writes);
+        assert.equal(h.calls.filter((call) => call.name === "showToast").length, toasts);
+        if (confirm) {
+          assert.equal(h.memory.data.reviewingClaimId, "same-claim");
+          await h.finish(confirm);
+          assert.equal(h.memory.data.reviewingClaimId, "");
+        }
+      } finally { h.restore(); }
+    });
+  }
+}
+
+for (const change of ["newload", "unload", "authclear"]) {
+  for (const outcome of ["resolve", "reject"]) {
+    test(`real runtime superseded review ${outcome} makes zero writes after ${change}`, async () => {
+      const h = realRuntime();
+      try {
+        const load = h.memory.onShow();
+        await flush();
+        const oldRequests = [...h.requests];
+        for (const request of oldRequests) request.held = true;
+        if (change === "newload") await h.finish(h.memory.onShow());
+        if (change === "unload") h.memory.onUnload();
+        if (change === "authclear") h.app.clearAuthenticatedIdentity();
+        const before = structuredClone(h.memory.data);
+        const writes = h.memory.writes.length;
+        for (const request of oldRequests) h.reply(request, outcome === "resolve" ? ADULT_REVIEW : { detail: "旧回顾失败" }, outcome === "resolve" ? 200 : 500);
+        await load;
+        assert.deepEqual(h.memory.data, before);
+        assert.equal(h.memory.writes.length, writes);
+        assert.equal(h.requests.length, change === "newload" ? oldRequests.length + 3 : oldRequests.length);
+      } finally { h.restore(); }
     });
   }
 }

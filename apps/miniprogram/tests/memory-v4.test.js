@@ -117,9 +117,10 @@ test("记住的事 opens from a row under the days and 日常回顾 goes back", 
 test("cold binding cache syncs before guardian review and safety reads", async () => {
   const calls = [];
   const binding = fx.authed().api.readBindingManifest();
+  let cachedBinding = null;
   const h = await openMemory({
-    readBindingManifest: () => null,
-    syncDeviceBindings: async () => ({ status: "ready", binding }),
+    readBindingManifest: () => cachedBinding,
+    syncDeviceBindings: async () => { cachedBinding = binding; return { status: "ready", binding }; },
     getMemoryDays: async () => { calls.push("adult"); return { items: [] }; },
     getConversationReview: async () => { calls.push("adult-review"); return {}; },
     getUnreadGuardianNotifications: async () => { calls.push("safety"); return { newest: fx.SAFETY_ALERT, others_count: 0 }; },
@@ -165,9 +166,10 @@ test("confirmed empty bindings retain adult review", async () => {
 test("a confirmed child binding without its child never opens adult review", async () => {
   let adultReads = 0;
   const binding = { ...fx.authed().api.readBindingManifest(), primary_subject_ids: [] };
+  let cachedBinding = null;
   const h = await openMemory({
-    readBindingManifest: () => null,
-    syncDeviceBindings: async () => ({ status: "ready", binding }),
+    readBindingManifest: () => cachedBinding,
+    syncDeviceBindings: async () => { cachedBinding = binding; return { status: "ready", binding }; },
     getConversationReview: async () => { adultReads++; return {}; },
   });
   try {
@@ -179,9 +181,14 @@ test("a confirmed child binding without its child never opens adult review", asy
 test("retrying a failed cold binding read restores guardian safety and review", async () => {
   let available = false;
   const binding = fx.authed().api.readBindingManifest();
+  let cachedBinding = null;
   const h = await openMemory({
-    readBindingManifest: () => null,
-    syncDeviceBindings: async () => available ? { status: "ready", binding } : { status: "error", binding: null },
+    readBindingManifest: () => cachedBinding,
+    syncDeviceBindings: async () => {
+      if (!available) return { status: "error", binding: null };
+      cachedBinding = binding;
+      return { status: "ready", binding };
+    },
     ...fx.safetyAlertApi([fx.SAFETY_ALERT]),
   });
   try {
