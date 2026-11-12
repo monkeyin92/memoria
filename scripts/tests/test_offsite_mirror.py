@@ -10,11 +10,14 @@ import unittest
 SCRIPT = Path(__file__).resolve().parents[2] / 'infra/backup/offsite-mirror.sh'
 
 
+# Verified with encoding/json on the complete official minio-go v7.0.90 lifecycle.go.
+# https://github.com/minio/minio-go/blob/v7.0.90/pkg/lifecycle/lifecycle.go
+# mc RELEASE.2025-04-16T18-13-26Z cmd/ilm-rule-{import,export}.go reject zero rules.
 def policy(days=7, **changes):
     rule = {'Expiration': {'Days': days}, 'ID': 'memoria-offsite-retention',
             'NoncurrentVersionExpiration': {'NoncurrentDays': days}, 'Status': 'Enabled'}
     rule.update(changes)
-    return {'Rule': [rule]}
+    return {'Rules': [rule]}
 
 
 class OffsiteMirrorTest(unittest.TestCase):
@@ -30,7 +33,7 @@ class OffsiteMirrorTest(unittest.TestCase):
             (staging / 'LATEST').write_text('20261112T100000Z\n')
             (root / 'wal').mkdir()
             state = root / 'state.json'
-            state.write_text(json.dumps(initial or {'Rule': []}))
+            state.write_text(json.dumps(initial or {'Rules': []}))
             log = root / 'calls'
             mc = bin_dir / 'mc'
             mc.write_text('#!' + sys.executable + '\n' + '''import json, os, sys
@@ -40,24 +43,22 @@ with open(os.environ['CALLS'], 'a') as f: f.write(' '.join(args) + '\\n')
 state = Path(os.environ['STATE'])
 failure = os.environ['FAILURE']
 if args[:2] == ['version', 'info']: print('Enabled')
-elif args[:3] == ['ilm', 'rule', 'list']:
-    if failure == 'query': sys.exit(4)
-    if failure != 'create': print('Expiry 30d Disabled prefix=partial/')
-elif args[:3] == ['ilm', 'rule', 'add']:
-    if failure == 'create': sys.exit(3)
 elif args[:3] == ['ilm', 'rule', 'import']:
     data = json.load(sys.stdin)
-    days = int(os.environ.get('MEMORIA_OFFSITE_RETENTION_DAYS', '7'))
-    assert data['Rule'][0]['Expiration']['Days'] == days
-    assert data['Rule'][0]['NoncurrentVersionExpiration']['NoncurrentDays'] == days
+    if not data.get('Rules'):
+        print('The provided ILM configuration does not contain any rule, aborting.', file=sys.stderr)
+        sys.exit(1)
     if failure == 'create': sys.exit(3)
     if failure != 'ignored': state.write_text(json.dumps(data))
 elif args[:3] == ['ilm', 'rule', 'export']:
     if failure == 'query': print(state.read_text()); sys.exit(4)
     data = json.loads(state.read_text())
     if failure == 'malformed': print('Expiry'); sys.exit(0)
+    if not data.get('Rules'):
+        print('Unable to export lifecycle configuration. lifecycle configuration not set.', file=sys.stderr)
+        sys.exit(1)
     print(json.dumps(data, indent=1))
-    if os.environ['DRIFT'] == 'yes': state.write_text(json.dumps({'Rule': []}))
+    if os.environ['DRIFT'] == 'yes': state.write_text(json.dumps({'Rules': []}))
 elif args[0] == 'mirror' and failure == 'mirror': sys.exit(5)
 ''')
             mc.chmod(0o755)
@@ -113,7 +114,8 @@ elif args[0] == 'mirror' and failure == 'mirror': sys.exit(5)
     def test_default_and_explicit_days_sync_only_after_verified_configuration(self):
         for days in [None, *range(1, 8)]:
             with self.subTest(days=days):
-                _, calls, success = self.run_mirror(policy(days or 7), days=days)
+                result, calls, success = self.run_mirror(policy(days or 7), days=days)
+                self.assertEqual(result.returncode, 9, result.stderr)
                 self.assertIn('ilm rule export', calls)
                 self.assertEqual(calls.count('mirror --'), 4)
                 self.assertLess(calls.index('ilm rule export'), calls.index('mirror --'))
