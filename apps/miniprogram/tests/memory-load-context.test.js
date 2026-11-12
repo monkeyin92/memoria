@@ -929,3 +929,38 @@ for (const method of ["openConversation", "confirmCandidate", "retractMemory"]) 
     } finally { Date.now = now; h.restore(); }
   });
 }
+
+for (const failure of ["sync", "review"]) {
+  test(`failed ${failure} load blocks every action until a successful reload`, async () => {
+    const h = realRuntime(failure === "sync" ? null : SELF);
+    try {
+      const load = h.memory.onShow();
+      await flush();
+      const failed = h.pending(failure === "sync" ? "/device-bindings" : "conversation-review");
+      assert.ok(failed);
+      h.reply(failed, { detail: "回顾加载失败" }, 500);
+      await h.finish(load);
+      assert.equal(h.memory.data.loading, false);
+      const event = { currentTarget: { dataset: { sessionId: "session", claimId: "same-claim", pending: true } } };
+      const start = h.requests.length;
+      for (const method of ["openConversation", "confirmCandidate", "retractMemory"]) {
+        const operation = h.memory[method](event);
+        await flush();
+        assert.equal(h.requests.length, start, `${method} must not use a failed page`);
+        await operation;
+      }
+      h.api.selectDeviceBinding(failure === "sync" ? CHILD : SELF);
+      await h.finish(h.memory.onShow());
+      h.wx.showModal = (options) => options.success({ confirm: true });
+      const methods = failure === "sync" ? ["confirmCandidate", "retractMemory"] : ["openConversation", "confirmCandidate"];
+      for (const method of methods) {
+        const nextStart = h.requests.length;
+        await h.finish(h.memory[method](event));
+        const next = h.requests.slice(nextStart);
+        if (method === "openConversation") assert.ok(next.some((request) => request.url.includes("conversation-history")));
+        else assert.ok(next.some((request) => request.method === "POST" && request.url.includes(failure === "sync" ? "/guardian/minors/p_child/" : "/archive/memories/")));
+        assert.equal(h.memory.data.reviewingClaimId, "");
+      }
+    } finally { h.restore(); }
+  });
+}
