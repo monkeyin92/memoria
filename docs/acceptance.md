@@ -4,7 +4,7 @@
 
 ## 2026-11-12 深审软件修复
 
-源候选 `e26a798b1b0b03a33daa254e0717c8bce305276a`，基线 `71353afe`。以下软件验证与独立终审结果来自父任务记录，本次文档收尾未重跑软件套件。交付 [PR #592](https://github.com/monkeyin92/memoria/pull/592)，发布边界见 [交接入口](../HANDOFF.md#2026-11-12-深审软件修复未部署)。
+核心功能验证基准 `e26a798b`，基线 `71353afe`。完整 CI 后续暴露发布夹具、隔离演练和 7 项 PG 测试契约缺口，已分别由 `1dd74244`、`b27be8b2`、`15205f09` 修正；定向套件通过不表示旧候选完整 CI 通过。以下按对应版本记录验证范围，实际交付 head 与最终 CI 以 PR 收据为准。交付 [PR #592](https://github.com/monkeyin92/memoria/pull/592)，发布边界见 [交接入口](../HANDOFF.md#2026-11-12-深审软件修复未部署)。
 
 本轮已确认的 12 项软件修复如下。
 
@@ -24,18 +24,18 @@
 两项 followup 同步修复。
 
 - 身份缓存跨 owner 清理，mounted onboarding 继续 emit。
-- backup 对生命周期所有权与固定版本 mc 的紧凑 JSON `Rules` 输出 做 fail-closed 校验；未启用 bucket lifecycle。N+N 保留规则不保证物理删除时间 ≤7 天。
+- backup 对生命周期所有权与固定版本 mc 的紧凑 JSON `Rules` 输出做 fail-closed 校验；未启用 bucket lifecycle。N+N 保留规则不保证物理删除时间 ≤7 天。
 
 父任务记录的验证结果如下，各套件范围存在重叠，不合计通过数。
 
 | 范围 | 结果与边界 |
 | --- | --- |
-| PostgreSQL | 大套 1093 pass、0 fail、0 skip；最终 loopback 兼容小修后相关 PG 107 pass，与大套重叠。 |
+| PostgreSQL | 核心定向套件 1093 pass、0 fail、0 skip；loopback 修正后相关 PG 107 pass。交付夹具 `15205f09` 的 4 文件父级独立 PG 27 pass、零跳过，作者邻近 PG 61 pass；范围重叠不合计。 |
 | 小程序 | 827 pass、0 fail、1 skip；缺 Chrome 的 layout 用例未运行。必需的页面 failed-load 测试已补齐，移除 settled 门禁的变异会使新增的 2 条回归失败。 |
 | Python 与结构 | 严格 Mypy 覆盖 598 source files，全 Ruff、14 项 layer、budget、docs 检查及 diff 检查通过。 |
 | Go 与天气 | 父任务全 suite 与子任务 vet、race 通过；父任务天气相关 44 pass。 |
-| 发布与备份 | 父任务发布 CI 相关测试 166 pass，含 `/tmp` 与 rollback 场景；backup 16 pass。这是本地测试记录，不是远端 CI 或发布成功收据。 |
-| 独立终审 | Claude、Gemini、Grok、Codex 分域复核，各实现域由不同厂商评审，最终无阻塞或应改项。 |
+| 发布与备份 | 发布/过滤 166 pass，含 Bash 5、`/tmp` 与 rollback；脚本全量 887 pass、6 skip（4 项需 PG、2 项需 `/proc`）；backup 16 pass。本地结果不替代最终远端 CI。 |
+| 独立终审 | 核心分域复核无阻塞；交付复核为 PASS+NOTES，临时文件负断言及验证版本说明两项应改已补齐。最终 CI 状态见 PR。 |
 
 `code` 和本地链路 `wired` 已验证。生产 `wired`、`enabled` 与本候选设备验收均未完成；本轮无生产变更、部署、线上擦除、bucket lifecycle 启用、上传或设备操作，无依赖升级。N-11 继续保留在唯一未完成队列。历史真机通过记录不构成本候选通过证据。
 

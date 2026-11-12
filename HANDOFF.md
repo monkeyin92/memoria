@@ -16,7 +16,7 @@
 
 ## 2026-11-12 深审软件修复（未部署）
 
-本轮 12 项及 2 项 followup 已完成软件修复与本地验证。源候选 `e26a798b1b0b03a33daa254e0717c8bce305276a`，基线 `71353afe`；交付 [PR #592](https://github.com/monkeyin92/memoria/pull/592)，合并状态与提交以该 PR 的 GitHub 收据为准。范围、父任务验证记录和排除项见 [本轮验收](docs/acceptance.md#2026-11-12-深审软件修复)。
+本轮 12 项及 2 项 followup 已完成软件修复与分批本地验证，基线 `71353afe`。核心功能验证基准为 `e26a798b`；交付前 CI 暴露的发布、演练及 7 项 PG 测试契约缺口已分别在 `1dd74244`、`b27be8b2`、`15205f09` 修正，后者父级独立 PG 27 项全通过、零跳过。定向套件通过不代表旧候选完整 CI 通过；交付 [PR #592](https://github.com/monkeyin92/memoria/pull/592)，合并状态与提交以该 PR 的 GitHub 收据为准。范围、父任务验证记录和排除项见 [本轮验收](docs/acceptance.md#2026-11-12-深审软件修复)。
 
 `code` 与本地 `wired` 已验证，生产 `wired`、`enabled` 和本候选 `device_verified` 未验收。本轮没有生产变更、部署、线上擦除、bucket lifecycle 启用、小程序上传或设备操作，也没有依赖升级。N-11 仍在 [未完成队列](TODOLIST.md)，历史设备收据不能替代本候选设备验收。原始执行证据 `outputs/acceptance/deep-audit-fixes/execution.md` 与 `execution.tsv` 被 Git 忽略，不随 fresh clone 提供；清理前转存至主仓 `/Users/monkeyin/projects/memoria/outputs/acceptance/deep-audit-fixes/`，不随分支清理删除。
 

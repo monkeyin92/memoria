@@ -2390,7 +2390,8 @@ def test_component_rejects_legacy_registration_before_compose_up(
     assert result.returncode != 0
     assert "does not support record-override" in result.stderr
     assert not calls
-    assert not list(host.tmp.glob("memoria-contract-*"))
+    image = CONTROL_IMAGE if role == "control" else BRIDGE_IMAGE
+    assert not list(host.tmp.glob(f"memoria-{image.split(':', 1)[1]}-*"))
 
 
 @pytest.mark.parametrize("role", ["agent", "control"])
