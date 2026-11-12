@@ -324,6 +324,12 @@ Page({
     return this._reviewState(context) === "current";
   },
 
+  async _recoverReviewContext(context) {
+    const state = this._reviewState(context);
+    if (state === "guest") this._enterGuestState();
+    if (state === "changed") await this.loadDays();
+  },
+
   onShow() {
     if (typeof this.getTabBar === "function" && this.getTabBar()) { this.getTabBar().setData({ selected: 1 }); }
     const authenticated = api.hasAuthenticatedSession();
@@ -630,21 +636,21 @@ Page({
   },
 
   async openConversation(event) {
-    const authEpoch = api.currentAuthEpoch();
     const context = this._reviewRequest;
-    const snapshot = bindingSnapshot(api.readBindingManifest?.() || null);
-    const userId = api.currentIdentity()?.user_id;
-    if (!(await requireLogin({ reason: "view_memory" }))) return;
-    if (context !== this._reviewRequest || !api.isAuthEpochCurrent(authEpoch) ||
-        api.currentIdentity()?.user_id !== userId || snapshot !== bindingSnapshot(api.readBindingManifest?.() || null)) return;
+    if (!(await requireLogin({ reason: "view_memory" }))) {
+      await this._recoverReviewContext(context);
+      return;
+    }
+    if (!this._isReviewCurrent(context)) {
+      await this._recoverReviewContext(context);
+      return;
+    }
+    if (context.kind !== "adult") return;
     const sessionId = event?.currentTarget?.dataset?.sessionId;
     if (!sessionId || this.data.conversationLoading) return;
     this._conversationRequestSeq = (this._conversationRequestSeq || 0) + 1;
     const requestSeq = this._conversationRequestSeq;
-    const isCurrent = () => requestSeq === this._conversationRequestSeq &&
-      context === this._reviewRequest && api.isAuthEpochCurrent(authEpoch) &&
-      api.hasAuthenticatedSession() && api.currentIdentity()?.user_id === userId &&
-      snapshot === bindingSnapshot(api.readBindingManifest?.() || null);
+    const isCurrent = () => requestSeq === this._conversationRequestSeq && this._isReviewCurrent(context);
     this.setData({
       conversationLoading: true,
       selectedConversationSessionId: sessionId,
@@ -653,10 +659,16 @@ Page({
     });
     try {
       const result = await api.getConversationHistory(sessionId, 20);
-      if (!isCurrent()) return;
+      if (!isCurrent()) {
+        await this._recoverReviewContext(context);
+        return;
+      }
       this.setData({ conversationTurns: result.turns || [] });
     } catch (error) {
-      if (!isCurrent()) return;
+      if (!isCurrent()) {
+        await this._recoverReviewContext(context);
+        return;
+      }
       this.setData({
         selectedConversationSessionId: "",
         conversationTurns: [],
@@ -750,8 +762,15 @@ Page({
   async confirmCandidate(event) {
     const context = this._reviewRequest;
     const subjectId = this.data.guardianMode ? this.data.guardianSubjectId : "";
-    if (!(await requireLogin({ reason: "view_memory" }))) return;
-    if (!this._isReviewCurrent(context) || context.kind === "pending") return;
+    if (!(await requireLogin({ reason: "view_memory" }))) {
+      await this._recoverReviewContext(context);
+      return;
+    }
+    if (!this._isReviewCurrent(context)) {
+      await this._recoverReviewContext(context);
+      return;
+    }
+    if (context.kind === "pending") return;
     const claimId = event?.currentTarget?.dataset?.claimId;
     if (typeof claimId !== "string" || !claimId) return;
     if (this.data.reviewingClaimId) return;
@@ -760,18 +779,27 @@ Page({
       await (subjectId
         ? api.reviewGuardianChildMemory(subjectId, claimId, "confirm")
         : api.reviewMemoryClaim(claimId));
-      if (!this._isReviewCurrent(context)) return;
+      if (!this._isReviewCurrent(context)) {
+        await this._recoverReviewContext(context);
+        return;
+      }
       const refresh = this.loadDays();
       const refreshedContext = this._reviewRequest;
       const refreshed = await refresh;
-      if (!this._isReviewCurrent(refreshedContext)) return;
+      if (!this._isReviewCurrent(refreshedContext)) {
+        await this._recoverReviewContext(refreshedContext);
+        return;
+      }
       if (refreshed === "ok" && subjectId) {
         wx.showToast({ title: "已确认，会记住", icon: "success" });
       } else if (refreshed === "ok") {
         wx.showToast({ title: "已确认", icon: "success" });
       }
     } catch (error) {
-      if (!this._isReviewCurrent(context)) return;
+      if (!this._isReviewCurrent(context)) {
+        await this._recoverReviewContext(context);
+        return;
+      }
       this.setData({ error: error?.message || "确认失败，请稍后再试。" });
     } finally {
       if (this._reviewRequest === context && this.data.reviewingClaimId === claimId) this.setData({ reviewingClaimId: "" });
@@ -785,8 +813,15 @@ Page({
   async retractMemory(event) {
     const context = this._reviewRequest;
     const subjectId = this.data.guardianMode ? this.data.guardianSubjectId : "";
-    if (!(await requireLogin({ reason: "view_memory" }))) return;
-    if (!subjectId || !this._isReviewCurrent(context) || context.kind !== "guardian") return;
+    if (!(await requireLogin({ reason: "view_memory" }))) {
+      await this._recoverReviewContext(context);
+      return;
+    }
+    if (!this._isReviewCurrent(context)) {
+      await this._recoverReviewContext(context);
+      return;
+    }
+    if (!subjectId || context.kind !== "guardian") return;
     const dataset = event?.currentTarget?.dataset || {};
     const claimId = dataset.claimId;
     if (typeof claimId !== "string" || !claimId || this.data.reviewingClaimId) return;
@@ -800,18 +835,31 @@ Page({
         fail: () => resolve(false),
       });
     });
-    if (!agreed || !this._isReviewCurrent(context) || this.data.reviewingClaimId) return;
+    if (!this._isReviewCurrent(context)) {
+      await this._recoverReviewContext(context);
+      return;
+    }
+    if (!agreed || this.data.reviewingClaimId) return;
     this.setData({ reviewingClaimId: claimId, error: "" });
     try {
       await api.reviewGuardianChildMemory(subjectId, claimId, "retract");
-      if (!this._isReviewCurrent(context)) return;
+      if (!this._isReviewCurrent(context)) {
+        await this._recoverReviewContext(context);
+        return;
+      }
       const refresh = this.loadDays();
       const refreshedContext = this._reviewRequest;
       const refreshed = await refresh;
-      if (!this._isReviewCurrent(refreshedContext)) return;
+      if (!this._isReviewCurrent(refreshedContext)) {
+        await this._recoverReviewContext(refreshedContext);
+        return;
+      }
       if (refreshed === "ok") wx.showToast({ title: pending ? "已不记" : "已忘掉", icon: "success" });
     } catch (error) {
-      if (!this._isReviewCurrent(context)) return;
+      if (!this._isReviewCurrent(context)) {
+        await this._recoverReviewContext(context);
+        return;
+      }
       this.setData({ error: error?.message || "操作失败，请稍后再试。" });
     } finally {
       if (this._reviewRequest === context && this.data.reviewingClaimId === claimId) this.setData({ reviewingClaimId: "" });

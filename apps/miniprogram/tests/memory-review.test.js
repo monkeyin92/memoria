@@ -222,6 +222,7 @@ test("late conversation detail after logout clears the transient selection state
       getConversationHistory: async () => historyReady,
     });
     try {
+      await page.loadDays();
       const pending = page.openConversation({
         currentTarget: { dataset: { sessionId: "session-late" } },
       });

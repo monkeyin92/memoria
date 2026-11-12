@@ -512,7 +512,7 @@ for (const outcome of ["resolve", "reject"]) {
       const old = h.pending("conversation-history");
       h.api.selectDeviceBinding({ ...SELF, binding_version: 2 });
       h.reply(old, outcome === "resolve" ? { turns: [{ owner_text: "旧详情" }] } : { detail: "旧详情失败" }, outcome === "resolve" ? 200 : 500);
-      await detail;
+      await h.finish(detail);
       assert.equal(h.memory.data.conversationLoading, false);
       assert.equal(h.memory.data.selectedConversationSessionId, "");
       assert.deepEqual(h.memory.data.conversationTurns, []);
@@ -606,7 +606,13 @@ for (const change of ["binding", "account", "newload", "unload"]) {
       const writes = h.memory.writes.length;
       modal.success({ confirm: true });
       await h.finish(retract);
-      assert.equal(h.memory.writes.length, writes);
+      if (change === "binding") {
+        assert.ok(h.memory.writes.length > writes);
+        assert.equal(h.memory.data.guardianSubjectId, "p_other");
+        assert.equal(h.memory.data.loading, false);
+      } else {
+        assert.equal(h.memory.writes.length, writes);
+      }
       assert.equal(h.requests.filter((request) => request.method === "POST" && request.url.includes("/memories/")).length, 0);
       assert.equal(h.memory.data.reviewingClaimId, "");
     } finally { h.restore(); }
@@ -720,9 +726,12 @@ for (const method of ["openConversation", "confirmCandidate", "retractMemory"]) 
       h.api.selectDeviceBinding({ ...CHILD, binding_version: 2, primary_subject_ids: ["p_other"] });
       const writes = h.memory.writes.length;
       const requests = h.requests.length;
-      await operation;
-      assert.equal(h.memory.writes.length, writes);
-      assert.equal(h.requests.length, requests);
+      await h.finish(operation);
+      assert.ok(h.memory.writes.length > writes);
+      assert.ok(h.requests.length > requests);
+      assert.equal(h.memory.data.guardianSubjectId, "p_other");
+      assert.equal(h.memory.data.loading, false);
+      assert.equal(h.requests.slice(requests).some((request) => request.url.includes("conversation-history") || request.method === "POST"), false);
     } finally { h.restore(); }
   });
 }
@@ -788,4 +797,57 @@ for (const change of ["newload", "unload", "authclear"]) {
       } finally { h.restore(); }
     });
   }
+}
+
+for (const binding of [CHILD, null]) {
+  test(`settled adult detail rejects a late ${binding ? "child" : "empty"} binding and refreshes the page`, async () => {
+    const h = realRuntime();
+    try {
+      await h.finish(h.memory.onShow());
+      if (binding) h.api.selectDeviceBinding(binding);
+      else h.api.clearDeviceBindingContext();
+      const start = h.requests.length;
+      await h.finish(h.memory.openConversation({ currentTarget: { dataset: { sessionId: "session" } } }));
+      assert.equal(h.requests.slice(start).some((request) => request.url.includes("conversation-history")), false);
+      assert.equal(h.memory.data.loading, false);
+      assert.deepEqual(h.memory.data.conversationTurns, []);
+      assert.equal(h.memory.data.guardianSubjectId, binding ? "p_child" : "");
+      assert.doesNotMatch(h.text(), /成人私密原话详情/);
+    } finally { h.restore(); }
+  });
+}
+for (const method of ["confirmCandidate", "retractMemory"]) {
+  test(`settled ${method} refreshes a changed binding instead of silently ignoring the action`, async () => {
+    const h = realRuntime(CHILD);
+    try {
+      await h.finish(h.memory.onShow());
+      h.api.selectDeviceBinding({ ...CHILD, binding_version: 2, primary_subject_ids: ["p_other"] });
+      const start = h.requests.length;
+      await h.finish(h.memory[method]({ currentTarget: { dataset: { claimId: "same-claim", pending: true } } }));
+      assert.equal(h.memory.data.guardianSubjectId, "p_other");
+      assert.equal(h.memory.data.loading, false);
+      assert.equal(h.memory.data.reviewingClaimId, "");
+      assert.ok(h.requests.length > start);
+      assert.equal(h.requests.slice(start).some((request) => request.method === "POST"), false);
+    } finally { h.restore(); }
+  });
+  test(`in-flight ${method} refreshes after the server reply when only the binding version changes`, async () => {
+    const h = realRuntime(CHILD);
+    try {
+      await h.finish(h.memory.onShow());
+      h.wx.showModal = (options) => options.success({ confirm: true });
+      const operation = h.memory[method]({ currentTarget: { dataset: { claimId: "same-claim", pending: true } } });
+      await flush();
+      const old = h.pending("/memories/same-claim/review");
+      assert.ok(old);
+      h.api.selectDeviceBinding({ ...CHILD, binding_version: 2 });
+      const start = h.requests.length;
+      h.reply(old, {});
+      await h.finish(operation);
+      assert.ok(h.requests.length > start);
+      assert.equal(h.memory.data.loading, false);
+      assert.equal(h.memory.data.reviewingClaimId, "");
+      assert.equal(h.memory._reviewRequest.binding.binding_version, 2);
+    } finally { h.restore(); }
+  });
 }
