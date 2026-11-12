@@ -199,3 +199,26 @@ test('same owner cold-start token refresh preserves the mounted onboarding snaps
     assert.equal(binding.readBindingManifest().account_owner_id, 'u_parent');
   } finally { controller.dispose(); }
 });
+
+for (const result of ['networks', 'error']) {
+  test(`late BLE scan ${result} cannot refill a controller after identity reset`, async () => {
+    login('u_parent');
+    const snapshots = [];
+    const controller = new OnboardingController({ onChange: (value) => snapshots.push(value) });
+    let resolveScan;
+    let rejectScan;
+    const response = new Promise((resolve, reject) => { resolveScan = resolve; rejectScan = reject; });
+    controller._transport = { request: () => response, dispose() {} };
+    try {
+      const scanning = controller.loadWifiNetworks();
+      app.clearAuthenticatedIdentity(); login('u_parent'); controller.startScan();
+      const count = snapshots.length;
+      const current = controller.snapshot();
+      if (result === 'networks') resolveScan({ networks: [{ ssid: 'previous-owner-wifi', rssi: -40, security: 'wpa2', channel: 6 }] });
+      else rejectScan(new Error('previous-owner-error'));
+      assert.deepEqual(await scanning, []);
+      assert.deepEqual(controller.snapshot(), current);
+      assert.equal(snapshots.length, count);
+    } finally { controller.dispose(); }
+  });
+}
