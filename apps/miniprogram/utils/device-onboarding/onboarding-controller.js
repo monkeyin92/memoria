@@ -115,6 +115,21 @@ class OnboardingController {
     this._activationSince = null;
     this._bootstrapPop = "";
     this._disposed = false;
+    const app = typeof getApp === "function" ? getApp() : null;
+    this._unsubscribeAuthCleared = app?.subscribeAuthCleared?.(() => {
+      this._attemptEpoch += 1;
+      this._resetSession();
+      this.clearSensitiveInput();
+      this._disposeBle();
+      this._wifiNetworks = [];
+      this._network = null;
+      this._state = "prepare";
+      this._busy = false;
+      this._error = "";
+      this._errorCode = "";
+      this._activationSince = null;
+      this._emit();
+    });
     this._emit();
   }
 
@@ -333,14 +348,16 @@ class OnboardingController {
 
   async loadWifiNetworks() {
     if (!this._transport) return [];
+    const epoch = this._attemptEpoch;
     try {
       const response = await this._transport.request("prov-scan", {});
+      if (!this._isCurrent(epoch)) return [];
       const networks = normalizeWifiNetworks(response?.networks || response);
       this._wifiNetworks = networks;
       this._emit();
       return networks;
     } catch (error) {
-      this._setError(error);
+      if (this._isCurrent(epoch)) this._setError(error);
       return [];
     }
   }
@@ -750,6 +767,8 @@ class OnboardingController {
   }
 
   dispose() {
+    this._unsubscribeAuthCleared?.();
+    this._unsubscribeAuthCleared = null;
     this._disposed = true;
     this._attemptEpoch += 1;
     this.stopActivationPolling();

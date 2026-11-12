@@ -10,7 +10,7 @@ function main() {
   const legal = require(resolved);
   if (legal.INTERNAL_TEST_CONSENT_UNLOCK === true) {
     console.error(
-      "INTERNAL_TEST_CONSENT_UNLOCK is true. An experience build must flip it locally and must not commit it.",
+      "INTERNAL_TEST_CONSENT_UNLOCK is true. You must not commit it. Use upload:test -- --internal-test-consent-unlock to inject it into an isolated build.",
     );
     process.exit(1);
   }

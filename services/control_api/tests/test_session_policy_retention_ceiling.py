@@ -22,7 +22,13 @@ async def test_live_retention_dominates_profile_capability(monkeypatch, allowed)
     }
     before = deepcopy(profile)
     session = {"user_id": "parent", "interaction_mode": "companion", "mode_policy_version": "v1"}
-    monkeypatch.setattr(interaction, "require_active_voice_session", lambda *a: session)
+
+    def require_session(request, session_id, *, terminal_response=False):
+        assert session_id == "session"
+        assert terminal_response is True
+        return session
+
+    monkeypatch.setattr(interaction, "require_active_voice_session", require_session)
     monkeypatch.setattr(
         interaction, "current_persistent_runtime_profile", AsyncMock(return_value=profile)
     )

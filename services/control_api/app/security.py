@@ -250,11 +250,11 @@ def require_matching_user(requested_user_id: str, user: AuthenticatedUser) -> st
     return user.user_id
 
 
-def require_active_voice_session(request: Request, session_id: str) -> dict[str, Any]:
+def require_active_voice_session(request: Request, session_id: str, *, terminal_response: bool = False) -> dict[str, Any]:
     """Resolve session ownership without reviving data after deletion starts."""
     store = cast(MemoryStore, request.app.state.memory_store)
     if store.is_voice_session_tombstoned(session_id=session_id):
-        raise HTTPException(status_code=410, detail="voice session was deleted")
+        raise HTTPException(status_code=410, detail={"code": "session_terminated", "reason": "voice_session_deleted"} if terminal_response else "voice session was deleted")
     session = store.get_voice_session_by_id(session_id=session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="voice session not found")
@@ -268,5 +268,5 @@ def require_active_voice_session(request: Request, session_id: str) -> dict[str,
         if isinstance(value, str) and value
     }
     if any(store.is_account_unavailable(user_id=account_id) for account_id in account_ids):
-        raise HTTPException(status_code=410, detail="voice session was deleted")
+        raise HTTPException(status_code=410, detail={"code": "session_terminated", "reason": "voice_session_deleted"} if terminal_response else "voice session was deleted")
     return session

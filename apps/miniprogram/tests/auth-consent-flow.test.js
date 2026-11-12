@@ -128,3 +128,34 @@ test("a failed login stays on the page and does not keep a phone request in flig
     harness.restore();
   }
 });
+
+test("auth decodes a raw redirect once and retains the encoded notification id", () => {
+  const target = "/pages/attention/index?id=" + encodeURIComponent("提醒/50%+&=?");
+  const h = loadPage("pages/auth/index", { api: authApi().api });
+  try {
+    h.page.onLoad({ redirect: encodeURIComponent(target) });
+    h.page.finishLogin();
+    assert.deepEqual(h.wxCalls.filter((call) => call.name === "redirectTo").map((call) => call.args[0]), [{ url: target }]);
+  } finally { h.restore(); }
+});
+
+test("auth safely falls back for malformed or unsafe redirect queries", () => {
+  for (const redirect of [undefined, "%E0%A4%A", "%ZZ", "%252Fpages%252Fattention%252Findex", "https%3A%2F%2Fevil.test", "%2F%2Fevil.test"]) {
+    const h = loadPage("pages/auth/index", { api: authApi().api });
+    try {
+      assert.doesNotThrow(() => h.page.onLoad({ redirect }));
+      h.page.finishLogin();
+      assert.deepEqual(h.wxCalls.filter((call) => call.name === "switchTab").map((call) => call.args[0]), [{ url: "/pages/home/index" }]);
+    } finally { h.restore(); }
+  }
+});
+
+test("ordinary redirects work without getCurrentPages", () => {
+  const h = loadPage("pages/auth/index", { api: authApi().api });
+  try {
+    h.page.onLoad({ redirect: encodeURIComponent("/pages/persona-custom/index") });
+    delete global.getCurrentPages;
+    h.page.finishLogin();
+    assert.deepEqual(h.wxCalls.filter((call) => call.name === "redirectTo").map((call) => call.args[0]), [{ url: "/pages/persona-custom/index" }]);
+  } finally { h.restore(); }
+});

@@ -82,7 +82,7 @@ async def test_compliance_doc_keyset_matches_the_recorded_request() -> None:
     )
     assert await weather.resolve(query="未来五天南京天气") == (
         "南京未来五天：今天多云，15到24度；明天多云，15到24度；后天多云，15到24度；"
-        "第四天多云，15到24度；第五天多云，15到24度。"
+        "大后天多云，15到24度；第五天多云，15到24度。"
     )
     await weather.aclose()
 

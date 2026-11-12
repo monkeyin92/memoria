@@ -57,6 +57,7 @@ from services.session_runtime.errors import (
     PersistentSessionDenied,
     PersistentSessionExpired,
     PersistentSessionNotFound,
+    PersistentSessionTerminated,
     PersistentSessionUnavailable,
 )
 from services.session_runtime.issue_authority import SessionIssueAuthorityMixin
@@ -492,15 +493,14 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
         session_id: str,
         now: datetime,
     ) -> tuple[RuntimeProfileSignedV2, SessionRuntimeContext]:
-        """Load current authority and reject stale private-read consent."""
+        """Load current authority and recheck the profile's required consents."""
         profile, context = await self._current_profile_context(actor_id=actor_id, session_id=session_id, now=now)
-        await self._require_private_profile_consent(profile, now=now)
+        await self._require_profile_consent(profile, now=now)
         return profile, context
 
     async def _current_profile_context(
         self, *, actor_id: str, session_id: str, now: datetime,
     ) -> tuple[RuntimeProfileSignedV2, SessionRuntimeContext]:
-        """Validate active identity, signature, TTL and binding for lifecycle work."""
         try:
             async with self._store.read_transaction(actor_id=actor_id) as connection:
                 profile, context = await self._load_active_profile_context(
@@ -520,7 +520,7 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
         except asyncpg.PostgresError as exc:
             raise PersistentSessionUnavailable(str(exc)) from exc
         if not still_current:
-            raise PersistentSessionDenied("session binding is no longer active")
+            raise PersistentSessionTerminated("session binding is no longer active")
         return profile, context
 
     async def switch_subject(
@@ -619,7 +619,7 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
         except asyncpg.PostgresError as exc:
             raise PersistentSessionUnavailable(str(exc)) from exc
         if not still_current:
-            raise PersistentSessionDenied("session binding is no longer active")
+            raise PersistentSessionTerminated("session binding is no longer active")
         if current.issued_at <= now < current.expires_at:
             # Another caller already renewed this Session.
             return current
@@ -871,31 +871,18 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
         reason_code: str,
         now: datetime,
     ) -> SessionCloseResult:
-        """Apply the distinct idempotent session_closed authority transition.
+        """Close once as the actor the stored profile names."""
 
-        A normal close is never labeled session_failed. The transition
-        advances the session and conversation fences and writes one session_closed event
-        plus its outbox row atomically; a retried close of the same expected
-        profile/epoch is an idempotent replay that applies nothing and never
-        marks a failed session closed.
-        """
-
-        reason_code = reason_code.strip()
-        if not reason_code or len(reason_code) > 64:
-            raise ValueError("reason_code must be a bounded non-blank string")
+        reason_code = self._close_reason(reason_code)
         try:
             profile, context = await self._active_profile_context(
-                actor_id=actor_id,
-                session_id=session_id,
+                actor_id=actor_id, session_id=session_id,
             )
         except PersistentSessionNotFound:
             # The session is not active. Distinguish an idempotent
             # already-closed replay from an unknown or failed authority.
             async with self._store.read_transaction(actor_id=actor_id) as connection:
-                stored = await self._store.context_any_state(
-                    connection,
-                    session_id=session_id,
-                )
+                stored = await self._store.context_any_state(connection, session_id=session_id)
             if stored is None or stored[0].actor_id != actor_id:
                 raise PersistentSessionNotFound(session_id) from None
             if stored[1] == "closed":
@@ -906,12 +893,22 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
         if profile.actor_id != actor_id:
             raise PersistentSessionDenied("only the profile actor may close a Session")
         self._require_profile_signature(profile)
+        return await self._commit_close(profile, context, reason_code=reason_code, now=now)
 
+    async def _commit_close(
+        self,
+        profile: RuntimeProfileSignedV2,
+        context: SessionRuntimeContext,
+        *,
+        reason_code: str,
+        now: datetime,
+    ) -> SessionCloseResult:
+        """Commit session_closed as the profile actor; the SQL CAS rejects a rotated head."""
         event = SessionEvent.model_validate(
             {
                 "event_id": f"event-{uuid.uuid4()}",
                 "event_type": "session_closed",
-                "session_id": session_id,
+                "session_id": context.session_id,
                 "session_epoch": context.session_epoch + 1,
                 "device_id": profile.device_id,
                 "binding_id": profile.binding_id,
@@ -922,7 +919,7 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
                 "event_sequence": context.profile_revision + 1,
                 "active_subject_id": None,
                 "runtime_profile_id": profile.runtime_profile_id,
-                "actor_id": actor_id,
+                "actor_id": profile.actor_id,
                 "subject_revision": 0,
                 "occurred_at": now.isoformat(),
                 "payload": {
@@ -941,7 +938,7 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
         )
         try:
             async with self._store.action_transaction(
-                actor_id=actor_id,
+                actor_id=profile.actor_id,
                 device_id=profile.device_id,
                 subject_id=context.active_subject_id,
             ) as connection:
@@ -1140,7 +1137,7 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
         if current.runtime_profile_id != requested.runtime_profile_id:
             raise PersistentSessionDenied("runtime profile is stale")
         if capability == "memory_recall_private" or data_classification == "private":
-            await self._require_private_profile_consent(requested, now=now)
+            await self._require_profile_consent(requested, now=now)
         try:
             async with self._store.action_transaction(
                 actor_id=actor_id,

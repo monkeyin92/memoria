@@ -15,7 +15,7 @@ async function main() {
   }
 
   const projectConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  const requireFromProject = createRequire(path.join(projectPath, "package.json"));
+  const requireFromProject = createRequire(path.join(__dirname, "../apps/miniprogram/package.json"));
   const ci = requireFromProject("miniprogram-ci");
   const project = new ci.Project({
     appid: projectConfig.appid,

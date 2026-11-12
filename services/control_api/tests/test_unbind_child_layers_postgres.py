@@ -1,10 +1,9 @@
-"""Real-PostgreSQL contract for unbind: it always erases the child layers.
+"""Real-PostgreSQL contract for unbind: last-binding unbind erases child memory through the subject saga.
 
 Unbind has no keep/delete choice any more (#283): the child's summaries and
 long-term archive go, the consents that justified them are withdrawn, and the
-identity row is cleared. The control API is driven over HTTP while
-``child_layer_store`` is a real ``ChildLayerStore`` against a fresh database
-from the memory-scope fixture. Skipped unless ``MEMORIA_TEST_POSTGRES_DSN`` is
+identity row is cleared. The HTTP API uses the real subject-erasure port
+against the same fresh PostgreSQL database as the child-layer writes. Skipped unless ``MEMORIA_TEST_POSTGRES_DSN`` is
 set.
 """
 
@@ -31,6 +30,7 @@ from services.guardian.child_memory import (
     DialogueSummary,
 )
 from services.memory_scope.child_layers import ChildLayerRecord, ChildLayerStore
+from services.memory_scope.subject_erasure import PostgresSubjectMemoryScope
 from services.memory_scope.tests import test_postgres_store
 from services.memory_scope.tests.test_child_layers_postgres import (
     _close_layers,
@@ -263,6 +263,8 @@ async def test_unbind_deletes_every_child_layer_without_a_data_switch(
     _configure(monkeypatch, tmp_path)
     app = create_app()
     app.state.child_layer_store = store
+    scope = PostgresSubjectMemoryScope(store._maintenance_dsn)
+    app.state.subject_deletion._memory_scope = scope
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -313,29 +315,23 @@ async def test_unbind_deletes_every_child_layer_without_a_data_switch(
                 await _child_layer_audit(admin_db_dsn, action="child_layer_retain")
                 == []
             )
-            audit = await _child_layer_audit(admin_db_dsn)
-            assert {_payload(row)["kind"] for row in audit} == {
-                KIND_DIALOGUE_SUMMARY,
-                KIND_CHILD_ARCHIVE,
-            }
-            for row in audit:
-                assert row["action"] == "child_layer_erase"
-                assert row["actor_subject_id"] == "system:child_layer_erase"
-                assert started_at <= row["created_at"] <= finished_at
-            serialized = "\n".join(_serialized(row) for row in audit)
+            assert await _child_layer_audit(admin_db_dsn) == []
+            audit = await _child_layer_audit(admin_db_dsn, action="memory.subject.erased")
+            assert len(audit) == 1
+            row = audit[0]
+            assert row["actor_subject_id"] == "governance"
+            assert row["subject_id"] == child_id
+            assert _payload(row) == {}
+            assert started_at <= row["created_at"] <= finished_at
+            serialized = _serialized(row)
             for value in (
-                child_id,
-                owner_id,
-                body["binding_id"],
-                DEVICE_ID,
-                summary.record_id,
-                archive.record_id,
-                SUMMARY_TEXT,
-                ARCHIVE_TEXT,
-                "使用人",
+                owner_id, body["binding_id"], DEVICE_ID, summary.record_id,
+                archive.record_id, SUMMARY_TEXT, ARCHIVE_TEXT, "使用人",
             ):
                 assert value not in serialized, value
+
     finally:
+        await scope.close()
         await _close_layers(store, bootstrap, admin_db_dsn)
 
 
@@ -351,6 +347,8 @@ async def test_unbind_written_with_the_old_keep_flag_still_deletes(
     _configure(monkeypatch, tmp_path)
     app = create_app()
     app.state.child_layer_store = store
+    scope = PostgresSubjectMemoryScope(store._maintenance_dsn)
+    app.state.subject_deletion._memory_scope = scope
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -365,6 +363,7 @@ async def test_unbind_written_with_the_old_keep_flag_still_deletes(
             assert response.json()["child_layers_purged"] == "completed"
             assert await _memory_counts(admin_db_dsn, child_id) == {}
     finally:
+        await scope.close()
         await _close_layers(store, bootstrap, admin_db_dsn)
 
 
@@ -378,6 +377,8 @@ async def test_a_rebound_device_starts_without_the_erased_child(
     _configure(monkeypatch, tmp_path)
     app = create_app()
     app.state.child_layer_store = store
+    scope = PostgresSubjectMemoryScope(store._maintenance_dsn)
+    app.state.subject_deletion._memory_scope = scope
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -413,6 +414,7 @@ async def test_a_rebound_device_starts_without_the_erased_child(
             assert new_child != child_id
             assert await _memory_counts(admin_db_dsn, new_child) == {}
     finally:
+        await scope.close()
         await _close_layers(store, bootstrap, admin_db_dsn)
 
 
@@ -426,6 +428,8 @@ async def test_new_identity_after_unbind_does_not_restore_the_erased_layers(
     _configure(monkeypatch, tmp_path)
     app = create_app()
     app.state.child_layer_store = store
+    scope = PostgresSubjectMemoryScope(store._maintenance_dsn)
+    app.state.subject_deletion._memory_scope = scope
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -464,4 +468,5 @@ async def test_new_identity_after_unbind_does_not_restore_the_erased_layers(
                 item["person_id"] for item in candidates_b.json()["subjects"]
             ] == [child_b]
     finally:
+        await scope.close()
         await _close_layers(store, bootstrap, admin_db_dsn)
