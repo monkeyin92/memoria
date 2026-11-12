@@ -348,14 +348,16 @@ class OnboardingController {
 
   async loadWifiNetworks() {
     if (!this._transport) return [];
+    const epoch = this._attemptEpoch;
     try {
       const response = await this._transport.request("prov-scan", {});
+      if (!this._isCurrent(epoch)) return [];
       const networks = normalizeWifiNetworks(response?.networks || response);
       this._wifiNetworks = networks;
       this._emit();
       return networks;
     } catch (error) {
-      this._setError(error);
+      if (this._isCurrent(epoch)) this._setError(error);
       return [];
     }
   }
