@@ -692,7 +692,7 @@ async def unbind_device(
     released = tuple(s.subject_id for s in revocation.subjects if s.outcome == "released")
     if released:
         withdrawn = await _withdraw_bound_subject_consents(
-            request, user=user, binding_id=binding.binding_id, subject_ids=released,
+            request, account_owner_id=binding.account_owner_person_id, binding_id=binding.binding_id, subject_ids=released,
         )
         subject_deletion = identity_cleared = child_layers_purged = "pending"
         if deletion is not None:
@@ -701,7 +701,7 @@ async def unbind_device(
                 try:
                     await forget_subject_plans(request.app.state, subject_id)
                     await deletion.delete_subject(
-                        SubjectScope(account_id=user.user_id, subject_id=subject_id), redact_identity=True,
+                        SubjectScope(account_id=binding.account_owner_person_id, subject_id=subject_id), redact_identity=True,
                     )
                 except Exception:
                     logger.exception("subject deletion after unbind is incomplete")
@@ -742,7 +742,7 @@ async def _release_fleet_binding(request: Request, *, device_id: str, binding_id
 async def _withdraw_bound_subject_consents(
     request: Request,
     *,
-    user: AuthenticatedUser,
+    account_owner_id: str,
     binding_id: str,
     subject_ids: tuple[str, ...],
 ) -> int:
@@ -765,12 +765,12 @@ async def _withdraw_bound_subject_consents(
     guardian_store = getattr(request.app.state, "guardian_store", None)
     withdrawn = 0
     for subject_id in subject_ids:
-        if subject_id == user.user_id:
+        if subject_id == account_owner_id:
             continue
         try:
             if service is not None:
                 withdrawn += await service.revoke(
-                    actor_person_id=user.user_id,
+                    actor_person_id=account_owner_id,
                     subject_person_id=subject_id,
                     binding_id=binding_id,
                     reason="device_unbound",
@@ -778,14 +778,14 @@ async def _withdraw_bound_subject_consents(
             if guardian_consents is not None and guardian_store is not None:
                 records = await guardian_store.list_person_consents(
                     subject_person_id=subject_id,
-                    actor_person_id=user.user_id,
+                    actor_person_id=account_owner_id,
                 )
                 for record in records:
-                    if record.revoked_at is not None or record.grantor_person_id != user.user_id:
+                    if record.revoked_at is not None or record.grantor_person_id != account_owner_id:
                         continue
                     await guardian_consents.revoke_for_person(
                         consent_id=record.consent_id,
-                        grantor_person_id=user.user_id,
+                        grantor_person_id=account_owner_id,
                         subject_person_id=subject_id,
                         evidence_event_id=(
                             f"guardian-person-consent-unbind:{binding_id}:{record.consent_id}"

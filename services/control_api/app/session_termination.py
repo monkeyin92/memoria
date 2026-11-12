@@ -102,9 +102,13 @@ class AccountSessionTerminator:
         )
         return len(sessions)
 
-    async def terminate_subject(self, subject_id: str, *, actor_id: str | None = None, reason: str = "subject_data_deleted") -> int:
+    async def terminate_subject(self, subject_id: str, *, actor_id: str | None = None,
+                                reason: str = "subject_data_deleted", binding_ids: frozenset[str] | None = None) -> int:
         session_ids = await asyncio.to_thread(self._store.open_device_media_session_ids)
-        if session_ids and self._close_device_session is None:
+        if not session_ids:
+            return 0
+        close_device_session = self._close_device_session
+        if close_device_session is None:
             raise RuntimeError("device session close authority is not configured")
         closed = set()
         for session_id in session_ids:
@@ -116,8 +120,9 @@ class AccountSessionTerminator:
             if not owner:
                 raise RuntimeError("device session owner is unavailable")
             try:
-                await self._close_device_session(device_id=str(row["device_id"]), session_id=session_id, actor_id=owner,
-                    reason=reason, close_edge_socket=True, expected_subject_id=subject_id)
+                await close_device_session(device_id=str(row["device_id"]), session_id=session_id, actor_id=owner,
+                    reason=reason, close_edge_socket=True, expected_subject_id=subject_id,
+                    expected_binding_ids=binding_ids)
             except PersistentSessionSubjectChanged:
                 continue
             closed.add(session_id)

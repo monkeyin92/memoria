@@ -717,7 +717,7 @@ class PostgresMultiSubjectRuntimeControl:
             binding_id=manifest.binding_id,
             actor_id=actor_id,
         )
-        private_consent_withdrawn = False
+        consent_withdrawn = False
         try:
             current, _context = await self.sessions.current(
                 actor_id=actor_id,
@@ -725,13 +725,12 @@ class PostgresMultiSubjectRuntimeControl:
                 now=now,
             )
         except ProfileConsentWithdrawn as exc:
-            if set(exc.withdrawn) & {"chat", "tutor", "english_practice"}:
-                await self.sessions.close_session(actor_id=actor_id, session_id=resolved_session_id, reason_code="consent_withdrawn", now=now)
-                raise
             if not self.is_control_session(resolved_session_id):
+                if set(exc.withdrawn) & {"chat", "tutor", "english_practice"}:
+                    await self.sessions.close_session(actor_id=actor_id, session_id=resolved_session_id, reason_code="consent_withdrawn", now=now)
                 raise
             current = exc.profile
-            private_consent_withdrawn = True
+            consent_withdrawn = True
         except PersistentSessionNotFound:
             if await self.sessions.session_state(
                 actor_id=actor_id,
@@ -789,7 +788,7 @@ class PostgresMultiSubjectRuntimeControl:
                     requested_capabilities=_REQUESTED_CAPABILITIES,
                 )
             )
-        if private_consent_withdrawn or not await self._persona_snapshot_is_current(
+        if consent_withdrawn or not await self._persona_snapshot_is_current(
             manifest,
             current=current,
             actor_id=actor_id,

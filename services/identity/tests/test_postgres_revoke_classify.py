@@ -141,3 +141,36 @@ async def test_subject_lock_serializes_new_binding_and_last_unbind(
         await gate.close()
         await observer.close()
         await store.close()
+
+
+async def test_release_completion_requires_account_context_and_preserves_pending_capture(postgres_database, tmp_path):
+    store, service, child = await setup(postgres_database, tmp_path)
+    connection = await asyncpg.connect(postgres_database.role_dsn('memoria_identity'))
+    try:
+        await service.revoke_binding(device_id='device-1', actor_person_id='parent')
+        with pytest.raises(asyncpg.PostgresError, match='release actor context mismatch'):
+            await connection.execute('SELECT identity_complete_subject_release($1,$2)', 'parent', child)
+        async with connection.transaction():
+            await connection.execute("SELECT set_config('app.identity_actor','stranger',true)")
+            with pytest.raises(asyncpg.PostgresError, match='release actor context mismatch'):
+                async with connection.transaction():
+                    await connection.execute('SELECT identity_complete_subject_release($1,$2)', 'parent', child)
+        assert await store.pending_subject_releases() == (('parent', child),)
+        assert not await store.released_subject_identity_absent('parent', child)
+        await store.complete_subject_release('parent', child)
+        assert await store.pending_subject_releases() == ()
+    finally:
+        await connection.close()
+        await store.close()
+
+
+async def test_release_replay_does_not_hide_invisible_or_unrecorded_identity(postgres_database, tmp_path):
+    store, service, child = await setup(postgres_database, tmp_path)
+    try:
+        from services.identity.domain import IdentityNotFoundError
+        with pytest.raises(IdentityNotFoundError):
+            await service.redact_released_subject(person_id=child, actor_person_id='stranger')
+        with pytest.raises(IdentityNotFoundError):
+            await service.redact_released_subject(person_id='never-recorded', actor_person_id='parent')
+    finally:
+        await store.close()

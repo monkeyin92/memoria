@@ -871,6 +871,7 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
         reason_code: str,
         now: datetime,
         expected_subject_id: str | None = None,
+        expected_binding_ids: frozenset[str] | None = None,
     ) -> SessionCloseResult:
         """Close once, optionally requiring the same confirmed subject."""
 
@@ -879,8 +880,7 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
             raise ValueError("reason_code must be a bounded non-blank string")
         try:
             profile, context = await self._active_profile_context(
-                actor_id=actor_id,
-                session_id=session_id,
+                actor_id=actor_id, session_id=session_id,
             )
         except PersistentSessionNotFound:
             # The session is not active. Distinguish an idempotent
@@ -890,19 +890,19 @@ class PostgresSessionRuntimeService(SessionActionAuthorityMixin, SessionIssueAut
                     connection,
                     session_id=session_id,
                 )
-                closed_profile = await self._store.profile_by_id(connection, runtime_profile_id=stored[0].current_runtime_profile_id) if stored is not None and expected_subject_id is not None else None
+                closed_profile = await self._store.profile_by_id(connection, runtime_profile_id=stored[0].current_runtime_profile_id) if stored is not None and (expected_subject_id is not None or expected_binding_ids is not None) else None
+            self._require_subject_for_close(closed_profile, expected_subject_id, expected_binding_ids)
             if stored is None or stored[0].actor_id != actor_id:
                 raise PersistentSessionNotFound(session_id) from None
             if stored[1] == "closed":
-                self._require_subject_for_close(closed_profile, expected_subject_id)
                 return SessionCloseResult(applied=False, already_closed=True)
             raise SessionRuntimeConflict(
                 "session is not active and cannot be closed",
             ) from None
+        self._require_subject_for_close(profile, expected_subject_id, expected_binding_ids)
         if profile.actor_id != actor_id:
             raise PersistentSessionDenied("only the profile actor may close a Session")
         self._require_profile_signature(profile)
-        self._require_subject_for_close(profile, expected_subject_id)
 
         event = SessionEvent.model_validate(
             {

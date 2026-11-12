@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from services.identity.domain import (
     BindingStatus,
@@ -681,12 +681,12 @@ class InMemoryIdentityStore:
                 if subject == binding.account_owner_person_id:
                     continue
                 person = self._persons[subject]
-                attested = any(r.source_person_id == actor_person_id and r.target_person_id == subject
+                attested = any(r.source_person_id == binding.account_owner_person_id and r.target_person_id == subject
                     and r.relation_type in {"guardian_of", "delegate_for"} and r.status in {"active", "pending"}
                     and r.established_evidence_id in {"guardian_attestation_v1:device_binding", "delegate_attestation_v1:device_binding", "guardian_declaration_v1:device_binding"}
                     for r in self._relationships.values())
                 served = any(b.status == "active" and any(r.person_id == subject and r.status == "active" for r in b.roles) for b in self._bindings.values())
-                outcome = "adult_kept" if person.subject_category == "adult" else "not_attested" if not attested else "still_served" if served else "released"
+                outcome: Literal["released", "still_served", "adult_kept", "not_attested"] = "adult_kept" if person.subject_category == "adult" else "not_attested" if not attested else "still_served" if served else "released"
                 if outcome == "released":
                     self._persons[subject] = replace(person, status="disabled", updated_at=at)
                     self._subject_releases.add((binding.account_owner_person_id, subject))
@@ -700,6 +700,10 @@ class InMemoryIdentityStore:
     async def complete_subject_release(self, account_id: str, subject_id: str) -> None:
         with self._lock:
             self._subject_releases.discard((account_id, subject_id))
+
+    async def released_subject_identity_absent(self, account_id: str, subject_id: str) -> bool:
+        with self._lock:
+            return (account_id, subject_id) in self._subject_releases and subject_id not in self._persons
 
     async def transition_binding(
         self,

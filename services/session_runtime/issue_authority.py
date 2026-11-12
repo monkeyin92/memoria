@@ -107,19 +107,22 @@ class SessionIssueAuthorityMixin:
             now: datetime,
         ) -> ConsentDiscovery: ...
 
-    def _require_subject_for_close(self, profile: RuntimeProfileSignedV2 | None, subject_id: str | None) -> None:
-        if subject_id is None:
+    def _require_subject_for_close(self, profile: RuntimeProfileSignedV2 | None, subject_id: str | None,
+                                   binding_ids: frozenset[str] | None = None) -> None:
+        if subject_id is None and binding_ids is None:
             return
         if profile is None:
             raise PersistentSessionSubjectChanged("close subject is unavailable")
         self._require_profile_signature(profile)
-        if profile.active_subject_id != subject_id or profile.speaker_state != "confirmed":
+        if binding_ids is not None and profile.binding_id not in binding_ids:
+            raise PersistentSessionSubjectChanged("close binding is outside the grant scope")
+        if subject_id is not None and (profile.active_subject_id != subject_id or profile.speaker_state != "confirmed"):
             raise PersistentSessionSubjectChanged("close subject is no longer confirmed")
 
     async def _require_profile_consent(self, profile: RuntimeProfileSignedV2, *, now: datetime) -> None:
-        required = set(profile.capabilities) & set(GUARDIAN_MEMORY_CAPABILITIES)
+        required = {capability for capability in GUARDIAN_MEMORY_CAPABILITIES if capability in profile.capabilities}
         if profile.subject_category == "minor":
-            required.update(set(profile.capabilities) & set(MINOR_SESSION_CAPABILITIES))
+            required.update(capability for capability in MINOR_SESSION_CAPABILITIES if capability in profile.capabilities)
         if not required:
             return
         withdrawn = set()

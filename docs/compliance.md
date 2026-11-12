@@ -394,9 +394,9 @@ async def on_session_end(session_id: str) -> SweepReceipt:
 
 ### 2026-09-26 按使用人删除覆盖面复核（当前权威）
 
-注销账号会先通过身份 SQL 在 subject 锁下捕获允许擦除的无账号儿童，并持久保存到 `identity_subject_releases`。仍被其他 owner 的 active binding 服务的儿童不会进入名单。关系和身份删除之前，每个允许擦除的儿童必须完成 `SubjectDeletionService`，包括记忆两层、儿童 id 危机元数据、语料和 usage；失败由账号 ledger 重试。此前已越过 `identity_rows_deleted` 且没有名单的历史注销不自动补清理。
+注销账号会先通过身份 SQL 在 subject 锁下捕获允许擦除的无账号儿童，并持久保存到 `identity_subject_releases`。仍被其他 owner 的 active binding 服务的儿童不会进入名单。关系和身份删除之前，每个允许擦除的儿童必须完成 `SubjectDeletionService`，包括记忆两层、儿童 id 危机元数据、语料和 usage；失败由账号 ledger 重试。注销在清除身份图前检查该账号的 release 已全部完成，再删除已完成的账号与儿童映射；其他 owner 的 pending release 保留到擦除完成。若该儿童身份已由另一账号注销删除，重试只有在身份 SQL 确认当前 owner 持有 release 且 person 全局不存在后才跳过身份脱敏，仍须擦完该 owner 的数据。worker 可跨 owner 枚举待处理 release，complete SQL 要求匹配的事务 actor；两者仍使用服务内部的 Identity API 角色，没有新增独立 worker 凭据。此前已越过 `identity_rows_deleted` 且没有名单的历史注销不自动补清理。
 
-撤销 `minor_voice_session` 后，bound-subject hook 先撤销同一授权人在 active binding 上的 Consent 权威，再以权威签名 profile 中已确认的 `active_subject_id` 选择该儿童设备会话。投影可能尚未反映切人，所以关闭权威会再次核对目标，沿用现有 profile CAS 拒绝检查后的切人。关闭复用 Session Runtime close、directory expire 和 Edge `/v1/internal/device-runtime/session-close`，全部成功后才关闭本地投影。Edge 失败返回失败并保留重试入口，不报停流成功。person id 不传给账号终止；已切到其他人和 unknown_safe 的会话保留。记忆同意单独撤销仍走降级，保留聊天。
+撤销 `minor_voice_session` 后，bound-subject hook 先撤销同一授权人在 active binding 上的 Consent 权威，再以该授权人拥有的 binding 集合及权威签名 profile 中已确认的 `active_subject_id` 选择设备会话；其他 owner 的有效授权会话保留。删除与注销仍覆盖该 subject 的全部会话。投影可能尚未反映切人，所以关闭权威会再次核对目标，沿用现有 profile CAS 拒绝检查后的切人。关闭复用 Session Runtime close、directory expire 和 Edge `/v1/internal/device-runtime/session-close`，全部成功后才关闭本地投影。Edge 失败返回失败并保留重试入口，不报停流成功。person id 不传给账号终止；已切到其他人和 unknown_safe 的会话保留。无关的 failed、missing 或 actor 不匹配残留不会阻断扫描；签名匹配目标后的 authority 或 Edge 错误仍使删除失败并可重放。control session 不承载音频流，撤销语音同意时保留 subject 并轮转签名 profile 去掉相应能力，重新授予后可再次刷新恢复；实际 voice session 仍永久终止。记忆同意单独撤销仍走降级，保留聊天。解绑由获得 `binding.manage` 的 member 发起时，同意撤销和即时擦除均使用绑定 owner 的 scope。
 
 Agent 拉取 `/v1/interaction/session-policy` 时，只有 `410` 且 `detail.code=session_terminated` 会关闭并永久拒绝后续生成。已关闭会话、绑定撤销和语音授权撤销使用这个明确错误契约。网络、5xx 和其他未确认拒绝继续使用既有 unknown_safe。上述链路通过隔离 PG 与 Mock HTTP 验证，未部署，也没有实机音频停流验收。
 

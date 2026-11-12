@@ -1485,7 +1485,7 @@ BEGIN
         IF EXISTS (SELECT 1 FROM identity_persons WHERE person_id = v_subject AND subject_category = 'adult') THEN
             v_outcome := 'adult_kept';
         ELSIF NOT EXISTS (
-            SELECT 1 FROM identity_relationships WHERE source_person_id = p_actor
+            SELECT 1 FROM identity_relationships WHERE source_person_id = v_binding.account_owner_person_id
             AND target_person_id = v_subject AND relation_type IN ('guardian_of', 'delegate_for')
             AND status IN ('active', 'pending') AND established_evidence_id IN (
                 'guardian_attestation_v1:device_binding', 'delegate_attestation_v1:device_binding',
@@ -1511,10 +1511,30 @@ SET search_path = pg_catalog, public SET row_security = on AS $$
     WHERE completed_at IS NULL AND reason = 'unbind' ORDER BY released_at LIMIT greatest(0, least(p_limit, 1000));
 $$;
 CREATE OR REPLACE FUNCTION identity_complete_subject_release(p_account text, p_subject text)
-RETURNS void LANGUAGE sql SECURITY DEFINER
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, public SET row_security = on AS $$
+BEGIN
+    IF p_account IS DISTINCT FROM NULLIF(current_setting('app.identity_actor', true), '') THEN
+        RAISE EXCEPTION 'release actor context mismatch';
+    END IF;
+    IF EXISTS (SELECT 1 FROM identity_subject_releases
+        WHERE account_id = p_account AND subject_id = p_subject
+          AND identity_subject_still_served(p_subject, CASE WHEN reason = 'account' THEN p_account END)) THEN
+        RAISE EXCEPTION 'release subject is still served';
+    END IF;
     UPDATE identity_subject_releases SET completed_at = now()
     WHERE account_id = p_account AND subject_id = p_subject;
+    DELETE FROM identity_subject_releases
+    WHERE account_id = p_account AND subject_id = p_subject AND completed_at IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM identity_persons WHERE person_id = p_subject);
+END
+$$;
+CREATE OR REPLACE FUNCTION identity_released_subject_identity_absent(p_account text, p_subject text)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, public SET row_security = on AS $$
+    SELECT p_account = NULLIF(current_setting('app.identity_actor', true), '')
+      AND EXISTS (SELECT 1 FROM identity_subject_releases WHERE account_id = p_account AND subject_id = p_subject)
+      AND NOT EXISTS (SELECT 1 FROM identity_persons WHERE person_id = p_subject);
 $$;
 REVOKE ALL ON FUNCTION identity_subject_still_served(text,text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_binding_subject_guard() FROM PUBLIC;
@@ -1522,8 +1542,10 @@ REVOKE ALL ON FUNCTION identity_lock_binding_subjects(text,text[]) FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_revoke_binding(text,text,timestamptz) FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_pending_subject_releases(integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity_complete_subject_release(text,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity_released_subject_identity_absent(text,text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION identity_lock_binding_subjects(text,text[]), identity_revoke_binding(text,text,timestamptz),
-    identity_pending_subject_releases(integer), identity_complete_subject_release(text,text) TO memoria_identity;
+    identity_pending_subject_releases(integer), identity_complete_subject_release(text,text),
+    identity_released_subject_identity_absent(text,text) TO memoria_identity;
 
 CREATE OR REPLACE FUNCTION identity_redact_bound_subject(
     p_person_id text,
@@ -1686,10 +1708,17 @@ BEGIN
     -- Opened here, in the definer's own transaction scope.  A caller that set
     -- it itself changes nothing: this assignment is the only authority.
     PERFORM set_config('app.identity_account_deletion', '1', true);
+    v_persons := ARRAY[p_account_person_id] || identity_account_erasable_subjects(p_account_person_id);
+    IF EXISTS (SELECT 1 FROM identity_subject_releases
+        WHERE account_id = p_account_person_id AND completed_at IS NULL) THEN
+        RAISE EXCEPTION 'identity_delete_account_identity: subject erasure is incomplete';
+    END IF;
+    DELETE FROM identity_subject_releases
+    WHERE completed_at IS NOT NULL AND account_id = p_account_person_id;
     -- Idempotent replay: an account with no identity row and no binding of
     -- its own has nothing left to erase.
     IF NOT EXISTS (
-        SELECT 1 FROM identity_persons WHERE person_id = p_account_person_id
+        SELECT 1 FROM identity_persons WHERE person_id = ANY(v_persons)
     ) AND NOT EXISTS (
         SELECT 1 FROM identity_device_bindings
         WHERE account_owner_person_id = p_account_person_id
@@ -1699,7 +1728,8 @@ BEGIN
     -- Account person plus the accountless subjects its parent_for_child
     -- bindings declared.  An adult who registered their own account keeps
     -- their row: only the account's own graph is erased.
-    v_persons := ARRAY[p_account_person_id] || identity_account_erasable_subjects(p_account_person_id);
+    DELETE FROM identity_subject_releases
+    WHERE completed_at IS NOT NULL AND subject_id = ANY(v_persons);
     SELECT COALESCE(array_agg(b.binding_id), ARRAY[]::text[]),
            COALESCE(
                jsonb_agg(jsonb_build_object(

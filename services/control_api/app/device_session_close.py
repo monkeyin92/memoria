@@ -105,6 +105,7 @@ async def close_media_session_pipeline(
     close_edge_socket: bool = False,
     expected_stream_epoch: int | None = None,
     expected_subject_id: str | None = None,
+    expected_binding_ids: frozenset[str] | None = None,
 ) -> dict[str, object]:
     """Close authority, routing and Edge before checkpointing the projection."""
 
@@ -128,11 +129,8 @@ async def close_media_session_pipeline(
             session_id=session_id,
             reason_code=reason,
             now=datetime.now(UTC),
-            **(
-                {"expected_subject_id": expected_subject_id}
-                if expected_subject_id is not None
-                else {}
-            ),
+            expected_subject_id=expected_subject_id,
+            expected_binding_ids=expected_binding_ids,
         )
         already_closed = result.already_closed
     except PersistentSessionSubjectChanged:

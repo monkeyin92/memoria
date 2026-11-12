@@ -25,10 +25,21 @@ def guardian_revocation_hook(
                 source_key="guardian_revocation",
             )
         if event.kind == "minor_voice_session":
+            binding_ids = None
+            if event.scope == "bound_subject":
+                manifests = await identity.list_active_manifests_for_person(
+                    event.subject_person_id, actor_person_id=event.grantor_person_id,
+                )
+                binding_ids = frozenset(
+                    manifest.binding_id for manifest in manifests
+                    if manifest.account_owner_id == event.grantor_person_id
+                    and event.subject_person_id in manifest.primary_subject_ids
+                )
             await terminator.terminate_subject(
                 event.subject_person_id,
                 actor_id=event.grantor_person_id,
                 reason="consent_withdrawn",
+                binding_ids=binding_ids,
             )
         if event.scope == "minor_account" and event.kind in {
             "minor_voice_session",

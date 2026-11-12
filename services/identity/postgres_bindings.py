@@ -351,6 +351,8 @@ class PostgresIdentityBindingMixin:
         async with pool.acquire() as connection:
             async with connection.transaction():
                 await self._apply_context(connection, actor_person_id=actor_person_id, scope="api")
+                row = await connection.fetchrow("SELECT * FROM identity_device_bindings WHERE binding_id=$1", binding_id)
+                roles = await connection.fetch("SELECT * FROM identity_device_binding_roles WHERE binding_id=$1", binding_id)
                 try:
                     raw = await connection.fetchval("SELECT identity_revoke_binding($1,$2,$3)", binding_id, actor_person_id, at)
                 except asyncpg.PostgresError as exc:
@@ -359,9 +361,11 @@ class PostgresIdentityBindingMixin:
                     if exc.sqlstate == "IB409":
                         raise BindingVersionConflictError("binding is no longer active") from exc
                     raise
-                row = await connection.fetchrow("SELECT * FROM identity_device_bindings WHERE binding_id=$1", binding_id)
-                roles = await connection.fetch("SELECT * FROM identity_device_binding_roles WHERE binding_id=$1", binding_id)
-                return BindingRevocation(_binding(row, roles), tuple(SubjectRelease(**s) for s in json.loads(raw)))
+                binding = _binding(row, roles)
+                revoked = replace(binding, status="revoked",
+                    valid_until=at if at > binding.valid_from else binding.valid_until,
+                    roles=tuple(replace(role, status="revoked", ended_at=at) if role.status == "active" else role for role in binding.roles))
+                return BindingRevocation(revoked, tuple(SubjectRelease(**s) for s in json.loads(raw)))
 
     async def prepare_account_subject_erasure(self, account_id: str) -> tuple[str, ...]:
         pool = await self._ready()
@@ -379,7 +383,16 @@ class PostgresIdentityBindingMixin:
     async def complete_subject_release(self, account_id: str, subject_id: str) -> None:
         pool = await self._ready()
         async with pool.acquire() as connection:
-            await connection.execute("SELECT identity_complete_subject_release($1,$2)", account_id, subject_id)
+            async with connection.transaction():
+                await self._apply_context(connection, actor_person_id=account_id, scope="api")
+                await connection.execute("SELECT identity_complete_subject_release($1,$2)", account_id, subject_id)
+
+    async def released_subject_identity_absent(self, account_id: str, subject_id: str) -> bool:
+        pool = await self._ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(connection, actor_person_id=account_id, scope="api")
+                return bool(await connection.fetchval("SELECT identity_released_subject_identity_absent($1,$2)", account_id, subject_id))
 
     async def transition_binding(
         self,

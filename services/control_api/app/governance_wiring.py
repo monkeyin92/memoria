@@ -37,6 +37,7 @@ from services.governance.subject_deletion import (
 from services.governance.subject_ports import SubjectGuardianPort, SubjectScope
 from services.guardian.corpus import (
     CorpusRetentionService,
+    CorpusSampleStorePort,
 )
 from services.guardian.domain import GuardianStorePort
 from services.identity.domain import IdentityNotFoundError
@@ -110,10 +111,10 @@ def install_subject_deletion(
     identity = cast(IdentityService, app.state.identity_service)
 
     async def redact(subject_id: str, account_id: str) -> None:
-        await identity.redact_bound_subject(person_id=subject_id, actor_person_id=account_id)
+        await identity.redact_released_subject(person_id=subject_id, actor_person_id=account_id)
 
     async def purge_corpus(subject_id: str) -> int:
-        samples = await guardian_store.corpus_samples(minor_user_id=subject_id)
+        samples = await cast(CorpusSampleStorePort, guardian_store).corpus_samples(minor_user_id=subject_id)
         deleted = await corpus_retention_service.purge_minor(minor_user_id=subject_id)
         for sample in samples:
             try:

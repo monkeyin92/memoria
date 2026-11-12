@@ -1010,11 +1010,11 @@ class AccountDataGovernance:
                 await checkpoint("evolution_rows_deleted")
 
             if _DELETION_STEP_RANK[step] < _DELETION_STEP_RANK["bound_subjects_erased"]:
-                if subjects and self._subject_deletion is None:
-                    raise AccountDeletionIncompleteError("bound subject deletion is not configured")
                 for subject_id in subjects:
-                    result = await self._subject_deletion.delete_subject(SubjectScope(account_id, subject_id))
-                    if result["status"] != "completed":
+                    if self._subject_deletion is None or self._identity_repository is None:
+                        raise AccountDeletionIncompleteError("bound subject deletion is not configured")
+                    subject_result = await self._subject_deletion.delete_subject(SubjectScope(account_id, subject_id))
+                    if subject_result["status"] != "completed":
                         raise AccountDeletionIncompleteError("bound subject deletion is incomplete")
                     await self._identity_repository.complete_subject_erasure(account_id, subject_id)
                 progress["subjects.erased"] = len(subjects)

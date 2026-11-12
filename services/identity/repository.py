@@ -310,6 +310,8 @@ class IdentityStore(Protocol):
 
     async def complete_subject_release(self, account_id: str, subject_id: str) -> None: ...
 
+    async def released_subject_identity_absent(self, account_id: str, subject_id: str) -> bool: ...
+
     async def transition_binding(
         self,
         binding_id: str,

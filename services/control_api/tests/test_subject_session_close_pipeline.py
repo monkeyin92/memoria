@@ -190,12 +190,16 @@ async def test_guardian_revocation_scope_preserves_owner_account(scope, kind, ex
         async def terminate_subject(self, subject, **kwargs):
             calls.append("subject")
             assert subject == "child"
+            assert kwargs["binding_ids"] == (frozenset({"owned"}) if scope == "bound_subject" else None)
 
         async def terminate_account(self, account):
             calls.append("account")
             assert account == "child"
 
-    hook = guardian_revocation_hook(Terminator(), identity=None, bound_consent=None)
+    class Identity:
+        async def list_active_manifests_for_person(self, *args, **kwargs):
+            return (SimpleNamespace(binding_id="owned", account_owner_id="parent", primary_subject_ids=("child",)),)
+    hook = guardian_revocation_hook(Terminator(), identity=Identity(), bound_consent=None)
     await hook(ConsentRevocation("child", "parent", kind, scope))
     assert calls == expected
 

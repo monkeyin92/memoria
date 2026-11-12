@@ -142,3 +142,61 @@ async def test_captured_children_survive_account_retry_after_archive_and_erase_f
         assert f.ledger.completed() == (('parent', f.child, False),)
     finally:
         await close(f)
+
+
+async def test_account_erasure_removes_completed_release_mappings(postgres_database, tmp_path):
+    f = await fixture(postgres_database, tmp_path)
+    admin = await asyncpg.connect(postgres_database.owner_dsn())
+    try:
+        assert (await f.governance.delete_account('parent'))['status'] == 'completed'
+        assert await admin.fetchval('SELECT count(*) FROM identity_subject_releases WHERE account_id=$1', 'parent') == 0
+    finally:
+        await admin.close()
+        await close(f)
+
+
+async def test_other_owners_pending_release_converges_after_account_erases_identity(postgres_database, tmp_path):
+    f = await fixture(postgres_database, tmp_path)
+    admin = await asyncpg.connect(postgres_database.owner_dsn())
+    try:
+        await f.identity.register_person(person_id='other', display_name='Other', timezone='Asia/Shanghai',
+            subject_category='adult', age_band='adult', age_evidence_status='verified', age_evidence_id='fixture', now=NOW)
+        await f.identity.attest_binding_relationship(source_person_id='other', target_person_id=f.child,
+            relation_type='guardian_of', actor_person_id='other', now=NOW)
+        await bind(f.identity, f.child, owner='other')
+        await f.identity.revoke_binding(device_id='device-1', actor_person_id='parent')
+        await f.identity.revoke_binding(device_id='device-2', actor_person_id='other')
+        assert await f.store.pending_subject_releases() == (('other', f.child),)
+        await admin.execute("INSERT INTO archive_evidence_events(event_id,account_id,event_type,schema_version,occurred_at,subject_id,speaker_class,source,payload,content_sha256) VALUES('other-child-event','other','speech.utterance_finalized',1,now(),$1,'owner','asr','{}',repeat('a',64))", f.child)
+        assert (await f.governance.delete_account('parent'))['status'] == 'completed'
+        assert await admin.fetchval('SELECT count(*) FROM identity_persons WHERE person_id=$1', f.child) == 0
+        assert await f.store.pending_subject_releases() == (('other', f.child),)
+        async def redact(subject_id, account_id):
+            await f.identity.redact_released_subject(person_id=subject_id, actor_person_id=account_id)
+        f.subject._redact_identity = redact
+        f.subject._pending_releases = f.store.pending_subject_releases
+        f.subject._complete_release = f.store.complete_subject_release
+        assert await f.subject.retry_pending_deletions() == 1
+        assert await admin.fetchval("SELECT count(*) FROM archive_evidence_events WHERE event_id='other-child-event'") == 0
+        assert await f.store.pending_subject_releases() == ()
+        assert await admin.fetchval('SELECT count(*) FROM identity_subject_releases WHERE subject_id=$1', f.child) == 0
+    finally:
+        await admin.close()
+        await close(f)
+
+
+async def test_identity_delete_replay_cleans_completed_capture_but_preserves_pending(postgres_database, tmp_path):
+    f = await fixture(postgres_database, tmp_path)
+    admin = await asyncpg.connect(postgres_database.owner_dsn())
+    try:
+        assert (await f.governance.delete_account('parent'))['status'] == 'completed'
+        await admin.execute("INSERT INTO identity_subject_releases(account_id,subject_id,released_at,completed_at,reason) VALUES('parent','historical-child',now(),now(),'account')")
+        await f.identity.delete_account_identity(account_person_id='parent')
+        assert await admin.fetchval("SELECT count(*) FROM identity_subject_releases WHERE account_id='parent'") == 0
+        await admin.execute("INSERT INTO identity_subject_releases(account_id,subject_id,released_at,reason) VALUES('parent','pending-child',now(),'account')")
+        with pytest.raises(asyncpg.PostgresError, match='subject erasure is incomplete'):
+            await f.identity.delete_account_identity(account_person_id='parent')
+        assert await admin.fetchval("SELECT count(*) FROM identity_subject_releases WHERE account_id='parent' AND completed_at IS NULL") == 1
+    finally:
+        await admin.close()
+        await close(f)
