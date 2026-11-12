@@ -57,6 +57,9 @@ def test_isolation_restore_deletion_drill_passes_and_writes_evidence(tmp_path: P
         "subject_events": [],
         "vectors": 0,
     }
+    assert report["surfaces_after_replay"]["caches"]["sessions_terminated_for"] == [
+        "lab-child-deleted"
+    ]
     assert report["surfaces_after_replay"]["keep_subject"]["owner_events"] == ["keep-e1"]
     assert any(gap["status"] == "未验" for gap in report["a14_gaps"])
     assert report_path.stat().st_mode & 0o777 == 0o600
