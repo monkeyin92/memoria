@@ -37,7 +37,16 @@ mc alias set --quiet local http://memoria-minio:9000 \
 mc alias set --quiet offsite "$MEMORIA_OFFSITE_S3_ENDPOINT" \
   "$MEMORIA_OFFSITE_S3_ACCESS_KEY" "$MEMORIA_OFFSITE_S3_SECRET_KEY"
 mc stat "offsite/$MEMORIA_OFFSITE_S3_BUCKET" >/dev/null
-mc version info "offsite/$MEMORIA_OFFSITE_S3_BUCKET" | grep -q 'Enabled'
+if version_info="$(mc --no-color version info "offsite/$MEMORIA_OFFSITE_S3_BUCKET" 2>&1)"; then
+  if [ "$version_info" != "offsite/$MEMORIA_OFFSITE_S3_BUCKET versioning is enabled" ]; then
+    echo "offsite version info is not the pinned mc enabled output; refusing lifecycle changes" >&2
+    exit 2
+  fi
+else
+  version_status=$?
+  echo "offsite version query failed; refusing lifecycle changes" >&2
+  exit "$version_status"
+fi
 
 # Only recognize this subset of the pinned mc/minio-go serializer. Comparing
 # the entire output preserves spaces inside strings and rejects extra rules.
