@@ -31,6 +31,7 @@ accepts a candidate that was built by hand from this base instead; the running
 bridge IS the runtime base in that case, so rolling back to the previous image
 also rolls back the base. It requires --reason, is recorded in the deployment
 log and the remote rollback point, and leaves every other check unchanged.
+--remote-root accepts only /opt/memoria/component-releases.
 EOF
 }
 
@@ -94,6 +95,10 @@ done
 }
 [[ "$remote_root" =~ ^/[A-Za-z0-9._/-]+$ && "/$remote_root/" != *"/../"* ]] || {
   echo "invalid remote root" >&2
+  exit 2
+}
+[[ "$remote_root" == /opt/memoria/component-releases ]] || {
+  echo "unsupported remote root; must be /opt/memoria/component-releases" >&2
   exit 2
 }
 if [[ -n "$manual_base_reason" ]]; then
@@ -1084,7 +1089,19 @@ record_component_override() {
     bash /root/memoria-release/release-ops.sh record-override \
     voice-core-media-bridge "$persisted" "$original"
 }
-[[ -f /root/memoria-release/release-ops.sh ]]
+# Source the installed dispatcher in a subprocess and replace the write step
+# with a sentinel. This checks command support without registering an override.
+release_ops_capability="$(
+  TAG="$stack_release_tag" COMMIT="$stack_release_commit" bash -Eeuo pipefail -c '
+    source "$1"
+    declare -F step_record_override >/dev/null
+    step_record_override() { printf "%s\n" record-override-supported; }
+    main record-override
+  ' _ /root/memoria-release/release-ops.sh
+)" && [[ "$release_ops_capability" == record-override-supported ]] || {
+  echo "installed release-ops.sh does not support record-override" >&2
+  exit 1
+}
 
 rollback() {
   exit_code=$?

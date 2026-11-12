@@ -592,11 +592,26 @@ class FakeHost:
         self.release_dir(tag)
         calls = self.fake / "calls.jsonl"
         calls.write_text("", encoding="utf-8")
-        containers = shlex.quote(str(self.fake / "containers"))
         invocation = f"main {name}"
         if args:
             invocation += " " + " ".join(shlex.quote(a) for a in args)
-        program = "\n".join(
+        program = self.shell_program(invocation, tag=tag, commit=commit)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("MEMORIA_")}
+        env.update(PATH=f"{self.bin}:{env['PATH']}", FAKE_ROOT=str(self.fake))
+        result = subprocess.run(
+            ["bash", "-c", program],
+            cwd=self.root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        lines = calls.read_text(encoding="utf-8").splitlines()
+        return _step_run(result, [json.loads(line) for line in lines])
+
+    def shell_program(self, invocation: str, *, tag: str, commit: str) -> str:
+        containers = shlex.quote(str(self.fake / "containers"))
+        return "\n".join(
             (
                 "set -Eeuo pipefail",
                 f"export TAG={tag} COMMIT={commit}",
@@ -628,18 +643,6 @@ class FakeHost:
                 invocation,
             )
         )
-        env = {k: v for k, v in os.environ.items() if not k.startswith("MEMORIA_")}
-        env.update(PATH=f"{self.bin}:{env['PATH']}", FAKE_ROOT=str(self.fake))
-        result = subprocess.run(
-            ["bash", "-c", program],
-            cwd=self.root,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        lines = calls.read_text(encoding="utf-8").splitlines()
-        return _step_run(result, [json.loads(line) for line in lines])
 
 
 def guardian_host(tmp_path: Path) -> FakeHost:
@@ -2150,54 +2153,320 @@ def test_shared_host_bringup_script_is_checked_in_and_keeps_its_step_contract() 
     )
 
 
-@pytest.mark.parametrize(
-    ("role", "service", "image"),
-    [("control", "control-api", CONTROL_IMAGE),
-     ("agent", "voice-core-media-bridge", BRIDGE_IMAGE)],
-)
-def test_component_cutover_next_freeze_and_rollback_contract(
-    tmp_path: Path, role: str, service: str, image: str
-) -> None:
+_COMPONENT_DOCKER = r"""
+import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+root = Path(os.environ["FAKE_ROOT"])
+with (root / "calls.jsonl").open("a") as stream:
+    stream.write(json.dumps({"argv": ["docker", *args], "cwd": os.getcwd(),
+        "release_tag": os.environ.get("MEMORIA_RELEASE_TAG"),
+        "release_commit": os.environ.get("MEMORIA_RELEASE_COMMIT")}) + "\n")
+box = root / "containers" / ("memoria-" + os.environ["CONTRACT_SERVICE"] + "-1")
+if args[0] == "compose":
+    files = [args[i+1] for i, arg in enumerate(args) if arg == "--file"]
+    image = Path(files[-1]).read_text().split("image:")[1].strip().strip('"')
+    for field, value in {"chain": ",".join(files), "image": image,
+                         "image-id": "sha256:contract", "revision": "b" * 40,
+                         "version": image.split(":", 1)[1]}.items():
+        (box / field).write_text(value)
+elif args[0] == "inspect":
+    template = args[-1]
+    if "Health" in template:
+        print("healthy")
+    elif ".Config.Image" in template:
+        print((box / "image").read_text())
+    elif "revision" in template:
+        print((box / "revision").read_text())
+    elif "version" in template:
+        print((box / "version").read_text())
+elif args[0] != "exec":
+    raise SystemExit("unexpected docker operation: " + repr(args))
+"""
+
+
+def _run_component_functions(
+    tmp_path: Path,
+    role: str,
+    *,
+    failure: str = "",
+    source: str | None = None,
+    legacy: str = "",
+) -> tuple[FakeHost, subprocess.CompletedProcess[str], list[dict[str, Any]], Path, Path]:
+    import shutil
+
     host = component_host(tmp_path)
-    script = (ROOT / "scripts" / f"deploy_{role}_component.sh").read_text()
-    start = script.index('cd "$working_dir"\nenv ', script.index("trap rollback ERR"))
-    command = script[start:script.index('\n\n', start)]
-    base = host.release_dir(COMPONENT_STACK) / "docker-compose.production.yml"
-    relative = f"component-releases/contract-{role}/{role}-component.override.yml"
-    override = host.override_file(relative, service, image)
-    _executable(host.bin / "docker", '#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n')
-    result = subprocess.run(
-        ["bash", "-c", 'previous_args=(--file "$base_file" --file "$live_override"); ' + command],
-        env={**os.environ, "PATH": f"{host.bin}:{os.environ['PATH']}",
-             "live_override": str(host.tmp / "pre-cutover.yml"),
-             "working_dir": str(host.root), "base_file": str(base),
-             "override": str(override), "project_name": "memoria",
-             "stack_tag": COMPONENT_STACK, "stack_commit": COMPONENT_STACK_COMMIT,
-             "stack_release_tag": COMPONENT_STACK,
-             "stack_release_commit": COMPONENT_STACK_COMMIT,
-             "previous_args": "must-not-use-previous-chain"},
-        capture_output=True, text=True, check=False,
+    service = "control-api" if role == "control" else "voice-core-media-bridge"
+    image = CONTROL_IMAGE if role == "control" else BRIDGE_IMAGE
+    remote = host.memoria / "component-releases" / f"contract-{role}"
+    override = host.override_file(
+        f"component-releases/contract-{role}/{role}-component.override.yml", service, image
     )
-    assert result.returncode == 0, result.stderr
-    args = result.stdout.splitlines()
-    files = [args[i + 1] for i, arg in enumerate(args) if arg == "--file"]
-    assert files == [str(base), str(override)]
-    assert "--no-deps" in args and args[-1] == service
-    assert 'record_component_override "$override"\ntrap - ERR' in script
-    assert 'record_component_override "$rollback_override" || rollback_status=$?' in script
-    origin = host.tmp_override(f"contract-{role}.yml", service, image)
-    host.container(service, release=COMPONENT_STACK, commit="b" * 40,
-                   chain=",".join(files), image=image, image_id="sha256:contract")
-    registration = host.step("record-override", tag=COMPONENT_STACK, args=[
-        service, f"/opt/memoria/{relative}", f"/tmp/{origin.name}",
-    ])
-    assert registration.returncode == 0, registration.output
+    rollback = host.override_file(
+        f"component-releases/contract-{role}/{role}-component.rollback.override.yml",
+        service,
+        image.split(":")[0] + ":rollback-contract",
+    )
+    base = host.release_dir(COMPONENT_STACK) / "docker-compose.production.yml"
+    # Only these executables are reachable. Docker is always the local stub.
+    for command in (
+        "bash",
+        "env",
+        "basename",
+        "dirname",
+        "install",
+        "cat",
+        "awk",
+        "sed",
+        "head",
+        "sort",
+        "cut",
+        "chmod",
+        "mkdir",
+        "date",
+        "cmp",
+        "python3",
+        "sha256sum",
+        "shasum",
+        "stat",
+        "wc",
+        "grep",
+        "tr",
+        "tee",
+        "seq",
+        "sleep",
+        "rm",
+        "mv",
+        "ln",
+        "readlink",
+    ):
+        executable = shutil.which(command)
+        if executable:
+            (host.bin / command).symlink_to(executable)
+    _executable(host.bin / "docker", f"#!{sys.executable}\n{_COMPONENT_DOCKER}")
+    calls = host.fake / "calls.jsonl"
+    calls.write_text("")
+    wrapper = host.root / "release-ops.sh"
+    normalize = (
+        f"persisted=/opt/memoria/${{3#{host.memoria}/}}\n"
+        f"original=/tmp/${{4#{host.tmp}/}}\n"
+        'set -- "$1" "$2" "$persisted" "$original"\n'
+    )
+    guard = (
+        f'[[ "${{TAG:-}}" == {COMPONENT_STACK} && '
+        f'"${{COMMIT:-}}" == {COMPONENT_STACK_COMMIT} ]] || exit 91\n'
+    )
+    if failure:
+        guard += "exit 92\n" if failure == "all" else '[[ "$3" == *rollback* ]] || exit 92\n'
+    wrapper.write_text(
+        (
+            ("exit 0\n" if legacy == "early-exit" else "")
+            + ("step_record_override() { :; }\n" if legacy == "dispatcher" else "")
+            + "main() { return 2; }\n"
+        )
+        if legacy
+        else f'if [[ "${{BASH_SOURCE[0]}}" != "$0" ]]; then source {shlex.quote(str(SCRIPT))}; return; fi\n'
+        + guard
+        + normalize
+        + host.shell_program('main "$@"', tag=COMPONENT_STACK, commit=COMPONENT_STACK_COMMIT)
+    )
+    script = source or (ROOT / "scripts" / f"deploy_{role}_component.sh").read_text()
+    start = script.index("record_component_override() {")
+    end = script.index(
+        "\n{\n  printf", script.index('record_component_override "$override"', start)
+    )
+    fragment = script[start:end].replace("/root/memoria-release/release-ops.sh", str(wrapper))
+    fragment = fragment.replace("/tmp/", str(host.tmp) + "/")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("MEMORIA_")}
+    env.update(
+        PATH=str(host.bin),
+        FAKE_ROOT=str(host.fake),
+        CONTRACT_SERVICE=service,
+        working_dir=str(host.root),
+        remote_dir=str(remote),
+        base_file=str(base),
+        override=str(override),
+        rollback_override=str(rollback),
+        live_override=str(remote / "pre-cutover.yml"),
+        project_name="memoria",
+        stack_tag=COMPONENT_STACK,
+        stack_commit=COMPONENT_STACK_COMMIT,
+        stack_release_tag=COMPONENT_STACK,
+        stack_release_commit=COMPONENT_STACK_COMMIT,
+        release_tag="contract",
+        release_commit="b" * 40,
+        target_image=image,
+        control_container="memoria-control-api-1",
+        bridge_container="memoria-voice-core-media-bridge-1",
+    )
+    env.pop("TAG", None)
+    env.pop("COMMIT", None)
+    result = subprocess.run(
+        ["/bin/bash", "-c", "set -Eeuo pipefail\n" + fragment],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return (
+        host,
+        result,
+        [json.loads(line) for line in calls.read_text().splitlines()],
+        override,
+        rollback,
+    )
+
+
+@pytest.mark.parametrize("role", ["control", "agent"])
+@pytest.mark.parametrize("failure", ["", "candidate", "all"])
+def test_component_cutover_next_freeze_and_rollback_contract(
+    tmp_path: Path, role: str, failure: str
+) -> None:
+    host, result, calls, override, rollback = _run_component_functions(
+        tmp_path, role, failure=failure
+    )
+    _assert_component_result(host, result, calls, override, rollback, role, failure)
+
+
+def _assert_component_result(
+    host: FakeHost,
+    result: subprocess.CompletedProcess[str],
+    calls: list[dict[str, Any]],
+    override: Path,
+    rollback: Path,
+    role: str,
+    failure: str,
+) -> None:
+    service = "control-api" if role == "control" else "voice-core-media-bridge"
+    compose = [call for call in calls if call["argv"][:2] == ["docker", "compose"]]
+    assert len(compose) == (2 if failure else 1), result.stderr
+    for call, expected in zip(compose, [override, rollback], strict=False):
+        args = call["argv"]
+        files = [args[i + 1] for i, arg in enumerate(args) if arg == "--file"]
+        assert files == [
+            str(host.release_dir(COMPONENT_STACK) / "docker-compose.production.yml"),
+            str(expected),
+        ]
+        assert call["release_tag"] == COMPONENT_STACK
+        assert call["release_commit"] == COMPONENT_STACK_COMMIT
+        assert "--no-deps" in args and args[-1] == service
+    if failure == "all":
+        assert result.returncode != 0
+        assert "rollback=FAILED" in result.stderr
+        assert "rollback=PASS" not in result.stderr
+        return
+    assert result.returncode == (92 if failure else 0), result.stderr
+    if failure:
+        assert "rollback=PASS" in result.stderr
+    persisted = rollback if failure else override
+    origin = host.tmp / f"memoria-contract-{persisted.name}"
+    assert origin.is_file()
+    assert origin.read_bytes() == persisted.read_bytes()
+    assert origin.stat().st_mode & 0o777 == 0o600
+    sha = hashlib.sha256(persisted.read_bytes()).hexdigest()
+    assert (
+        f"{service} /opt/memoria/{persisted.relative_to(host.memoria)} {sha} /tmp/{origin.name}"
+        in host.state_file.read_text()
+    )
+    _executable(host.bin / "docker", '#!/usr/bin/env bash\nexec record docker "$@"\n')
     freeze = host.step("freeze", tag=RELEASE)
     assert freeze.returncode == 0, freeze.output
-    _executable(host.bin / "docker", '#!/usr/bin/env bash\nexec record docker "$@"\n')
-    sha = hashlib.sha256(override.read_bytes()).hexdigest()
-    assert f"{service} {override} {sha} sha256:contract" in host.prev_record(RELEASE)
-    rollback = host.step("rollback", tag=RELEASE)
-    assert rollback.returncode == 0, rollback.output
-    assert any(str(override) in call.argv and call.argv[-1] == service
-               for call in rollback.compose_calls)
+    assert f"{service} {persisted} {sha} sha256:contract" in host.prev_record(RELEASE)
+    full_rollback = host.step("rollback", tag=RELEASE)
+    assert full_rollback.returncode == 0, full_rollback.output
+    assert any(
+        str(persisted) in call.argv and call.argv[-1] == service
+        for call in full_rollback.compose_calls
+    )
+
+
+@pytest.mark.parametrize("role", ["control", "agent"])
+@pytest.mark.parametrize("legacy", ["function", "dispatcher", "early-exit"])
+def test_component_rejects_legacy_registration_before_compose_up(
+    tmp_path: Path, role: str, legacy: str
+) -> None:
+    host, result, calls, _, _ = _run_component_functions(tmp_path, role, legacy=legacy)
+    assert result.returncode != 0
+    assert "does not support record-override" in result.stderr
+    assert not calls
+    assert not list(host.tmp.glob("memoria-contract-*"))
+
+
+@pytest.mark.parametrize("role", ["agent", "control"])
+@pytest.mark.parametrize("mode", ["--dry-run", "--cutover"])
+def test_component_rejects_unsupported_root_before_remote_actions(
+    tmp_path: Path, role: str, mode: str
+) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("ssh", "rsync", "docker", "git", "python3"):
+        _executable(bin_dir / name, "#!/bin/bash\necho UNEXPECTED_EXTERNAL >&2\nexit 99\n")
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            str(ROOT / "scripts" / f"deploy_{role}_component.sh"),
+            "--remote",
+            "host",
+            "--release-tag",
+            "candidate",
+            "--base-image",
+            f"memoria-{'agent' if role == 'agent' else 'control-api'}:base",
+            "--expected-commit",
+            "a" * 40,
+            "--remote-root",
+            "/opt/other",
+            mode,
+        ],
+        env={**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2, result.stderr
+    assert "unsupported remote root" in result.stderr
+    assert "UNEXPECTED_EXTERNAL" not in result.stderr
+
+
+@pytest.mark.parametrize("role", ["control", "agent"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["wrong-service", "drop-tag", "drop-commit", "rollback-chain", "original-prefix", "false-pass"],
+)
+def test_component_host_contract_detects_production_mutations(
+    tmp_path: Path, role: str, mutation: str
+) -> None:
+    source = (ROOT / "scripts" / f"deploy_{role}_component.sh").read_text()
+    start = source.index("record_component_override() {")
+    head, body = source[:start], source[start:]
+    stack = "stack" if role == "control" else "stack_release"
+    service = "control-api" if role == "control" else "voice-core-media-bridge"
+    failure = ""
+    if mutation == "wrong-service":
+        body = body.replace(f'{service} "$persisted"', 'media-edge "$persisted"', 1)
+    elif mutation == "drop-tag":
+        body = body.replace(f'TAG="${stack}_tag" ', "", 1)
+    elif mutation == "drop-commit":
+        body = body.replace(f'COMMIT="${stack}_commit" ', "", 1)
+    elif mutation == "rollback-chain":
+        body = body.replace(
+            '--file "$rollback_override"', '--file "$live_override" --file "$rollback_override"', 1
+        )
+        failure = "candidate"
+    elif mutation == "original-prefix":
+        body = body.replace('original="/tmp/memoria-', 'original="/tmp/broken-', 1)
+    else:
+        body = body.replace(
+            'record_component_override "$rollback_override" || rollback_status=$?',
+            'record_component_override "$rollback_override" || :',
+            1,
+        )
+        failure = "all"
+    assert head + body != source
+    host, result, calls, override, rollback = _run_component_functions(
+        tmp_path,
+        role,
+        failure=failure,
+        source=head + body,
+    )
+    with pytest.raises(AssertionError):
+        _assert_component_result(host, result, calls, override, rollback, role, failure)

@@ -26,6 +26,8 @@ def selected(gate: str, path: str) -> bool:
     ('miniprogram', 'scripts/compile_miniprogram_preflight.js'),
     ('miniprogram', 'scripts/miniprogram_ci_runtime.js'),
     ('miniprogram', '.github/workflows/ci.yml'),
+    ('miniprogram', 'services/session_runtime/profile_service.py'),
+    ('miniprogram', 'packages/contracts/schemas/multi-subject/profile.json'),
 ])
 def test_gate_selects_runtime_inputs(gate: str, path: str) -> None:
     assert selected(gate, path)
@@ -33,6 +35,8 @@ def test_gate_selects_runtime_inputs(gate: str, path: str) -> None:
 
 @pytest.mark.parametrize(('gate', 'path'), [
     ('miniprogram', 'scripts/release_ops.sh'),
+    ('miniprogram', 'services/session_runtime/service.py'),
+    ('miniprogram', 'packages/contracts/schemas/unrelated/profile.json'),
     ('miniprogram', 'devicetest/safety_soak_report.py'),
     ('python', 'apps/miniprogram/pages/home/index.js'),
     ('python', 'scripts/deploy_agent_component.sh'),

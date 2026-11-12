@@ -4,8 +4,6 @@ const EFFECTIVE_ON = "2026年10月24日";
 const GUIDE_VERSION = "internal-test-guide-20261017-r6";
 const CONSENT_DOC_VERSION = "internal-test-consent-20261017-r6";
 
-// upload:test injects the explicit internal-test flag into an isolated build copy.
-// check:release-gate rejects true in source.
 const INTERNAL_TEST_CONSENT_UNLOCK = false;
 
 function releaseDate(effectiveOn = EFFECTIVE_ON) {
