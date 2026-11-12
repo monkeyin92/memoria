@@ -518,7 +518,7 @@ class _Lineage:
         )
 
 
-type SessionTerminator = Callable[[str], Awaitable[int]]
+type SessionTerminator = Callable[[SubjectScope], Awaitable[int]]
 type CorpusPurger = Callable[[str], Awaitable[int]]
 type ChatUsagePurger = Callable[[str], Awaitable[int]]
 type IdentityRedactor = Callable[[str, str], Awaitable[None]]
@@ -682,7 +682,7 @@ class SubjectDeletionService:
         try:
             if due("sessions_terminated"):
                 progress["sessions"] = (
-                    await self._terminate_sessions(scope.subject_id)
+                    await self._terminate_sessions(scope)
                     if self._terminate_sessions is not None
                     else 0
                 )

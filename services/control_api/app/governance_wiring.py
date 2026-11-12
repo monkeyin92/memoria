@@ -34,7 +34,7 @@ from services.governance.subject_deletion import (
     SubjectDeletionLedger,
     SubjectDeletionService,
 )
-from services.governance.subject_ports import SubjectGuardianPort
+from services.governance.subject_ports import SubjectGuardianPort, SubjectScope
 from services.guardian.corpus import (
     CorpusRetentionService,
 )
@@ -136,13 +136,16 @@ def install_subject_deletion(
                 return int(connection.execute("SELECT count(*) FROM daily_chat_usage WHERE subject_id = ?", (subject_id,)).fetchone()[0])
         return await asyncio.to_thread(count)
 
+    async def terminate(scope: SubjectScope) -> int:
+        return await session_terminator.terminate_subject(scope.subject_id, actor_id=scope.account_id)
+
     service = SubjectDeletionService(
         ledger=ledger,
         archive=subject_archive(settings),
         object_store=archive_object_store,
         guardian=cast(SubjectGuardianPort, guardian_store),
         memory_scope=getattr(app.state, "subject_memory_scope", None),
-        terminate_sessions=session_terminator.terminate_subject,
+        terminate_sessions=terminate,
         purge_corpus=purge_corpus,
         purge_chat_usage=purge_chat_usage,
         redact_identity=redact,

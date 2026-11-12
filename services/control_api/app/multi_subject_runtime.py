@@ -30,7 +30,7 @@ from services.session_runtime.commands import (
     StartPersistentSessionCommand,
     SwitchPersistentSubjectCommand,
 )
-from services.session_runtime.issue_authority import PrivateProfileConsentWithdrawn
+from services.session_runtime.issue_authority import ProfileConsentWithdrawn
 from services.session_runtime.postgres_store import SessionRuntimeConflict
 from services.session_runtime.profile_service import (
     InMemoryRuntimeAuthority,
@@ -724,7 +724,10 @@ class PostgresMultiSubjectRuntimeControl:
                 session_id=resolved_session_id,
                 now=now,
             )
-        except PrivateProfileConsentWithdrawn as exc:
+        except ProfileConsentWithdrawn as exc:
+            if set(exc.withdrawn) & {"chat", "tutor", "english_practice"}:
+                await self.sessions.close_session(actor_id=actor_id, session_id=resolved_session_id, reason_code="consent_withdrawn", now=now)
+                raise
             if not self.is_control_session(resolved_session_id):
                 raise
             current = exc.profile

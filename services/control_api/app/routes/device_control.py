@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hmac
 import logging
-import ssl
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal, cast
@@ -39,15 +38,15 @@ from services.control_api.app.device_control import (
     allowed_audio_modes,
     stable_profile_fingerprint,
 )
+from services.control_api.app.device_session_close import close_media_session_pipeline
+from services.control_api.app.device_session_close import (
+    edge_internal_client_config as _edge_internal_client_config,
+)
 from services.control_api.app.media_runtime import DEVICE_STREAM_EPOCH_MAX
 from services.control_api.app.offline_stories import OFFLINE_STORIES
 from services.control_api.app.security import (
     AuthenticatedUser,
     require_authenticated_user,
-)
-from services.control_api.app.session_directory import (
-    SessionDirectory,
-    SessionDirectoryUnavailable,
 )
 from services.control_api.app.wake_words import (
     resolve_wake_word_settings,
@@ -57,13 +56,6 @@ from services.control_api.app.wake_words import (
 )
 from services.device_fleet.bootstrap_domain import OnboardingError
 from services.device_fleet.bootstrap_service import DeviceOnboardingService
-from services.session_runtime.postgres_store import SessionRuntimeConflict
-from services.session_runtime.service import (
-    PersistentSessionDenied,
-    PersistentSessionNotFound,
-    PersistentSessionUnavailable,
-    PostgresSessionRuntimeService,
-)
 
 router = APIRouter(prefix="/v1/devices", tags=["device-control"])
 logger = logging.getLogger(__name__)
@@ -306,30 +298,6 @@ async def project_device_profile_change(
         apply_at,
     )
     return delivered
-
-
-def _edge_internal_client_config(
-    settings: object,
-) -> tuple[str, str, float, bool | ssl.SSLContext, tuple[str, str] | None]:
-    base_url = str(getattr(settings, "media_edge_internal_control_url", "")).strip().rstrip("/")
-    token_setting = getattr(settings, "media_edge_internal_control_token", None)
-    token = (
-        token_setting.get_secret_value().strip()
-        if token_setting is not None and hasattr(token_setting, "get_secret_value")
-        else str(token_setting or "").strip()
-    )
-    timeout = float(getattr(settings, "media_edge_control_timeout_s", 2.0))
-    verify: bool | ssl.SSLContext = True
-    cert: tuple[str, str] | None = None
-    ca_file = str(getattr(settings, "media_edge_internal_control_ca_file", "")).strip()
-    cert_file = str(getattr(settings, "media_edge_internal_control_client_cert_file", "")).strip()
-    key_file = str(getattr(settings, "media_edge_internal_control_client_key_file", "")).strip()
-    if ca_file or cert_file or key_file:
-        if not (ca_file and cert_file and key_file):
-            raise ValueError("incomplete Control-to-Edge mTLS configuration")
-        verify = ssl.create_default_context(cafile=ca_file)
-        cert = (cert_file, key_file)
-    return base_url, token, timeout, verify, cert
 
 
 async def _read_live_device_runtime_status(
@@ -704,193 +672,6 @@ def _parse_close_report_time(value: str) -> datetime:
 internal_router = APIRouter(prefix="/v1/internal", tags=["device-internal"])
 
 
-def _edge_control_client_config(
-    settings: object,
-) -> tuple[str, str, float, bool | ssl.SSLContext, tuple[str, str] | None]:
-    return _edge_internal_client_config(settings)
-
-
-async def _close_active_device_session(
-    request: Request,
-    *,
-    device_id: str,
-    session_id: str,
-) -> bool:
-    """Ask the Edge to close the live device socket for this session.
-
-    This is the Control-to-Edge direction and uses the same runtime-control
-    token as runtime-profile invalidation; it is NOT the Edge-to-Control
-    close-report token. Failure is surfaced to the caller so a DELETE never
-    leaves a live socket behind while claiming the session was closed.
-    """
-
-    try:
-        base_url, token, timeout, verify, cert = _edge_control_client_config(
-            request.app.state.settings
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "media_edge_control_unavailable"},
-        ) from exc
-    if not base_url or len(token) < 32:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "media_edge_control_unavailable"},
-        )
-    try:
-        async with httpx.AsyncClient(timeout=timeout, verify=verify, cert=cert) as client:
-            response = await client.post(
-                f"{base_url}/v1/internal/device-runtime/session-close",
-                headers={"X-Memoria-Edge-Control-Token": token},
-                json={"device_id": device_id, "session_id": session_id},
-            )
-            response.raise_for_status()
-            value = response.json()
-    except Exception as exc:
-        logger.warning(
-            "device media edge socket close failed session_id=%s error=%s",
-            session_id,
-            type(exc).__name__,
-        )
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "media_edge_session_close_unavailable"},
-        ) from exc
-    if not isinstance(value, dict) or not isinstance(value.get("delivered"), bool):
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "media_edge_session_close_unavailable"},
-        )
-    return bool(value["delivered"])
-
-
-async def _close_media_session_pipeline(
-    request: Request,
-    *,
-    device_id: str,
-    session_id: str,
-    reason: str,
-    actor_id: str,
-    close_edge_socket: bool = False,
-    expected_stream_epoch: int | None = None,
-) -> dict[str, object]:
-    """Close one direct device session: authority + directory first, then projection.
-
-    Close order is enforced: the Postgres session_closed authority transition
-    and the SessionDirectory release both succeed before the SQLite
-    projection is marked closed. An ordinary network disconnect therefore can
-    never mark the projection closed while the authority is still active.
-    Every step is idempotent, so a retry after a partial failure converges:
-    the authority replay returns already_closed, the directory expire is a
-    no-op when absent, and the projection keeps its first close_reason.
-    """
-
-    store = cast(MemoryStore, request.app.state.memory_store)
-    row = store.get_device_media_session(session_id=session_id)
-    if row is None or row["device_id"] != device_id:
-        raise HTTPException(status_code=404, detail={"code": "media_session_not_found"})
-    if expected_stream_epoch is not None and int(row["stream_epoch"]) != expected_stream_epoch:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "media_session_epoch_mismatch"},
-        )
-    runtime_service = cast(
-        PostgresSessionRuntimeService | None,
-        getattr(request.app.state, "session_runtime_service", None),
-    )
-    if runtime_service is None:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "session_runtime_authority_unavailable"},
-        )
-    already_closed = False
-    try:
-        result = await runtime_service.close_session(
-            actor_id=actor_id,
-            session_id=session_id,
-            reason_code=reason,
-            now=datetime.now(UTC),
-        )
-        already_closed = result.already_closed
-    except PersistentSessionNotFound as exc:
-        # A genuine authority miss must be rejected, never treated as
-        # already closed: without the Postgres authority transition the
-        # projection must not be marked closed.
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "media_session_authority_not_found"},
-        ) from exc
-    except SessionRuntimeConflict as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "media_session_close_conflict"},
-        ) from exc
-    except PersistentSessionDenied as exc:
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "media_session_close_denied"},
-        ) from exc
-    except PersistentSessionUnavailable as exc:
-        logger.warning(
-            "device media session close authority failed session_id=%s error=%s",
-            session_id,
-            type(exc).__name__,
-        )
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "session_runtime_authority_unavailable"},
-        ) from exc
-    directory = cast(
-        SessionDirectory | None,
-        getattr(request.app.state, "session_directory", None),
-    )
-    if directory is not None:
-        try:
-            await directory.expire(session_id)
-        except SessionDirectoryUnavailable as exc:
-            raise HTTPException(
-                status_code=503,
-                detail={"code": "media_session_directory_unavailable"},
-            ) from exc
-    if close_edge_socket:
-        # The live Edge socket is closed before the projection is marked
-        # closed so an owner DELETE can never leave a connected session.
-        await _close_active_device_session(
-            request,
-            device_id=device_id,
-            session_id=session_id,
-        )
-    closed_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    applied_projection = store.close_device_media_session(
-        session_id=session_id,
-        reason=reason,
-        closed_at=closed_at,
-        expected_stream_epoch=expected_stream_epoch,
-    )
-    if not applied_projection:
-        current = store.get_device_media_session(session_id=session_id)
-        if current is None:
-            raise HTTPException(status_code=404, detail={"code": "media_session_not_found"})
-        if expected_stream_epoch is not None and int(current["stream_epoch"]) != expected_stream_epoch:
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "media_session_epoch_mismatch"},
-            )
-        if current["closed_at"] is None:
-            raise HTTPException(
-                status_code=503,
-                detail={"code": "media_session_projection_unavailable"},
-            )
-    return {
-        "device_id": device_id,
-        "session_id": session_id,
-        "closed": True,
-        "already_closed": already_closed,
-        "reason": reason,
-    }
-
-
 @router.delete("/{device_id}/media-sessions/{session_id}")
 async def delete_device_media_session(
     device_id: str,
@@ -912,8 +693,11 @@ async def delete_device_media_session(
         account_id=user.user_id,
         device_id=device_id,
     )
-    return await _close_media_session_pipeline(
-        request,
+    return await close_media_session_pipeline(
+        store=request.app.state.memory_store,
+        runtime_service=getattr(request.app.state, "session_runtime_service", None),
+        directory=getattr(request.app.state, "session_directory", None),
+        settings=request.app.state.settings,
         device_id=device_id,
         session_id=session_id,
         reason="device_close",
@@ -1072,8 +856,11 @@ async def report_edge_session_close(
             status_code=409,
             detail={"code": "media_session_epoch_mismatch"},
         )
-    return await _close_media_session_pipeline(
-        request,
+    return await close_media_session_pipeline(
+        store=request.app.state.memory_store,
+        runtime_service=getattr(request.app.state, "session_runtime_service", None),
+        directory=getattr(request.app.state, "session_directory", None),
+        settings=request.app.state.settings,
         device_id=body.device_id,
         session_id=body.session_id,
         reason=body.reason,

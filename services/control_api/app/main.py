@@ -49,12 +49,14 @@ from services.control_api.app.child_compliance_wiring import install_child_compl
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
 from services.control_api.app.device_registry import DeviceRegistry
+from services.control_api.app.device_session_close import close_media_session_pipeline
 from services.control_api.app.governance_wiring import (
     account_data_governance,
     claim_bound_child_subject_ids,
     install_subject_deletion,
 )
 from services.control_api.app.guardian_push import build_crisis_push_worker
+from services.control_api.app.guardian_revocation import guardian_revocation_hook
 from services.control_api.app.lifespan_resources import LifespanResources, SharedPostgresPools
 from services.control_api.app.media_runtime import mint_streamcore_token
 from services.control_api.app.media_slo import MediaSLOGate
@@ -133,14 +135,14 @@ from services.governance.account_data import (
     AccountDeletionWorker,
 )
 from services.growth.postgres_reader import PostgresGrowthReader
-from services.guardian.consent import ConsentRevocationHook, GuardianConsentService
+from services.guardian.consent import GuardianConsentService
 from services.guardian.corpus import (
     CorpusRetentionService,
     CorpusRetentionWorker,
     CorpusSampleStorePort,
 )
 from services.guardian.crisis import CrisisNotificationService, CrisisNotificationStorePort
-from services.guardian.domain import ConsentKind, GuardianStorePort
+from services.guardian.domain import GuardianStorePort
 from services.guardian.postgres_store import PostgresGuardianStore
 from services.guardian.push import CrisisPushStorePort
 from services.identity.authority import (
@@ -436,16 +438,6 @@ def _voice_preview_renderer(settings: ControlSettings) -> VoicePreviewRenderer:
     return CosyVoicePreviewRenderer()
 
 
-def _guardian_revocation_hook(
-    terminator: AccountSessionTerminator,
-) -> ConsentRevocationHook:
-    async def on_revoked(account_id: str, kind: ConsentKind) -> None:
-        if kind in {"minor_voice_session", "memory_retention"}:
-            await terminator.terminate_account(account_id)
-
-    return on_revoked
-
-
 def _evolution_release_policy(settings: ControlSettings) -> EvolutionReleasePolicy:
     return EvolutionReleasePolicy(
         parse_runtime_prompt_families(settings.evolution_runtime_prompt_families)
@@ -713,6 +705,9 @@ async def _wire_services(w: Wiring) -> None:
     session_terminator = AccountSessionTerminator(
         store=store,
         connections=app.state.realtime_connections,
+        close_device_session=partial(close_media_session_pipeline, store=store,
+            runtime_service=getattr(app.state, "session_runtime_service", None),
+            directory=app.state.session_directory, settings=settings),
     )
     app.state.session_terminator = session_terminator
 
@@ -819,7 +814,8 @@ async def _wire_services(w: Wiring) -> None:
     app.state.guardian_consent_service = GuardianConsentService(
         guardian_store,
         archive,
-        on_revoked=_guardian_revocation_hook(session_terminator),
+        on_revoked=guardian_revocation_hook(session_terminator, identity=app.state.identity_service,
+            bound_consent=getattr(app.state, "bound_subject_consent", None)),
     )
     app.state.memory_catalog = memory_catalog
     app.state.skill_catalog = skill_catalog

@@ -55,6 +55,7 @@ async def _bound_child(
         primary_subject_ids=(child.person_id,),
         roles=(("parent", "guardian"), ("parent", "device_admin")),
         service_profile_version="parent_for_child-v1",
+        persona_assignment_id="starlight:v1",
         policy_bundle_version="multi-subject-v1",
         consent_offer_ids=("offer_minor_voice_session_v1",),
         actor_person_id="parent",

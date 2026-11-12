@@ -18,6 +18,7 @@ from services.identity.domain import (
     BindingStatus,
     BindingVersionConflictError,
     DeviceBinding,
+    IdentityAccessDeniedError,
     IdentityNotFoundError,
 )
 from services.identity.postgres_helpers import _timestamp
@@ -353,6 +354,8 @@ class PostgresIdentityBindingMixin:
                 try:
                     raw = await connection.fetchval("SELECT identity_revoke_binding($1,$2,$3)", binding_id, actor_person_id, at)
                 except asyncpg.PostgresError as exc:
+                    if exc.sqlstate == "IB403":
+                        raise IdentityAccessDeniedError("binding manage denied") from exc
                     if exc.sqlstate == "IB409":
                         raise BindingVersionConflictError("binding is no longer active") from exc
                     raise

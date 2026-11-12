@@ -396,6 +396,11 @@ async def on_session_end(session_id: str) -> SweepReceipt:
 
 注销账号会先通过身份 SQL 在 subject 锁下捕获允许擦除的无账号儿童，并持久保存到 `identity_subject_releases`。仍被其他 owner 的 active binding 服务的儿童不会进入名单。关系和身份删除之前，每个允许擦除的儿童必须完成 `SubjectDeletionService`，包括记忆两层、儿童 id 危机元数据、语料和 usage；失败由账号 ledger 重试。此前已越过 `identity_rows_deleted` 且没有名单的历史注销不自动补清理。
 
+撤销 `minor_voice_session` 后，bound-subject hook 先撤销同一授权人在 active binding 上的 Consent 权威，再以权威签名 profile 中已确认的 `active_subject_id` 选择该儿童设备会话。投影可能尚未反映切人，所以关闭权威会再次核对目标，沿用现有 profile CAS 拒绝检查后的切人。关闭复用 Session Runtime close、directory expire 和 Edge `/v1/internal/device-runtime/session-close`，全部成功后才关闭本地投影。Edge 失败返回失败并保留重试入口，不报停流成功。person id 不传给账号终止；已切到其他人和 unknown_safe 的会话保留。记忆同意单独撤销仍走降级，保留聊天。
+
+Agent 拉取 `/v1/interaction/session-policy` 时，只有 `410` 且 `detail.code=session_terminated` 会关闭并永久拒绝后续生成。已关闭会话、绑定撤销和语音授权撤销使用这个明确错误契约。网络、5xx 和其他未确认拒绝继续使用既有 unknown_safe。上述链路通过隔离 PG 与 Mock HTTP 验证，未部署，也没有实机音频停流验收。
+
+
 
 按使用人删除（`services/governance/subject_deletion.py`）的覆盖面按存储逐项复核，结论取代下方 09-20 结论中已过时的部分（`memory_scope` 已由 P1-11 的维护角色函数按使用人擦除，不再是"无法物理删除"）。
 

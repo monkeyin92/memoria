@@ -551,7 +551,7 @@ async def session_policy(
     request: Request,
     _: Annotated[None, Depends(_require_policy_token)],
 ) -> dict[str, Any]:
-    session = require_active_voice_session(request, body.session_id)
+    session = require_active_voice_session(request, body.session_id, terminal_response=True)
     runtime_profile = await current_persistent_runtime_profile(
         request,
         session,
