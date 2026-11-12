@@ -214,8 +214,9 @@ PostgreSQL 自定义格式（`-Fc`），支持：
 
 1. **远程异地备份（2026-10-26 确立保留策略）:**
    - 镜像服务：`infra/backup/offsite-mirror.sh`（profile: `offsite-backup`）
-   - 保留期：书面明确配置为 7 天（合规门槛 ≤7 天，`MEMORIA_OFFSITE_RETENTION_DAYS=7`）
-   - 自动过期机制：镜像脚本启动时通过 `mc ilm rule add --expire-days 7 --noncurrent-expire-days 7` 在异地 S3 桶上配置对象生命周期规则，超时自动到期清理
+   - 合规目标仍为对象总物理寿命 ≤7 天；`MEMORIA_OFFSITE_RETENTION_DAYS` 保持 1–7 天，默认 7。版本开启时，current `Days=N` 和 `NoncurrentDays=N` 是 N+N 两阶段，后者另行计时且删除异步，当前配置不能保证该合规目标，未来启用前重评，不擅自缩减现有参数。
+   - 自动过期机制与 `docs/runbooks.md` 的备份流程一致。固定 mc 先核对 version info，再 export 判断归属；仅允许空配置或可识别的单条 `memoria-offsite-retention` 规则执行完整 `mc ilm rule import`，顶层 JSON 字段为 `Rules`。外来、混合规则和未知格式拒绝且保持既有策略；导入后及每轮 mirror 前 export 核验，不匹配或清空按漂移以 2 退出。查询、导入、mirror 失败均停止且不推进失败轮次的成功水位。
+   - 当前任务仅执行隔离的离线契约测试，不启用 profile、不执行真实 bucket 配置。规则写入、对象物理删除和恢复能力均未获本轮在线验收。
    
 2. **恢复演练:** 需定期验证备份可用性（每月一次 pg_restore 试验）
 
