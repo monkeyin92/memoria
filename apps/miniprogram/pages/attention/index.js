@@ -21,6 +21,12 @@ Page({
     this.loadAlert();
   },
 
+  onShow() {
+    if (this.data.alertResult.errorKind === "auth" && api.hasAuthenticatedSession()) {
+      return this.loadAlert();
+    }
+  },
+
   async loadAlert() {
     if (this._loadingAlert) return;
     this._loadingAlert = true;

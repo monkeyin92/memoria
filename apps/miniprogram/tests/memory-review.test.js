@@ -80,6 +80,7 @@ function instantiate(definition) {
 }
 
 function stubApi(overrides) {
+  overrides = { syncDeviceBindings: async () => ({ status: "empty", binding: null }), ...overrides };
   const originals = {};
   for (const [key, value] of Object.entries(overrides)) {
     originals[key] = api[key];

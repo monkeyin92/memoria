@@ -288,7 +288,24 @@ Page({
     const authEpoch = api.currentAuthEpoch();
     this.setData({ acting: true, error: "", notice: "" });
     try {
-      await api.deleteCustomPersona(personaId);
+      try {
+        await api.deleteCustomPersona(personaId);
+      } catch (error) {
+        if (!api.isAuthEpochCurrent(authEpoch)) return;
+        if (error?.status !== 409 || error?.code !== "persona_in_use") throw error;
+        const confirmInUse = await new Promise((resolve) => {
+          wx.showModal({
+            title: "人格仍在使用中，确认删除？",
+            content: "这份人格仍在使用。确认删除后无法恢复，请确认是否继续。",
+            confirmText: "仍要删除",
+            confirmColor: "#9A4732",
+            success: (result) => resolve(Boolean(result.confirm)),
+            fail: () => resolve(false),
+          });
+        });
+        if (!confirmInUse || !api.isAuthEpochCurrent(authEpoch)) return;
+        await api.deleteCustomPersona(personaId, { confirm: true });
+      }
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({ notice: "已删除自定义人格。" });
       await this.loadPersonas();

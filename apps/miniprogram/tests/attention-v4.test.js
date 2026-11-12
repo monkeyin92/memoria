@@ -388,3 +388,52 @@ test("no shipped copy carries a hotline number; the server's next-step line owns
     );
   assert.deepEqual(hits, []);
 });
+
+test("login returns to the original attention page and refreshes its failed read", async () => {
+  let loggedIn = false;
+  const store = fx.safetyAlertApi([fx.SAFETY_ALERT]);
+  const options = fx.authed({
+    hasAuthenticatedSession: () => loggedIn,
+    getGuardianNotification: async (id) => {
+      if (!loggedIn) throw Object.assign(new Error("expired"), { status: 401 });
+      return store.getGuardianNotification(id);
+    },
+  });
+  const h = loadPage("pages/attention/index", options);
+  let auth;
+  try {
+    await h.run({ id: "n1" });
+    assert.equal(h.page.data.alertResult.errorKind, "auth");
+    h.page.openAttentionLogin();
+    const navigation = h.wxCalls.find((call) => call.name === "navigateTo");
+    const query = Object.fromEntries(new URLSearchParams(navigation.args[0].url.split("?")[1]));
+    auth = loadPage("pages/auth/index", options);
+    auth.page.onLoad(query);
+    global.getCurrentPages = () => [{ route: "pages/home/index" }, { route: "pages/attention/index", options: { id: "n1" } }, { route: "pages/auth/index" }];
+    loggedIn = true;
+    auth.page.finishLogin();
+    assert.equal(auth.wxCalls.filter((call) => call.name === "redirectTo").length, 0);
+    assert.deepEqual(auth.wxCalls.filter((call) => call.name === "navigateBack").map((call) => call.args[0]), [{ delta: 1 }]);
+    auth.restore();
+    auth = null;
+    global.getCurrentPages = () => [{ route: "pages/home/index" }, { route: "pages/attention/index", options: { id: "n1" } }];
+    await h.page.onShow();
+    await h.settle();
+    assert.equal(h.page.data.alertResult.status, "ok");
+    assert.match(visibleText(renderPage("pages/attention/index", h.page.data)), /有一条需要你关注的对话/);
+    h.page.goBack();
+    assert.deepEqual(navigations(h), [{ delta: 1 }]);
+  } finally { auth?.restore(); h.restore(); }
+});
+
+test("login still redirects a different attention target and ordinary non-tab page", () => {
+  for (const redirect of ["/pages/attention/index?id=n2", "/pages/persona-custom/index"]) {
+    const h = loadPage("pages/auth/index", fx.authed());
+    try {
+      h.page.setData({ redirect });
+      global.getCurrentPages = () => [{ route: "pages/attention/index", options: { id: "n1" } }, { route: "pages/auth/index" }];
+      h.page.finishLogin();
+      assert.deepEqual(h.wxCalls.filter((call) => call.name === "redirectTo").map((call) => call.args[0]), [{ url: redirect }]);
+    } finally { h.restore(); }
+  }
+});

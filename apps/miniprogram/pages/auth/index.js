@@ -95,6 +95,13 @@ Page({
       wx.switchTab({ url: routeOf(redirect) });
       return;
     }
+    const pages = getCurrentPages();
+    const previous = pages[pages.length - 2];
+    if (previous?.route === "pages/attention/index" &&
+        redirect === `/pages/attention/index?id=${encodeURIComponent(previous.options?.id || "")}`) {
+      wx.navigateBack({ delta: 1 });
+      return;
+    }
     wx.redirectTo({ url: redirect });
   },
 });

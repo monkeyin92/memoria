@@ -270,7 +270,7 @@ Page({
    * 不给家长看原文，回顾页改为「哪些天聊过 + AI 概括」。与成长小结页取同一个孩子。
    */
   _guardianSubject() {
-    const binding = api.readBindingManifest?.() || null;
+    const binding = this._reviewBinding || api.readBindingManifest?.() || null;
     if (!binding || binding.declared_mode !== "parent_for_child" || binding.status !== "active") {
       return "";
     }
@@ -294,11 +294,11 @@ Page({
       this._enterGuestState();
       return;
     }
-    this.loadDays();
-    this._loadCrisisSafety();
+    return this.loadDays().then(() => this._loadCrisisSafety());
   },
 
   async _loadCrisisSafety() {
+    if (this._bindingUnconfirmed || !api.hasAuthenticatedSession()) return;
     if (!this._guardianSubject()) {
       this.setData({
         safetyBanner: null,
@@ -331,6 +331,7 @@ Page({
   },
 
   retrySafetyRead() {
+    if (this._bindingUnconfirmed) return this.loadDays().then(() => this._loadCrisisSafety());
     return this._loadCrisisSafety();
   },
 
@@ -361,6 +362,8 @@ Page({
   },
 
   _enterGuestState() {
+    this._reviewBinding = null;
+    this._bindingUnconfirmed = true;
     this.setData({
       authenticated: false,
       days: [],
@@ -435,9 +438,25 @@ Page({
     const identity = api.currentIdentity();
     if (!identity) return "guest";
     const authEpoch = api.currentAuthEpoch();
-    this.setData({ loading: true, error: "" });
+    this._bindingUnconfirmed = true;
+    this.setData({ ...privatePartitionsClear(), loading: true, error: "", guardianMode: true });
     try {
+      let binding = api.readBindingManifest?.() || null;
+      if (!binding) {
+        const result = await api.syncDeviceBindings();
+        if (!api.isAuthEpochCurrent(authEpoch)) return "stale";
+        if (result.status !== "empty" && (result.status !== "ready" || !result.binding)) {
+          throw new Error("无法确认设备绑定，请稍后重试。");
+        }
+        binding = result.binding;
+      }
+      this._reviewBinding = binding;
       const guardianSubject = this._guardianSubject();
+      if (binding && (binding.status !== "active" ||
+          (binding.declared_mode !== "self_use" && !guardianSubject))) {
+        throw new Error("无法确认设备绑定，请稍后重试。");
+      }
+      this._bindingUnconfirmed = false;
       let guardianDays = null;
       let childMemories = null;
       let recentChildSummaries = [];
@@ -531,6 +550,7 @@ Page({
       if (!api.isAuthEpochCurrent(authEpoch)) return;
       this.setData({
         ...privatePartitionsClear(),
+        ...(this._bindingUnconfirmed ? { safetyBanner: null, safetyReadStatus: "failed", safetyReadErrorKind: "network" } : {}),
         error: error?.message || "回顾暂时无法加载。",
       });
       return "error";
