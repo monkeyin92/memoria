@@ -1,13 +1,16 @@
 """Run the real shell with isolated paths and a fake mc; no bucket or host cleanup."""
+import hashlib
 import json
-from pathlib import Path
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[2] / 'infra/backup/offsite-mirror.sh'
+PRIMARY_SHA256 = 'bd63c09d507c03a64c5a9cbd89b2b921abb6a8b0715d02e9abbfa9bcddd71c70'
 
 # Captured with encoding/json.MarshalIndent on the complete official source:
 # https://github.com/minio/minio-go/blob/v7.0.90/pkg/lifecycle/lifecycle.go
@@ -36,6 +39,41 @@ def policy(days=7, **changes):
     rule['NoncurrentVersionExpiration']['NoncurrentDays'] = days
     rule.update(changes)
     return data
+
+
+def verify_primary_contract(source):
+    """Use an exact, separately downloaded upstream file. Never fetch or install."""
+    data = source.read_bytes()
+    if hashlib.sha256(data).hexdigest() != PRIMARY_SHA256:
+        raise ValueError('expected the exact official minio-go v7.0.90 lifecycle.go')
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / 'lifecycle.go').write_bytes(data.replace(b'package lifecycle', b'package main', 1))
+        (root / 'primary.go').write_text(r'''package main
+import ("encoding/json"; "encoding/xml"; "fmt")
+func main() {
+ var cfg Configuration
+ raw := `<LifecycleConfiguration><Rule><Expiration><Days>7</Days></Expiration><ID>memoria-offsite-retention</ID><NoncurrentVersionExpiration><NoncurrentDays>7</NoncurrentDays></NoncurrentVersionExpiration><Status>Enabled</Status></Rule></LifecycleConfiguration>`
+ if err := xml.Unmarshal([]byte(raw), &cfg); err != nil { panic(err) }
+ output, err := json.MarshalIndent(cfg, "", " "); if err != nil { panic(err) }
+ counts := []int{}
+ for _, input := range []string{`{"Rule":[{"ID":"memoria-offsite-retention"}]}`, `{"Rules":[]}`, string(output)} {
+  decoded := NewConfiguration()
+  if err := json.Unmarshal([]byte(input), decoded); err != nil { panic(err) }
+  counts = append(counts, len(decoded.Rules))
+ }
+ proof, err := json.Marshal(struct{Export string; RuleCounts []int}{string(output), counts})
+ if err != nil { panic(err) }; fmt.Println(string(proof))
+}
+''')
+        env = dict(os.environ, GOWORK='off', GOPROXY='off', GOTOOLCHAIN='local', GO111MODULE='off')
+        result = subprocess.run(['go', 'run', str(root / 'lifecycle.go'), str(root / 'primary.go')],
+                                env=env, text=True, capture_output=True, timeout=60, check=True)
+    proof = json.loads(result.stdout)
+    if proof != {'Export': PINNED_EXPORT, 'RuleCounts': [0, 0, 1]}:
+        raise AssertionError(f'primary serializer disagrees with fixture: {proof!r}')
+    print(f'PASS official lifecycle.go SHA256 {PRIMARY_SHA256}')
+    print('PASS exact MarshalIndent fixture; Rule=0 rules, empty Rules=0, valid Rules=1')
 
 
 # Primary contracts at mc RELEASE.2025-04-16T18-13-26Z:
@@ -342,4 +380,7 @@ class OffsiteMirrorTest(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    unittest.main()
+    if len(sys.argv) == 3 and sys.argv[1] == '--verify-primary-lifecycle':
+        verify_primary_contract(Path(sys.argv[2]))
+    else:
+        unittest.main()
