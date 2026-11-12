@@ -572,6 +572,8 @@ PYEOF
 
 `scripts/deploy_control_component.sh` 与 `scripts/deploy_agent_component.sh` 的切流和失败回滚均使用基础 Compose + 该服务的一份 image-only override，不叠加切流前的 override。健康与镜像检查通过后，脚本调用主机 `/root/memoria-release/release-ops.sh record-override`，将持久覆盖与字节相同的 `/tmp/memoria-<tag>-<文件名>` 原件登记进状态文件；登记失败触发回滚，回滚覆盖也必须登记成功才能报告 PASS。主机必须已安装支持 `record-override` 的 release-ops.sh。下一次整栈 `freeze` 仍只接受已登记的单服务覆盖，核对内容、sha256 与运行镜像；`rollback` 使用冻结的覆盖并校验 image ID。任意多文件 Compose 链仍被拒绝。整栈发布后，历史登记保留，不会用于新 PREV 的纯整栈链。
 
+小程序内测同意流程用 `npm --prefix apps/miniprogram run upload:test -- --version <版本> --desc <说明> --internal-test-consent-unlock --dry-run` 做本地编译预检。该参数只修改临时构建副本，结束或失败后删除副本；源码 `INTERNAL_TEST_CONSENT_UNLOCK` 必须保持 `false`，`check:release-gate` 继续拒绝提交 `true`。不带参数的构建保持锁定。真实上传须另行获得明确授权，并去掉 `--dry-run`；仍要求源码工作区干净、目标 AppID 和密钥权限通过，上传只到开发版本，不提交审核或正式发布。
+
 运行门禁需剥离本地 `OFFLINE_MOCK/INTERRUPTION_MIN_DURATION_S`；`--skip-gates` 必须有明确理由与收据。门禁里的 pytest 在 macOS 上同样可跑：进程采样经 `scripts/local_process_probe.py`，Linux 读 `/proc`，macOS 读 libproc 的 RSS 与存活并用一次连接探测证明监听端口已关闭，ESTABLISHED 连接数记为未测量（`null`，不是 0），不因平台被跳过。上传要求 PATH 中 `rsync>=3.0` 支持 `--protect-args`，macOS 内置版本不可假定满足。
 
 ### 完整制品上传与校验
