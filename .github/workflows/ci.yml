@@ -54,6 +54,7 @@ jobs:
               - 'services/**/*.sql'
               - '!services/control_api/tests/test_production_compose.py'
               - 'testing/**'
+              - 'devicetest/**'
               - 'conftest.py'
               - 'infra/postgres/**'
               - 'infra/memoria-data.production.yml'
@@ -77,7 +78,9 @@ jobs:
               - 'scripts/generate_media_go_proto.sh'
               - 'infra/Dockerfile.media-edge'
             miniprogram:
+              - '.github/workflows/ci.yml'
               - 'apps/miniprogram/**'
+              - 'scripts/*miniprogram*.js'
             firmware:
               - '.github/workflows/ci.yml'
               - 'HANDOFF.md'
