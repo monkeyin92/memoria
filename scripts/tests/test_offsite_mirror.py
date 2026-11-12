@@ -66,7 +66,7 @@ elif args[0] == 'mirror' and failure == 'mirror': sys.exit(5)
             for command, body in {
                 'date': 'echo 2026-11-12T10:00:00Z',
                 'find': 'echo cleanup >> "$CALLS"',
-                'sleep': 'exit 9' if not drift else "printf '%s' '{\"Rules\":[]}' > \"$STATE\"", 
+                'sleep': 'exit 9' if not drift else "printf '%s' '{\"Rules\":[]}' > \"$STATE\"",
             }.items():
                 executable = bin_dir / command
                 executable.write_text('#!/bin/sh\n' + body + '\n')

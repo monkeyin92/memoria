@@ -39,17 +39,60 @@ mc alias set --quiet offsite "$MEMORIA_OFFSITE_S3_ENDPOINT" \
 mc stat "offsite/$MEMORIA_OFFSITE_S3_BUCKET" >/dev/null
 mc version info "offsite/$MEMORIA_OFFSITE_S3_BUCKET" | grep -q 'Enabled'
 
-# This dedicated bucket's complete policy is owned by this script. mc's pinned
-# export serializer omits an empty Filter and emits these fields in this order.
-expected_ilm='{"Rules":[{"Expiration":{"Days":'"$offsite_retention_days"'},"ID":"memoria-offsite-retention","NoncurrentVersionExpiration":{"NoncurrentDays":'"$offsite_retention_days"'},"Status":"Enabled"}]}'
+# Only recognize this subset of the pinned mc/minio-go serializer. Comparing
+# the entire output preserves spaces inside strings and rejects extra rules.
+retention_policy() {
+  printf '{\n "Rules": [\n  {\n   "Expiration": {\n    "Days": %s\n   },\n   "ID": "memoria-offsite-retention",\n   "NoncurrentVersionExpiration": {\n    "NoncurrentDays": %s\n   },\n   "Status": "%s"\n  }\n ]\n}' "$1" "$2" "$3"
+}
+
+export_policy() {
+  if actual_ilm="$(mc --no-color ilm rule export "offsite/$MEMORIA_OFFSITE_S3_BUCKET" 2>&1)"; then
+    export_status=0
+  else
+    export_status=$?
+  fi
+}
+
+export_policy
+if [ "$export_status" -eq 0 ]; then
+  current_days="${actual_ilm#*'"Days": '}"
+  current_days="${current_days%%'
+'*}"
+  noncurrent_days="${actual_ilm#*'"NoncurrentDays": '}"
+  noncurrent_days="${noncurrent_days%%'
+'*}"
+  case "$current_days:$noncurrent_days" in
+    *[!0-9:]*|:*|*:|0:*|*:0) current_days="" ;;
+  esac
+  owned=false
+  if [ -n "$current_days" ]; then
+    for status in Enabled Disabled; do
+      if [ "$actual_ilm" = "$(retention_policy "$current_days" "$noncurrent_days" "$status")" ]; then
+        owned=true
+      fi
+    done
+  fi
+  if [ "$owned" != true ]; then
+    echo "offsite lifecycle ownership cannot be proven from pinned mc export; refusing import (foreign rules or unknown format)" >&2
+    exit 2
+  fi
+elif [ "$export_status" -ne 1 ] ||
+     [ "$actual_ilm" != 'mc: <ERROR> Unable to export lifecycle configuration: lifecycle configuration not set.' ]; then
+  echo "offsite lifecycle ownership query failed; refusing import" >&2
+  exit "$export_status"
+fi
+
+expected_ilm="$(retention_policy "$offsite_retention_days" "$offsite_retention_days" Enabled)"
 printf '%s\n' "$expected_ilm" | mc ilm rule import "offsite/$MEMORIA_OFFSITE_S3_BUCKET"
 
 while :; do
-  # Capture the command status separately; a pipeline would hide query failure.
-  actual_ilm="$(mc ilm rule export "offsite/$MEMORIA_OFFSITE_S3_BUCKET")"
-  actual_ilm="$(printf '%s' "$actual_ilm" | tr -d '[:space:]')"
+  export_policy
+  if [ "$export_status" -ne 0 ]; then
+    echo "offsite lifecycle readback query failed; stopping sync" >&2
+    exit "$export_status"
+  fi
   if [ "$actual_ilm" != "$expected_ilm" ]; then
-    echo "offsite lifecycle readback does not match the required full-bucket expiration policy" >&2
+    echo "offsite lifecycle readback differs from the required pinned mc output (policy drift or unknown format); stopping sync" >&2
     exit 2
   fi
   test -s /backup-staging/LATEST
