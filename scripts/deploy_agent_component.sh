@@ -838,7 +838,6 @@ if [[ ! -d "$working_dir" ]]; then
 fi
 [[ -d "$working_dir" ]]
 
-previous_args=()
 for file in "${previous_files[@]}"; do
   if [[ "${file##*/}" == docker-compose.production.yml ]]; then
     [[ "$(sha256sum "$file" | cut -d ' ' -f1)" == "$expected_compose_sha" ]] || {
@@ -846,7 +845,6 @@ for file in "${previous_files[@]}"; do
       exit 1
     }
   fi
-  previous_args+=(--file "$file")
 done
 
 # Keep one rollback tag for the bridge image so a rollback preserves the same
@@ -1078,6 +1076,16 @@ resolve_output="$(
 )"
 printf '%s\n' "$resolve_output"
 
+record_component_override() {
+  local persisted="$1" original
+  original="/tmp/memoria-${release_tag}-$(basename "$persisted")"
+  install -m 0600 "$persisted" "$original"
+  TAG="$stack_release_tag" COMMIT="$stack_release_commit" \
+    bash /root/memoria-release/release-ops.sh record-override \
+    voice-core-media-bridge "$persisted" "$original"
+}
+[[ -f /root/memoria-release/release-ops.sh ]]
+
 rollback() {
   exit_code=$?
   trap - ERR
@@ -1088,11 +1096,14 @@ rollback() {
     env MEMORIA_RELEASE_TAG="$stack_release_tag" \
       MEMORIA_RELEASE_COMMIT="$stack_release_commit" \
       docker compose --project-name "$project_name" \
-      "${previous_args[@]}" --file "$rollback_override" \
+      --file "$base_file" --file "$rollback_override" \
       --profile media-runtime up -d --no-deps --no-build \
       voice-core-media-bridge
   )
   rollback_status=$?
+  if ((rollback_status == 0)); then
+    record_component_override "$rollback_override" || rollback_status=$?
+  fi
   if ((rollback_status == 0)); then
     echo "component rollback=PASS" >&2
   else
@@ -1105,7 +1116,7 @@ trap rollback ERR
 cd "$working_dir"
 env MEMORIA_RELEASE_TAG="$stack_release_tag" MEMORIA_RELEASE_COMMIT="$stack_release_commit" \
   docker compose --project-name "$project_name" \
-  "${previous_args[@]}" --file "$override" \
+  --file "$base_file" --file "$override" \
   --profile media-runtime up -d --no-deps --no-build \
   voice-core-media-bridge
 
@@ -1121,6 +1132,7 @@ done
 docker exec "$bridge_container" /app/.venv/bin/python -c \
   'import socket; s=socket.create_connection(("127.0.0.1", 7001), 3); s.close(); print("bridge_grpc_socket=PASS")'
 
+record_component_override "$override"
 trap - ERR
 {
   printf 'agent_component_cutover=PASS\n'

@@ -2148,3 +2148,56 @@ def test_shared_host_bringup_script_is_checked_in_and_keeps_its_step_contract() 
     assert not re.search(
         r"(?im)^\s*(?:export\s+)?[A-Z_]*(?:PASSWORD|SECRET|TOKEN|KEY)[A-Z_]*=\S+", text
     )
+
+
+@pytest.mark.parametrize(
+    ("role", "service", "image"),
+    [("control", "control-api", CONTROL_IMAGE),
+     ("agent", "voice-core-media-bridge", BRIDGE_IMAGE)],
+)
+def test_component_cutover_next_freeze_and_rollback_contract(
+    tmp_path: Path, role: str, service: str, image: str
+) -> None:
+    host = component_host(tmp_path)
+    script = (ROOT / "scripts" / f"deploy_{role}_component.sh").read_text()
+    start = script.index('cd "$working_dir"\nenv ', script.index("trap rollback ERR"))
+    command = script[start:script.index('\n\n', start)]
+    base = host.release_dir(COMPONENT_STACK) / "docker-compose.production.yml"
+    relative = f"component-releases/contract-{role}/{role}-component.override.yml"
+    override = host.override_file(relative, service, image)
+    _executable(host.bin / "docker", '#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n')
+    result = subprocess.run(
+        ["bash", "-c", 'previous_args=(--file "$base_file" --file "$live_override"); ' + command],
+        env={**os.environ, "PATH": f"{host.bin}:{os.environ['PATH']}",
+             "live_override": str(host.tmp / "pre-cutover.yml"),
+             "working_dir": str(host.root), "base_file": str(base),
+             "override": str(override), "project_name": "memoria",
+             "stack_tag": COMPONENT_STACK, "stack_commit": COMPONENT_STACK_COMMIT,
+             "stack_release_tag": COMPONENT_STACK,
+             "stack_release_commit": COMPONENT_STACK_COMMIT,
+             "previous_args": "must-not-use-previous-chain"},
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    args = result.stdout.splitlines()
+    files = [args[i + 1] for i, arg in enumerate(args) if arg == "--file"]
+    assert files == [str(base), str(override)]
+    assert "--no-deps" in args and args[-1] == service
+    assert 'record_component_override "$override"\ntrap - ERR' in script
+    assert 'record_component_override "$rollback_override" || rollback_status=$?' in script
+    origin = host.tmp_override(f"contract-{role}.yml", service, image)
+    host.container(service, release=COMPONENT_STACK, commit="b" * 40,
+                   chain=",".join(files), image=image, image_id="sha256:contract")
+    registration = host.step("record-override", tag=COMPONENT_STACK, args=[
+        service, f"/opt/memoria/{relative}", f"/tmp/{origin.name}",
+    ])
+    assert registration.returncode == 0, registration.output
+    freeze = host.step("freeze", tag=RELEASE)
+    assert freeze.returncode == 0, freeze.output
+    _executable(host.bin / "docker", '#!/usr/bin/env bash\nexec record docker "$@"\n')
+    sha = hashlib.sha256(override.read_bytes()).hexdigest()
+    assert f"{service} {override} {sha} sha256:contract" in host.prev_record(RELEASE)
+    rollback = host.step("rollback", tag=RELEASE)
+    assert rollback.returncode == 0, rollback.output
+    assert any(str(override) in call.argv and call.argv[-1] == service
+               for call in rollback.compose_calls)

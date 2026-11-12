@@ -546,7 +546,6 @@ EOF
 chmod 0600 "$live_override"
 validate_control_override "$live_override"
 previous_files=("$base_file" "$live_override")
-previous_args=(--file "$base_file" --file "$live_override")
 [[ -d "$working_dir" ]] || working_dir="$(dirname "$base_file")"
 [[ -d "$working_dir" ]] || {
   echo "Control Compose working directory is unavailable" >&2
@@ -606,6 +605,16 @@ resolve_output="$(
 )"
 printf '%s\n' "$resolve_output"
 
+record_component_override() {
+  local persisted="$1" original
+  original="/tmp/memoria-${release_tag}-$(basename "$persisted")"
+  install -m 0600 "$persisted" "$original"
+  TAG="$stack_tag" COMMIT="$stack_commit" \
+    bash /root/memoria-release/release-ops.sh record-override \
+    control-api "$persisted" "$original"
+}
+[[ -f /root/memoria-release/release-ops.sh ]]
+
 rollback() {
   exit_code=$?
   trap - ERR
@@ -614,10 +623,13 @@ rollback() {
   (
     cd "$working_dir"
     env MEMORIA_RELEASE_TAG="$stack_tag" MEMORIA_RELEASE_COMMIT="$stack_commit" \
-      docker compose --project-name "$project_name" "${previous_args[@]}" \
+      docker compose --project-name "$project_name" --file "$base_file" \
       --file "$rollback_override" up -d --no-deps --no-build control-api
   )
   rollback_status=$?
+  if ((rollback_status == 0)); then
+    record_component_override "$rollback_override" || rollback_status=$?
+  fi
   if ((rollback_status == 0)); then
     echo "control component rollback=PASS" >&2
   else
@@ -629,7 +641,7 @@ trap rollback ERR
 
 cd "$working_dir"
 env MEMORIA_RELEASE_TAG="$stack_tag" MEMORIA_RELEASE_COMMIT="$stack_commit" \
-  docker compose --project-name "$project_name" "${previous_args[@]}" \
+  docker compose --project-name "$project_name" --file "$base_file" \
   --file "$override" up -d --no-deps --no-build control-api
 
 health=""
@@ -642,6 +654,7 @@ done
 [[ "$(docker inspect "$control_container" --format '{{.Config.Image}}')" == "$target_image" ]]
 [[ "$(docker inspect "$control_container" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" == "$release_commit" ]]
 [[ "$(docker inspect "$control_container" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')" == "$release_tag" ]]
+record_component_override "$override"
 trap - ERR
 {
   printf 'control_component_cutover=PASS\n'
