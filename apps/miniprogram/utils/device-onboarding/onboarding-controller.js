@@ -115,6 +115,19 @@ class OnboardingController {
     this._activationSince = null;
     this._bootstrapPop = "";
     this._disposed = false;
+    const app = typeof getApp === "function" ? getApp() : null;
+    this._unsubscribeAuthCleared = app?.subscribeAuthCleared?.(() => {
+      this._session = null;
+      this._claim = null;
+      this._binding = null;
+      this._activation = null;
+      this._wifiNetworks = [];
+      this._network = null;
+      this._state = "prepare";
+      this._busy = false;
+      this._emit();
+      this.dispose();
+    });
     this._emit();
   }
 
@@ -750,6 +763,8 @@ class OnboardingController {
   }
 
   dispose() {
+    this._unsubscribeAuthCleared?.();
+    this._unsubscribeAuthCleared = null;
     this._disposed = true;
     this._attemptEpoch += 1;
     this.stopActivationPolling();

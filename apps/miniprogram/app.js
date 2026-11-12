@@ -43,8 +43,14 @@ App({
     if (!identity || typeof response.access_token !== "string" || !response.access_token) {
       throw new Error("账号身份响应无效");
     }
+    const previous = this.globalData.identity;
+    if (!previous || previous.user_id !== identity.user_id ||
+        previous.account_type !== identity.account_type) {
+      this.clearAuthenticatedIdentity();
+    } else {
+      this.globalData.authEpoch += 1;
+    }
     const expiresAt = Date.now() + Math.max(0, Number(response.expires_in || 0)) * 1000;
-    this.globalData.authEpoch += 1;
     this.globalData.identity = identity;
     this.globalData.accessToken = response.access_token;
     this.globalData.accessTokenExpiresAt = expiresAt;
@@ -67,6 +73,9 @@ App({
     this.globalData.accessToken = "";
     this.globalData.accessTokenExpiresAt = 0;
     storage.clearAuthSnapshot();
+    require("./utils/api").clearDeviceBindingContext();
+    require("./utils/child-consent").clearChildInfoConsent();
+    require("./utils/device-onboarding/session-store").clearOnboardingSessionId();
     for (const listener of [...this._authClearedListeners]) {
       try {
         listener();

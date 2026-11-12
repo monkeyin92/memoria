@@ -273,6 +273,10 @@ function rawRequest(path, options = {}) {
       timeout,
       header: headers,
       success(response) {
+        if (authenticated && requestAuthEpoch !== currentAuthEpoch()) {
+          reject(new ApiError("账号身份已变化，请重新登录。", { code: "AUTH_CONTEXT_CHANGED" }));
+          return;
+        }
         if (response.statusCode >= 200 && response.statusCode < 300) {
           resolve(response.data);
           return;
@@ -1533,4 +1537,5 @@ module.exports = {
   deleteCustomPersona,
   requireRuntimeCapability,
   clearRuntimeProfileMemory,
+  clearDeviceBindingContext,
 };
