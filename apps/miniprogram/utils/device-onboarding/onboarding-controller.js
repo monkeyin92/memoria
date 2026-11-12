@@ -117,16 +117,18 @@ class OnboardingController {
     this._disposed = false;
     const app = typeof getApp === "function" ? getApp() : null;
     this._unsubscribeAuthCleared = app?.subscribeAuthCleared?.(() => {
-      this._session = null;
-      this._claim = null;
-      this._binding = null;
-      this._activation = null;
+      this._attemptEpoch += 1;
+      this._resetSession();
+      this.clearSensitiveInput();
+      this._disposeBle();
       this._wifiNetworks = [];
       this._network = null;
       this._state = "prepare";
       this._busy = false;
+      this._error = "";
+      this._errorCode = "";
+      this._activationSince = null;
       this._emit();
-      this.dispose();
     });
     this._emit();
   }

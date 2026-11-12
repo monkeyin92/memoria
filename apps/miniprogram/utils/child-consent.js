@@ -34,9 +34,7 @@ function clearChildInfoConsent() {
   for (const key of [CHILD_INFO_CONSENT_KEY, CHILD_INFO_CONSENT_VERSIONS_KEY]) {
     try {
       wx.removeStorageSync(key);
-    } catch {
-      // Continue clearing the other local reading receipt.
-    }
+    } catch {}
   }
 }
 
