@@ -219,6 +219,9 @@ test("late conversation detail after logout clears the transient selection state
     const restore = stubApi({
       currentIdentity: () => ({ user_id: "person_owner" }),
       isAuthEpochCurrent: (epoch) => epoch === lastEpoch,
+      getMemoryDays: async () => ({ items: [] }),
+      getConversationReview: async () => ({}),
+      getConversationSessions: async () => ({ items: [] }),
       getConversationHistory: async () => historyReady,
     });
     try {

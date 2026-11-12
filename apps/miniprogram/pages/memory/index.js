@@ -324,6 +324,12 @@ Page({
     return this._reviewState(context) === "current";
   },
 
+  _isReviewInteractive(context) {
+    if (!this._isReviewCurrent(context) || !context.settled || this.data.loading) return false;
+    const subjectId = this.data.guardianMode ? this.data.guardianSubjectId : "";
+    return subjectId === context.subjectId && (context.kind === "guardian") === Boolean(subjectId);
+  },
+
   async _recoverReviewContext(context) {
     const state = this._reviewState(context);
     if (state === "guest") this._enterGuestState();
@@ -476,6 +482,8 @@ Page({
       bindingSnapshot: bindingSnapshot(binding),
       binding,
       kind: "pending",
+      subjectId: "",
+      settled: false,
     };
     this._reviewRequest = context;
     this.setData({
@@ -507,6 +515,7 @@ Page({
       }
       context.binding = binding;
       context.kind = guardianSubject ? "guardian" : "adult";
+      context.subjectId = guardianSubject;
       let guardianDays = null;
       let childMemories = null;
       let recentChildSummaries = [];
@@ -598,6 +607,7 @@ Page({
       });
       await this._loadCrisisSafety(context);
       if (!this._isReviewCurrent(context)) return "stale";
+      context.settled = true;
       return "ok";
     } catch (error) {
       if (!this._isReviewCurrent(context)) return "stale";
@@ -645,7 +655,7 @@ Page({
       await this._recoverReviewContext(context);
       return;
     }
-    if (context.kind !== "adult") return;
+    if (!this._isReviewInteractive(context) || context.kind !== "adult") return;
     const sessionId = event?.currentTarget?.dataset?.sessionId;
     if (!sessionId || this.data.conversationLoading) return;
     this._conversationRequestSeq = (this._conversationRequestSeq || 0) + 1;
@@ -770,7 +780,7 @@ Page({
       await this._recoverReviewContext(context);
       return;
     }
-    if (context.kind === "pending") return;
+    if (!this._isReviewInteractive(context)) return;
     const claimId = event?.currentTarget?.dataset?.claimId;
     if (typeof claimId !== "string" || !claimId) return;
     if (this.data.reviewingClaimId) return;
@@ -821,7 +831,7 @@ Page({
       await this._recoverReviewContext(context);
       return;
     }
-    if (!subjectId || context.kind !== "guardian") return;
+    if (!this._isReviewInteractive(context) || !subjectId || context.kind !== "guardian") return;
     const dataset = event?.currentTarget?.dataset || {};
     const claimId = dataset.claimId;
     if (typeof claimId !== "string" || !claimId || this.data.reviewingClaimId) return;
@@ -839,7 +849,7 @@ Page({
       await this._recoverReviewContext(context);
       return;
     }
-    if (!agreed || this.data.reviewingClaimId) return;
+    if (!this._isReviewInteractive(context) || !agreed || this.data.reviewingClaimId) return;
     this.setData({ reviewingClaimId: claimId, error: "" });
     try {
       await api.reviewGuardianChildMemory(subjectId, claimId, "retract");

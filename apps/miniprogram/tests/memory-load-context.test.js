@@ -847,7 +847,85 @@ for (const method of ["confirmCandidate", "retractMemory"]) {
       assert.ok(h.requests.length > start);
       assert.equal(h.memory.data.loading, false);
       assert.equal(h.memory.data.reviewingClaimId, "");
-      assert.equal(h.memory._reviewRequest.binding.binding_version, 2);
+      const next = h.memory[method]({ currentTarget: { dataset: { claimId: "same-claim", pending: true } } });
+      await flush();
+      assert.ok(h.pending("/minors/p_child/memories/same-claim/review"));
+      await h.finish(next);
     } finally { h.restore(); }
+  });
+}
+
+for (const binding of [CHILD, { ...CHILD, primary_subject_ids: ["p_other"] }, { ...SELF, binding_version: 2 }]) {
+  for (const stage of ["review", "safety"]) {
+    if (stage === "safety" && binding.declared_mode === "self_use") continue;
+    test(`recovery double click waits for ${binding.declared_mode} ${binding.primary_subject_ids[0]} ${stage} to settle`, async () => {
+      const h = realRuntime(binding.declared_mode === "self_use" ? SELF : CHILD);
+      try {
+        await h.finish(h.memory.onShow());
+        h.api.selectDeviceBinding({ ...binding, binding_version: 3 });
+        const method = binding.declared_mode === "self_use" ? "openConversation" : "confirmCandidate";
+        const event = { currentTarget: { dataset: { sessionId: "session", claimId: "same-claim" } } };
+        const recovery = h.memory[method](event);
+        await flush();
+        if (stage === "safety") {
+          for (let round = 0; round < 8; round++) {
+            for (const request of h.requests.filter((item) => !item.answered && !item.url.includes("/notifications/unread"))) {
+              h.reply(request, h.response(request));
+            }
+            await flush();
+          }
+        }
+        assert.equal(h.memory.data.loading, true);
+        const start = h.requests.length;
+        const second = h.memory[method](event);
+        await flush();
+        assert.equal(h.requests.slice(start).some((request) => request.method === "POST" || request.url.includes("conversation-history")), false);
+        await h.finish(second);
+        await h.finish(recovery);
+        assert.equal(h.memory.data.loading, false);
+        assert.equal(h.memory.data.reviewingClaimId, "");
+      } finally { h.restore(); }
+    });
+  }
+}
+for (const method of ["confirmCandidate", "retractMemory"]) {
+  test(`failed ${method} after version drift recovers without leaking the old error`, async () => {
+    const h = realRuntime(CHILD);
+    try {
+      await h.finish(h.memory.onShow());
+      h.wx.showModal = (options) => options.success({ confirm: true });
+      const operation = h.memory[method]({ currentTarget: { dataset: { claimId: "same-claim", pending: true } } });
+      await flush();
+      const post = h.pending("/memories/same-claim/review");
+      h.api.selectDeviceBinding({ ...CHILD, binding_version: 2 });
+      h.reply(post, { detail: "旧操作失败" }, 500);
+      await h.finish(operation);
+      assert.equal(h.memory.data.loading, false);
+      assert.equal(h.memory.data.error, "");
+      assert.equal(h.memory.data.reviewingClaimId, "");
+      assert.doesNotMatch(h.text(), /旧操作失败/);
+      const next = h.memory[method]({ currentTarget: { dataset: { claimId: "same-claim", pending: true } } });
+      await flush();
+      assert.ok(h.pending("/minors/p_child/memories/same-claim/review"));
+      await h.finish(next);
+    } finally { h.restore(); }
+  });
+}
+for (const method of ["openConversation", "confirmCandidate", "retractMemory"]) {
+  test(`expired login at ${method} enters the guest page without private requests`, async () => {
+    const h = realRuntime(method === "openConversation" ? SELF : CHILD);
+    const now = Date.now;
+    try {
+      await h.finish(h.memory.onShow());
+      const current = now();
+      Date.now = () => current + 4_000_000;
+      const start = h.requests.length;
+      await h.memory[method]({ currentTarget: { dataset: { sessionId: "session", claimId: "same-claim" } } });
+      assert.equal(h.memory.data.authenticated, false);
+      assert.equal(h.memory.data.loading, false);
+      assert.deepEqual(h.memory.data.conversationTurns, []);
+      assert.equal(h.requests.length, start);
+      assert.match(h.text(), /微信登录后打开/);
+    } finally { Date.now = now; h.restore(); }
   });
 }
