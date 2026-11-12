@@ -23,6 +23,13 @@ from packages.contracts.generated.python.multi_subject_contracts import (
     SessionEvent,
 )
 
+from services.session_runtime.postgres_connections import (
+    SessionRuntimeStoreError,
+    _ActionExecutorConnection,
+    _json_object,
+    same_authority_database,
+)
+
 _SCHEMA_PATH = Path(__file__).with_name("postgres_schema.sql")
 SESSION_RUNTIME_SCHEMA_SQL: str = _SCHEMA_PATH.read_text(encoding="utf-8")
 
@@ -202,10 +209,6 @@ _SESSION_API_FUNCTION_SIGNATURES = frozenset(
 )
 
 
-class SessionRuntimeStoreError(RuntimeError):
-    """Base persistence failure."""
-
-
 class SessionRuntimeConflict(SessionRuntimeStoreError):
     """An idempotency or CAS fence conflicted."""
 
@@ -284,13 +287,6 @@ def _json_text(value: Mapping[str, object]) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
-def _json_object(value: object, *, field: str) -> dict[str, object]:
-    decoded = json.loads(value) if isinstance(value, str) else value
-    if not isinstance(decoded, dict):
-        raise SessionRuntimeStoreError(f"{field} is not a JSON object")
-    return {str(key): item for key, item in decoded.items()}
-
-
 def _profile_from_json(value: object) -> RuntimeProfileSignedV2:
     return RuntimeProfileSignedV2.model_validate(
         _json_object(value, field="runtime profile")
@@ -342,72 +338,6 @@ def _context_from_json(value: object) -> SessionRuntimeContext:
 def _require_transaction(connection: asyncpg.Connection) -> None:
     if not connection.is_in_transaction():
         raise RuntimeError("Session Runtime requires a caller-owned transaction")
-
-
-class _ActionExecutorConnection:
-    """Capability-reducing facade over one physical asyncpg connection.
-
-    Policy's public Session batch currently reads its locked receipt through a
-    table-shaped repository query after invoking ``policy_lock_receipt_v2``.
-    The unified action role deliberately has no table SELECT.  This facade maps
-    only that explicit lock/read sequence to Session's validated
-    ``action_policy_lock_receipt`` SECURITY DEFINER port; every other operation
-    stays on the same underlying connection and transaction.
-    """
-
-    def __init__(self, connection: asyncpg.Connection) -> None:
-        self._connection = connection
-
-    def is_in_transaction(self) -> bool:
-        return bool(self._connection.is_in_transaction())
-
-    async def execute(self, query: str, *args: object, **kwargs: object) -> str:
-        return str(await self._connection.execute(query, *args, **kwargs))
-
-    async def fetchval(
-        self,
-        query: str,
-        *args: object,
-        **kwargs: object,
-    ) -> object:
-        if "policy_lock_receipt_v2" in query:
-            raw = await self._connection.fetchval(
-                "SELECT action_policy_lock_receipt($1)",
-                *args,
-            )
-            return raw is not None
-        return await self._connection.fetchval(query, *args, **kwargs)
-
-    async def fetchrow(
-        self,
-        query: str,
-        *args: object,
-        **kwargs: object,
-    ) -> object:
-        if "FROM policy_receipts_v2 WHERE receipt_id = $1" in query:
-            raw = await self._connection.fetchval(
-                "SELECT action_policy_lock_receipt($1)",
-                *args,
-            )
-            if raw is None:
-                return None
-            receipt = _json_object(raw, field="policy receipt")
-            for field in ("created_at", "expires_at"):
-                value = receipt.get(field)
-                if isinstance(value, str):
-                    receipt[field] = datetime.fromisoformat(
-                        value.replace("Z", "+00:00")
-                    )
-            return receipt
-        return await self._connection.fetchrow(query, *args, **kwargs)
-
-    async def fetch(
-        self,
-        query: str,
-        *args: object,
-        **kwargs: object,
-    ) -> list[asyncpg.Record]:
-        return list(await self._connection.fetch(query, *args, **kwargs))
 
 
 class PostgresSessionRuntimeStore:
@@ -684,6 +614,9 @@ class PostgresSessionRuntimeStore:
                     )
         finally:
             await action.close()
+        if self._projector_dsn is not None:
+            async with self.projector_transaction():
+                pass
         return conditional_present
 
     async def readiness(self) -> dict[str, str]:
@@ -792,17 +725,25 @@ class PostgresSessionRuntimeStore:
 
     @asynccontextmanager
     async def projector_transaction(self) -> AsyncIterator[asyncpg.Connection]:
-        """Read-only snapshot as the one role that sees every actor's rows."""
+        """Global snapshot from the same primary database as both authorities."""
         if self._projector_dsn is None:
             raise SessionRuntimeAuthorityUnavailable("Session projector DSN is not configured")
-        connection = await self._connect(self._projector_dsn,
-                                         application_name="memoria-session-projector")
         try:
-            async with connection.transaction(isolation="repeatable_read", readonly=True):
-                await connection.execute("SET LOCAL ROLE memoria_session_projector")
-                yield connection
-        finally:
-            await connection.close()
+            connection = await self._connect(self._projector_dsn,
+                                             application_name="memoria-session-projector")
+            try:
+                async with connection.transaction(isolation="repeatable_read", readonly=True):
+                    await connection.execute("SET LOCAL ROLE memoria_session_projector")
+                    if not await same_authority_database(
+                        connection, self._connect, read_dsn=self._dsn, action_dsn=self._action_dsn,
+                    ):
+                        raise SessionRuntimeAuthorityUnavailable(
+                            "Session projector and runtime authorities must use the same TCP primary database")
+                    yield connection
+            finally:
+                await connection.close()
+        except (asyncpg.PostgresError, OSError, TimeoutError) as exc:
+            raise SessionRuntimeAuthorityUnavailable("Session projector database identity is unavailable") from exc
 
     async def persist_initial(
         self,

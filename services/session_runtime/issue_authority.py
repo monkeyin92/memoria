@@ -153,21 +153,36 @@ class SessionIssueAuthorityMixin:
             raise PersistentSessionUnavailable("session context has no current profile")
         self._require_profile_signature(profile)
         if (
+            (profile.session_id, profile.runtime_profile_id, profile.actor_id, profile.device_id,
+             profile.binding_id, profile.binding_version)
+            != (session_id, context.current_runtime_profile_id, context.actor_id, context.device_id,
+                context.binding_id, context.binding_version)
+            or context.session_id != session_id
+        ):
+            raise PersistentSessionUnavailable("current profile disagrees with its context")
+        if profile.device_id != device_id:
+            raise PersistentSessionUnavailable("device projection disagrees with session authority")
+        if state == "active" and (
+            profile.active_subject_id != context.active_subject_id
+            or profile.subject_revision != context.subject_revision
+            or profile.session_epoch != context.session_epoch
+        ):
+            raise PersistentSessionUnavailable("current profile subject or epoch is inconsistent")
+        if state == "closed" and (
+            context.active_subject_id is not None
+            or context.session_epoch != profile.session_epoch + 1
+        ):
+            raise PersistentSessionUnavailable("closed session context is inconsistent")
+        if (
             (binding_ids is not None and profile.binding_id not in binding_ids)
             or profile.active_subject_id != subject_id
             or profile.speaker_state != "confirmed"
         ):
             return None
-        if (profile.actor_id, profile.device_id) != (context.actor_id, context.device_id):
-            raise PersistentSessionUnavailable("current profile disagrees with its context")
-        if profile.device_id != device_id:
-            raise PersistentSessionUnavailable("device projection disagrees with session authority")
         if state == "closed":
             return SessionCloseResult(applied=False, already_closed=True)
         if state != "active":
             raise SessionRuntimeConflict("session is not active and cannot be closed")
-        if profile.session_epoch != context.session_epoch:
-            raise PersistentSessionUnavailable("current profile epoch is inconsistent")
         return await self._commit_close(profile, context, reason_code=reason_code, now=now)
 
     @staticmethod
