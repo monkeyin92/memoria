@@ -62,8 +62,17 @@ export_policy() {
   fi
 }
 
-# mc's zero-rule export error, formatted by cmd/error.go and pkg/v3/console.
-empty_ilm_error='mc: <ERROR> Unable to export lifecycle configuration: lifecycle configuration not set.'
+# mc's zero-rule and MinIO NoSuchLifecycleConfiguration errors, formatted by
+# cmd/error.go and pkg/v3/console. Other backend messages require revalidation.
+policy_is_empty() {
+  [ "$export_status" -eq 1 ] || return 1
+  case "$actual_ilm" in
+    'mc: <ERROR> Unable to export lifecycle configuration: lifecycle configuration not set.'|\
+    'mc: <ERROR> Unable to get lifecycle configuration. The lifecycle configuration does not exist.') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 export_policy
 if [ "$export_status" -eq 0 ]; then
   current_days="${actual_ilm#*'"Days": '}"
@@ -87,8 +96,7 @@ if [ "$export_status" -eq 0 ]; then
     echo "offsite lifecycle ownership cannot be proven from pinned mc export; refusing import (foreign rules or unknown format)" >&2
     exit 2
   fi
-elif [ "$export_status" -ne 1 ] ||
-     [ "$actual_ilm" != "$empty_ilm_error" ]; then
+elif ! policy_is_empty; then
   echo "offsite lifecycle ownership query failed; refusing import" >&2
   exit "$export_status"
 fi
@@ -105,7 +113,7 @@ fi
 while :; do
   export_policy
   if [ "$export_status" -ne 0 ]; then
-    if [ "$export_status" -eq 1 ] && [ "$actual_ilm" = "$empty_ilm_error" ]; then
+    if policy_is_empty; then
       echo "offsite lifecycle readback is empty (policy drift); stopping sync" >&2
       exit 2
     fi
