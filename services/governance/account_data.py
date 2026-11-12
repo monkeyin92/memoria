@@ -22,11 +22,13 @@ import asyncpg
 from services.archive.object_store import ObjectNotFoundError, ObjectRef, ObjectStore
 from services.device_fleet.device_test_registration import RegistrationAuditDeletion
 from services.evolution.account_fence import AccountReadGuard, AccountWriteBlockedError
+from services.governance.subject_deletion import SubjectDeletionService
 from services.governance.subject_export import (
     build_subject_export,
     manifest_sha256,
     validate_subject_export_request,
 )
+from services.governance.subject_ports import SubjectScope
 from services.guardian.corpus import CorpusRetentionService
 from services.legacy.domain import LegacyAccountExport, LegacyRegistryPort
 from services.voice_profile.domain import VoiceProfilePort
@@ -200,14 +202,19 @@ _DELETION_STEP_RANK = {
     "archive_rows_deleted": 5,
     "speaker_rows_deleted": 6,
     "evolution_rows_deleted": 7,
-    "identity_rows_deleted": 8,
-    "verified_empty": 9,
-    "completed": 10,
+    "bound_subjects_erased": 8,
+    "identity_rows_deleted": 9,
+    "verified_empty": 10,
+    "completed": 11,
 }
 
 
 class AccountIdentityRepository(Protocol):
     """Controlled identity erasure port (issue #283)."""
+
+    async def prepare_subject_erasure(self, account_id: str) -> tuple[str, ...]: ...
+
+    async def complete_subject_erasure(self, account_id: str, subject_id: str) -> None: ...
 
     async def delete_account_identity(self, account_id: str) -> dict[str, int]: ...
 
@@ -709,6 +716,7 @@ class AccountDataGovernance:
         account_read_guard: AccountReadGuard | None = None,
         onboarding: BoundDeviceAuditDeleter | None = None,
         identity_repository: AccountIdentityRepository | None = None,
+        subject_deletion: SubjectDeletionService | None = None,
     ) -> None:
         self._memory_store = memory_store
         self._archive_repository = archive_repository
@@ -724,6 +732,7 @@ class AccountDataGovernance:
         self._account_read_guard = account_read_guard or _unguarded_read
         self._onboarding = onboarding
         self._identity_repository = identity_repository
+        self._subject_deletion = subject_deletion
         # ponytail: deletion is rare; one lock avoids a per-account lock lifecycle.
         self._deletion_lock = asyncio.Lock()
 
@@ -923,6 +932,9 @@ class AccountDataGovernance:
             return len(references)
 
         try:
+            subjects: tuple[str, ...] = ()
+            if self._identity_repository is not None and _DELETION_STEP_RANK[step] < _DELETION_STEP_RANK["identity_rows_deleted"]:
+                subjects = await self._identity_repository.prepare_subject_erasure(account_id)
             if _DELETION_STEP_RANK[step] < _DELETION_STEP_RANK["sessions_terminated"]:
                 terminated = (
                     await self._session_terminator.terminate_account(account_id)
@@ -997,8 +1009,17 @@ class AccountDataGovernance:
                 )
                 await checkpoint("evolution_rows_deleted")
 
-            # Idempotent: a retry after a late child bind runs the erasure port
-            # again, and the port converges (already-erased rows count zero).
+            if _DELETION_STEP_RANK[step] < _DELETION_STEP_RANK["bound_subjects_erased"]:
+                if subjects and self._subject_deletion is None:
+                    raise AccountDeletionIncompleteError("bound subject deletion is not configured")
+                for subject_id in subjects:
+                    result = await self._subject_deletion.delete_subject(SubjectScope(account_id, subject_id))
+                    if result["status"] != "completed":
+                        raise AccountDeletionIncompleteError("bound subject deletion is incomplete")
+                    await self._identity_repository.complete_subject_erasure(account_id, subject_id)
+                progress["subjects.erased"] = len(subjects)
+                await checkpoint("bound_subjects_erased")
+
             if self._identity_repository is not None:
                 identity_counts = await self._identity_repository.delete_account_identity(
                     account_id

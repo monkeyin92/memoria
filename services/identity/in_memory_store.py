@@ -47,6 +47,7 @@ class InMemoryIdentityStore:
         self._audit: list[AuditEvent] = []
         self._outbox: dict[str, OutboxEvent] = {}
         self._subject_releases: set[tuple[str, str]] = set()
+        self._account_subjects: dict[str, tuple[str, ...]] = {}
 
     async def initialize(self) -> None:
         return None
@@ -273,6 +274,20 @@ class InMemoryIdentityStore:
             if str(event.payload.get("person_id", "")) in person_ids:
                 del self._outbox[outbox_key]
         return counts
+
+    async def prepare_account_subject_erasure(self, account_id: str) -> tuple[str, ...]:
+        with self._lock:
+            if account_id not in self._account_subjects:
+                self._account_subjects[account_id] = tuple(sorted({subject
+                    for b in self._bindings.values() if b.account_owner_person_id == account_id and b.declared_mode == "parent_for_child"
+                    for subject in b.primary_subject_ids if subject != account_id
+                    and self._persons[subject].subject_category in {"minor", "unknown"}
+                    and not any(other.account_owner_person_id != account_id and other.status == "active"
+                        and any(r.person_id == subject and r.status == "active" for r in other.roles) for other in self._bindings.values())}))
+            for subject in (account_id, *self._account_subjects[account_id]):
+                if subject in self._persons:
+                    self._persons[subject] = replace(self._persons[subject], status="disabled")
+            return self._account_subjects[account_id]
 
     async def delete_account_identity(
         self,

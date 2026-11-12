@@ -17,6 +17,7 @@ from services.consent.binding_snapshot import (
     BindingConsentRole,
     BindingRelationshipEvidence,
 )
+from services.identity.account_lifecycle import IdentityAccountLifecycleMixin
 from services.identity.authority import (
     ConsentAuthorityUnavailableError,
     ConsentSnapshotResolver,
@@ -55,10 +56,8 @@ from services.identity.domain import (
     validate_manifest_wire,
 )
 from services.identity.personas import IdentityPersonaMixin
-from services.identity.relationships import (
-    REDACTED_DISPLAY_NAME,
-    IdentityRelationshipMixin,
-)
+from services.identity.relationships import REDACTED_DISPLAY_NAME as REDACTED_DISPLAY_NAME
+from services.identity.relationships import IdentityRelationshipMixin
 from services.identity.repository import AuditEvent, IdentityStore, OutboxEvent
 from services.identity.service_helpers import (
     _canonical_registration_result,
@@ -69,7 +68,7 @@ from services.identity.subject_release import BindingRevocation
 from services.identity.transfers import IdentityTransferMixin
 
 
-class IdentityService(IdentityPersonaMixin, IdentityTransferMixin, IdentityRelationshipMixin):
+class IdentityService(IdentityAccountLifecycleMixin, IdentityPersonaMixin, IdentityTransferMixin, IdentityRelationshipMixin):
     """Deep-module facade: persons, relationships and versioned bindings."""
 
     def __init__(
@@ -430,32 +429,6 @@ class IdentityService(IdentityPersonaMixin, IdentityTransferMixin, IdentityRelat
         )
         return updated
 
-    async def delete_account_identity(
-        self, *, account_person_id: str
-    ) -> dict[str, int]:
-        """Erase the account's identity rows (issue #283).
-
-        The account-deletion pipeline is the only caller. The SQL port
-        re-checks the actor context and the transaction-local gate, so this
-        method carries the account itself as the actor.
-        """
-        return await self._store.delete_account_identity(
-            account_person_id=account_person_id,
-            display_name=REDACTED_DISPLAY_NAME,
-            actor_person_id=account_person_id,
-        )
-
-    async def remaining_account_identity(
-        self, *, account_person_id: str
-    ) -> dict[str, int]:
-        return await self._store.remaining_account_identity(
-            account_person_id=account_person_id
-        )
-
-    # ------------------------------------------------------------------
-    # Bindings
-    # ------------------------------------------------------------------
-
     async def create_binding(
         self,
         *,
@@ -656,14 +629,13 @@ class IdentityService(IdentityPersonaMixin, IdentityTransferMixin, IdentityRelat
             timestamp=timestamp,
             extra={"revoke_reason": reason},
         )
-        revoked = await self._store.revoke_binding(
+        return await self._store.revoke_binding(
             current.binding_id,
             at=timestamp,
             audit_event=audit,
             outbox_event=outbox,
             actor_person_id=actor_person_id,
         )
-        return revoked
 
     async def expire_bindings(self, now: datetime | None = None) -> int:
         timestamp = _now(now)

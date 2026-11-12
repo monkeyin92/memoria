@@ -394,6 +394,9 @@ async def on_session_end(session_id: str) -> SweepReceipt:
 
 ### 2026-09-26 按使用人删除覆盖面复核（当前权威）
 
+注销账号会先通过身份 SQL 在 subject 锁下捕获允许擦除的无账号儿童，并持久保存到 `identity_subject_releases`。仍被其他 owner 的 active binding 服务的儿童不会进入名单。关系和身份删除之前，每个允许擦除的儿童必须完成 `SubjectDeletionService`，包括记忆两层、儿童 id 危机元数据、语料和 usage；失败由账号 ledger 重试。此前已越过 `identity_rows_deleted` 且没有名单的历史注销不自动补清理。
+
+
 按使用人删除（`services/governance/subject_deletion.py`）的覆盖面按存储逐项复核，结论取代下方 09-20 结论中已过时的部分（`memory_scope` 已由 P1-11 的维护角色函数按使用人擦除，不再是"无法物理删除"）。
 
 - **已删除并在 `verified_empty` 核对为空**：归档证据（按血缘与 `subject_id`）、转写、证据对象行、处理 outbox、编译收据、所有以 `source_event_id` 关联的投影；监护/导师与危机行；语料活行；`memory_scope` 记录、状态事件、共享提案与投票、采集证据（outbox/审计载荷清空）；人格（特征、风格统计、版本，2026-09-26 起按使用人记账并在删除末尾核对）。

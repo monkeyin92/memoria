@@ -1385,6 +1385,7 @@ CREATE TABLE IF NOT EXISTS identity_subject_releases (
     completed_at timestamptz,
     PRIMARY KEY (account_id, subject_id)
 );
+ALTER TABLE identity_subject_releases ADD COLUMN IF NOT EXISTS reason text NOT NULL DEFAULT 'unbind' CHECK (reason IN ('unbind', 'account'));
 ALTER TABLE identity_subject_releases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE identity_subject_releases FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS identity_owner_full ON identity_subject_releases;
@@ -1507,7 +1508,7 @@ CREATE OR REPLACE FUNCTION identity_pending_subject_releases(p_limit integer)
 RETURNS TABLE(account_id text, subject_id text) LANGUAGE sql SECURITY DEFINER
 SET search_path = pg_catalog, public SET row_security = on AS $$
     SELECT account_id, subject_id FROM identity_subject_releases
-    WHERE completed_at IS NULL ORDER BY released_at LIMIT greatest(0, least(p_limit, 1000));
+    WHERE completed_at IS NULL AND reason = 'unbind' ORDER BY released_at LIMIT greatest(0, least(p_limit, 1000));
 $$;
 CREATE OR REPLACE FUNCTION identity_complete_subject_release(p_account text, p_subject text)
 RETURNS void LANGUAGE sql SECURITY DEFINER
@@ -1604,6 +1605,57 @@ $$;
 -- actor equals the account being erased, then deletes the account person plus
 -- the accountless children bound to it in foreign-key order, and keeps the
 -- audit trail content-free: ids and times only.
+CREATE OR REPLACE FUNCTION identity_account_erasable_subjects(p_account text)
+RETURNS text[] LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, public SET row_security = on AS $$
+    SELECT COALESCE(array_agg(DISTINCT person_id ORDER BY person_id), ARRAY[]::text[]) FROM (
+        SELECT p.person_id FROM identity_device_bindings b
+        JOIN identity_device_binding_roles r USING(binding_id)
+        JOIN identity_persons p ON p.person_id = r.person_id
+        WHERE b.account_owner_person_id = p_account AND b.declared_mode = 'parent_for_child'
+          AND r.role = 'primary_subject' AND p.person_id <> p_account
+          AND p.subject_category IN ('minor', 'unknown')
+          AND NOT identity_subject_still_served(p.person_id, p_account)
+        UNION
+        SELECT subject_id FROM identity_subject_releases WHERE account_id = p_account AND reason = 'account'
+    ) candidates;
+$$;
+CREATE OR REPLACE FUNCTION identity_prepare_account_subject_erasure(p_account text)
+RETURNS text[] LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public SET row_security = on AS $$
+DECLARE v_device text; v_subject text; v_locked text[]; v_subjects text[];
+BEGIN
+    IF p_account IS DISTINCT FROM NULLIF(current_setting('app.identity_actor', true), '') THEN
+        RAISE EXCEPTION 'account actor context mismatch';
+    END IF;
+    FOR v_device IN SELECT DISTINCT device_id FROM identity_device_bindings
+        WHERE account_owner_person_id = p_account ORDER BY device_id LOOP
+        PERFORM pg_advisory_xact_lock(hashtextextended(v_device, 0));
+    END LOOP;
+    SELECT array_agg(DISTINCT person_id ORDER BY person_id) INTO v_locked FROM (
+        SELECT p_account AS person_id UNION SELECT r.person_id FROM identity_device_bindings b
+        JOIN identity_device_binding_roles r USING(binding_id) WHERE b.account_owner_person_id = p_account
+    ) subjects;
+    FOREACH v_subject IN ARRAY v_locked LOOP
+        PERFORM pg_advisory_xact_lock(hashtextextended('subject:' || v_subject, 0));
+    END LOOP;
+    IF EXISTS (SELECT 1 FROM identity_device_bindings b JOIN identity_device_binding_roles r USING(binding_id)
+        WHERE b.account_owner_person_id = p_account AND NOT r.person_id = ANY(v_locked)) THEN
+        RAISE EXCEPTION 'account bindings changed; retry capture' USING ERRCODE = 'IB409';
+    END IF;
+    v_subjects := identity_account_erasable_subjects(p_account);
+    UPDATE identity_persons SET status = 'disabled', updated_at = now()
+        WHERE person_id = p_account OR person_id = ANY(v_subjects);
+    INSERT INTO identity_subject_releases(account_id, subject_id, released_at, reason)
+        SELECT p_account, unnest(v_subjects), now(), 'account'
+        ON CONFLICT (account_id, subject_id) DO UPDATE SET reason = 'account';
+    RETURN v_subjects;
+END
+$$;
+REVOKE ALL ON FUNCTION identity_account_erasable_subjects(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity_prepare_account_subject_erasure(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION identity_prepare_account_subject_erasure(text) TO memoria_identity;
+
 CREATE OR REPLACE FUNCTION identity_delete_account_identity(
     p_account_person_id text,
     p_display_name text
@@ -1647,32 +1699,7 @@ BEGIN
     -- Account person plus the accountless subjects its parent_for_child
     -- bindings declared.  An adult who registered their own account keeps
     -- their row: only the account's own graph is erased.
-    SELECT COALESCE(array_agg(DISTINCT c.person_id), ARRAY[p_account_person_id])
-    INTO v_persons
-    FROM (
-        SELECT p.person_id
-        FROM identity_persons p
-        WHERE p.person_id = p_account_person_id
-        UNION
-        SELECT p.person_id
-        FROM identity_device_bindings b
-        JOIN identity_device_binding_roles r ON r.binding_id = b.binding_id
-        JOIN identity_persons p ON p.person_id = r.person_id
-        WHERE b.account_owner_person_id = p_account_person_id
-          AND b.declared_mode = 'parent_for_child'
-          AND r.role = 'primary_subject'
-          AND p.subject_category IN ('minor', 'unknown')
-          AND NOT EXISTS (
-              SELECT 1
-              FROM identity_device_bindings other
-              JOIN identity_device_binding_roles other_role
-                ON other_role.binding_id = other.binding_id
-              WHERE other_role.person_id = p.person_id
-                AND other.account_owner_person_id <> p_account_person_id
-                AND other.status = 'active'
-                AND other_role.status = 'active'
-          )
-    ) c;
+    v_persons := ARRAY[p_account_person_id] || identity_account_erasable_subjects(p_account_person_id);
     SELECT COALESCE(array_agg(b.binding_id), ARRAY[]::text[]),
            COALESCE(
                jsonb_agg(jsonb_build_object(

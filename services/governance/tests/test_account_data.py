@@ -1319,6 +1319,12 @@ class _IdentityEraser:
         self.calls: list[str] = []
         self._leftover = leftover
 
+    async def prepare_subject_erasure(self, account_id: str) -> tuple[str, ...]:
+        return ()
+
+    async def complete_subject_erasure(self, account_id: str, subject_id: str) -> None:
+        return None
+
     async def delete_account_identity(self, account_id: str) -> dict[str, int]:
         self.calls.append(account_id)
         return {"persons": 1}

@@ -552,6 +552,7 @@ class SubjectDeletionService:
         persona: PersonaForgetter | None = None,
         pending_releases: Callable[..., Awaitable[tuple[tuple[str, str], ...]]] | None = None,
         complete_release: Callable[[str, str], Awaitable[None]] | None = None,
+        remaining_chat_usage: Callable[[str], Awaitable[int]] | None = None,
     ) -> None:
         self._ledger = ledger
         self._archive = archive
@@ -565,6 +566,7 @@ class SubjectDeletionService:
         self._persona = persona
         self._pending_releases = pending_releases
         self._complete_release = complete_release
+        self._remaining_chat_usage = remaining_chat_usage
         self._lock = asyncio.Lock()
 
     @property
@@ -852,4 +854,6 @@ class SubjectDeletionService:
         if self._memory_scope is not None:
             memory = await self._memory_scope.remaining_subject_rows(subject_id=scope.subject_id)
             remaining.update({f"memory_scope.{key}": value for key, value in memory.items()})
+        if self._remaining_chat_usage is not None:
+            remaining["control.daily_chat_usage"] = await self._remaining_chat_usage(scope.subject_id)
         return {key: value for key, value in remaining.items() if value}

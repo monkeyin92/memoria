@@ -360,6 +360,13 @@ class PostgresIdentityBindingMixin:
                 roles = await connection.fetch("SELECT * FROM identity_device_binding_roles WHERE binding_id=$1", binding_id)
                 return BindingRevocation(_binding(row, roles), tuple(SubjectRelease(**s) for s in json.loads(raw)))
 
+    async def prepare_account_subject_erasure(self, account_id: str) -> tuple[str, ...]:
+        pool = await self._ready()
+        async with pool.acquire() as connection:
+            async with connection.transaction():
+                await self._apply_context(connection, actor_person_id=account_id, scope="api")
+                return tuple(await connection.fetchval("SELECT identity_prepare_account_subject_erasure($1)", account_id))
+
     async def pending_subject_releases(self, *, limit: int = 100) -> tuple[tuple[str, str], ...]:
         pool = await self._ready()
         async with pool.acquire() as connection:

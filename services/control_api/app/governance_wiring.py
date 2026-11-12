@@ -11,7 +11,7 @@ from typing import cast
 from fastapi import FastAPI
 
 from services.archive.claim_subjects import BoundChildSubjectIds
-from services.archive.object_store import ObjectStore
+from services.archive.object_store import ObjectNotFoundError, ObjectStore
 from services.control_api.app.account_gate import AccountOperationGate
 from services.control_api.app.config import ControlSettings
 from services.control_api.app.database import MemoryStore
@@ -29,7 +29,11 @@ from services.governance.account_data import (
     SqliteAccountRepository,
 )
 from services.governance.subject_archive import PostgresSubjectArchive
-from services.governance.subject_deletion import SubjectDeletionLedger, SubjectDeletionService
+from services.governance.subject_deletion import (
+    SubjectDeletionIncompleteError,
+    SubjectDeletionLedger,
+    SubjectDeletionService,
+)
 from services.governance.subject_ports import SubjectGuardianPort
 from services.guardian.corpus import (
     CorpusRetentionService,
@@ -109,7 +113,15 @@ def install_subject_deletion(
         await identity.redact_bound_subject(person_id=subject_id, actor_person_id=account_id)
 
     async def purge_corpus(subject_id: str) -> int:
-        return await corpus_retention_service.purge_minor(minor_user_id=subject_id)
+        samples = await guardian_store.corpus_samples(minor_user_id=subject_id)
+        deleted = await corpus_retention_service.purge_minor(minor_user_id=subject_id)
+        for sample in samples:
+            try:
+                await archive_object_store.get(sample.reference)
+            except (ObjectNotFoundError, FileNotFoundError):
+                continue
+            raise SubjectDeletionIncompleteError("subject corpus object remains readable")
+        return deleted
 
     async def purge_chat_usage(subject_id: str) -> int:
         def purge() -> int:
@@ -117,6 +129,12 @@ def install_subject_deletion(
                 return delete_chat_usage(connection, subject_id=subject_id)
 
         return await asyncio.to_thread(purge)
+
+    async def remaining_chat_usage(subject_id: str) -> int:
+        def count() -> int:
+            with app.state.memory_store.connection() as connection:
+                return int(connection.execute("SELECT count(*) FROM daily_chat_usage WHERE subject_id = ?", (subject_id,)).fetchone()[0])
+        return await asyncio.to_thread(count)
 
     service = SubjectDeletionService(
         ledger=ledger,
@@ -131,6 +149,7 @@ def install_subject_deletion(
         persona=app.state.persona_engine,
         pending_releases=app.state.identity_store.pending_subject_releases,
         complete_release=app.state.identity_store.complete_subject_release,
+        remaining_chat_usage=remaining_chat_usage,
     )
     app.state.subject_deletion = service
     return service
@@ -141,6 +160,12 @@ class _IdentityAccountEraser:
 
     def __init__(self, identity: IdentityService) -> None:
         self._identity = identity
+
+    async def prepare_subject_erasure(self, account_id: str) -> tuple[str, ...]:
+        return await self._identity.prepare_account_subject_erasure(account_id)
+
+    async def complete_subject_erasure(self, account_id: str, subject_id: str) -> None:
+        await self._identity.complete_subject_release(account_id, subject_id)
 
     async def delete_account_identity(self, account_id: str) -> dict[str, int]:
         return await self._identity.delete_account_identity(
@@ -168,6 +193,7 @@ def account_data_governance(
     session_terminator: AccountSessionTerminator,
     identity: IdentityService | None = None,
     onboarding: DeviceOnboardingService | None = None,
+    subject_deletion: SubjectDeletionService | None = None,
 ) -> AccountDataGovernance:
     archive_url = settings.archive_database_url.get_secret_value()
     archive_repository = subject_archive(settings)
@@ -179,6 +205,7 @@ def account_data_governance(
     )
     return AccountDataGovernance(
         memory_store=store,
+        subject_deletion=subject_deletion,
         archive_repository=archive_repository,
         speaker_repository=speaker_repository,
         evolution_repository=evolution_repository,

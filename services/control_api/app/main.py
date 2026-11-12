@@ -959,6 +959,14 @@ async def _wire_services(w: Wiring) -> None:
         if crisis_push_worker is not None:
             w.start(crisis_push_worker)
         app.state.crisis_push_worker = crisis_push_worker
+    subject_deletion = install_subject_deletion(
+        app,
+        settings,
+        guardian_store=guardian_store,
+        archive_object_store=archive_object_store,
+        corpus_retention_service=corpus_retention_service,
+        session_terminator=session_terminator,
+    )
     app.state.account_data_governance = account_data_governance(
         settings,
         store=store,
@@ -975,20 +983,12 @@ async def _wire_services(w: Wiring) -> None:
         guardian_repository=guardian_store,
         corpus_retention_service=corpus_retention_service,
         session_terminator=session_terminator, onboarding=device_onboarding,
-        identity=app.state.identity_service,
+        identity=app.state.identity_service, subject_deletion=subject_deletion,
     )
     if w.live:
         deletion_worker = AccountDeletionWorker(app.state.account_data_governance)
         w.start(deletion_worker)
         app.state.account_deletion_worker = deletion_worker
-    subject_deletion = install_subject_deletion(
-        app,
-        settings,
-        guardian_store=guardian_store,
-        archive_object_store=archive_object_store,
-        corpus_retention_service=corpus_retention_service,
-        session_terminator=session_terminator,
-    )
     if w.live:
         w.start(AccountDeletionWorker(subject_deletion))
 
