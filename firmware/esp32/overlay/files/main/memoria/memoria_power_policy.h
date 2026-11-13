@@ -10,7 +10,7 @@ namespace memoria {
 
 enum class PowerPhase : unsigned char {
     kConversing,
-    kWifiHold,
+    kWifiHold,  // Connected standby; idle screen-off never schedules chip sleep.
     kDeepSleep,
     kWaking,
     kNightSoothing,

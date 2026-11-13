@@ -600,7 +600,7 @@ def test_usb_sleep_and_poweroff_stop_without_deep_sleep() -> None:
     assert "StopListening" in handler
     assert "ToggleChatState" in handler
     assert "PowerPhase::kWifiHold" in handler
-    assert "kWifiHoldNotArmed" in handler
+    assert "wifi_hold_since_ms_" not in handler
     assert "esp_deep_sleep_start" not in handler
     assert "StopStation" in handler
     assert "USB still powers the board" in handler

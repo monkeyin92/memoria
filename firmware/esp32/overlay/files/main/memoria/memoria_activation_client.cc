@@ -1,3 +1,4 @@
+#include "memoria_firmware_update.h"
 #include "memoria_activation_client.h"
 
 #include <algorithm>
@@ -554,6 +555,11 @@ std::string MemoriaActivationClient::SignGetRequest(const std::string& path) con
     return payload.empty() ? std::string{} : SignedRequestHeader(identity_, payload);
 }
 
+std::string MemoriaActivationClient::SignFirmwareReport(const std::string& path,
+    const std::string& report, const std::string& request_id) const {
+    return SignedRequestHeader(identity_, "memoria-firmware-report-v1\n" + path + "\n" + report + "\n" + request_id);
+}
+
 esp_err_t MemoriaActivationClient::FetchDisplayProfile(const std::string& control_api_url,
                                                        DisplayProfile* profile) {
     if (profile == nullptr || !identity_.loaded() || control_api_url.empty()) {
@@ -565,13 +571,18 @@ esp_err_t MemoriaActivationClient::FetchDisplayProfile(const std::string& contro
     if (request_payload.empty() || request_signature.empty()) {
         return ESP_FAIL;
     }
+    const std::string report = MemoriaFirmwareUpdate::ReportHeader();
+    const std::string firmware_request = MemoriaFirmwareUpdate::RequestId();
     std::string response;
     last_http_status_ = 0;
     last_transport_error_ = 0;
     int status = 0;
     if (!HttpRequest("GET", JoinUrl(control_api_url, path),
                      {{"X-Device-Certificate-ID", identity_.certificate_id()},
-                      {"X-Device-Signature", request_signature}},
+                      {"X-Device-Signature", request_signature},
+                      {"X-Memoria-Firmware", report},
+                      {"X-Memoria-Firmware-Request", firmware_request},
+                      {"X-Memoria-Firmware-Signature", SignFirmwareReport(path, report, firmware_request)}},
                      {}, &response, &status, &last_transport_error_)) {
         last_http_status_ = status;
         return status == 409 ? ESP_ERR_INVALID_STATE : ESP_FAIL;
@@ -584,6 +595,13 @@ esp_err_t MemoriaActivationClient::FetchDisplayProfile(const std::string& contro
         !RequiredString(root.value, "display_version", &display_version, 64)) {
         ESP_LOGE(kTag, "Display profile response invalid");
         return ESP_ERR_INVALID_RESPONSE;
+    }
+    profile->firmware_request_id.clear();
+    const cJSON* command = cJSON_GetObjectItemCaseSensitive(root.value, "firmware_check");
+    std::string request_id;
+    if (command != nullptr && RequiredString(command, "request_id", &request_id, 64) &&
+        !request_id.empty() && request_id.find_first_not_of("0123456789abcdef") == std::string::npos) {
+        profile->firmware_request_id = request_id;
     }
     profile->companion_id = std::move(companion_id);
     profile->display_version = std::move(display_version);

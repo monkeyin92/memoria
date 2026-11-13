@@ -5,6 +5,7 @@ const test = require("node:test");
 
 const root = path.join(__dirname, "..");
 const api = require("../utils/api");
+const realAuth = { hasAuthenticatedSession: api.hasAuthenticatedSession, currentAuthEpoch: api.currentAuthEpoch, isAuthEpochCurrent: api.isAuthEpochCurrent };
 const binding = require("../utils/device-binding");
 const { canonicalManifest } = require("./manifest-fixtures");
 const { readSubjectLabel } = require("../utils/subject-label");
@@ -23,6 +24,8 @@ let deferProfileResponses = false;
 const deferredResponses = [];
 let settingsPayload = null;
 let diagnosticsPayload = null;
+let firmwarePayload = null;
+test.afterEach(() => { firmwarePayload = null; });
 let settingsPatchResult = null;
 const settingsPatchCalls = [];
 const personaCalls = [];
@@ -86,6 +89,10 @@ global.wx = {
       } else {
         options.success(nextRequestResult);
       }
+      return;
+    }
+    if (pathname === "/v1/devices/dev_1/firmware-update") {
+      options.success(firmwarePayload ? { statusCode: 200, data: firmwarePayload } : nextRequestResult);
       return;
     }
     if (pathname === "/v1/devices/dev_1/diagnostics/latest") {
@@ -1355,6 +1362,7 @@ function wireDiagnostics(overrides = {}) {
 }
 
 test("device page loads authoritative settings and diagnostics (half-duplex fail-closed)", async () => {
+  firmwarePayload = { presence: "offline", running: { build: 33, reported_at: null } };
   binding.saveBindingManifest(familyManifest());
   profilePayload = wireProfile({ runtime_profile_id: "rp_diag", session_id: "ses_diag", session_epoch: 1 });
   settingsPayload = wireSettings();
@@ -1427,6 +1435,7 @@ test("aec-verified diagnostics expose server-approved modes and voice barge-in",
 });
 
 test("device page shows the Edge-negotiated effective audio mode, not the requested echo", async () => {
+  firmwarePayload = { presence: "busy", running: { build: 33, reported_at: null } };
   binding.saveBindingManifest(familyManifest());
   profilePayload = wireProfile({ runtime_profile_id: "rp_live", session_id: "ses_live", session_epoch: 1 });
   settingsPayload = wireSettings({ audio_mode: "interrupt_assist" });
@@ -1465,7 +1474,7 @@ test("diagnostics unavailable fails closed for acoustics controls", async () => 
   assert.equal(page.data.online, false);
   assert.equal(page.data.deviceConnectionState, "unknown");
   assert.equal(page.data.deviceConnectionAction, "");
-  assert.equal(page.data.onlineLabel, "绑定已确认，设备状态待同步");
+  assert.equal(page.data.onlineLabel, "状态待确认");
   assert.doesNotMatch(
     visibleText(renderPage("pages/device/index", page.data, { width: 390, safeTop: 47, safeBottom: 34 })),
     /设备暂时无法连接/,
@@ -2459,4 +2468,380 @@ test("重新配网从新二维码开始，不带旧启用会话", () => {
   } finally {
     global.wx.navigateTo = previous.navigateTo;
   }
+});
+
+test("OTA button confirms target, renders terminal state, and stops polling when hidden", async () => {
+  const saved = { get: api.getFirmwareUpdate, start: api.startFirmwareUpdate, modal: wx.showModal };
+  const page = instantiate(pageDefinition);
+  page._firmwareVisible = true;
+  page.setData({ binding: { device_id: "dev_1" } });
+  let payload = { running: { build: 29 }, available: { build: 30, version: "v30", size: 123 }, presence: "online", update: null };
+  const calls = [];
+  let confirmation;
+  api.getFirmwareUpdate = async () => payload;
+  api.startFirmwareUpdate = async (id, target) => {
+    calls.push({ id, target });
+    payload = { ...payload, update: { state: "waiting_device" } };
+    return payload;
+  };
+  wx.showModal = (options) => { confirmation = options.content; options.success({ confirm: true }); };
+  try {
+    await page.checkFirmwareUpdate();
+    assert.deepEqual(calls, [{ id: "dev_1", target: 30 }]);
+    assert.match(confirmation, /自动重启/);
+    await page.refreshFirmware();
+    assert.equal(page.data.firmwareActive, true);
+    page.onHide();
+    assert.equal(page._firmwareVisible, false);
+    payload = { ...payload, running: { build: 30 }, update: { state: "succeeded" } };
+    page._firmwareVisible = true;
+    await page.refreshFirmware();
+    assert.match(page.data.firmwareText, /更新成功/);
+    assert.equal(page.data.firmwareActive, false);
+    assert.equal(page.data.firmwareBuild, "build 30");
+    page.setData({ authenticated: true, hasBinding: true, loading: false, managementExpanded: true });
+    const rendered = visibleText(renderPage("pages/device/index", page.data));
+    assert.match(rendered, /检查更新/);
+    assert.match(rendered, /build 30/);
+    payload = { ...payload, update: { state: "failed", failure: "download_interrupted" } };
+    await page.refreshFirmware();
+    assert.match(page.data.firmwareText, /下载中断/);
+  } finally { page.onUnload(); api.getFirmwareUpdate = saved.get; api.startFirmwareUpdate = saved.start; wx.showModal = saved.modal; }
+});
+
+test("OTA cancels confirmation and discards late results on hide, account or device switch", async () => {
+  const saved = { get: api.getFirmwareUpdate, start: api.startFirmwareUpdate, modal: wx.showModal, epoch: api.isAuthEpochCurrent };
+  const page = instantiate(pageDefinition);
+  page._firmwareVisible = true;
+  page.setData({ binding: { device_id: "dev_1" } });
+  const payload = { running: { build: null }, available: { build: 30, version: "v30" }, update: null };
+  let posts = 0;
+  api.getFirmwareUpdate = async () => payload;
+  api.startFirmwareUpdate = async () => { posts += 1; };
+  wx.showModal = (options) => options.success({ confirm: false });
+  try {
+    await page.checkFirmwareUpdate();
+    assert.equal(posts, 0);
+    for (const change of [() => page.onHide(), () => page.setData({ binding: { device_id: "dev_2" } }), () => { api.isAuthEpochCurrent = () => false; }]) {
+      page._firmwareVisible = true;
+      page.setData({ binding: { device_id: "dev_1" }, firmwareText: "pending" });
+      api.isAuthEpochCurrent = () => true;
+      let resolve;
+      api.getFirmwareUpdate = () => new Promise((done) => { resolve = done; });
+      const pending = page.refreshFirmware();
+      change();
+      resolve(payload);
+      await pending;
+      assert.equal(page.data.firmwareText, "pending");
+    }
+  } finally { page.onUnload(); api.getFirmwareUpdate = saved.get; api.startFirmwareUpdate = saved.start; wx.showModal = saved.modal; api.isAuthEpochCurrent = saved.epoch; }
+});
+
+test("OTA API submits only the selected target_build", async () => {
+  const original = wx.request;
+  let observed;
+  wx.request = (options) => { observed = options; options.success({ statusCode: 202, data: {} }); };
+  try {
+    await api.startFirmwareUpdate("dev_1", 30);
+    assert.equal(observed.method, "POST");
+    assert.deepEqual(observed.data, { target_build: 30 });
+    assert.match(observed.url, /\/v1\/devices\/dev_1\/firmware-update$/);
+  } finally { wx.request = original; }
+});
+
+test("OTA onShow restores polling and plain old-server 404 differs from binding errors", async () => {
+  const saved = { get: api.getFirmwareUpdate, authenticated: api.hasAuthenticatedSession };
+  const page = instantiate(pageDefinition);
+  page.loadDevice = async () => page.setData({ binding: { device_id: "dev_1" } });
+  api.hasAuthenticatedSession = () => true;
+  let calls = 0;
+  api.getFirmwareUpdate = async () => { calls += 1; return { running: { build: 29 }, available: null, update: { state: "waiting_device" } }; };
+  try {
+    await page.onShow();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(calls, 1);
+    assert.equal(page.data.firmwareActive, true);
+    page.onHide();
+    await page.onShow();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(calls, 2);
+    api.getFirmwareUpdate = async () => { throw { status: 404, code: "device_not_bound_to_account", message: "设备未绑定" }; };
+    await page.refreshFirmware();
+    assert.equal(page.data.firmwareText, "设备未绑定");
+    api.getFirmwareUpdate = async () => { throw { status: 404, message: "Not Found" }; };
+    await page.refreshFirmware();
+    assert.equal(page.data.firmwareText, "服务暂不支持检查更新");
+  } finally { page.onUnload(); api.getFirmwareUpdate = saved.get; api.hasAuthenticatedSession = saved.authenticated; }
+});
+
+test("OTA expired session releases the button and offers login without sending a request", async () => {
+  const saved = { getApp: global.getApp, request: wx.request, toast: wx.showToast, ...Object.fromEntries(Object.keys(realAuth).map(key => [key, api[key]])) };
+  const app = { globalData: { identity: { user_id: "owner" }, accessToken: "expired-test-token", accessTokenExpiresAt: Date.now() - 1000, authEpoch: 7 } };
+  global.getApp = () => app;
+  Object.assign(api, realAuth);
+  let requests = 0;
+  let toast;
+  wx.request = () => { requests += 1; };
+  wx.showToast = options => { toast = options.title; };
+  const page = instantiate(pageDefinition);
+  page._firmwareVisible = true;
+  page.setData({ authenticated: true, hasBinding: true, loading: false, managementExpanded: true, binding: { device_id: "dev_1" } });
+  try {
+    await page.checkFirmwareUpdate();
+    assert.equal(requests, 0);
+    assert.equal(page.data.firmwareSubmitting, false);
+    assert.equal(page.data.authenticated, false);
+    assert.match(toast, /登录.*过期/);
+    const rendered = visibleText(renderPage("pages/device/index", page.data));
+    assert.match(rendered, /登录/);
+    assert.doesNotMatch(rendered, /build 32|确认更新固件/);
+  } finally {
+    page.onUnload(); global.getApp = saved.getApp; wx.request = saved.request; wx.showToast = saved.toast;
+    for (const key of Object.keys(realAuth)) api[key] = saved[key];
+  }
+});
+
+test("OTA expiry while HTTP is pending clears loading and never confirms the stale offer", async () => {
+  const saved = { getApp: global.getApp, request: wx.request, modal: wx.showModal, toast: wx.showToast, ...Object.fromEntries(Object.keys(realAuth).map(key => [key, api[key]])) };
+  const app = { globalData: { identity: { user_id: "owner" }, accessToken: "test-token", accessTokenExpiresAt: Date.now() + 60000, authEpoch: 7 } };
+  global.getApp = () => app;
+  Object.assign(api, realAuth);
+  let request;
+  let modals = 0;
+  wx.request = options => { request = options; };
+  wx.showModal = () => { modals += 1; };
+  wx.showToast = () => {};
+  const page = instantiate(pageDefinition);
+  page._firmwareVisible = true;
+  page.setData({ authenticated: true, binding: { device_id: "dev_1" } });
+  try {
+    const pending = page.checkFirmwareUpdate();
+    assert.equal(page.data.firmwareSubmitting, true);
+    app.globalData.accessTokenExpiresAt = Date.now() - 1000;
+    request.success({ statusCode: 200, data: { running: { build: 32 }, available: { build: 33, version: "v33" }, presence: "online", update: null } });
+    await pending;
+    assert.equal(page.data.firmwareSubmitting, false);
+    assert.equal(page.data.authenticated, false);
+    assert.equal(modals, 0);
+    assert.equal(page.data.firmwareStatus, null);
+  } finally {
+    page.onUnload(); global.getApp = saved.getApp; wx.request = saved.request; wx.showModal = saved.modal; wx.showToast = saved.toast;
+    for (const key of Object.keys(realAuth)) api[key] = saved[key];
+  }
+});
+
+test("OTA old-account response cannot clear a new account's pending check", async () => {
+  const saved = { getApp: global.getApp, request: wx.request, ...Object.fromEntries(Object.keys(realAuth).map(key => [key, api[key]])) };
+  const app = { globalData: { identity: { user_id: "owner" }, accessToken: "token-a", accessTokenExpiresAt: Date.now() + 60000, authEpoch: 7 } };
+  global.getApp = () => app;
+  Object.assign(api, realAuth);
+  const requests = [];
+  wx.request = options => requests.push(options);
+  const page = instantiate(pageDefinition);
+  page._firmwareVisible = true;
+  page.setData({ authenticated: true, binding: { device_id: "dev_1" } });
+  try {
+    const oldCheck = page.checkFirmwareUpdate();
+    page.onHide();
+    app.globalData.authEpoch += 1;
+    app.globalData.accessToken = "token-b";
+    app.globalData.identity = { user_id: "other-owner" };
+    page._firmwareVisible = true;
+    page.setData({ binding: { device_id: "dev_2" }, firmwareText: "new account" });
+    const newCheck = page.checkFirmwareUpdate();
+    requests[0].success({ statusCode: 401, data: { detail: "expired" } });
+    await oldCheck;
+    assert.equal(page.data.firmwareSubmitting, true);
+    assert.equal(page.data.authenticated, true);
+    assert.equal(page.data.firmwareText, "new account");
+    assert.equal(app.globalData.accessToken, "token-b");
+    requests[1].success({ statusCode: 200, data: { running: { build: 33 }, available: { build: 33 }, presence: "online", update: null } });
+    await newCheck;
+    assert.equal(page.data.firmwareSubmitting, false);
+    assert.equal(page.data.firmwareBuild, "build 33");
+    assert.equal(page.data.firmwareText, "已是最新版本");
+  } finally {
+    page.onUnload(); global.getApp = saved.getApp; wx.request = saved.request;
+    for (const key of Object.keys(realAuth)) api[key] = saved[key];
+  }
+});
+
+
+test("OTA polling expiry releases the active state and offers login", async () => {
+  const saved = { getApp: global.getApp, request: wx.request, toast: wx.showToast, ...Object.fromEntries(Object.keys(realAuth).map(key => [key, api[key]])) };
+  const app = { globalData: { identity: { user_id: "owner" }, accessToken: "expired-token", accessTokenExpiresAt: Date.now() - 1000, authEpoch: 7 } };
+  global.getApp = () => app;
+  Object.assign(api, realAuth);
+  let requests = 0;
+  let toast;
+  wx.request = () => { requests += 1; };
+  wx.showToast = options => { toast = options.title; };
+  const page = instantiate(pageDefinition);
+  page._firmwareVisible = true;
+  page.setData({ authenticated: true, firmwareActive: true, binding: { device_id: "dev_1" } });
+  try {
+    await page.refreshFirmware();
+    assert.equal(requests, 0);
+    assert.equal(page.data.firmwareActive, false);
+    assert.equal(page.data.authenticated, false);
+    assert.match(toast, /登录.*过期/);
+    assert.match(visibleText(renderPage("pages/device/index", page.data)), /登录/);
+  } finally {
+    page.onUnload(); global.getApp = saved.getApp; wx.request = saved.request; wx.showToast = saved.toast;
+    for (const key of Object.keys(realAuth)) api[key] = saved[key];
+  }
+});
+
+// Captured ui33-fix-success-payload.txt, evaluated at its recorded client time.
+const standby33 = { running: { build: 33, reported_at: "2026-11-13T04:00:25.006647+00:00" }, available: { build: 33, version: "2.4.2+m33", size: 3390528 }, presence: "online", update: { request_id: "3b9ab701ee7b1e16fd4b60daec195a96", target_build: 33, state: "succeeded", failure: null, download_inferred: false } };
+
+test("captured standby heartbeat renders device online while media remains disconnected", async () => {
+  const saved = { get: api.getFirmwareUpdate, now: Date.now };
+  Date.now = () => 1794542451165;
+  api.getFirmwareUpdate = async () => standby33;
+  const page = instantiate(pageDefinition);
+  page._firmwareVisible = true;
+  page.setData({ authenticated: true, hasBinding: true, binding: { device_id: "dev_1" }, loading: false, managementExpanded: true, deviceConnectionState: "offline", onlineLabel: "暂时离线", diagnostics: wireDiagnostics(), liveRuntimeStatusLabel: "当前未连接" });
+  try {
+    await page.refreshFirmware();
+    const text = visibleText(renderPage("pages/device/index", page.data));
+    assert.match(text, /设备在线/);
+    assert.equal(page.data.deviceConnectionState, "online");
+    assert.equal(page.data.liveRuntimeStatusLabel, "当前未连接");
+    assert.doesNotMatch(text, /暂时离线/);
+  } finally { page.onHide(); api.getFirmwareUpdate = saved.get; Date.now = saved.now; }
+});
+
+test("network display rejects stale, future, absent heartbeats and failed requests", async () => {
+  const saved = { get: api.getFirmwareUpdate, now: Date.now };
+  Date.now = () => 1794542451165;
+  const page = instantiate(pageDefinition);
+  page._firmwareVisible = true;
+  page.setData({ binding: { device_id: "dev_1" } });
+  try {
+    for (const payload of [standby33, { ...standby33, presence: "offline" }, { ...standby33, presence: "unknown" }, { ...standby33, running: { build: 33, reported_at: "2026-11-13T03:00:00Z" } }, { ...standby33, running: { build: 33, reported_at: "2026-11-14T04:00:25Z" } }, { ...standby33, running: { build: 33 } }]) {
+      api.getFirmwareUpdate = async () => payload;
+      await page.refreshFirmware();
+      const expected = payload === standby33 ? "online" : payload.presence === "offline" ? "offline" : "unknown";
+      assert.equal(page.data.deviceConnectionState, expected);
+    }
+    api.getFirmwareUpdate = async () => { throw new Error("network unavailable"); };
+    await page.refreshFirmware();
+    assert.equal(page.data.deviceConnectionState, "unknown");
+    assert.equal(page.data.deviceConnectionAction, "");
+  } finally { page.onHide(); api.getFirmwareUpdate = saved.get; Date.now = saved.now; }
+});
+
+test("network evidence expires during a hung refresh and polls without an OTA", async () => {
+  const saved = { get: api.getFirmwareUpdate, now: Date.now, timeout: global.setTimeout, clear: global.clearTimeout };
+  let now = 1794542451165;
+  let id = 0;
+  const timers = new Map();
+  Date.now = () => now;
+  global.setTimeout = (fn, delay) => { timers.set(++id, { fn, at: now + delay }); return id; };
+  global.clearTimeout = (key) => timers.delete(key);
+  const page = instantiate(pageDefinition);
+  page._firmwareVisible = true;
+  page.setData({ binding: { device_id: "dev_1" } });
+  let finish;
+  try {
+    api.getFirmwareUpdate = async () => standby33;
+    await page.refreshFirmware();
+    assert.equal(page.data.online, true);
+    assert.ok([...timers.values()].some(timer => timer.at === now + 15000));
+    api.getFirmwareUpdate = () => new Promise(resolve => { finish = resolve; });
+    const pending = page.refreshFirmware();
+    now += 30000;
+    for (const timer of [...timers.values()]) if (timer.at <= now) timer.fn();
+    assert.equal(page.data.deviceConnectionState, "unknown");
+    finish(standby33);
+    await pending;
+    assert.equal(page.data.deviceConnectionState, "unknown", "slow responses cannot renew stale evidence");
+    page.onHide();
+    assert.equal(timers.size, 0);
+  } finally { page.onHide(); api.getFirmwareUpdate = saved.get; Date.now = saved.now; global.setTimeout = saved.timeout; global.clearTimeout = saved.clear; }
+});
+
+test("old online responses cannot overwrite a new device, account or reopened page", async () => {
+  const saved = { get: api.getFirmwareUpdate, now: Date.now, epoch: api.currentAuthEpoch, current: api.isAuthEpochCurrent };
+  Date.now = () => 1794542451165;
+  let epoch = 1;
+  api.currentAuthEpoch = () => epoch;
+  api.isAuthEpochCurrent = value => value === epoch;
+  try {
+    for (const change of [page => page.setData({ binding: { device_id: "dev_2" } }), () => { epoch++; }, page => { page.onHide(); page._firmwareVisible = true; }]) {
+      const page = instantiate(pageDefinition);
+      page._firmwareVisible = true;
+      page.setData({ binding: { device_id: "dev_1" } });
+      let finish;
+      api.getFirmwareUpdate = () => new Promise(resolve => { finish = resolve; });
+      const old = page.refreshFirmware();
+      change(page);
+      api.getFirmwareUpdate = async () => ({ presence: "offline" });
+      await page.refreshFirmware();
+      finish(standby33);
+      await old;
+      assert.equal(page.data.deviceConnectionState, "offline");
+      assert.equal(page.data.onlineLabel, "暂时离线");
+      page.onHide();
+    }
+  } finally { api.getFirmwareUpdate = saved.get; Date.now = saved.now; api.currentAuthEpoch = saved.epoch; api.isAuthEpochCurrent = saved.current; }
+});
+
+test("heartbeat lifetime, client clock changes and old firmware services stay conservative", async () => {
+  const saved = { get: api.getFirmwareUpdate, now: Date.now, timeout: global.setTimeout, clear: global.clearTimeout };
+  let now = 1794542451165;
+  let id = 0;
+  const timers = new Map();
+  Date.now = () => now;
+  global.setTimeout = (fn, delay) => { timers.set(++id, { fn, delay }); return id; };
+  global.clearTimeout = key => timers.delete(key);
+  const page = instantiate(pageDefinition);
+  page._firmwareVisible = true;
+  page.setData({ binding: { device_id: "dev_1" }, diagnostics: { live_runtime: { connected: true } } });
+  try {
+    for (const reportedAt of [new Date(now - 90000).toISOString(), null, "invalid"]) {
+      api.getFirmwareUpdate = async () => ({ ...standby33, running: { build: 33, reported_at: reportedAt } });
+      await page.refreshFirmware();
+      assert.equal(page.data.deviceConnectionState, "unknown");
+    }
+    api.getFirmwareUpdate = async () => ({ ...standby33, running: { build: 33, reported_at: new Date(now - 89900).toISOString() } });
+    await page.refreshFirmware();
+    assert.equal(page.data.online, true);
+    const expiry = [...timers.values()].find(timer => timer.delay === 100);
+    assert.ok(expiry, "expiry follows heartbeat age even before the next poll");
+    now += 100;
+    expiry.fn();
+    assert.equal(page.data.deviceConnectionState, "unknown");
+    now -= 86400000;
+    api.getFirmwareUpdate = async () => standby33;
+    await page.refreshFirmware();
+    assert.equal(page.data.deviceConnectionState, "unknown", "future server timestamps cannot prove local freshness");
+    api.getFirmwareUpdate = async () => { throw { status: 404, message: "Not Found" }; };
+    await page.refreshFirmware();
+    assert.equal(page.data.deviceConnectionState, "unknown");
+    assert.equal(page.data.firmwareText, "服务暂不支持检查更新");
+    page.onHide();
+    assert.equal(page.data.networkObservation, null);
+  } finally { page.onHide(); api.getFirmwareUpdate = saved.get; Date.now = saved.now; global.setTimeout = saved.timeout; global.clearTimeout = saved.clear; }
+});
+
+
+test("network presence honors live busy reports and bounded clock skew", () => {
+  const { firmwareNetworkObservation, networkStatusView } = require("../utils/device-status");
+  const now = 1794542451165;
+  for (const reported_at of [null, new Date(now - 95000).toISOString()]) {
+    const observation = firmwareNetworkObservation({ presence: "busy", running: { reported_at } }, now, now);
+    assert.equal(networkStatusView(observation, now).online, true);
+    assert.equal(networkStatusView(observation, now + 30000).deviceConnectionState, "unknown");
+  }
+  for (const offset of [1500, 5000]) {
+    const observation = firmwareNetworkObservation({ presence: "online", running: { reported_at: new Date(now + offset).toISOString() } }, now, now);
+    assert.equal(networkStatusView(observation, now).online, true);
+    assert.equal(observation.expiresAt, now + 30000);
+  }
+  const future = firmwareNetworkObservation({ presence: "online", running: { reported_at: new Date(now + 5001).toISOString() } }, now, now);
+  assert.equal(networkStatusView(future, now).deviceConnectionState, "unknown");
+  const rollback = firmwareNetworkObservation({ presence: "offline" }, now + 60000, now);
+  assert.equal(rollback.expiresAt, now + 30000);
 });

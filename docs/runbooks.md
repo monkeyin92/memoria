@@ -901,16 +901,46 @@ SQL 侧只多返回事实 `device_bound`，与开关无关，所以 `schema` 步
 
 ### 固件 OTA 发布与回滚演练（设备在线升级）
 
-机制（`memoria_firmware_update.*`、`services/control_api/app/device_firmware.py`）：服务器 `current.json` 是唯一的发布指针，设备只装 **build 严格大于自己** 且签名通过的镜像；空闲时检查，下载进另一个 OTA 槽并核长度与 SHA-256，空闲时重启；新镜像以 `PENDING_VERIFY` 启动，Control API 答复激活后才 `mark_app_valid`，在此之前复位会被引导程序回滚到旧槽（`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`）。没有按设备定向：服务器上的 `current.json` 对同一块板的所有设备生效。
+机制（`memoria_firmware_update.*`、`services/control_api/app/device_firmware.py`）：服务器优先读取 `<board>/devices/<device_id>.json`，不存在才读取 `<board>/current.json`，设备指针损坏返回 503，不回退全局指针。`image` 端点同样限制为该设备当前 offer，设备只装 **build 严格大于自己** 且签名通过的镜像；空闲时检查，下载进另一个 OTA 槽并核长度与 SHA-256，空闲时重启；新镜像以 `PENDING_VERIFY` 启动，Control API 答复激活后才 `mark_app_valid`，在此之前复位会被引导程序回滚到旧槽（`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`）。`current.json` 对没有设备指针的同板设备生效。撤销设备指针恢复全局 offer，不取消设备已经开始的下载。
 
-发布一个 build（需要用户当场授权，是对线上设备的变更）：改 `memoria_firmware_release.h` 的 `MEMORIA_FIRMWARE_BUILD` → `firmware/esp32/scripts/build.sh --no-idf-install` → `publish_firmware_release.py sign`（写 `outputs/firmware-releases/<board>/<build>/`，用本机私钥签并按设备内置的公钥验）→ `publish_firmware_release.py upload --remote memoria-prod --build N`（暂存在 `ubuntu` 家目录，`sudo` 装入 `/var/lib/memoria/firmware-releases/<board>/`，核哈希后才原子切 `current.json`）。验收看串口：约 30 s 内 `Firmware build N … available`，约 80 s 下载，`staged`，空闲重启，之后 `MEMORIA_FIRMWARE_BUILD=N; slot=ota_x` 与 `Firmware build N confirmed`。`withdraw` 只是不再提供，已装的设备保持。
+发布一个 build（需要用户当场授权，是对线上设备的变更）：改 `memoria_firmware_release.h` 的 `MEMORIA_FIRMWARE_BUILD` → `firmware/esp32/scripts/build.sh --no-idf-install` → `publish_firmware_release.py sign`（写 `outputs/firmware-releases/<board>/<build>/`，用本机私钥签并按设备内置的公钥验）→ `publish_firmware_release.py upload --remote memoria-prod --build N --device <device_id>`（暂存在 `ubuntu` 家目录，`sudo` 装入 `/var/lib/memoria/firmware-releases/<board>/`，核哈希后才原子切该设备指针。全局发布必须显式 `--global`，与 `--device` 二选一）。验收看串口：约 30 s 内 `Firmware build N … available`，约 80 s 下载，`staged`，空闲重启，之后 `MEMORIA_FIRMWARE_BUILD=N; slot=ota_x` 与 `Firmware build N confirmed`。`withdraw` 只是不再提供，已装的设备保持。
+
+小程序使用 `GET/POST /v1/devices/{id}/firmware-update`。GET 需要账号读取 capability 和设备绑定，POST 另外需要 writable account 和 `device_settings_manage`，只接收 `target_build`。同一目标进行中返回原 request_id；目标版本改变或已是最新返回 409，无发布返回 404，损坏返回 503。未知运行 build 不能显示最新。
+
+build29 增加 `display-profile.firmware_check.request_id`，空闲轮询收到后立即检查并持久化去重。后台周期检查保留。设备同时发送 `X-Memoria-Firmware`、`X-Memoria-Firmware-Request` 和 `X-Memoria-Firmware-Signature`，后者签名 `memoria-firmware-report-v1\n{path}\n{report}\n{request_id}`，保留原 `X-Device-Signature` 鉴权。报告形状为 `build=29;boot=8位小写hex;last=none|current|declined|retry|staged`。随机 request_id 阻止请求前报告重放为成功；报告没有时钟新鲜度保证，不能独立当作远程证明。固件签名和镜像校验不变。
+
+状态集中在带锁的单进程内存 tracker，最多 4096 台设备，1 小时 TTL，每请求最多 64 条观测，10 分钟超时。服务重启、TTL 或容量淘汰会丢失历史，多 worker 不共享状态，部署应保持单 worker。`waiting_device` 等待空闲轮询，`checking` 来自设备 release GET，`downloading` 仅根据 image GET 推断，`restarting` 来自设备 staged 报告。成功必须收到本 request_id 的新 build、新 boot 且 `last=current`，服务端发送完镜像不会判成功。失败区分 `timeout`、`rolled_back`、`download_interrupted`、`device_declined`，终态可重试。设备正在对话时不做 idle poll，因此缺少近期报告不能证明设备离线；无新报告时，presence 使用现有 Edge assistant snapshot 的有效在线证据，否则保持 unknown。
+
+组件部署兼容性检查：control-api 新增 `firmware_update.py` 并更新 `device_firmware.py` 和两个 routes；无 Edge 协议或数据库 schema 迁移。旧设备不发报告时接口返回未知 build，旧固件忽略新增 display-profile 字段。build28 不识别按钮命令，目标机需先定向安装 29 桥接，再制作 30 验证按钮 OTA。初始桥接为29。截至2026-11-13，32已评审并通过本次定向OTA安装和confirmed，33已于2026-11-13 12:00经修复客户端的真实检查与确认完成下载、ota_1重启、confirmed及UI成功。32已完成802秒同boot待机、真实codec关闭、物理触摸和正常答复；提示音完整性仍未单独确认。线上旧提交 2c6ff2cc 的账户 capability、绑定 helper、路由注册和签名库依赖需逐项核对后做组件 hotfix，不能据此整栈替换 main。只向目标 `dev_atk_a4cb8fd6095c` 发布，保留全局 build21。
+
+**2026-11-12 固件按钮 OTA 集成现场记录**：18:14 核对生产基线为 `2c6ff2ccf3212e9d8b9b45f94ffad28dd8b0c82d`，18:19 核对单组件候选 `e265f3e18aa983f2d0ee45c3c8343a6ef091eb82` 已在 `memoria-control-api:20261112-firmware-ota-v1` 运行、healthy、restart=0。其他组件容器 ID 未变。回退镜像 `rollback-20261112-firmware-ota-v1-pre-control` 仍指向基线。目标 `dev_atk_a4cb8fd6095c` 的真实已鉴权 GET 返回 200，running build 与 reported_at 均为 null、presence=unknown，不能据此认定设备在线。全局 build21 指针 SHA-256 在前后均为 `5e6030edd618747d71584d8b585d70ce5ab37f02492fa7dda5a5b12ac2bb0dea`。
+
+build29 产品镜像保留在 `outputs/firmware-releases/memoria-esp-vocat/29/`，3390192 bytes，SHA-256 `e0740f01740dea7af87cfa4e5ae4a0645bb21424aacb685c248d471a3c5d9504`。18:37 USB 重插后恢复实时串口；升级前完整 ota_0、引导/分区表、NVS/otadata/phy 和 identity 备份均通过芯片 MD5 比对，另存 assets 等保护区 MD5。新读取的身份区确认目标 `dev_atk_a4cb8fd6095c`，新启动为 build28/ota_0。仅定向发布29后，18:42:45 staged ota_1 并自动重启，18:42:56 build29/ota_1 confirmed。持续 logger 未在下载/确认期间重开。
+
+仅29成功后制作产品30，3390192 bytes，SHA-256 `f75b57c0382350d414c031266c955ced3995b01d2fa9472b8ce7a5087692d5de`。开发工具打开实际上传快照，用户完成登录；真实点击「检查更新」「确认更新」，request_id `8ff20b5fb6f96cbe5ade73eacc76a715`，请求前设备报告 build29/boot `443def49`。18:45:57 开始下载，18:46:10 达30%，18:46:11 因原有 wifi hold 到期进入深睡，USB断开。没有30 staged、新build30或confirmed。唤醒后线上报告仍为29，新boot `691da016`，携带同request_id；这不能算OTA成功。目标设备指针已撤回，恢复全局21；29/30原签名件和线上哈希保留，global指针SHA仍为 `5e6030edd618747d71584d8b585d70ce5ab37f02492fa7dda5a5b12ac2bb0dea`。
+
+用户追加正式产品要求后，31候选删除空闲熄屏后的自动深睡计时，使用现有 wifi_hold 表示持续联网待机；补齐 listening_closed 关闭语音处理、残余编码上行丢弃及关闭采集状态下的 Control/OTA 轮询。恢复只允许在 listening 状态且关闭标记仍匹配时切换采集，避免旧回调在 idle 重开麦克风。显式关机和现有离线菜单/安静时段操作保留。31正式产品构建通过，3390432 bytes，SHA-256 `9988ef8968a33df8c07f212b1283aff26718e6dddfaa3afa9882d302adcb4465`；837项整套固件测试和4项最终专项行为回归通过，lint通过。31需不同厂商独立评审后才能签发/上传/安装，本轮没有签名或发布修复。19:00前只读已鉴权GET确认原30请求终态 `failed/timeout`、running29、available21；此状态查询不代替UI验收。证据与增量 diff 在 `outputs/acceptance/ota-20261112/`，备份含身份秘密，禁止公开。
+
+小程序当前源码的设备页 62 项 Node 测试通过，Node 24.16.0 下按 lock 安装依赖，真实编译预检通过 284 个文件。为保留共享工作树，将当前源码复制到 `outputs/acceptance/ota-20261112/upload-snapshot/`，本地快照提交 `9835c58c362d380b7e961dca9d62e78409097d3f` 仅用于可追溯上传，无共享分支提交或推送。`upload_miniprogram_test.js` 两次被微信 IP 白名单以 `-10008 invalid ip` 拒绝；随后使用已登录官方开发者工具 CLI 上传同一干净候选成功，版本 `2026.11.12-ota`，包大小 1621740 bytes，回执 `wechat-upload.log` 与 `wechat-upload-info.json`。该结果仅证明开发版上传，不证明体验版设置、审核、正式发布或手机按钮验收。初次上传阶段的模拟器空白与 `cgWindowNotFound` 未构成按钮验收；重插续跑中已通过重新编译恢复实际UI并点击30确认，结果为上文记录的深睡中断。
+
+**2026-11-12 19:36 离线准备记录**：32独立Claude评审无阻塞，两条仅测试条件已补齐，本次专项11项通过，overlay检查通过。32产品3390528 bytes，SHA-256 `2793a247054d5a833336f63d537f2aa495ac3292ac940775475e47cc42307bcd`，已本地签名。保全206份完整32固件源码、镜像、构建配置与源哈希后，仅将release header中build32改为33一行，正式`build.sh --no-idf-install`构建退出0并签名。33同为3390528 bytes，SHA-256 `33091ec8fe0c18beaef29ed0557264f1e4ced6d9e97629823a4b7d3030c61a35`。当前源码header与默认artifact均为33；32须使用其保留的签名目录。四份私有备份的本地SHA校验通过，不能代替设备保护区现场比对。旧备份ota_0为28，若未来USB桥接写入，须额外备份届时活跃槽，不能当成29回滚件。
+
+本轮未连接或复位设备，未播放音频。用户表示暂不能操作后已停止硬件工作，不再循环等候或重复请求拔插。32/33均未上传，19:36:23现场核对远端32/33目录不存在、目标设备指针不存在，global21 SHA仍为 `5e6030edd618747d71584d8b585d70ce5ab37f02492fa7dda5a5b12ac2bb0dea`。Control API已完成的组件部署、小程序开发版上传与29桥接保留，不重做。官方工具open成功后，原生UI仍报 `Computer Use server error -10005: cgWindowNotFound`；本轮没有UI点击或成功截图，既有登录项目保留。无本次串口owner或硬件后台进程。完整证据与未执行安装命令见 `outputs/acceptance/ota-20261112/receipt.md`。
+
+恢复时最小顺序为新串口唯一owner与目标身份/build/boot → 监控下优先32 OTA或受保护的app/otadata桥接写入 → 新32 confirmed →15秒熄屏、真实AudioCodec input false、上行与ASR关闭、同boot联网超过原180秒后再至少10分钟 → 真实触摸/input true/完整提示音/正常回复 → 定向33后等超过180秒，实际小程序检查与确认 → request_id贯穿新33 boot/confirmed及UI成功 → 仅撤目标指针并核global与保护区。未安装32时不能进入按钮验收。2026-11-13已完成32的待机与物理恢复，33按钮OTA及提示音完整性仍未通过，整体目标未完成。2026-11-12停止窗口曾禁止任何device或global指针；2026-11-13用户已明确恢复本次目标device升级授权，global发布仍禁止。
+
+**2026-11-13 目标设备恢复验收结果**：USB恢复，fresh identity仅匹配`dev_atk_a4cb8fd6095c`。现场分区表与双槽备份、芯片MD5通过，活跃ota_1与原签名29一致。保留32/33签名、3390528bytes与原SHA复核通过，未重建。Control OCI revision仍`e265f3e1`、healthy、restart0、单worker，global21 SHA未变。仅定向32，11:14:41 staged ota_0，11:14:55 build32 confirmed，新boot`4d4e72ab`；无USB刷写。11:16:28收麦，11:16:43熄屏，11:16:44真实`AudioCodec input=false`，同boot连续USB/Control观察802.744秒，超过原180秒后再10分钟，无重连、input重开或VAD。用户实测熄屏旁讲话无回应，11:32:32真实触摸恢复亮屏、input与正常回答。旧媒体会话以`owner_silence_timeout`结束，触摸重建媒体会话；Control连续且无WiFi断开，不能把“正在连接”推断为断网。用户听到问候语，未单独确认提示音完整性。
+
+33于11:34仅定向提供，保持熄屏超过180秒后11:38实际点击小程序检查更新。按钮持续加载，服务端未观察到新的固件更新请求；一次重编译后候选回到未登录首页。具体原因未证实，没有确认点击、新request_id、33下载、新boot、confirmed或UI成功，禁止报告按钮OTA通过，也没有HTTP代点。遵从不重复要求登录的指令，本轮不再请求登录。11:40已撤仅目标指针并核global21 SHA仍为`5e6030edd618747d71584d8b585d70ce5ab37f02492fa7dda5a5b12ac2bb0dea`。32 confirmed之后才读回保护区，boot/ptable、NVS、phy、identity、assets均与本次升级前MD5一致。受控重启后11:41:45仍为32/ota_0。logger与本次网络取证进程已释放，保留用户应用、签名件、双槽回退与私有备份。完整时间线、命令和UI证据见既有`outputs/acceptance/ota-20261112/receipt.md`。后续修复与33真实按钮验收结果见下一段。
+
+**2026-11-13 12:02 客户端修复后按钮OTA通过**：15分钟session过期导致发送前401，原守卫连finally也拒绝，按钮永久loading。已评审修复分开action清理归属与有效session响应归属，补齐轮询过期guest/toast与旧epoch保护。当前66设备页测试全部通过。官方CLI开发版`2026.11.13-ota-fix`上传成功，1622245 bytes，同源`upload-snapshot-expiry-fix`编译后本人登录一次。真实检查和确认产生`3b9ab701ee7b1e16fd4b60daec195a96`，baseline32/boot`9f035938`，11:59:21下载，12:00:07 staged ota_1，12:00:20 build33 confirmed，新签名boot`06591e5c`，UI显示build33及更新成功，同request状态succeeded。33原hash不变，未重建重签或部署control-api。受控临时内存expiry测试在实际UI看到过期toast、guest及loading false，原expiry和时钟恢复后原登录设备页保留；这不是自然900秒或服务端token过期验收。仅目标指针已撤，global21 SHA仍为`5e6030edd618747d71584d8b585d70ce5ab37f02492fa7dda5a5b12ac2bb0dea`。串口与本次抓包已停止。33后未读回保护区，32的MD5证据不可充作33证据。提示音完整性仍未知。通用设备网络面板仍显示离线，与实时固件online状态不一致，作为邻近问题保留未修改。截图、源码manifest、上传回执、serial与签名报告见既有receipt最新段落。
 
 **回滚演练**（2026-10-04 20:26–20:37 在真机做过一次，通过：N=21、演练号 22，收据见 HANDOFF「2026-10-04 夜 OTA 回滚演练…」一节；只在有人在场、USB 连着、串口记录进程开着时做；做之前先备份，见下一节）：
 1. 先让板子跑着真实 build N 并确认（OTA 装上或 USB 刷入都行；2026-10-04 那次是 USB 刷的 21，OTA 正常路径 2026-09-27 已验过）。
 2. `firmware/esp32/scripts/build_ota_rollback_drill.sh N+1`：同一份源码、更大的 build 号、**不确认自己**的演练镜像，落在 `artifacts/ota-rollback-drill/app-<N+1>.bin`（缓存里的两处源码构建后自动还原，演练代码不进仓库）。**先构建并签好真实 build，再构建演练**：它会覆盖 `artifacts/memoria-esp-vocat-app.bin`。
-3. `publish_firmware_release.py sign --image artifacts/ota-rollback-drill/app-<N+1>.bin --build <N+1>` 与 `upload --build <N+1>`（`sign` 默认只认头文件里的 build，演练镜像必须显式给号，默认路径永远不会误签它）。
+3. `publish_firmware_release.py sign --image artifacts/ota-rollback-drill/app-<N+1>.bin --build <N+1>` 与 `upload --build <N+1> --device <device_id>`（`sign` 默认只认头文件里的 build，演练镜像必须显式给号，默认路径永远不会误签它）。
 4. 设备装上并重启进 N+1：串口出现 `OTA rollback drill: build N+1 stays PENDING_VERIFY`，**没有** `confirmed`。设备只在开机空闲约 30 s 后检查一次，之后每 6 小时一次（传输失败后 15 min），所以 `upload` 之后要**复位板子**（拔插 USB，或停掉常驻串口记录进程后 `esptool … --after hard-reset`、再重开记录进程；记录进程自 2026-10-21 起开口不再复位板子）才会马上发现；下载约 70 s，其间任何唤醒都会暂停它，别碰机器人。
-5. 板子仍停在 N+1 的 `PENDING_VERIFY` 时，**先**把 `current.json` 指回真实 build N（再次 `upload --build N`，或 `withdraw`）：否则回滚回来的 N 会发现 N+1 比自己新，再下载、再重启、再回滚，反复循环。N+1 这个号永久作废，下一个真实 build 用 N+2。
+5. 板子仍停在 N+1 的 `PENDING_VERIFY` 时，**先**把该设备指针指回真实 build N（再次 `upload --build N --device <device_id>`，或 `withdraw --device <device_id>` 恢复全局 offer）：否则回滚回来的 N 会发现 N+1 比自己新，再下载、再重启、再回滚，反复循环。N+1 这个号永久作废，下一个真实 build 用 N+2。
 6. 复位板子（拔插 USB，或停掉记录进程后 `esptool … --after hard-reset`，之后再开记录进程；只重开记录进程不会复位）：预期引导程序放弃 N+1，回到旧槽，串口 `MEMORIA_FIRMWARE_BUILD=N`，能唤醒、能对话；之后固件检查返回 200 且没有再下载镜像。
 7. 通过判据：第 6 步回到 N 且对话正常，之后不再出现下载。失败时按下一节的固件回写恢复（只写唯一紧邻 app 与空 otadata，不动保护区）。取证（可选）：第 5 步之后、第 6 步复位之前，用 `firmware/esp32/scripts/flash_backup.py` 的 `read_region` 只读 `0xd000` 起 8 KiB（芯片停在 ROM 下载模式，不消耗 `PENDING_VERIFY`）：应见槽 0 seq 1 `VALID`（ota_0）、槽 1 seq 2 `PENDING_VERIFY`（ota_1），boot、分区表、phy、identity、ota_0、assets 的 MD5 与演练前相同（nvs 与 otadata 会变）。回滚复位之后同样转储一次（先停串口记录进程；转储后用 `esptool --chip esp32s3 -p <端口> --after hard-reset read-mac` 复位）：应见槽 1 `ABORTED`，其余区 MD5 与演练前相同（nvs 只在 OTA 下载那一步变过）。2026-10-04 那次实测（23:23）：槽 0 seq 1 `ota_0` `VALID`、槽 1 seq 2 `ota_1` `ABORTED`；没有演练「复位时指针仍在 N+1」的循环情形。
 
@@ -945,7 +975,13 @@ bench 镜像在 USB 串口多认两条命令；产品镜像不含这两个动词
 
 ### 固件 keep-awake 构建（临时远程测试，不发布）
 
-产品镜像和 bench 镜像仍会深睡。`CONFIG_MEMORIA_KEEP_AWAKE` 默认关。需要 USB 串口一直在的测试机，在 `firmware/esp32` 下执行：
+32已评审候选将正式产品与 bench 的普通长时间空闲改为持续联网待机，保持既有15秒熄屏阈值，关闭语音处理和上行音频，Control轮询与OTA仍可达。触摸恢复既有对话路径，并保留提示音播放队列。显式关机、离线菜单及安静时段触摸操作的语义不变。32已于2026-11-13通过目标设备定向OTA安装并confirmed。33原签名件已于2026-11-13通过真实按钮OTA，ota_1 confirmed及UI成功。32的真实采集关闭、长时间熄屏待机与物理触摸恢复已完成。提示音完整性仍未知，不据此宣称所有声学项目已验收。
+
+设备页网络状态将媒体会话与联网状态分开。`diagnostics.live_runtime.connected=false` 只表示媒体未连接，不能证明设备断网。设备页读取现有 `GET /v1/devices/{device_id}/firmware-update`，`presence=busy` 采信服务端已校验的实时会话快照，显示在线；`presence=online` 要求 `running.reported_at` 距今不足90秒，并允许最多5秒未来偏差。`presence=offline` 显示离线，其余情况显示待确认。缺少接口、缺少或无效时间戳、超过5秒未来偏差或过期时间戳及请求失败均不以绑定、版本或升级成功兜底为在线。客户端时钟偏差可能使有效心跳保守显示待确认，未加入时钟同步或修改服务契约。
+
+页面可见时普通状态每15秒重新查询，OTA进行中保持3秒。每次网络证据有效期为min(请求开始时间,接收时间)后30秒，空闲在线证据还受心跳剩余90秒期限约束，未来容差不会延长寿命；busy不依赖空闲心跳。独立定时器到期转为待确认，不等待慢请求。隐藏、重新加载和退出账号清除网络证据；异步结果沿用设备、账号epoch、请求序号与可见性校验。2026-11-13经Gemini Carbon独评后已修正busy空心跳与5秒时差两项发现，72项设备页测试通过，全套684通过、1项既有环境跳过。开发版2026.11.13-network-fix已通过官方CLI上传，同源快照490文件核对一致。真实开发者工具设备页显示设备在线、网络已连接，四次采样跨65秒保持在线，媒体connected=false且reported_at推进。手机UI、自然长对话busy及物理断网未验，账号切换和旧请求隔离仅有host行为测试。证据与增量patch见既有 `outputs/acceptance/ota-20261112/receipt.md`。
+
+`CONFIG_MEMORIA_KEEP_AWAKE` 仍默认关，只用于抑制显式深睡路径的临时调试。正式产品待机不依赖它。需要该调试镜像时，在 `firmware/esp32` 下执行：
 
 ```bash
 ./scripts/build.sh --keep-awake

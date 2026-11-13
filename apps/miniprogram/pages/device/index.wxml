@@ -379,6 +379,11 @@
           </view>
           <image class="row-chev" src="/assets/ui/v4/chev-faint.svg" />
         </view>
+        <view class="diagnostic">
+          <view class="summary-row"><text class="summary-key">运行版本</text><text class="summary-value">{{firmwareBuild}}</text></view>
+          <view class="summary-row"><text>{{firmwareText}}</text></view>
+          <button bindtap="checkFirmwareUpdate" disabled="{{firmwareActive || firmwareSubmitting}}" loading="{{firmwareSubmitting}}">{{firmwareActive ? '更新进行中' : '检查更新'}}</button>
+        </view>
         <view class="list-row" hover-class="list-row-hover" bindtap="toggleDiag">
           <view class="row-icon"><mp-icon name="note"></mp-icon></view>
           <view class="row-copy">

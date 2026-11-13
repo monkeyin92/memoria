@@ -18,6 +18,9 @@
 #include "memoria_activation_client.h"
 #include "memoria_firmware_release.h"
 #include "sodium.h"
+#include "esp_random.h"
+#include "settings.h"
+#include <atomic>
 
 #define MEMORIA_FIRMWARE_STR2(x) #x
 #define MEMORIA_FIRMWARE_STR(x) MEMORIA_FIRMWARE_STR2(x)
@@ -35,6 +38,7 @@ constexpr const char* kTag = "MemoriaFirmware";
 constexpr const char* kSigningDomain = "memoria-firmware-release-v1\n";
 constexpr int kHttpTimeoutMs = 15000;
 constexpr size_t kChunkBytes = 4096;
+std::atomic<const char*> last_check{"none"};
 
 struct ScopedJson final {
     cJSON* value = nullptr;
@@ -166,6 +170,11 @@ std::unique_ptr<Http> OpenSignedGet(const DeviceIdentity& identity, const std::s
     http->SetHeader("Accept", accept);
     http->SetHeader("X-Device-Certificate-ID", identity.certificate_id());
     http->SetHeader("X-Device-Signature", signature);
+    const std::string report = MemoriaFirmwareUpdate::ReportHeader();
+    const std::string request_id = MemoriaFirmwareUpdate::RequestId();
+    http->SetHeader("X-Memoria-Firmware", report);
+    http->SetHeader("X-Memoria-Firmware-Request", request_id);
+    http->SetHeader("X-Memoria-Firmware-Signature", client.SignFirmwareReport(path, report, request_id));
     if (!http->Open("GET", JoinUrl(base, path))) {
         ESP_LOGW(kTag, "Firmware request transport failed, code=0x%x", http->GetLastError());
         return nullptr;
@@ -282,16 +291,42 @@ bool Download(const DeviceIdentity& identity, const std::string& base, const Rel
 
 }  // namespace
 
+std::string MemoriaFirmwareUpdate::ReportHeader() {
+    static const uint32_t boot = esp_random();
+    char report[128];
+    std::snprintf(report, sizeof(report), "build=%lu;boot=%08lx;last=%s",
+                  static_cast<unsigned long>(kFirmwareBuild), static_cast<unsigned long>(boot), last_check.load());
+    return report;
+}
+
+std::string MemoriaFirmwareUpdate::RequestId() {
+    Settings settings("memoria_ota", false);
+    return settings.GetString("request", "");
+}
+
+bool MemoriaFirmwareUpdate::AcceptRequest(const std::string& request_id) {
+    if (request_id.empty() || request_id.size() > 64 ||
+        request_id.find_first_not_of("0123456789abcdef") != std::string::npos || RequestId() == request_id) return false;
+    Settings settings("memoria_ota", true);
+    settings.SetString("request", request_id);
+    last_check.store("none");
+    return true;
+}
+
 void MemoriaFirmwareUpdate::ConfirmRunningImage() {
     const esp_partition_t* running = esp_ota_get_running_partition();
     esp_ota_img_states_t state = ESP_OTA_IMG_UNDEFINED;
     ESP_LOGI(kTag, "%s slot=%s", memoria_firmware_build_marker,
              running != nullptr ? running->label : "?");
-    if (running == nullptr || esp_ota_get_state_partition(running, &state) != ESP_OK ||
-        state != ESP_OTA_IMG_PENDING_VERIFY) {
+    if (running == nullptr || esp_ota_get_state_partition(running, &state) != ESP_OK) {
+        return;
+    }
+    if (state != ESP_OTA_IMG_PENDING_VERIFY) {
+        last_check.store("current");
         return;
     }
     if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+        last_check.store("current");
         ESP_LOGI(kTag, "Firmware build %lu confirmed", static_cast<unsigned long>(kFirmwareBuild));
     }
 }
@@ -300,21 +335,25 @@ FirmwareCheck MemoriaFirmwareUpdate::CheckAndStage(const DeviceIdentity& identit
                                           const std::string& control_api_url,
                                           const std::function<bool()>& may_continue) {
     if (control_api_url.empty() || sodium_init() < 0) {
+        last_check.store("declined");
         return FirmwareCheck::kNothingNew;
     }
     const std::string path = "/v1/devices/" + identity.device_id() + "/firmware-release";
     int status = 0;
     auto http = OpenSignedGet(identity, control_api_url, path, "application/json", &status);
     if (http == nullptr) {
+        last_check.store("retry");
         return FirmwareCheck::kRetryLater;
     }
     if (status == 204) {
         http->Close();
+        last_check.store("current");
         return FirmwareCheck::kNothingNew;
     }
     if (status != 200) {
         ESP_LOGW(kTag, "Firmware release check rejected, status=%d", status);
         http->Close();
+        last_check.store("retry");
         return FirmwareCheck::kRetryLater;
     }
     const std::string body = http->ReadAll();
@@ -322,21 +361,25 @@ FirmwareCheck MemoriaFirmwareUpdate::CheckAndStage(const DeviceIdentity& identit
     Release release;
     if (!ParseRelease(body, &release)) {
         ESP_LOGE(kTag, "Firmware release document is malformed");
+        last_check.store("declined");
         return FirmwareCheck::kNothingNew;
     }
     if (release.build <= kFirmwareBuild) {
+        last_check.store("current");
         return FirmwareCheck::kNothingNew;
     }
     if (!VerifyRelease(release)) {
         ESP_LOGE(kTag, "Firmware release signature does not verify; ignoring build %lu",
                  static_cast<unsigned long>(release.build));
+        last_check.store("declined");
         return FirmwareCheck::kNothingNew;
     }
     ESP_LOGI(kTag, "Firmware build %lu (%s) available, running %lu",
              static_cast<unsigned long>(release.build), release.version.c_str(),
              static_cast<unsigned long>(kFirmwareBuild));
-    return Download(identity, control_api_url, release, may_continue) ? FirmwareCheck::kStaged
-                                                                        : FirmwareCheck::kRetryLater;
+    const bool staged = Download(identity, control_api_url, release, may_continue);
+    last_check.store(staged ? "staged" : "retry");
+    return staged ? FirmwareCheck::kStaged : FirmwareCheck::kRetryLater;
 }
 
 }  // namespace memoria

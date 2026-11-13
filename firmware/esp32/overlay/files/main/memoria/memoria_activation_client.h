@@ -19,6 +19,7 @@ struct ActivationProfile {
 
 // Which companion the bound account picked, for the device screen.
 struct DisplayProfile {
+    std::string firmware_request_id;
     std::string companion_id;
     std::string display_version;  // opaque; changes when the companion changes
     // Always tap-only on this product (`button`). Empty when the server omitted
@@ -44,6 +45,8 @@ public:
     // X-Device-Signature value for a device-signed GET of `path` (the
     // manifest's request object with this path). Empty on failure.
     std::string SignGetRequest(const std::string& path) const;
+    std::string SignFirmwareReport(const std::string& path, const std::string& report,
+                                   const std::string& request_id) const;
 
     // Best-effort failure detail for logs and the error page. The upstream
     // Http interface has no separate TLS error accessor; GetLastError() on a

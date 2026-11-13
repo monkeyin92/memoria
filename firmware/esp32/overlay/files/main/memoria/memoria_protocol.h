@@ -333,6 +333,7 @@ private:
     void ResetSessionState();
 };
 
+bool IsListeningClosed();
 void SetListeningClosedHandler(std::function<void(bool closed)> handler);
 // The device's own VAD edges, called once each vad.start / vad.end is on its way to the server. It can run on
 // the main task or on the uplink task, sometimes under the playback state lock: keep the handler to atomics.
