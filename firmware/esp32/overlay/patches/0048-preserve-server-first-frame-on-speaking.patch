@@ -1,0 +1,48 @@
+diff --git a/main/audio/audio_service.h b/main/audio/audio_service.h
+--- a/main/audio/audio_service.h
++++ b/main/audio/audio_service.h
+@@ -188,7 +188,7 @@
+     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
+     void PlaySound(const std::string_view& sound);
+     bool ReadAudioData(std::vector<int16_t>& data, int sample_rate, int samples);
+-    void ResetDecoder();
++    void ResetDecoder(bool preserve_server_generation = false);
+     void ResetDecoderForServerGeneration(uint32_t generation_id);
+     void SetModelsList(srmodel_list_t* models_list);
+ 
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -1068,11 +1068,16 @@
+     return notify_drained;
+ }
+ 
+-void AudioService::ResetDecoder() {
++void AudioService::ResetDecoder(bool preserve_server_generation) {
+     bool notify_drained = false;
+     memoria::SupplyEpisodeSummary supply_summary;
+     {
+         std::lock_guard<std::mutex> lock(audio_queue_mutex_);
++        // The wire-order generation barrier already reset this decoder before
++        // seq0 admission. A delayed legacy Speaking event must preserve it.
++        if (preserve_server_generation && accepted_server_generation_ != 0) {
++            return;
++        }
+         notify_drained = ResetDecoderLocked(accepted_server_generation_);
+         supply_summary = playback_supply_meter_.NoteDecoderReset(
+             accepted_server_generation_, playback_generation_, MemoriaSupplyNowMs());
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -1525,7 +1525,11 @@
+                 ConfigureStopKeywordForSpeaking();
+ #endif
+             }
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++            audio_service_.ResetDecoder(true);
++#else
+             audio_service_.ResetDecoder();
++#endif
+             break;
+         case kDeviceStateWifiConfiguring:
+             audio_service_.EnableVoiceProcessing(false);

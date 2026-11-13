@@ -76,6 +76,8 @@ rg -Fq 'CONFIG_MEMORIA_KEEP_AWAKE=y' "$SCRIPT_DIR/flash.sh" || \
 # Execute the real patched admission and receive-priority functions on the host.
 MEMORIA_ESP32_UPSTREAM_DIR="$MEMORIA_UPSTREAM_DIR" "$python_bin" \
     "$MEMORIA_FIRMWARE_ROOT/tests/test_memoria_media_realtime.py"
+MEMORIA_ESP32_UPSTREAM_DIR="$MEMORIA_UPSTREAM_DIR" "$python_bin" \
+    "$MEMORIA_FIRMWARE_ROOT/tests/test_memoria_speaking_first_frame.py"
 rg -q 'server_decode_queue_drops_\.fetch_add' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
     die "media decode drops must be counted without receive-path serial I/O"
 rg -q 'ServerDecodeQueueDrops\(\)' "$MEMORIA_UPSTREAM_DIR/main/application.cc" || \
