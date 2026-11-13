@@ -1,0 +1,78 @@
+diff --git a/main/audio/audio_service.h b/main/audio/audio_service.h
+--- a/main/audio/audio_service.h
++++ b/main/audio/audio_service.h
+@@ -159,7 +159,7 @@
+     // EnableWakeWordDetection(true/false) leaves stop-only mode again.
+     bool EnableStopKeywordDetection();
+     bool IsStopKeywordDetectionEnabled() const;
+-    void EnableVoiceProcessing(bool enable);
++    void EnableVoiceProcessing(bool enable, bool reset_decoder = true);
+     void EnableAudioTesting(bool enable);
+     void EnableDeviceAec(bool enable);
+ 
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -953,14 +953,16 @@
+     return audio_engine_initialized_ && audio_engine_->IsStopKeywordDetectionEnabled();
+ }
+ 
+-void AudioService::EnableVoiceProcessing(bool enable) {
++void AudioService::EnableVoiceProcessing(bool enable, bool reset_decoder) {
+     ESP_LOGD(TAG, "%s voice processing", enable ? "Enabling" : "Disabling");
+ 
+     if (enable) {
+         if (!InitializeAudioEngine()) {
+             return;
+         }
+-        ResetDecoder();
++        if (reset_decoder) {
++            ResetDecoder();
++        }
+         audio_input_need_warmup_ = true;
+         {
+             std::lock_guard<std::mutex> lock(input_resampler_mutex_);
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -1481,6 +1481,11 @@
+             display->SetStatus(Lang::Strings::LISTENING);
+             display->SetEmotion("neutral");
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++            if (memoria::IsListeningClosed()) {
++                audio_service_.EnableVoiceProcessing(false);
++                audio_service_.EnableWakeWordDetection(false);
++                break;
++            }
+             memoria::PowerPolicyRegistry::GetInstance().SetPhase(memoria::PowerPhase::kConversing);
+ #endif
+ 
+@@ -1535,6 +1540,12 @@
+     }
+ 
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++    if (memoria::IsListeningClosed()) {
++        pending_listening_start_ = false;
++        audio_service_.EnableVoiceProcessing(false);
++        audio_service_.EnableWakeWordDetection(false);
++        return;
++    }
+     // Play the local listening cue before opening the microphone so the cue
+     // itself cannot create a device VAD epoch; the playback-drained event
+     // resumes this same seam.
+@@ -1552,7 +1563,14 @@
+ 
+     // Send the start listening command
+     protocol_->SendStartListening(listening_mode_);
+-    audio_service_.EnableVoiceProcessing(true);
++    if (!audio_service_.IsAudioProcessorRunning()) {
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++        // Capture resumes independently of queued local playback.
++        audio_service_.EnableVoiceProcessing(true, false);
++#else
++        audio_service_.EnableVoiceProcessing(true);
++#endif
++    }
+ 
+     ConfigureWakeWordForListening();
+ 

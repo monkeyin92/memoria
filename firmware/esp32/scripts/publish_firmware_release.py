@@ -2,8 +2,8 @@
 """Sign and publish a Memoria firmware image for over-the-air updates.
 
     uv run python firmware/esp32/scripts/publish_firmware_release.py sign [--build N]
-    uv run python firmware/esp32/scripts/publish_firmware_release.py upload --remote memoria-prod --build N
-    uv run python firmware/esp32/scripts/publish_firmware_release.py withdraw --remote memoria-prod
+    uv run python firmware/esp32/scripts/publish_firmware_release.py upload --remote memoria-prod --build N --device DEVICE_ID
+    uv run python firmware/esp32/scripts/publish_firmware_release.py withdraw --remote memoria-prod --device DEVICE_ID
 
 ``sign`` takes the built application image (``artifacts/memoria-esp-vocat-app.bin``),
 checks that it is a Memoria image whose embedded ``MEMORIA_FIRMWARE_BUILD``
@@ -170,13 +170,24 @@ def _ssh(remote: str, script: str) -> None:
 _REMOTE_SUDO = 'SUDO=""; if [ "$(id -u)" != 0 ]; then SUDO="sudo -n"; fi\n'
 
 
-def upload(remote: str, remote_root: str, build: int, out: Path) -> None:
+def pointer_name(device: str | None, global_offer: bool) -> str:
+    if (device is None) == (not global_offer):
+        fail("choose exactly one of --device or --global")
+    if device is not None and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", device):
+        fail("invalid device id")
+    return f"devices/{device}.json" if device else "current.json"
+
+
+def upload(remote: str, remote_root: str, build: int, out: Path, *, device: str | None = None, global_offer: bool = False) -> None:
+    pointer = pointer_name(device, global_offer)
     source = out / FIRMWARE_BOARD / str(build)
     release = validate_release(json.loads((source / "release.json").read_text()))
     if release["build"] != build:
         fail("release.json build does not match --build")
     board_dir = shlex.quote(f"{remote_root}/{FIRMWARE_BOARD}")
     final = shlex.quote(f"{remote_root}/{FIRMWARE_BOARD}/{build}")
+    pointer_path = shlex.quote(f"{remote_root}/{FIRMWARE_BOARD}/{pointer}")
+    pointer_parent = shlex.quote(str(Path(f"{remote_root}/{FIRMWARE_BOARD}/{pointer}").parent))
     staging = f".memoria-firmware-incoming/{build}"
     _ssh(remote, f"set -euo pipefail\nrm -rf ~/{staging}\nmkdir -p ~/{staging}\n")
     subprocess.run(
@@ -190,20 +201,28 @@ def upload(remote: str, remote_root: str, build: int, out: Path) -> None:
 test "$(stat -c %s app.bin)" = {release["size"]}
 test "$(sha256sum app.bin | cut -d' ' -f1)" = {release["sha256"]}
 $SUDO install -d -m 0755 {board_dir} {final}
-$SUDO install -m 0644 app.bin release.json {final}/
-$SUDO install -m 0644 release.json {board_dir}/.current.json.new
-$SUDO mv -f {board_dir}/.current.json.new {board_dir}/current.json
+if $SUDO test -f {final}/app.bin; then
+    test "$($SUDO sha256sum {final}/app.bin | cut -d' ' -f1)" = {release["sha256"]}
+else
+    $SUDO install -m 0644 app.bin {final}/app.bin
+fi
+$SUDO install -m 0644 release.json {final}/release.json
+$SUDO install -d -m 0755 {pointer_parent}
+TEMP=$($SUDO mktemp {pointer_path}.XXXXXX)
+$SUDO install -m 0644 release.json "$TEMP"
+$SUDO mv -f "$TEMP" {pointer_path}
 cd ~ && rm -rf ~/{staging}
 echo "current -> build {build}"
 """,
     )
 
 
-def withdraw(remote: str, remote_root: str) -> None:
+def withdraw(remote: str, remote_root: str, *, device: str | None = None, global_offer: bool = False) -> None:
+    pointer = pointer_name(device, global_offer)
     _ssh(
         remote,
         f"set -euo pipefail\n{_REMOTE_SUDO}"
-        f"$SUDO rm -f {shlex.quote(remote_root)}/{FIRMWARE_BOARD}/current.json\n"
+        f"$SUDO rm -f {shlex.quote(remote_root)}/{FIRMWARE_BOARD}/{pointer}\n"
         "echo 'no firmware release offered'\n",
     )
 
@@ -230,6 +249,10 @@ def main() -> int:
     withdraw_parser = commands.add_parser("withdraw")
     withdraw_parser.add_argument("--remote", required=True)
     withdraw_parser.add_argument("--remote-root", default=DEFAULT_REMOTE_ROOT)
+    for scoped in (upload_parser, withdraw_parser):
+        group = scoped.add_mutually_exclusive_group(required=True)
+        group.add_argument("--device")
+        group.add_argument("--global", dest="global_offer", action="store_true")
     args = parser.parse_args()
     for value in (getattr(args, "remote", None), getattr(args, "remote_root", None)):
         if value is not None and not re.fullmatch(r"[A-Za-z0-9@._/-]+", value):
@@ -237,9 +260,9 @@ def main() -> int:
     if args.command == "sign":
         sign(args.image, args.key, args.out, build=args.build)
     elif args.command == "upload":
-        upload(args.remote, args.remote_root, args.build, args.out)
+        upload(args.remote, args.remote_root, args.build, args.out, device=args.device, global_offer=args.global_offer)
     else:
-        withdraw(args.remote, args.remote_root)
+        withdraw(args.remote, args.remote_root, device=args.device, global_offer=args.global_offer)
     return 0
 
 

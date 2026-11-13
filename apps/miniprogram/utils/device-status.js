@@ -1,8 +1,6 @@
 /*
- * 设备在线/固件/网络/激活状态的服务端权威展示（单一决策点）。
- * 首页 Dashboard 与设备页共用同一份标签与状态推导，避免两处文案漂移；
- * 展示消费 Control API 的 activation、diagnostics (live_runtime) 与 runtime profile 响应，
- * 不伪造任何实时媒体/网络本地状态。
+ * Dashboard 仍消费 activation、diagnostics 与 runtime profile 的会话状态。
+ * 设备页网络状态单独消费固件 presence 和带时效的上报证据。
  */
 const ACTIVATION_LABELS = Object.freeze({
   pending_manifest: "等待配置",
@@ -75,7 +73,38 @@ function deviceStatusSummary(activation, profile, diagnostics) {
   };
 }
 
+// Firmware presence is server-derived; media disconnection is not network loss.
+function firmwareNetworkObservation(payload, requestedAt, now = Date.now()) {
+  let state = "unknown";
+  let expiresAt = Math.min(requestedAt, now) + 30_000;
+  if (payload?.presence === "offline") state = "offline";
+  if (payload?.presence === "busy") state = "online";
+  if (payload?.presence === "online") {
+    const reportedAt = typeof payload?.running?.reported_at === "string"
+      ? Date.parse(payload.running.reported_at) : NaN;
+    if (Number.isFinite(reportedAt) && reportedAt <= now + 5_000 && now - reportedAt < 90_000) {
+      state = "online";
+      expiresAt = Math.min(expiresAt, Math.min(reportedAt, now) + 90_000);
+    }
+  }
+  return { state, receivedAt: now, expiresAt };
+}
+
+function networkStatusView(observation, now = Date.now()) {
+  const state = observation && now >= observation.receivedAt && now < observation.expiresAt
+    ? observation.state : "unknown";
+  return {
+    networkObservation: observation || null,
+    deviceConnectionState: state,
+    deviceConnectionAction: state === "offline" ? "showConnectionHelp" : "",
+    online: state === "online",
+    onlineLabel: state === "online" ? "设备在线" : state === "offline" ? "暂时离线" : "状态待确认",
+  };
+}
+
 module.exports = {
+  firmwareNetworkObservation,
+  networkStatusView,
   ACTIVATION_LABELS,
   activationLabel,
   currentUserSummary,

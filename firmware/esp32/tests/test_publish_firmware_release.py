@@ -204,7 +204,7 @@ def test_firmware_installs_only_newer_signed_images_and_confirms_after_the_serve
     assert "MemoriaFirmwareUpdate::ConfirmRunningImage();" in start
     task = protocol[protocol.index("void MemoriaProtocol::DisplayProfileTask") :]
     task = task[: task.index("void MemoriaProtocol::CheckFirmwareUpdate")]
-    assert "GetDeviceState() == kDeviceStateIdle" in task
+    assert "if (IsConnectedStandby())" in task
     assert "protocol->CheckFirmwareUpdate(base, &next_firmware_check_ms);" in task
     check = protocol[protocol.index("void MemoriaProtocol::CheckFirmwareUpdate") :]
     check = check[: check.index("bool MemoriaProtocol::ConfirmServerRelease")]
@@ -233,3 +233,20 @@ def test_the_cli_signs_the_header_build_unless_told_another(
     publisher.main()
 
     assert calls == [{"build": None}, {"build": 22}]
+
+
+def test_publisher_requires_explicit_scope_and_withdraw_does_not_touch_global(monkeypatch):
+    publisher = _publisher()
+    with pytest.raises(SystemExit):
+        publisher.pointer_name(None, False)
+    with pytest.raises(SystemExit):
+        publisher.pointer_name('dev_1', True)
+    with pytest.raises(SystemExit):
+        publisher.pointer_name('../dev', False)
+    scripts = []
+    monkeypatch.setattr(publisher, '_ssh', lambda remote, script: scripts.append(script))
+    publisher.withdraw('remote', '/releases', device='dev_1')
+    assert '/devices/dev_1.json' in scripts[0]
+    assert 'current.json' not in scripts[0]
+    publisher.withdraw('remote', '/releases', global_offer=True)
+    assert '/current.json' in scripts[1]

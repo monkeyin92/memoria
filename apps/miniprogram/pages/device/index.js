@@ -1,3 +1,4 @@
+const { firmwareView } = require("../../utils/firmware-update");
 const api = require("../../utils/api");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const guardianPush = require("../../utils/guardian-push");
@@ -11,7 +12,7 @@ const {
   isNewerRuntimeProfile,
 } = require("../../utils/device-binding");
 const { companions, companionById, defaultCompanionId } = require("../../utils/companions");
-const { devicePlaceName, deviceStatusSummary } = require("../../utils/device-status");
+const { devicePlaceName, deviceStatusSummary, firmwareNetworkObservation, networkStatusView } = require("../../utils/device-status");
 const {
   readOnboardingSessionId,
   clearOnboardingSessionId,
@@ -316,6 +317,12 @@ function bindingChoiceItems(bindings) {
 Page({
   data: {
     statusBarStyle: statusBarStyle(),
+    networkObservation: null,
+    firmwareStatus: null,
+    firmwareText: "尚未检查更新",
+    firmwareBuild: "未知",
+    firmwareActive: false,
+    firmwareSubmitting: false,
     authenticated: false,
     loading: true,
     devicePlaceName: "设备",
@@ -444,6 +451,7 @@ Page({
   },
 
   async onShow() {
+    this._firmwareVisible = true;
     if (typeof this.getTabBar === "function" && this.getTabBar()) {
       this.getTabBar().setData({ selected: 3, hidden: Boolean(this.data.sheetOpen) });
     }
@@ -457,17 +465,115 @@ Page({
       return;
     }
     await this.loadDevice();
+    this.refreshFirmware();
     if (openUnbindSheet) this.openUnbindSheet();
   },
 
+  onHide() {
+    this._firmwareAction = (this._firmwareAction || 0) + 1;
+    this.setData({ firmwareSubmitting: false });
+    this._firmwareVisible = false;
+    this.setNetworkObservation(null);
+    this.stopFirmwarePolling();
+  },
+
   onUnload() {
+    this.onHide();
     if (this._unsubscribeAuthCleared) {
       this._unsubscribeAuthCleared();
       this._unsubscribeAuthCleared = null;
     }
   },
 
+  stopFirmwarePolling() {
+    clearTimeout(this._firmwareTimer);
+    this._firmwareSeq = (this._firmwareSeq || 0) + 1;
+  },
+
+  setNetworkObservation(observation) {
+    clearTimeout(this._networkExpiryTimer);
+    const sequence = this._networkExpirySeq = (this._networkExpirySeq || 0) + 1;
+    this.setData(networkStatusView(observation));
+    if (!observation || this.data.deviceConnectionState === "unknown") return;
+    this._networkExpiryTimer = setTimeout(() => {
+      if (sequence === this._networkExpirySeq) this.setData(networkStatusView(null));
+    }, Math.max(0, observation.expiresAt - Date.now()));
+    this._networkExpiryTimer?.unref?.();
+  },
+
+  async refreshFirmware() {
+    this.stopFirmwarePolling();
+    const seq = this._firmwareSeq;
+    const deviceId = this.data.binding?.device_id;
+    if (!deviceId || !this._firmwareVisible) return null;
+    const epoch = api.currentAuthEpoch();
+    const current = () => seq === this._firmwareSeq && this._firmwareVisible &&
+      this.data.binding?.device_id === deviceId && api.isAuthEpochCurrent(epoch);
+    const requestedAt = Date.now();
+    try {
+      const payload = await api.getFirmwareUpdate(deviceId);
+      if (!current()) return null;
+      this.setData(firmwareView(payload));
+      this.setNetworkObservation(firmwareNetworkObservation(payload, requestedAt));
+      return payload;
+    } catch (error) {
+      if (current()) this.setNetworkObservation(null);
+      if (current()) this.setData({ firmwareText: error?.status === 404 && !error?.code && error?.message === "Not Found" ? "服务暂不支持检查更新" : error?.message || "检查更新失败，请重试", firmwareActive: false });
+      return null;
+    } finally {
+      if (current()) {
+        this._firmwareTimer = setTimeout(() => this.refreshFirmware(), this.data.firmwareActive ? 3000 : 15000);
+        this._firmwareTimer?.unref?.();
+      }
+      if (seq === this._firmwareSeq && this._firmwareVisible &&
+          this.data.binding?.device_id === deviceId && epoch === api.currentAuthEpoch() &&
+          !api.hasAuthenticatedSession()) {
+        this._firmwareAction = (this._firmwareAction || 0) + 1;
+        this._enterGuestState();
+        wx.showToast({ title: "登录已过期，请重新登录", icon: "none" });
+      }
+    }
+  },
+
+  async checkFirmwareUpdate() {
+    if (this.data.firmwareSubmitting || this.data.firmwareActive) return;
+    this.setData({ firmwareSubmitting: true });
+    const action = this._firmwareAction = (this._firmwareAction || 0) + 1;
+    const flow = this._flowSeq;
+    const epoch = api.currentAuthEpoch();
+    const deviceId = this.data.binding?.device_id;
+    const current = () => action === this._firmwareAction && flow === this._flowSeq && this._firmwareVisible && this.data.binding?.device_id === deviceId && api.isAuthEpochCurrent(epoch);
+    try {
+      const payload = await this.refreshFirmware();
+      if (!current() || !payload?.available || this.data.firmwareActive) return;
+      if (payload.running.build != null && payload.running.build >= payload.available.build) return;
+      if (payload.presence === "offline") return;
+      const decision = await new Promise((resolve) => wx.showModal({
+        title: "确认更新固件", content: `更新至 ${payload.available.version}（build ${payload.available.build}）。${payload.running.build == null ? "当前固件尚不支持立即触发，确认后需重启机器人或等待自动检查。" : "设备会在空闲时下载并自动重启。"}请保持供电和网络连接。`,
+        confirmText: "确认更新", success: resolve, fail: () => resolve({ confirm: false }),
+      }));
+      if (!decision.confirm || !current()) return;
+      const result = await api.startFirmwareUpdate(deviceId, payload.available.build);
+      if (!current()) return;
+      this.setData(firmwareView(result));
+      this.refreshFirmware();
+    } catch (error) {
+      if (current()) this.setData({ firmwareText: error?.message || "更新请求失败，请重试" });
+    } finally {
+      if (action === this._firmwareAction) {
+        this.setData({ firmwareSubmitting: false });
+        if (epoch === api.currentAuthEpoch() && !api.hasAuthenticatedSession()) {
+          this._enterGuestState();
+          wx.showToast({ title: "登录已过期，请重新登录", icon: "none" });
+        }
+      }
+    }
+  },
+
   _enterGuestState() {
+    this.setNetworkObservation(null);
+    this.stopFirmwarePolling();
+    this.setData({ firmwareStatus: null, firmwareText: "", firmwareBuild: "未知", firmwareActive: false, firmwareSubmitting: false });
     this._flowSeq = (this._flowSeq || 0) + 1;
     this.setData({
       usageExpanded: false,
@@ -857,6 +963,10 @@ Page({
   },
 
   async loadDevice() {
+    this.setNetworkObservation(null);
+    this.stopFirmwarePolling();
+    this._firmwareAction = (this._firmwareAction || 0) + 1;
+    this.setData({ firmwareStatus: null, firmwareText: "尚未检查更新", firmwareBuild: "未知", firmwareActive: false, firmwareSubmitting: false });
     const flowSeq = (this._flowSeq = (this._flowSeq || 0) + 1);
     const authEpoch = api.currentAuthEpoch();
     const cachedBinding = readBindingManifest();
@@ -999,7 +1109,6 @@ Page({
       // 候选只用于多成员绑定的「此刻是谁在用」选择，不展示任何声音匹配度。
       const candidates = resolution?.candidate_subjects || [];
       const summary = deviceStatusSummary(activation, profile, diagnostics);
-      const deviceConnectionState = summary.connectionState;
       const failures = [profileResult, activationResult].filter(
         (result) => result.status === "rejected",
       );
@@ -1080,10 +1189,7 @@ Page({
         personaVoice: companion.voiceName,
         heroRoleId: companion.id,
         activation,
-        online: summary.online,
-        deviceConnectionState,
-        deviceConnectionAction: deviceConnectionState === "offline" ? "showConnectionHelp" : "",
-        onlineLabel: summary.onlineLabel,
+        ...networkStatusView(null),
         firmwareVersion: summary.firmwareVersion,
         networkLabel: summary.networkLabel,
         activationLabel: summary.activationLabel,
@@ -1127,6 +1233,7 @@ Page({
             ? "设备状态暂时无法读取，绑定关系仍保留；请稍后下拉刷新。"
             : "",
       });
+      this.refreshFirmware();
       this._loadSubjectPersonas(binding, flowSeq, authEpoch);
       this._loadAgeRows(flowSeq, authEpoch);
       this._loadElderSafety(binding, flowSeq, authEpoch);

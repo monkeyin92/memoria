@@ -29,6 +29,9 @@ public:
     // Marks a freshly installed image valid. No-op for an image that is
     // already confirmed or was flashed over USB.
     static void ConfirmRunningImage();
+    static std::string ReportHeader();
+    static std::string RequestId();
+    static bool AcceptRequest(const std::string& request_id);
 
     // Checks for a newer signed release and, when there is one, writes it to
     // the inactive slot and selects that slot for the next boot (kStaged);

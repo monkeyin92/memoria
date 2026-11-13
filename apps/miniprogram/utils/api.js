@@ -186,7 +186,13 @@ function errorFromResponse(response) {
     detail && typeof detail === "object" && typeof detail.code === "string"
       ? detail.code
       : null;
-  const message =
+  const firmwareMessages = {
+    firmware_release_changed: "可用固件已变化，请重新检查更新。",
+    firmware_already_current: "设备已运行此版本或更新版本，请刷新查看。",
+    firmware_release_not_found: "暂无可用固件发布，请稍后再检查。",
+    firmware_release_unavailable: "固件发布暂时不可用，请稍后重试。",
+  };
+  const message = firmwareMessages[code] || (
     typeof detail === "string"
       ? detail
       : code === "phone_authorization_required"
@@ -238,7 +244,7 @@ function errorFromResponse(response) {
                                           ? "启用流程状态已变化，请返回设备页重新进入。"
                   : response.statusCode === 429
                     ? "操作太频繁，请稍后再试。"
-                    : `请求未完成（${response.statusCode || 0}）`;
+                    : `请求未完成（${response.statusCode || 0}）`);
   return new ApiError(message, { status: response.statusCode || 0, code });
 }
 
@@ -1435,7 +1441,18 @@ async function requireRuntimeCapability(capability, { sessionId = null } = {}) {
   }
 }
 
+function getFirmwareUpdate(deviceId) {
+  return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/firmware-update`);
+}
+function startFirmwareUpdate(deviceId, targetBuild) {
+  return rawRequest(`/v1/devices/${encodeURIComponent(deviceId)}/firmware-update`, {
+    method: "POST", data: { target_build: targetBuild },
+  });
+}
+
 module.exports = {
+  getFirmwareUpdate,
+  startFirmwareUpdate,
   ApiError,
   currentIdentity,
   currentAccessToken,

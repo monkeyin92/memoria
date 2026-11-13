@@ -5,7 +5,8 @@ into a directory this service reads (``MEMORIA_FIRMWARE_RELEASE_DIR``, by
 default ``firmware-releases`` next to ``MEMORIA_DB_PATH``: in production the
 existing ``/data`` bind of ``/var/lib/memoria``)::
 
-    <root>/<board>/current.json          the signed release document
+    <root>/<board>/devices/<device_id>.json  optional device offer
+    <root>/<board>/current.json          fallback signed release document
     <root>/<board>/<build>/app.bin       the application image it describes
 
 The document is signed offline with the firmware release key; the device holds
@@ -139,13 +140,23 @@ class FirmwareReleaseDirectory:
     def __init__(self, root: Path, *, public_key: bytes = RELEASE_PUBLIC_KEY) -> None:
         self.root = root
         self._public_key = public_key
-        self._verified: tuple[tuple[int, int, int], FirmwareRelease] | None = None
+        self._verified: tuple[tuple[bytes, int, int], FirmwareRelease] | None = None
 
-    def current(self, board: str = FIRMWARE_BOARD) -> FirmwareRelease | None:
+    def current(self, board: str = FIRMWARE_BOARD, *, device_id: str | None = None) -> FirmwareRelease | None:
         manifest = self.root / board / "current.json"
+        if board != FIRMWARE_BOARD:
+            raise InvalidFirmwareRelease("invalid board")
+        if device_id is not None:
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", device_id):
+                raise InvalidFirmwareRelease("invalid device id")
+            device_manifest = self.root / board / "devices" / f"{device_id}.json"
+            if device_manifest.exists() or device_manifest.is_symlink():
+                manifest = device_manifest
         try:
             raw = manifest.read_bytes()
-        except FileNotFoundError:
+        except FileNotFoundError as exc:
+            if manifest.name != "current.json":
+                raise InvalidFirmwareRelease("device pointer is unreadable") from exc
             return None
         release = validate_release(json.loads(raw), public_key=self._public_key)
         image = self.root / board / str(release["build"]) / "app.bin"
@@ -155,10 +166,11 @@ class FirmwareReleaseDirectory:
             raise InvalidFirmwareRelease("release image is missing") from exc
         if stat.st_size != release["size"]:
             raise InvalidFirmwareRelease("release image size does not match")
-        # Hash the image once per (build, size, mtime), not on every poll.
-        fingerprint = (cast(int, release["build"]), stat.st_size, stat.st_mtime_ns)
-        if self._verified is not None and self._verified[0] == fingerprint:
-            return self._verified[1]
+        # Cache the exact signed document and image fingerprint, including device offers.
+        fingerprint = (raw, stat.st_size, stat.st_mtime_ns)
+        cached = self._verified
+        if cached is not None and cached[0] == fingerprint:
+            return cached[1]
         digest = hashlib.sha256()
         with image.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1 << 16), b""):

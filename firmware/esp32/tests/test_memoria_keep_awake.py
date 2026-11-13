@@ -79,10 +79,8 @@ def test_product_text_still_deep_sleeps_and_keep_awake_text_does_not() -> None:
     awake = _keep_awake_branch(body)
     sleep = _sleep_branch(body)
     assert "SetPhase(memoria::PowerPhase::kWifiHold)" in awake
-    assert "wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed)" in awake
     assert 'ESP_LOGW(TAG, "chip deep sleep suppressed %s", memoria_keep_awake_build_marker)' in awake
     assert 'memoria_keep_awake_build_marker[] = "MEMORIA_KEEP_AWAKE_BUILD=1;"' in _read(BOARD_CC)
-    assert "kWifiHoldNotArmed" in awake
     assert "kWaking" not in awake
     assert "kConversing" not in awake
     assert "esp_deep_sleep_start" not in awake
@@ -95,7 +93,7 @@ def test_product_text_still_deep_sleeps_and_keep_awake_text_does_not() -> None:
 
 def _on_idle_screen_off(source: str) -> str:
     start = source.index("void OnIdleScreenOff()")
-    return source[start : source.index("void MaybeEnterDeepSleepFromWifiHold()", start)]
+    return source[start : source.index("void HandleScreenTouchRelease", start)]
 
 
 def _patched_hunk(patch: str, must_contain: str) -> str:
@@ -160,17 +158,12 @@ def test_keep_awake_screen_off_does_not_enter_wifi_hold() -> None:
     assert "wifi hold suppressed" in awake
     assert "memoria_keep_awake_build_marker" in awake
     assert "SetPhase(memoria::PowerPhase::kWifiHold)" in product
-    assert 'ESP_LOGI(TAG, "wifi hold started hold_ms=%u", power.wifi_hold_ms());' in product
+    assert "connected standby; screen off, mic closed, no idle sleep deadline" in product
     assert "MEMORIA_KEEP_AWAKE" not in product
 
 
-def test_both_callers_still_enter_tap_deep_sleep() -> None:
+def test_only_explicit_actions_enter_tap_deep_sleep() -> None:
     source = _read(BOARD_CC)
-    hold = source[
-        source.index("void MaybeEnterDeepSleepFromWifiHold()") : source.index(
-            "void HandleScreenTouchRelease(std::uint32_t hold_ms)"
-        )
-    ]
     touch = source[
         source.index("void HandleScreenTouchRelease(std::uint32_t hold_ms)") : source.index(
             "void HandleUsbWake()"
@@ -178,10 +171,10 @@ def test_both_callers_still_enter_tap_deep_sleep() -> None:
     ]
     usb_at = source.index("void HandleUsbWake()")
     usb = source[usb_at : source.index("#if CONFIG_MEMORIA_BENCH_SERIAL", usb_at)]
-    assert hold.count("EnterTapDeepSleep()") == 1
+    assert "MaybeEnterDeepSleepFromWifiHold" not in source
+    assert "wifi_hold_since_ms_" not in source
     # Night soothe plus offline menu idle both call EnterTapDeepSleep.
     assert touch.count("EnterTapDeepSleep()") >= 1
-    assert "MEMORIA_KEEP_AWAKE" not in hold
     assert "MEMORIA_KEEP_AWAKE" not in touch
     assert "MEMORIA_KEEP_AWAKE" not in usb
     assert "SetPhase(memoria::PowerPhase::kWaking)" in touch

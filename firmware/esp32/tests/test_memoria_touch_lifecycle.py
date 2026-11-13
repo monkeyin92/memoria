@@ -30,7 +30,6 @@ def lifecycle_tool(tmp_path_factory):
             "memoria::TapDevice TapDeviceFor(",
             "void ApplyOfflineMenuOutput(",
             "void DispatchTapWakeAction(",
-            "void MaybeEnterDeepSleepFromWifiHold(",
             "static bool DeviceInConversation(",
             "void TickOfflineMenuNetwork(",
         )
@@ -71,7 +70,7 @@ bool SendListeningResume() {return true;}
 }
 struct Board {
  std::atomic<bool> listening_capture_closed_{false}, offline_story_cancel_{false};
- std::atomic<unsigned> wifi_hold_since_ms_{0}, offline_play_generation_{0}, offline_prompt_generation_{0};
+ std::atomic<unsigned> offline_play_generation_{0}, offline_prompt_generation_{0};
  static constexpr unsigned kWifiHoldNotArmed=0, kOfflineClipGapMs=1600;
  memoria::OfflineMenuMachine offline_menu_;
  int cues=0, sleeps=0;
@@ -89,11 +88,9 @@ int main(int argc,char**argv) {
  auto& app=Application::GetInstance(); auto& power=memoria::PowerPolicyRegistry::GetInstance();
  if(test=="resume") {
   app.state=kDeviceStateListening; power.SetPhase(memoria::PowerPhase::kWifiHold);
-  b.wifi_hold_since_ms_=1;
   b.DispatchTapWakeAction(memoria::TapWakeAction::kResumeListening,"tap",now,50,true,false);
   assert(power.phase()==memoria::PowerPhase::kConversing);
-  assert(b.wifi_hold_since_ms_==Board::kWifiHoldNotArmed);
-  now=memoria::PowerPolicy::kDefaultWifiHoldMs+1000; app.state=kDeviceStateIdle; b.MaybeEnterDeepSleepFromWifiHold(); assert(b.sleeps==0);
+  assert(b.sleeps==0);
  } else if((test=="recovery" || test=="resume_recovery")) {
   b.offline_menu_.OnTap(now,50,false,true);
   auto action=memoria::TapWakeAction::kStartConversation;

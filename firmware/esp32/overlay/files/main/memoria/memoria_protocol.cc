@@ -367,6 +367,7 @@ void LogVadStartSuppressed(float rms, float peak, float floor) {
 namespace {
 MemoriaProtocol* g_active_protocol = nullptr;
 std::function<void(bool)> g_listening_closed_handler;
+std::atomic<bool> g_listening_closed{false};
 std::function<void(bool)> g_voice_activity_handler;
 }  // namespace
 
@@ -378,6 +379,10 @@ void SetListeningClosedHandler(std::function<void(bool closed)> handler) {
     g_listening_closed_handler = std::move(handler);
 }
 
+bool IsListeningClosed() {
+    return g_listening_closed.load(std::memory_order_relaxed);
+}
+
 bool SendListeningResume() {
     if (g_active_protocol == nullptr) {
         return false;
@@ -386,7 +391,14 @@ bool SendListeningResume() {
 }
 
 namespace {
+bool IsConnectedStandby() {
+    const auto state = Application::GetInstance().GetDeviceState();
+    return state == kDeviceStateIdle ||
+           (state == kDeviceStateListening && g_listening_closed.load(std::memory_order_relaxed));
+}
+
 void NotifyListeningClosed(bool closed) {
+    g_listening_closed.store(closed, std::memory_order_relaxed);
     if (g_listening_closed_handler) {
         g_listening_closed_handler(closed);
     }
@@ -597,7 +609,7 @@ void MemoriaProtocol::DisplayProfileTask(void* context) {
     while (protocol != nullptr) {
         // Only while idle: a conversation must never share the radio with a
         // cosmetic poll, and the next idle moment is soon enough.
-        if (Application::GetInstance().GetDeviceState() == kDeviceStateIdle) {
+        if (IsConnectedStandby()) {
             polled = true;
             const std::string base = !protocol->activation_.control_api_url.empty()
                                          ? protocol->activation_.control_api_url
@@ -636,6 +648,9 @@ void MemoriaProtocol::DisplayProfileTask(void* context) {
             } else if (result != ESP_OK && result != ESP_ERR_INVALID_STATE) {
                 ESP_LOGW(kTag, "Display profile poll failed, code=%s", esp_err_to_name(result));
             }
+            if (result == ESP_OK && MemoriaFirmwareUpdate::AcceptRequest(profile.firmware_request_id)) {
+                next_firmware_check_ms = 0;
+            }
             if (DeviceMonotonicMs() >= next_firmware_check_ms) {
                 protocol->CheckFirmwareUpdate(base, &next_firmware_check_ms);
             }
@@ -648,9 +663,12 @@ void MemoriaProtocol::DisplayProfileTask(void* context) {
 
 void MemoriaProtocol::CheckFirmwareUpdate(const std::string& base, uint64_t* next_check_ms) {
     const auto idle = []() {
-        return Application::GetInstance().GetDeviceState() == kDeviceStateIdle;
+        return IsConnectedStandby();
     };
     const FirmwareCheck check = MemoriaFirmwareUpdate::CheckAndStage(identity_, base, idle);
+    MemoriaActivationClient report_client(identity_);
+    DisplayProfile report_profile;
+    report_client.FetchDisplayProfile(base, &report_profile);
     if (check != FirmwareCheck::kStaged) {
         *next_check_ms =
             DeviceMonotonicMs() + (check == FirmwareCheck::kRetryLater ? kFirmwareRetryMs : kFirmwareCheckMs);
@@ -1177,6 +1195,10 @@ bool MemoriaProtocol::LocalStopKeywordArmed() {
 }
 
 bool MemoriaProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
+    // Drain already-encoded packets while standby capture is closed.
+    if (g_listening_closed.load(std::memory_order_relaxed)) {
+        return true;
+    }
     if (!IsAudioChannelOpened() || packet == nullptr || packet->payload.empty() ||
         packet->sample_rate != static_cast<int>(kUplinkSampleRate) ||
         packet->frame_duration != static_cast<int>(kFrameMs)) {

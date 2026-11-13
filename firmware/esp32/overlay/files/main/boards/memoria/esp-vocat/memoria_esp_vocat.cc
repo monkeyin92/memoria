@@ -562,8 +562,6 @@ private:
     TaskHandle_t charge_task_handle_ = nullptr;
     TaskHandle_t touch_task_handle_ = nullptr;
     int64_t last_qr_refresh_us_ = 0;
-    static constexpr std::uint32_t kWifiHoldNotArmed = 0;
-    std::atomic<std::uint32_t> wifi_hold_since_ms_{kWifiHoldNotArmed};
     TaskHandle_t imu_task_handle_ = nullptr;
 #if ESP_VOCAT_ENABLE_CAP_TOUCH_SENSOR
     TaskHandle_t touch_slider_task_handle_ = nullptr;
@@ -928,7 +926,6 @@ private:
 #if CONFIG_MEMORIA_KEEP_AWAKE
         auto& power = memoria::PowerPolicyRegistry::GetInstance();
         power.SetPhase(memoria::PowerPhase::kWifiHold);
-        wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
         ESP_LOGW(TAG, "chip deep sleep suppressed %s", memoria_keep_awake_build_marker);
 #else
         auto& power = memoria::PowerPolicyRegistry::GetInstance();
@@ -941,6 +938,22 @@ private:
 #endif
     }
 
+    void ApplyListeningCapture(bool closed) {
+        if (listening_capture_closed_.load(std::memory_order_relaxed) != closed) {
+            return;
+        }
+        auto& app = Application::GetInstance();
+        if (app.GetDeviceState() != kDeviceStateListening) {
+            return;
+        }
+        auto& audio = app.GetAudioService();
+        audio.EnableWakeWordDetection(false);
+        const bool capture = !closed;
+        if (audio.IsAudioProcessorRunning() != capture) {
+            audio.EnableVoiceProcessing(capture, false);
+        }
+    }
+
     void OnIdleScreenOff() {
 #if CONFIG_MEMORIA_KEEP_AWAKE
         // listening_closed paints an idle face while DeviceState stays listening.
@@ -948,30 +961,8 @@ private:
 #else
         auto& power = memoria::PowerPolicyRegistry::GetInstance();
         power.SetPhase(memoria::PowerPhase::kWifiHold);
-        wifi_hold_since_ms_.store(static_cast<std::uint32_t>(esp_timer_get_time() / 1000),
-                                  std::memory_order_relaxed);
-        ESP_LOGI(TAG, "wifi hold started hold_ms=%u", power.wifi_hold_ms());
+        ESP_LOGI(TAG, "connected standby; screen off, mic closed, no idle sleep deadline");
 #endif
-    }
-
-    void MaybeEnterDeepSleepFromWifiHold() {
-        auto& power = memoria::PowerPolicyRegistry::GetInstance();
-        if (power.phase() != memoria::PowerPhase::kWifiHold) {
-            return;
-        }
-        if (Application::GetInstance().GetDeviceState() != kDeviceStateIdle) {
-            return;
-        }
-        const std::uint32_t since = wifi_hold_since_ms_.load(std::memory_order_relaxed);
-        if (since == kWifiHoldNotArmed) {
-            return;
-        }
-        const std::uint32_t now =
-            static_cast<std::uint32_t>(esp_timer_get_time() / 1000);
-        if (now - since < power.wifi_hold_ms()) {
-            return;
-        }
-        EnterTapDeepSleep();
     }
 
     void HandleScreenTouchRelease(std::uint32_t hold_ms) {
@@ -1045,7 +1036,6 @@ private:
                 auto out = offline_menu_.OnTap(now_ms, hold_ms, online, idle);
                 if (out.start_story || out.clip_count > 0) {
                     power.SetPhase(memoria::PowerPhase::kWifiHold);
-                    wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
                 }
                 ApplyOfflineMenuOutput(out);
                 return;
@@ -1054,7 +1044,6 @@ private:
                 offline_menu_.OnNetworkSample(now_ms, NetworkLooksOnline(), true);
                 SyncOfflineMenuScreen();
                 power.SetPhase(memoria::PowerPhase::kWaking);
-                wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
                 PlayLocalAssetClip("wo_zai_ne.ogg");
                 app.WakeWordInvoke(wake_source);
                 return;
@@ -1062,7 +1051,6 @@ private:
                 offline_menu_.OnNetworkSample(now_ms, NetworkLooksOnline(), true);
                 SyncOfflineMenuScreen();
                 power.SetPhase(memoria::PowerPhase::kConversing);
-                wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
                 PlayLocalAssetClip("wo_zai_ne.ogg");
                 memoria::SendListeningResume();
                 return;
@@ -1137,7 +1125,6 @@ private:
         }
         auto& power = memoria::PowerPolicyRegistry::GetInstance();
         power.SetPhase(memoria::PowerPhase::kWifiHold);
-        wifi_hold_since_ms_.store(kWifiHoldNotArmed, std::memory_order_relaxed);
         if (stop_wifi && WifiManager::GetInstance().IsInitialized()) {
             WifiManager::GetInstance().StopStation();
             ESP_LOGI(kUsbTag, "usb poweroff stopped wifi station; USB still powers the board");
@@ -1251,7 +1238,6 @@ private:
                     }
                 }
             }
-            self->MaybeEnterDeepSleepFromWifiHold();
             vTaskDelay(pdMS_TO_TICKS(kUsbPollMs));
 #if CONFIG_MEMORIA_BENCH_SERIAL
             memoria::diag::Tick();
@@ -1568,6 +1554,7 @@ private:
         // The phone's companion pick arrives through the display-profile poll.
         memoria::SetListeningClosedHandler([this](bool closed) {
             listening_capture_closed_.store(closed, std::memory_order_relaxed);
+            Application::GetInstance().Schedule([this, closed]() { ApplyListeningCapture(closed); });
             if (display_ != nullptr) {
                 display_->SetListeningClosed(closed);
             }

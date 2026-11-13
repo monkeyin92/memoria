@@ -280,7 +280,6 @@ struct FakeMenu {
 };
 struct Board {
     std::atomic<bool> listening_capture_closed_{false};
-    std::atomic<unsigned> wifi_hold_since_ms_{0};
     static constexpr unsigned kWifiHoldNotArmed = 0;
     FakeMenu offline_menu_;
     std::atomic<unsigned> offline_prompt_generation_{0};

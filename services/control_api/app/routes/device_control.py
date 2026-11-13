@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal, cast
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.common.failure_log import failure_log
@@ -39,6 +39,7 @@ from services.control_api.app.device_control import (
     allowed_audio_modes,
     stable_profile_fingerprint,
 )
+from services.control_api.app.firmware_update import FirmwareStatus
 from services.control_api.app.media_runtime import DEVICE_STREAM_EPOCH_MAX
 from services.control_api.app.offline_stories import OFFLINE_STORIES
 from services.control_api.app.security import (
@@ -872,7 +873,10 @@ async def _close_media_session_pipeline(
         current = store.get_device_media_session(session_id=session_id)
         if current is None:
             raise HTTPException(status_code=404, detail={"code": "media_session_not_found"})
-        if expected_stream_epoch is not None and int(current["stream_epoch"]) != expected_stream_epoch:
+        if (
+            expected_stream_epoch is not None
+            and int(current["stream_epoch"]) != expected_stream_epoch
+        ):
             raise HTTPException(
                 status_code=409,
                 detail={"code": "media_session_epoch_mismatch"},
@@ -1114,3 +1118,82 @@ async def get_device_session_state(
             logger.warning("device session state authority unavailable %s", failure_log(exc))
             projected = project_assistant_snapshot(None, now=now)
     return {"device_id": device_id, **projected}
+
+
+class FirmwareUpdateBody(_StrictModel):
+    target_build: int = Field(strict=True, ge=1, lt=2**31)
+
+
+async def _firmware_status(request: Request, device_id: str) -> FirmwareStatus:
+    import asyncio
+
+    from services.control_api.app.firmware_update import tracker_for
+    from services.control_api.app.routes.device_onboarding import _current_firmware
+
+    tracker = tracker_for(request)
+    observation, update = tracker.read(device_id)
+    release = await asyncio.to_thread(_current_firmware, request, device_id)
+    presence = "online" if observation and tracker.clock() - observation.at < 90 else "unknown"
+    if presence == "unknown":
+        from services.control_api.app.assistant_snapshot import project_assistant_snapshot
+
+        runtime = await _read_live_device_runtime_status(request, device_id=device_id)
+        projected = project_assistant_snapshot(runtime, now=datetime.now(UTC))
+        if projected["status"] == "offline":
+            presence = "offline"
+        elif projected["status"] == "online":
+            presence = "online" if projected.get("phase") == "idle" else "busy"
+    return {
+        "running": {
+            "build": observation.report.build if observation else None,
+            "reported_at": datetime.fromtimestamp(observation.at, UTC).isoformat()
+            if observation
+            else None,
+        },
+        "available": {
+            "build": release.build,
+            "version": str(release.document["version"]),
+            "size": cast(int, release.document["size"]),
+        }
+        if release
+        else None,
+        "presence": presence,
+        "update": update,
+    }
+
+
+@router.get("/{device_id}/firmware-update")
+async def get_firmware_update(
+    device_id: str,
+    request: Request,
+    response: Response,
+    user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
+) -> FirmwareStatus:
+    _require_capability(request, user, "device_settings_read")
+    _require_device_activation(request, account_id=user.user_id, device_id=device_id)
+    response.headers["Cache-Control"] = "no-store"
+    return await _firmware_status(request, device_id)
+
+
+@router.post("/{device_id}/firmware-update", status_code=202)
+async def post_firmware_update(
+    device_id: str,
+    body: FirmwareUpdateBody,
+    request: Request,
+    user: Annotated[AuthenticatedUser, Depends(require_writable_account)],
+) -> FirmwareStatus:
+    from services.control_api.app.firmware_update import tracker_for
+
+    _require_capability(request, user, "device_settings_manage")
+    _require_device_activation(request, account_id=user.user_id, device_id=device_id)
+    result = await _firmware_status(request, device_id)
+    available = result["available"]
+    if available is None:
+        raise HTTPException(404, detail={"code": "firmware_release_not_found"})
+    if available["build"] != body.target_build:
+        raise HTTPException(409, detail={"code": "firmware_release_changed"})
+    running = result["running"]["build"]
+    if running is not None and running >= body.target_build:
+        raise HTTPException(409, detail={"code": "firmware_already_current"})
+    result["update"] = tracker_for(request).start(device_id, body.target_build)
+    return result

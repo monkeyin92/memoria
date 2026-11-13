@@ -701,7 +701,7 @@ def test_display_profile_poll_follows_the_phone_pick() -> None:
     task = protocol[protocol.index("void MemoriaProtocol::DisplayProfileTask") :]
     task = task[: task.index("bool MemoriaProtocol::CreateMediaSession")]
     # Never poll during a conversation.
-    assert "GetDeviceState() == kDeviceStateIdle" in task
+    assert "if (IsConnectedStandby())" in task
     assert "PublishCompanion(" in task
     assert "profile.display_version != applied_version" in task
     # Started on a bound boot; after a nearby binding the board restarts into
