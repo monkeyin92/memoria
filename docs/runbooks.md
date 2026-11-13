@@ -1323,4 +1323,7 @@ mypy services --strict
 
 目标板 WiFi WSS 的专属接收回调每 attempt 提升至至少 priority 4，保留更高基础优先级，并用 attempt fence 与 retirement 串行化。优先级在状态锁外采样，防止将临时优先级继承误判为永久提优；新增回归修前在释放锁后仍为 1，修后为 4。未改网络窗口、RX buffer、起播水位或超时。
 
-完整固件 Host 测试 852 项通过。完整 ESP-IDF 6.0.2 构建及构建后 overlay 检查通过，独立 Gemini 评审运行时无阻塞，发现的门禁 pytest 依赖已修复，默认 IDF Python 完整检查通过。build34 已本地签名，尚未上传、刷写或证明真机卡顿消失。接收调度与网络突发仍需真机区分。基线与候选验收记录见 `docs/acceptance/stutter-20261113/receipt.md`。部署必须先获得针对该次操作的授权；仅更新目标设备 app，保留已替换女声的 assets、身份及其他分区，并验证实际 build、接收 priority、帧数守恒、供音等待和播放听感。
+完整固件 Host 测试 852 项通过。完整 ESP-IDF 6.0.2 构建及构建后 overlay 检查通过，独立 Gemini 评审运行时无阻塞，发现的门禁 pytest 依赖已修复，默认 IDF Python 完整检查通过。build34 已按 2026-11-14 用户授权定向 OTA 至目标设备，实际 ota_0 并 confirmed、接收 priority=4。三段故事全程 dropped_total=0，但第三段仍有服务端 max_gap866ms 与设备供音等待795ms；尚未证明卡顿全部消失。接收调度与网络突发仍需真机区分。基线与候选验收记录见 `docs/acceptance/stutter-20261113/receipt.md`。部署必须先获得针对该次操作的授权；仅更新目标设备 app，保留已替换女声的 assets、身份及其他分区，并验证实际 build、接收 priority、帧数守恒、供音等待和播放听感。
+
+
+后续本地复现确认了两个需继续修复的边界：准备轮次期间委托先绑定旧 context_version，冻结后版本改变会拒收结果；IP 故事回退将短过渡语与等待后正文接入同一 TTS 流会断供。候选延后委托至 context 冻结完成，并移除 IP 故事 fallback 的同流过渡语，保留 MediaSession 独立辅助代际。首帧差也已在真实函数 Host 中复现为异步 Speaking 的 ResetDecoder 清帧，0048 在既有同步 server-generation barrier 下保留首帧，默认本地/显式清理不变。build35 完整构建、签名、853项固件Host检查及独立GPT评审已完成；服务端最小候选7965b77e正式门禁和镜像构建通过但尚未切流，设备尚未更新。既有极快检索接纳竞态仍未修复，不能视为所有时序均已解决；详细修前/后证据和未验证边界见上述收据。
