@@ -113,7 +113,7 @@ fail_under = 85
 show_missing = true
 
 [tool.memoria.module-budgets]
-"services/agent/src/duplex_runtime.py" = 1472
+"services/agent/src/duplex_runtime.py" = 1461
 "services/agent/src/agent.py" = 457
 "services/agent/src/orchestration/conversation_projection.py" = 1067
 "services/control_api/app/routes/archive.py" = 1451
@@ -139,7 +139,7 @@ show_missing = true
 "services/memory_scope/postgres_store.py" = 1383
 "services/control_api/app/main.py" = 1081
 "services/control_api/app/routes/media.py" = 1289
-"services/agent/src/reply_pipeline.py" = 1381
+"services/agent/src/reply_pipeline.py" = 1379
 "services/agent/src/voice_core/provider_adapter.py" = 1308
 "services/control_api/app/routes/guardian.py" = 1471
 "services/agent/src/voice_core/media_session_commit.py" = 1383

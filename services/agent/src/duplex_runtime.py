@@ -30,7 +30,6 @@ from services.agent.src.orchestration.emotion import (
 from services.agent.src.orchestration.heard_text_tracker import HeardTextTracker
 from services.agent.src.orchestration.interaction_plane import (
     InteractionDecision,
-    InteractionEvent,
     InteractionPlane,
     InteractionSnapshot,
 )
@@ -304,6 +303,7 @@ class DuplexRuntime(
         *,
         text: str = "",
         fence: GenerationFence | None = None,
+        allow_delegation: bool = True,
     ) -> None:
         if decision.start_prefetch:
             first_prefetch = self._interaction_prefetch_epoch != self._speaker_epoch
@@ -335,6 +335,7 @@ class DuplexRuntime(
             self.mark_audio_event("interaction_fast_model_warmup")
         if (
             decision.start_delegation
+            and allow_delegation
             and fence is not None
             and self.fence.matches(fence)
             and fence not in self._interaction_delegated_fences
@@ -1145,6 +1146,7 @@ class DuplexRuntime(
         user_text: str,
         *,
         input_modality: Literal["audio", "text"] = "audio",
+        defer_delegation: bool = False,
     ) -> GenerationFence:
         # Turn-boundary authority refresh: re-apply the signed profile before
         # any generation starts (never in the background mid-generation).
@@ -1196,22 +1198,9 @@ class DuplexRuntime(
             cause="turn_committed",
         )
         self.mark_audio_event("turn_committed")
-        committed_interaction = self.decide_interaction(
-            InteractionSnapshot(
-                event=InteractionEvent.TRANSCRIPT,
-                assistant_speaking=False,
-                text=user_text,
-                final=True,
-                has_speech_energy=input_modality == "audio",
-                semantic_evidence=True,
-                utterance_route=self.route_user_turn(user_text),
-                turn_committed=True,
-            )
-        )
-        self.apply_interaction_decision(
-            committed_interaction,
-            text=user_text,
-            fence=fence,
+        self.activate_committed_interaction(
+            user_text, fence, input_modality=input_modality,
+            allow_delegation=not defer_delegation,
         )
         self._schedule_context_snapshot_prepare()
         self._voice_floor.update(pending_assistant_text="", played_assistant_text="")
