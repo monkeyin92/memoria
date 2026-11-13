@@ -103,6 +103,7 @@ test("memory page loads the owner's own recap without consulting the Runtime Pro
     let memoryCalls = 0;
     let gateCalls = 0;
     const restore = stubApi({
+      syncDeviceBindings: async () => ({ status: "empty", binding: null }),
       currentIdentity: () => ({ user_id: "person_owner" }),
       isAuthEpochCurrent: () => true,
       requireRuntimeCapability: async () => {

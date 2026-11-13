@@ -149,11 +149,13 @@ Page({
     });
     const app = getApp();
     this._unsubscribeAuthCleared = app?.subscribeAuthCleared?.(() => {
+      this._refreshRequestSeq = (this._refreshRequestSeq || 0) + 1;
       this.setData(guestMemoryPatch());
     });
   },
 
   onUnload() {
+    this._refreshRequestSeq = (this._refreshRequestSeq || 0) + 1;
     this._unsubscribeAuthCleared?.();
   },
 
@@ -191,6 +193,7 @@ Page({
   },
 
   async refresh() {
+    const requestSeq = this._refreshRequestSeq = (this._refreshRequestSeq || 0) + 1;
     const minorId = this.data.minorId;
     if (!minorId) {
       this.setData({
@@ -200,6 +203,7 @@ Page({
       return;
     }
     const authEpoch = api.currentAuthEpoch();
+    const isCurrent = () => requestSeq === this._refreshRequestSeq && api.isAuthEpochCurrent(authEpoch);
     this.setData({ loading: true, error: "", loadState: "loading" });
     try {
       api.touchChildActivity(minorId).catch(() => {});
@@ -216,12 +220,13 @@ Page({
           }
         })(),
       ]);
-      if (!api.isAuthEpochCurrent(authEpoch)) return;
+      if (!isCurrent()) return;
       const archiveConsent = archiveConsentFromPersonPayload(consentPayload);
       let archiveFlat = [];
       if (archiveConsent.active) {
         archiveFlat = normalizeChildArchive(await api.getChildArchive(minorId));
       }
+      if (!isCurrent()) return;
       const summaries = normalizeSessionSummaries(summaryPayload);
       assertsNoTranscriptFields(summaries);
       assertsNoTranscriptFields(archiveFlat);
@@ -241,18 +246,17 @@ Page({
         error: "",
       });
     } catch (error) {
+      if (!isCurrent()) return;
       if (loginRequired(error)) {
         this.setData(guestMemoryPatch());
         return;
       }
-      if (api.isAuthEpochCurrent(authEpoch)) {
-        this.setData({
-          loadState: "error",
-          error: pageError(error, "暂时读不到孩子的记忆，请稍后再试。"),
-        });
-      }
+      this.setData({
+        loadState: "error",
+        error: pageError(error, "暂时读不到孩子的记忆，请稍后再试。"),
+      });
     } finally {
-      if (api.isAuthEpochCurrent(authEpoch)) {
+      if (isCurrent()) {
         this.setData({ loading: false }, () => this._revealRecent());
       }
     }

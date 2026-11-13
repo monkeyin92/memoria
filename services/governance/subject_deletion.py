@@ -518,7 +518,7 @@ class _Lineage:
         )
 
 
-type SessionTerminator = Callable[[str], Awaitable[int]]
+type SessionTerminator = Callable[[SubjectScope], Awaitable[int]]
 type CorpusPurger = Callable[[str], Awaitable[int]]
 type ChatUsagePurger = Callable[[str], Awaitable[int]]
 type IdentityRedactor = Callable[[str, str], Awaitable[None]]
@@ -550,6 +550,9 @@ class SubjectDeletionService:
         purge_chat_usage: ChatUsagePurger | None = None,
         redact_identity: IdentityRedactor | None = None,
         persona: PersonaForgetter | None = None,
+        pending_releases: Callable[..., Awaitable[tuple[tuple[str, str], ...]]] | None = None,
+        complete_release: Callable[[str, str], Awaitable[None]] | None = None,
+        remaining_chat_usage: Callable[[str], Awaitable[int]] | None = None,
     ) -> None:
         self._ledger = ledger
         self._archive = archive
@@ -561,6 +564,9 @@ class SubjectDeletionService:
         self._purge_chat_usage = purge_chat_usage
         self._redact_identity = redact_identity
         self._persona = persona
+        self._pending_releases = pending_releases
+        self._complete_release = complete_release
+        self._remaining_chat_usage = remaining_chat_usage
         self._lock = asyncio.Lock()
 
     @property
@@ -578,6 +584,14 @@ class SubjectDeletionService:
 
     async def retry_pending_deletions(self, *, limit: int = 100) -> int:
         completed = 0
+        if self._pending_releases is not None:
+            for account_id, subject_id in await self._pending_releases(limit=limit):
+                try:
+                    await self.delete_subject(SubjectScope(account_id, subject_id), redact_identity=True)
+                except Exception:
+                    logger.exception("released subject deletion remains incomplete")
+                else:
+                    completed += 1
         for account_id, subject_id, redact in await asyncio.to_thread(
             self._ledger.pending, limit=limit
         ):
@@ -668,7 +682,7 @@ class SubjectDeletionService:
         try:
             if due("sessions_terminated"):
                 progress["sessions"] = (
-                    await self._terminate_sessions(scope.subject_id)
+                    await self._terminate_sessions(scope)
                     if self._terminate_sessions is not None
                     else 0
                 )
@@ -775,6 +789,8 @@ class SubjectDeletionService:
 
             if due("completed"):
                 await checkpoint("completed")
+            if redact and self._complete_release is not None:
+                await self._complete_release(scope.account_id, scope.subject_id)
         except Exception as exc:
             await checkpoint(step, error=type(exc).__name__)
             raise
@@ -838,4 +854,6 @@ class SubjectDeletionService:
         if self._memory_scope is not None:
             memory = await self._memory_scope.remaining_subject_rows(subject_id=scope.subject_id)
             remaining.update({f"memory_scope.{key}": value for key, value in memory.items()})
+        if self._remaining_chat_usage is not None:
+            remaining["control.daily_chat_usage"] = await self._remaining_chat_usage(scope.subject_id)
         return {key: value for key, value in remaining.items() if value}

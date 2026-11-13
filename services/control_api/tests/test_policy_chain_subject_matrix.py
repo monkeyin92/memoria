@@ -1151,16 +1151,14 @@ async def test_legal_manager_change_closes_the_agent_facing_seams(
 
         # The read path itself must have withdrawn the authorization basis, and
         # both its read and its write entry points must agree on that.
-        assert current_after == "PersistentSessionDenied", current_after
-        assert switch_after == "PersistentSessionDenied", switch_after
-        # So the advisory seam refuses to decide instead of answering for the OLD
-        # subject with the account still the active one ...
-        assert after_policy.status_code == 503, after_policy.text
-        assert (
-            after_policy.json()["detail"]["code"]
-            == "session_runtime_authority_unavailable"
-        ), after_policy.text
-        # ... and the bounded conservative plan carries NO account-keyed read.
+        assert current_after == "PersistentSessionTerminated", current_after
+        assert switch_after == "PersistentSessionTerminated", switch_after
+        # The advisory seam tells the Agent to stop the superseded session.
+        assert after_policy.status_code == 410, after_policy.text
+        assert after_policy.json()["detail"] == {
+            "code": "session_terminated", "reason": "binding_revoked"
+        }, after_policy.text
+        # The bounded conservative plan carries no account-keyed read.
         assert reads_after_change == 0, (
             "a withdrawn session must not read the account-keyed memory: the "
             "binding was superseded by another owner, so the signed profile is "

@@ -184,7 +184,10 @@ async def test_signed_private_capability_tracks_live_consent(
             finally:
                 await admin.close()
             rebound_policy = await _session_policy(client, session_id=session_id)
-            assert rebound_policy.status_code == 503, rebound_policy.text
+            assert rebound_policy.status_code == 410, rebound_policy.text
+            assert rebound_policy.json()["detail"] == {
+                "code": "session_terminated", "reason": "binding_revoked"
+            }
             rebound_decision = await client.post(
                 "/v1/policy/decisions",
                 headers=headers,
@@ -206,7 +209,8 @@ async def test_signed_private_capability_tracks_live_consent(
             assert rebound_plan.json()["grounded_items"] == []
         else:
             assert policy.status_code == 503, policy.text
-            assert policy.json()["detail"]["code"] == "session_runtime_authority_unavailable"
+            assert policy.json()["detail"]["code"] == "session_profile_consent_changed"
+            assert await service.session_state(actor_id=actor, session_id=session_id) == "active"
             plan = await _response_plan(
                 client,
                 session_id=session_id,

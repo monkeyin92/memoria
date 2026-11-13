@@ -2,6 +2,47 @@
 
 本文件由 `scripts/consolidate_docs.py` 按类型归并生成。每个来源章节保留原文和来源路径。
 
+## 2026-11-12 深审软件修复
+
+核心功能验证基准 `e26a798b`，基线 `71353afe`。完整 CI 后续暴露发布夹具、隔离演练和 7 项 PG 测试契约缺口，已分别由 `1dd74244`、`b27be8b2`、`15205f09` 修正；定向套件通过不表示旧候选完整 CI 通过。以下按对应版本记录验证范围，实际交付 head 与最终 CI 以 PR 收据为准。交付 [PR #592](https://github.com/monkeyin92/memoria/pull/592)，发布边界见 [交接入口](../HANDOFF.md#2026-11-12-深审软件修复未部署)。
+
+本轮已确认的 12 项软件修复如下。
+
+1. 共享 child 的多设备解绑保留其他设备关系，owner SQL 锁与 release replay 覆盖并发和重放。
+2. 注销先持久化擦除名单，覆盖无账号 child，重试不丢删除范围。
+3. 撤回 consent 按 scope 关闭 signed global profile 的指定 actor。错误 projector 数据库及 context profile 不再报告假完成；close CAS 与 Edge pipeline 支持重试。control 重新授权可 refresh、renew；撤回 memory 后保留降级聊天。
+4. 迟到 `button.stop` 保持同一 WSS，仍可停止当前代；future 与 malformed 围栏仍拒绝。N-11 软件验证不关闭设备验收。
+5. “大后天”使用 offset 3，天气口播覆盖 7 日范围。
+6. review 冷绑定和 active context 必须 settled 才可操作，旧动作与当前上下文隔离。
+7. child archive 忽略旧上下文响应。
+8. persona 返回 409 后，第二次 confirm 可继续确认。
+9. 组件发布核验 base、单 override、登记及 ERR rollback 门禁。
+10. CI 过滤输入，仅触发对应检查。
+11. attention 保留 raw query，登录后返回原目标。
+12. 隔离内部测试的 consent unlock，并加 clean-source guard。
+
+两项 followup 同步修复。
+
+- 身份缓存跨 owner 清理，mounted onboarding 继续 emit。
+- backup 对生命周期所有权与固定版本 mc 的紧凑 JSON `Rules` 输出做 fail-closed 校验；未启用 bucket lifecycle。N+N 保留规则不保证物理删除时间 ≤7 天。
+
+父任务记录的验证结果如下，各套件范围存在重叠，不合计通过数。
+
+| 范围 | 结果与边界 |
+| --- | --- |
+| PostgreSQL | 核心定向套件 1093 pass、0 fail、0 skip；loopback 修正后相关 PG 107 pass。交付夹具 `15205f09` 的 4 文件父级独立 PG 27 pass、零跳过，作者邻近 PG 61 pass；范围重叠不合计。 |
+| 小程序 | 827 pass、0 fail、1 skip；缺 Chrome 的 layout 用例未运行。必需的页面 failed-load 测试已补齐，移除 settled 门禁的变异会使新增的 2 条回归失败。 |
+| Python 与结构 | 严格 Mypy 覆盖 598 source files，全 Ruff、14 项 layer、budget、docs 检查及 diff 检查通过。 |
+| Go 与天气 | 父任务全 suite 与子任务 vet、race 通过；父任务天气相关 44 pass。 |
+| 发布与备份 | 发布/过滤 166 pass，含 Bash 5、`/tmp` 与 rollback；脚本全量 887 pass、6 skip（4 项需 PG、2 项需 `/proc`）；backup 16 pass。本地结果不替代最终远端 CI。 |
+| 独立终审 | 核心分域复核无阻塞；交付复核为 PASS+NOTES，临时文件负断言及验证版本说明两项应改已补齐。最终 CI 状态见 PR。 |
+
+`code` 和本地链路 `wired` 已验证。生产 `wired`、`enabled` 与本候选设备验收均未完成；本轮无生产变更、部署、线上擦除、bucket lifecycle 启用、上传或设备操作，无依赖升级。N-11 继续保留在唯一未完成队列。历史真机通过记录不构成本候选通过证据。
+
+`unknownclock`、`conservativeapprox` 保持不改；Babel dependency 与 global PG lock 无适用证据，不升级为缺陷；interval ledger 与 SLO direction 不扩范围。已有 compliance、runbooks、strategy 的对应改动仍为专项契约入口，此处只聚合验收结果。
+
+原始执行证据为 `outputs/acceptance/deep-audit-fixes/execution.md`、`execution.tsv`，属于 Git ignored 数据，不随 fresh clone 提供。清理前转存至主仓 `/Users/monkeyin/projects/memoria/outputs/acceptance/deep-audit-fixes/`，不随分支清理删除。
+
 ## 来源文件
 
 - `docs/acceptance/20261015-fixed-reply-matcher-expand.md`

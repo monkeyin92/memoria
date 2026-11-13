@@ -349,7 +349,7 @@ def test_offsite_backup_profile_covers_base_backup_wal_and_critical_objects() ->
     assert "offsite/$MEMORIA_OFFSITE_S3_BUCKET/postgres/wal" in mirror
     assert "local/memoria-archive" in mirror
     assert "local/memoria-voice" in mirror
-    assert "mc version info" in mirror
+    assert "mc --no-color version info" in mirror
     assert "MEMORIA_OFFSITE_RETENTION_DAYS" in mirror
     assert "mc ilm rule" in mirror
     for forbidden in ("localhost", "127.0.0.1", "memoria-minio", "host.docker.internal"):
@@ -603,7 +603,8 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert '"$live_source_digest" == "$rollback_source_digest"' in deploy
     assert "docker commit --pause=true" not in deploy
     assert 'agent-component.rollback.override.yml' in deploy
-    assert '"${previous_args[@]}" --file "$rollback_override"' in deploy
+    assert '--file "$base_file" --file "$rollback_override"' in deploy
+    assert "previous_args" not in deploy
     assert 'rollback_image="memoria-agent:rollback-${release_tag}-pre"' in deploy
     assert 'image: "$rollback_image"' in deploy
     assert deploy.count('image: "$rollback_image"') == 1

@@ -25,7 +25,10 @@ function ensureCompileProjectConfig() {
   return () => fs.rmSync(projectConfigPath, { force: true });
 }
 
-function runDryRunWithPreload(preloadSource, { guardPlatformWrite = false } = {}) {
+function runDryRunWithPreload(
+  preloadSource,
+  { guardPlatformWrite = false, consentUnlock = false, dryRun = true } = {},
+) {
   const temporaryDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "memoria-miniprogram-upload-test-"),
   );
@@ -77,7 +80,8 @@ Module._load = function(request, parent, isMain) {
         "0.0.0-preflight",
         "--desc",
         "本地编译预检",
-        "--dry-run",
+        ...(dryRun ? ["--dry-run"] : []),
+        ...(consentUnlock ? ["--internal-test-consent-unlock"] : []),
       ],
       {
         cwd: repoRoot,
@@ -176,4 +180,64 @@ test("upload dry-run executes the real compiler and stops before platform upload
   assert.doesNotMatch(output, /getItem is not a function/);
   assert.ok(result.vendorLoads.length > 0, output);
   assert.deepEqual(result.platformWrites, [], output);
+});
+
+test("explicit internal consent dry-run compiles without platform writes", () => {
+  const result = runDryRunWithPreload(
+    'Object.defineProperty(globalThis, "localStorage", { value: undefined, configurable: true });',
+    { guardPlatformWrite: true, consentUnlock: true },
+  );
+  assert.equal(result.status, 0, combinedOutput(result));
+  assert.match(combinedOutput(result), /内测同意解锁：开启，仅构建副本/);
+  assert.match(combinedOutput(result), /编译预检通过：\d+ 个文件/);
+  assert.deepEqual(result.platformWrites, []);
+});
+
+test("internal consent flag preserves the real upload clean-worktree guard", () => {
+  const result = runDryRunWithPreload(`
+Object.defineProperty(globalThis, "localStorage", { value: undefined, configurable: true });
+const cp = require("node:child_process");
+const originalExec = cp.execFileSync;
+cp.execFileSync = function(command, args, options) {
+  if (command === "git" && args[0] === "status") return " M tracked.js\\n";
+  return originalExec.call(this, command, args, options);
+};`, { guardPlatformWrite: true, consentUnlock: true, dryRun: false });
+  assert.notEqual(result.status, 0);
+  assert.match(combinedOutput(result), /真实上传要求 Git 工作区干净/);
+  assert.deepEqual(result.vendorLoads, []);
+  assert.deepEqual(result.platformWrites, []);
+});
+
+test("clean source uploads the isolated artifact through an offline vendor stub", () => {
+  for (const consentUnlock of [false, true]) {
+    const result = runDryRunWithPreload(`
+Object.defineProperty(globalThis, "localStorage", { value: undefined, configurable: true });
+const cp = require("node:child_process");
+const exec = cp.execFileSync;
+cp.execFileSync = function(command, args, options) {
+  if (command === "git" && args[0] === "status") return "";
+  return exec.call(this, command, args, options);
+};
+const Module = require("node:module");
+const load = Module._load;
+Module._load = function(request, parent, isMain) {
+  if (request === "miniprogram-ci") return {
+    Project: class { constructor(options) { this.options = options; } },
+    async upload({ project }) {
+      const build = project.options.projectPath;
+      const legal = require(require("node:path").join(build, "utils/legal-release.js"));
+      console.log("OFFLINE_ARTIFACT=" + JSON.stringify({ build, unlock: legal.INTERNAL_TEST_CONSENT_UNLOCK }));
+      return { offlineStub: true };
+    },
+  };
+  return load.call(this, request, parent, isMain);
+};`, { consentUnlock, dryRun: false });
+    const output = combinedOutput(result);
+    assert.equal(result.status, 0, output);
+    const artifact = JSON.parse(output.match(/OFFLINE_ARTIFACT=(.+)/)[1]);
+    assert.equal(artifact.unlock, consentUnlock);
+    assert.notEqual(artifact.build, path.join(repoRoot, "apps/miniprogram"));
+    assert.equal(fs.existsSync(artifact.build), false);
+    assert.equal(require("../utils/legal-release").INTERNAL_TEST_CONSENT_UNLOCK, false);
+  }
 });

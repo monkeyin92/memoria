@@ -37,16 +37,93 @@ mc alias set --quiet local http://memoria-minio:9000 \
 mc alias set --quiet offsite "$MEMORIA_OFFSITE_S3_ENDPOINT" \
   "$MEMORIA_OFFSITE_S3_ACCESS_KEY" "$MEMORIA_OFFSITE_S3_SECRET_KEY"
 mc stat "offsite/$MEMORIA_OFFSITE_S3_BUCKET" >/dev/null
-mc version info "offsite/$MEMORIA_OFFSITE_S3_BUCKET" | grep -q 'Enabled'
+if version_info="$(mc --no-color version info "offsite/$MEMORIA_OFFSITE_S3_BUCKET" 2>&1)"; then
+  if [ "$version_info" != "offsite/$MEMORIA_OFFSITE_S3_BUCKET versioning is enabled" ]; then
+    echo "offsite version info is not the pinned mc enabled output; refusing lifecycle changes" >&2
+    exit 2
+  fi
+else
+  version_status=$?
+  echo "offsite version query failed; refusing lifecycle changes" >&2
+  exit "$version_status"
+fi
 
-# Configure lifecycle expiration policy (<= 7 days) if not already present
-if ! mc ilm rule list "offsite/$MEMORIA_OFFSITE_S3_BUCKET" 2>/dev/null | grep -q -E 'Expiry|Expire|expiration'; then
-  mc ilm rule add --expire-days "$offsite_retention_days" \
-    --noncurrent-expire-days "$offsite_retention_days" \
-    "offsite/$MEMORIA_OFFSITE_S3_BUCKET" || echo "warning: could not set ILM rule on offsite bucket" >&2
+# Piped mc export uses colorjson's compact non-TTY branch. Exact comparison
+# preserves spaces inside strings and rejects extra rules.
+retention_policy() {
+  printf '{"Rules":[{"Expiration":{"Days":%s},"ID":"memoria-offsite-retention","NoncurrentVersionExpiration":{"NoncurrentDays":%s},"Status":"%s"}]}' "$1" "$2" "$3"
+}
+
+export_policy() {
+  if actual_ilm="$(mc --no-color ilm rule export "offsite/$MEMORIA_OFFSITE_S3_BUCKET" 2>&1)"; then
+    export_status=0
+  else
+    export_status=$?
+  fi
+}
+
+# mc's zero-rule and MinIO NoSuchLifecycleConfiguration errors, formatted by
+# cmd/error.go and pkg/v3/console. Other backend messages require revalidation.
+policy_is_empty() {
+  [ "$export_status" -eq 1 ] || return 1
+  case "$actual_ilm" in
+    'mc: <ERROR> Unable to export lifecycle configuration: lifecycle configuration not set.'|\
+    'mc: <ERROR> Unable to get lifecycle configuration. The lifecycle configuration does not exist.') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+export_policy
+if [ "$export_status" -eq 0 ]; then
+  current_days="${actual_ilm#*'"Days":'}"
+  current_days="${current_days%%\}*}"
+  noncurrent_days="${actual_ilm#*'"NoncurrentDays":'}"
+  noncurrent_days="${noncurrent_days%%\}*}"
+  case "$current_days:$noncurrent_days" in
+    *[!0-9:]*|:*|*:|0:*|*:0) current_days="" ;;
+  esac
+  owned=false
+  if [ -n "$current_days" ]; then
+    for status in Enabled Disabled; do
+      if [ "$actual_ilm" = "$(retention_policy "$current_days" "$noncurrent_days" "$status")" ]; then
+        owned=true
+      fi
+    done
+  fi
+  if [ "$owned" != true ]; then
+    echo "offsite lifecycle ownership cannot be proven from pinned mc export; refusing import (foreign rules or unknown format)" >&2
+    printf 'actual lifecycle export: %s\n' "$actual_ilm" >&2
+    exit 2
+  fi
+elif ! policy_is_empty; then
+  echo "offsite lifecycle ownership query failed; refusing import" >&2
+  exit "$export_status"
+fi
+
+expected_ilm="$(retention_policy "$offsite_retention_days" "$offsite_retention_days" Enabled)"
+if printf '%s\n' "$expected_ilm" | mc ilm rule import "offsite/$MEMORIA_OFFSITE_S3_BUCKET"; then
+  :
+else
+  import_status=$?
+  echo "offsite lifecycle import failed; stopping sync" >&2
+  exit "$import_status"
 fi
 
 while :; do
+  export_policy
+  if [ "$export_status" -ne 0 ]; then
+    if policy_is_empty; then
+      echo "offsite lifecycle readback is empty (policy drift); stopping sync" >&2
+      exit 2
+    fi
+    echo "offsite lifecycle readback query failed; stopping sync" >&2
+    exit "$export_status"
+  fi
+  if [ "$actual_ilm" != "$expected_ilm" ]; then
+    echo "offsite lifecycle readback differs from the required pinned mc output (policy drift or unknown format); stopping sync" >&2
+    printf 'actual lifecycle export: %s\n' "$actual_ilm" >&2
+    exit 2
+  fi
   test -s /backup-staging/LATEST
   latest="$(tr -d '\r\n' </backup-staging/LATEST)"
   case "$latest" in

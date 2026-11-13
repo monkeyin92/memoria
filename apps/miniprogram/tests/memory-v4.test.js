@@ -113,3 +113,89 @@ test("记住的事 opens from a row under the days and 日常回顾 goes back", 
     harness.restore();
   }
 });
+
+test("cold binding cache syncs before guardian review and safety reads", async () => {
+  const calls = [];
+  const binding = fx.authed().api.readBindingManifest();
+  let cachedBinding = null;
+  const h = await openMemory({
+    readBindingManifest: () => cachedBinding,
+    syncDeviceBindings: async () => { cachedBinding = binding; return { status: "ready", binding }; },
+    getMemoryDays: async () => { calls.push("adult"); return { items: [] }; },
+    getConversationReview: async () => { calls.push("adult-review"); return {}; },
+    getUnreadGuardianNotifications: async () => { calls.push("safety"); return { newest: fx.SAFETY_ALERT, others_count: 0 }; },
+  });
+  try {
+    assert.equal(h.page.data.guardianMode, true);
+    assert.deepEqual(calls, ["safety"]);
+    assert.match(visibleText(renderPage("pages/memory/index", h.page.data)), /有一条需要你关注的对话/);
+  } finally { h.restore(); }
+});
+
+for (const status of ["error", "choose", "cached"]) {
+  test(`unconfirmed binding ${status} never loads adult data`, async () => {
+    let adultReads = 0;
+    const h = await openMemory({
+      readBindingManifest: () => null,
+      syncDeviceBindings: async () => ({ status, binding: null }),
+      getMemoryDays: async () => { adultReads++; return { items: [] }; },
+      getConversationReview: async () => { adultReads++; return {}; },
+    });
+    try {
+      assert.equal(adultReads, 0);
+      assert.equal(h.page.data.guardianMode, true);
+      assert.match(visibleText(renderPage("pages/memory/index", h.page.data)), /无法确认设备绑定/);
+      assert.equal(h.page.data.safetyReadStatus, "failed");
+    } finally { h.restore(); }
+  });
+}
+
+test("confirmed empty bindings retain adult review", async () => {
+  let adultReads = 0;
+  const h = await openMemory({
+    readBindingManifest: () => null,
+    syncDeviceBindings: async () => ({ status: "empty", binding: null }),
+    getConversationReview: async () => { adultReads++; return {}; },
+  });
+  try {
+    assert.equal(adultReads, 1);
+    assert.equal(h.page.data.guardianMode, false);
+  } finally { h.restore(); }
+});
+
+test("a confirmed child binding without its child never opens adult review", async () => {
+  let adultReads = 0;
+  const binding = { ...fx.authed().api.readBindingManifest(), primary_subject_ids: [] };
+  let cachedBinding = null;
+  const h = await openMemory({
+    readBindingManifest: () => cachedBinding,
+    syncDeviceBindings: async () => { cachedBinding = binding; return { status: "ready", binding }; },
+    getConversationReview: async () => { adultReads++; return {}; },
+  });
+  try {
+    assert.equal(adultReads, 0);
+    assert.match(visibleText(renderPage("pages/memory/index", h.page.data)), /无法确认设备绑定/);
+  } finally { h.restore(); }
+});
+
+test("retrying a failed cold binding read restores guardian safety and review", async () => {
+  let available = false;
+  const binding = fx.authed().api.readBindingManifest();
+  let cachedBinding = null;
+  const h = await openMemory({
+    readBindingManifest: () => cachedBinding,
+    syncDeviceBindings: async () => {
+      if (!available) return { status: "error", binding: null };
+      cachedBinding = binding;
+      return { status: "ready", binding };
+    },
+    ...fx.safetyAlertApi([fx.SAFETY_ALERT]),
+  });
+  try {
+    assert.match(visibleText(renderPage("pages/memory/index", h.page.data)), /暂时没能读取，点击重试/);
+    available = true;
+    await h.page.retrySafetyRead();
+    assert.equal(h.page.data.safetyReadStatus, "ok");
+    assert.match(visibleText(renderPage("pages/memory/index", h.page.data)), /有一条需要你关注的对话/);
+  } finally { h.restore(); }
+});

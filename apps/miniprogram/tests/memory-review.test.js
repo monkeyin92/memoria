@@ -80,6 +80,7 @@ function instantiate(definition) {
 }
 
 function stubApi(overrides) {
+  overrides = { syncDeviceBindings: async () => ({ status: "empty", binding: null }), ...overrides };
   const originals = {};
   for (const [key, value] of Object.entries(overrides)) {
     originals[key] = api[key];
@@ -218,9 +219,13 @@ test("late conversation detail after logout clears the transient selection state
     const restore = stubApi({
       currentIdentity: () => ({ user_id: "person_owner" }),
       isAuthEpochCurrent: (epoch) => epoch === lastEpoch,
+      getMemoryDays: async () => ({ items: [] }),
+      getConversationReview: async () => ({}),
+      getConversationSessions: async () => ({ items: [] }),
       getConversationHistory: async () => historyReady,
     });
     try {
+      await page.loadDays();
       const pending = page.openConversation({
         currentTarget: { dataset: { sessionId: "session-late" } },
       });

@@ -186,6 +186,8 @@ test("a late review response cannot repopulate private data after auth is cleare
   let appDefinition;
   let memoryPage;
   let releaseDays;
+  let startDays;
+  const daysStarted = new Promise((resolve) => { startDays = resolve; });
   const daysReady = new Promise((resolve) => {
     releaseDays = resolve;
   });
@@ -218,15 +220,17 @@ test("a late review response cannot repopulate private data after auth is cleare
   delete require.cache[apiPath];
   delete require.cache[gatePath];
   const api = require("../utils/api");
-  api.getMemoryDays = async () => daysReady;
+  api.syncDeviceBindings = async () => ({ status: "empty", binding: null });
+  api.getMemoryDays = async () => { startDays(); return daysReady; };
+  api.getConversationReview = async () => ({});
   global.Page = (definition) => {
     memoryPage = definition;
   };
   delete require.cache[memoryPath];
   require("../pages/memory/index");
   const instance = {
+    ...memoryPage,
     data: { ...memoryPage.data },
-    _enterGuestState: memoryPage._enterGuestState,
     setData(update) {
       Object.assign(this.data, update);
     },
@@ -235,7 +239,7 @@ test("a late review response cannot repopulate private data after auth is cleare
   try {
     memoryPage.onLoad.call(instance);
     const pending = memoryPage.loadDays.call(instance);
-    await new Promise((resolve) => setImmediate(resolve));
+    await daysStarted;
     app.clearAuthenticatedIdentity();
     releaseDays({
       items: [

@@ -4,8 +4,6 @@ const EFFECTIVE_ON = "2026年10月24日";
 const GUIDE_VERSION = "internal-test-guide-20261017-r6";
 const CONSENT_DOC_VERSION = "internal-test-consent-20261017-r6";
 
-// Experience-build self-test flips this source constant locally before upload and must not commit it.
-// check:release-gate fails when the constant is true, so that commit cannot merge to main.
 const INTERNAL_TEST_CONSENT_UNLOCK = false;
 
 function releaseDate(effectiveOn = EFFECTIVE_ON) {

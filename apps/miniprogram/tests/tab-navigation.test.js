@@ -84,8 +84,9 @@ test("<navigator> links to tabBar pages declare open-type switchTab", () => {
 test("login returns to every tab page with switchTab and to other pages with redirectTo", () => {
   const apiPath = require.resolve("../utils/api");
   const authPath = require.resolve("../pages/auth/index");
-  const previous = { wx: global.wx, Page: global.Page };
+  const previous = { wx: global.wx, Page: global.Page, getCurrentPages: global.getCurrentPages };
   const calls = [];
+  global.getCurrentPages = () => [];
   let definition = null;
 
   require.cache[apiPath] = { exports: { hasAuthenticatedSession: () => true } };

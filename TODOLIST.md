@@ -142,9 +142,9 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 - [ ] 机器人自己的声音透过回声消除漏进来（历史 −43…−51 dBFS）。只播复测后 `post_afe` ≈ −54 dBFS，回声泄漏应明显下降，须用停止 soak 再验。
 - [ ] **下一步（要你点头）**：在已有软件参考上调 AFE NLP / WebRTC NS（或参考时延/增益），目标是双讲窗停止词在 `post_afe` 上的 NCC 明显高于只播假峰；通过后再跑停止矩阵。不先上热词、不先松停止规则。
 
-### [ ] N-11 同类未处理：设备按钮停止带着已被替换代的围栏
+### [ ] N-11 设备按钮与关键词迟到停止的软件修复已验证，待设备验收
 
-edge 对已被替换代的迟到 `playback.progress` / `started` 已改为丢弃、不再关连接（PR #174，第十、十八轮真机 0 次 `playback_receipt_rejected`）。同一 handler 的 ledger 拒绝与 precheck 两条 terminal receipt 路径也已补上 terminal-only 窗口清理；Go/formal 回归在 PR #403 通过，已随 2026-10-23 23:31 的组件发布上线。形状相同但没动的：设备按钮停止带着已被替换代的围栏时，`CancelGeneration` 失败 → `stop_rejected` 并关连接（2026-09-30 04:30 一次，`button.stop … expected_fence.generation=2`）；按钮停止没有测过，看 edge 日志里的频率再定。
+已替换或已取消代的 `button.stop` / 关键词 hard stop 通过 `ErrStaleStopFence` 分类后忽略，保留 WSS 和当前代。关键词停止移除 snapshot 预检，过期判断由 Session 取消锁内完成，避免检查后取消的竞态。跨 session epoch、错误 stream epoch、非法 JSON、围栏形状、越界序号与权限检查仍保留；其他 runtime 错误仍拒绝。本地 WSS 回归覆盖迟到 stop 后在同一连接停止当前代，runtime 回归覆盖取消已先发生的情况。未部署、未访问真机，不代表设备验收通过。
 
 ### [ ] N-13 唤醒后的问候与第一句（观察项）
 

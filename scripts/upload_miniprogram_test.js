@@ -6,6 +6,8 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 const { createRequire } = require("node:module");
 
+const { withMiniprogramBuild } = require("./miniprogram_test_build");
+
 const { assertCompatibleMiniprogramCiRuntime } = require("./miniprogram_ci_runtime");
 
 const repoRoot = path.resolve(__dirname, "..");
@@ -23,11 +25,12 @@ const compilePreflightScript = path.join(__dirname, "compile_miniprogram_preflig
 
 function usage(exitCode = 0) {
   console[exitCode ? "error" : "log"](`用法：
-  npm --prefix apps/miniprogram run upload:test -- --version <版本号> --desc <说明> [--robot 1] [--dry-run]
+  npm --prefix apps/miniprogram run upload:test -- --version <版本号> --desc <说明> [--robot 1] [--dry-run] [--internal-test-consent-unlock]
 
 要求 Node 20–24；上传密钥通过 MINIPROGRAM_CI_PRIVATE_KEY 指定，或放在
 ~/.config/memoria/secrets/private.wx20a3a044b52fcbb7.key（目录 700、文件 600）。
 dry-run 会真实编译但不签名或上传。
+--internal-test-consent-unlock 仅在隔离构建副本中解锁内测同意流程，源码保持 false。
 真实执行只上传微信小程序开发版本（体验版）；不会提交审核或正式发布。`);
   process.exit(exitCode);
 }
@@ -42,9 +45,15 @@ function parseOptions(argv) {
   const valueOptions = new Set(["--version", "--desc", "--robot"]);
   const values = new Map();
   let dryRun = false;
+  let consentUnlock = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (["--help", "-h"].includes(argument)) fail("帮助参数不能与上传参数同时使用");
+    if (argument === "--internal-test-consent-unlock") {
+      if (consentUnlock) fail("--internal-test-consent-unlock 不能重复");
+      consentUnlock = true;
+      continue;
+    }
     if (argument === "--dry-run") {
       if (dryRun) fail("--dry-run 不能重复");
       dryRun = true;
@@ -62,17 +71,18 @@ function parseOptions(argv) {
     desc: values.get("--desc"),
     robot: values.get("--robot"),
     dryRun,
+    consentUnlock,
   };
 }
 
-function runCompilePreflight() {
+function runCompilePreflight(buildPath) {
   const temporaryDirectory = fs.mkdtempSync(
     path.join(os.tmpdir(), "memoria-miniprogram-compile-"),
   );
   try {
     const result = spawnSync(
       process.execPath,
-      [...process.execArgv, compilePreflightScript, projectPath],
+      [...process.execArgv, compilePreflightScript, buildPath],
       {
         cwd: temporaryDirectory,
         encoding: "utf8",
@@ -133,38 +143,41 @@ async function main() {
     .trim();
   console.log(`工作区状态：${worktreeStatus || "干净"}`);
   await assertCompatibleMiniprogramCiRuntime();
-  if (dryRun) {
-    const fileCount = runCompilePreflight();
-    console.log(`编译预检通过：${fileCount} 个文件。`);
-    console.log(
-      worktreeStatus
-        ? "编译、配置与凭据预检通过，但工作区未干净：禁止真实上传。"
-        : "预检通过：未上传代码。",
-    );
-    return;
-  }
-  if (worktreeStatus) fail("真实上传要求 Git 工作区干净，请先提交并复核源码");
+  if (!dryRun && worktreeStatus) fail("真实上传要求 Git 工作区干净，请先提交并复核源码");
+  await withMiniprogramBuild(projectPath, options.consentUnlock, async (buildPath) => {
+    console.log(`内测同意解锁：${options.consentUnlock ? "开启，仅构建副本" : "关闭"}`);
+    if (dryRun) {
+      const fileCount = runCompilePreflight(buildPath);
+      console.log(`编译预检通过：${fileCount} 个文件。`);
+      console.log(
+        worktreeStatus
+          ? "编译、配置与凭据预检通过，但工作区未干净：禁止真实上传。"
+          : "预检通过：未上传代码。",
+      );
+      return;
+    }
 
-  const requireFromProject = createRequire(path.join(projectPath, "package.json"));
-  const ci = requireFromProject("miniprogram-ci");
-  const project = new ci.Project({
-    appid: projectConfig.appid,
-    type: "miniProgram",
-    projectPath,
-    privateKeyPath,
+    const requireFromProject = createRequire(path.join(projectPath, "package.json"));
+    const ci = requireFromProject("miniprogram-ci");
+    const project = new ci.Project({
+      appid: projectConfig.appid,
+      type: "miniProgram",
+      projectPath: buildPath,
+      privateKeyPath,
+    });
+    const result = await withIsolatedCompilerWorkingDirectory(() =>
+      ci.upload({
+        project,
+        version,
+        desc,
+        robot,
+        setting: projectConfig.setting,
+        onProgressUpdate: (progress) => console.log(JSON.stringify(progress)),
+      }),
+    );
+    console.log("体验版上传成功。");
+    console.log(JSON.stringify(result));
   });
-  const result = await withIsolatedCompilerWorkingDirectory(() =>
-    ci.upload({
-      project,
-      version,
-      desc,
-      robot,
-      setting: projectConfig.setting,
-      onProgressUpdate: (progress) => console.log(JSON.stringify(progress)),
-    }),
-  );
-  console.log("体验版上传成功。");
-  console.log(JSON.stringify(result));
 }
 
 main().catch((error) => {

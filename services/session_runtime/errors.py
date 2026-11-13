@@ -17,6 +17,10 @@ class PersistentSessionDenied(PermissionError):
     """The authenticated actor/binding cannot create this Session."""
 
 
+class PersistentSessionTerminated(PersistentSessionDenied):
+    """The authority explicitly revoked the session's binding or lifecycle."""
+
+
 class PersistentSessionExpired(PersistentSessionDenied):
     """The stored profile is past its use window; only renewal may reissue it.
 

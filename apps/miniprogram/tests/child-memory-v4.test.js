@@ -432,3 +432,38 @@ test("the home memory card opens the summaries section", async () => {
     harness.restore();
   }
 });
+
+for (const outcome of ["resolve", "reject", "logout"]) {
+  test(`late archive ${outcome} cannot replace the latest empty or guest view`, async () => {
+    let resolveArchive, rejectArchive, started;
+    const entered = new Promise((resolve) => { started = resolve; });
+    const pending = new Promise((resolve, reject) => { resolveArchive = resolve; rejectArchive = reject; });
+    let reads = 0;
+    let epoch = 1;
+    let clearAuth;
+    const options = fx.authed({
+      ...fx.archiveApi,
+      currentAuthEpoch: () => epoch,
+      isAuthEpochCurrent: (value) => value === epoch,
+      getChildArchive: () => { reads++; if (reads === 1) { started(); return pending; } return Promise.resolve({ items: [] }); },
+    });
+    options.app = { subscribeAuthCleared: (callback) => { clearAuth = callback; return () => {}; } };
+    const h = loadPage("pages/child-memory/index", options);
+    try {
+      h.page.onLoad(CHILD);
+      h.page.setData({ authenticated: true });
+      const first = h.page.refresh();
+      await entered;
+      await h.page.refresh();
+      if (outcome === "logout") { epoch++; clearAuth(); }
+      if (outcome === "reject") rejectArchive(Object.assign(new Error("expired"), { status: 401 }));
+      else resolveArchive({ items: fx.ARCHIVE });
+      await first;
+      assert.deepEqual(h.page.data.archiveFlat, []);
+      const text = visibleText(renderPage("pages/child-memory/index", h.page.data));
+      assert.doesNotMatch(text.split("近期摘要")[0], /恐龙|小乐宝/);
+      if (outcome === "logout") assert.match(text, /请先登录/);
+      else { assert.equal(h.page.data.authenticated, true); assert.equal(h.page.data.loadState, "ready"); }
+    } finally { h.restore(); }
+  });
+}

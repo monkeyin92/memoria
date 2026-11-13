@@ -28,9 +28,11 @@ from packages.contracts.generated.python.multi_subject_contracts import (
     SubjectCategoryValue,
 )
 
+from services.consent.bound_subject import GUARDIAN_MEMORY_CAPABILITIES, MINOR_SESSION_CAPABILITIES
 from services.policy.action_authorizer import ActionAuthorizationError
 from services.policy.context import PolicyContext
 from services.policy.production_wiring import ConsentDiscovery
+from services.session_runtime.commands import SessionCloseResult
 from services.session_runtime.errors import (
     PersistentSessionDenied,
     PersistentSessionExpired,
@@ -44,6 +46,8 @@ from services.session_runtime.postgres_authorities import (
 )
 from services.session_runtime.postgres_store import (
     PostgresSessionRuntimeStore,
+    SessionRuntimeAuthorityUnavailable,
+    SessionRuntimeConflict,
     SessionRuntimeContext,
 )
 from services.session_runtime.profile_service import (
@@ -68,12 +72,13 @@ if TYPE_CHECKING:
     )
 
 
-class PrivateProfileConsentWithdrawn(PersistentSessionDenied):
-    """A live profile requires downgrade after private consent withdrawal."""
+class ProfileConsentWithdrawn(PersistentSessionDenied):
+    """An issued capability has lost its required current consent."""
 
-    def __init__(self, profile: RuntimeProfileSignedV2) -> None:
-        super().__init__("private recall consent is no longer active")
+    def __init__(self, profile: RuntimeProfileSignedV2, withdrawn: frozenset[CapabilityValue]) -> None:
+        super().__init__("profile consent is no longer active")
         self.profile = profile
+        self.withdrawn = withdrawn
 
 
 class SessionIssueAuthorityMixin:
@@ -104,33 +109,110 @@ class SessionIssueAuthorityMixin:
             now: datetime,
         ) -> ConsentDiscovery: ...
 
-    async def _require_private_profile_consent(
-        self, profile: RuntimeProfileSignedV2, *, now: datetime
-    ) -> None:
-        actor_id = profile.actor_id
-        if "memory_recall_private" in profile.capabilities:
-            try:
-                async with self._store.action_transaction(
-                    actor_id=actor_id,
-                    device_id=profile.device_id,
-                    subject_id=profile.active_subject_id,
-                ) as connection:
-                    discovery = await self._discover_current_consent(
-                        connection,
-                        actor_id=actor_id,
-                        subject_id=profile.active_subject_id,
-                        resource_owner_id=profile.active_subject_id,
-                        device_id=profile.device_id,
-                        binding_id=profile.binding_id,
-                        binding_version=profile.binding_version,
-                        capability="memory_recall_private",
-                        purpose="memory_recall",
-                        now=now,
-                    )
+        async def _commit_close(
+            self,
+            profile: RuntimeProfileSignedV2,
+            context: SessionRuntimeContext,
+            *,
+            reason_code: str,
+            now: datetime,
+        ) -> SessionCloseResult: ...
+
+    async def close_subject_session(
+        self,
+        *,
+        session_id: str,
+        device_id: str,
+        subject_id: str,
+        binding_ids: frozenset[str] | None,
+        reason_code: str,
+        now: datetime,
+    ) -> SessionCloseResult | None:
+        """Close this subject's session as the actor its signed profile names.
+
+        Reads any actor's current profile through the projector role, so neither
+        a projection nor an RLS-hidden row picks the target or the actor.
+        ``None`` only when no session authority exists or the verified profile
+        names another subject or binding.  A tampered or inconsistent profile,
+        an unreadable authority, a failed target, or a lost CAS against a
+        concurrent rotation raises, so the caller retries instead of reporting
+        the stream stopped.
+        """
+        reason_code = self._close_reason(reason_code)
+        try:
+            async with self._store.projector_transaction() as connection:
+                stored = await self._store.context_any_state(connection, session_id=session_id)
+                profile = None if stored is None else await self._store.profile_by_id(
+                    connection, runtime_profile_id=stored[0].current_runtime_profile_id)
+        except (SessionRuntimeAuthorityUnavailable, asyncpg.PostgresError) as exc:
+            raise PersistentSessionUnavailable(str(exc)) from exc
+        if stored is None:
+            return None
+        context, state = stored
+        if profile is None:
+            raise PersistentSessionUnavailable("session context has no current profile")
+        self._require_profile_signature(profile)
+        if (
+            (profile.session_id, profile.runtime_profile_id, profile.actor_id, profile.device_id,
+             profile.binding_id, profile.binding_version)
+            != (session_id, context.current_runtime_profile_id, context.actor_id, context.device_id,
+                context.binding_id, context.binding_version)
+            or context.session_id != session_id
+        ):
+            raise PersistentSessionUnavailable("current profile disagrees with its context")
+        if profile.device_id != device_id:
+            raise PersistentSessionUnavailable("device projection disagrees with session authority")
+        if state == "active" and (
+            profile.active_subject_id != context.active_subject_id
+            or profile.subject_revision != context.subject_revision
+            or profile.session_epoch != context.session_epoch
+        ):
+            raise PersistentSessionUnavailable("current profile subject or epoch is inconsistent")
+        if state == "closed" and (
+            context.active_subject_id is not None
+            or context.session_epoch != profile.session_epoch + 1
+        ):
+            raise PersistentSessionUnavailable("closed session context is inconsistent")
+        if (
+            (binding_ids is not None and profile.binding_id not in binding_ids)
+            or profile.active_subject_id != subject_id
+            or profile.speaker_state != "confirmed"
+        ):
+            return None
+        if state == "closed":
+            return SessionCloseResult(applied=False, already_closed=True)
+        if state != "active":
+            raise SessionRuntimeConflict("session is not active and cannot be closed")
+        return await self._commit_close(profile, context, reason_code=reason_code, now=now)
+
+    @staticmethod
+    def _close_reason(reason_code: str) -> str:
+        reason_code = reason_code.strip()
+        if not reason_code or len(reason_code) > 64:
+            raise ValueError("reason_code must be a bounded non-blank string")
+        return reason_code
+
+    async def _require_profile_consent(self, profile: RuntimeProfileSignedV2, *, now: datetime) -> None:
+        required = {capability for capability in GUARDIAN_MEMORY_CAPABILITIES if capability in profile.capabilities}
+        if profile.subject_category == "minor":
+            required.update(capability for capability in MINOR_SESSION_CAPABILITIES if capability in profile.capabilities)
+        if not required:
+            return
+        withdrawn = set()
+        try:
+            async with self._store.action_transaction(actor_id=profile.actor_id, device_id=profile.device_id,
+                subject_id=profile.active_subject_id) as connection:
+                for capability in sorted(required):
+                    discovery = await self._discover_current_consent(connection, actor_id=profile.actor_id,
+                        subject_id=profile.active_subject_id, resource_owner_id=profile.active_subject_id,
+                        device_id=profile.device_id, binding_id=profile.binding_id, binding_version=profile.binding_version,
+                        capability=capability, purpose=canonical_runtime_decision_purpose(capability), now=now)
                     if not any(item.is_effective_at(now) for item in discovery.consent_evidence):
-                        raise PrivateProfileConsentWithdrawn(profile)
-            except (asyncpg.PostgresError, ActionAuthorizationError) as exc:
-                raise PersistentSessionUnavailable(str(exc)) from exc
+                        withdrawn.add(capability)
+        except (asyncpg.PostgresError, ActionAuthorizationError) as exc:
+            raise PersistentSessionUnavailable(str(exc)) from exc
+        if withdrawn:
+            raise ProfileConsentWithdrawn(profile, frozenset(withdrawn))
 
     async def _build_issue(
         self,

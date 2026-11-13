@@ -524,6 +524,8 @@ class _CloseSessionAuthority:
         session_id: str,
         reason_code: str,
         now: datetime,
+        expected_subject_id: str | None = None,
+        expected_binding_ids: frozenset[str] | None = None,
     ) -> SimpleNamespace:
         self.calls.append(
             {

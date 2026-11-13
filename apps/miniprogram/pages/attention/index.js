@@ -17,8 +17,18 @@ Page({
   },
 
   onLoad(query) {
-    this._notificationId = query?.id || "";
-    this.loadAlert();
+    try {
+      this._notificationId = decodeURIComponent(query?.id || "");
+    } catch {
+      this._notificationId = "";
+    }
+    return this.loadAlert();
+  },
+
+  onShow() {
+    if (this.data.alertResult.errorKind === "auth" && api.hasAuthenticatedSession()) {
+      return this.loadAlert();
+    }
   },
 
   async loadAlert() {

@@ -41,3 +41,28 @@ test("pickers and the rate slider use the shared v4 field chrome", async () => {
   assert.equal((body.match(/chev-faint\.svg/g) || []).length, 7);
   assert.doesNotMatch(body, /row-chevron|page-head/);
 });
+
+for (const secondConfirm of [false, true]) {
+  test(`in-use persona removal requires a second consent ${secondConfirm}`, async () => {
+    const calls = [];
+    const h = loadPage("pages/persona-custom/index", fx.authed({
+      deleteCustomPersona: async (id, options) => {
+        calls.push([id, options]);
+        if (!options?.confirm) throw Object.assign(new Error("in use"), { status: 409, code: "persona_in_use" });
+        return { deleted: true };
+      },
+      listPersonas: async () => ({ custom_personas: calls.length > 1 ? [] : [{ persona_id: "cu_test", display_name: "小北" }] }),
+    }));
+    try {
+      await h.run();
+      const dialogs = [];
+      global.wx.showModal = (options) => { dialogs.push(options); options.success({ confirm: dialogs.length === 1 || secondConfirm }); };
+      await h.page.remove({ currentTarget: { dataset: { personaId: "cu_test" } } });
+      assert.equal(dialogs.length, 2);
+      assert.match(dialogs[1].content, /使用/);
+      assert.deepEqual(calls, secondConfirm ? [["cu_test", undefined], ["cu_test", { confirm: true }]] : [["cu_test", undefined]]);
+      assert.equal(h.page.data.personas.length, secondConfirm ? 0 : 1);
+      assert.equal(h.page.data.acting, false);
+    } finally { h.restore(); }
+  });
+}

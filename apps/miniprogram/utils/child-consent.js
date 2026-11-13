@@ -30,6 +30,14 @@ function recordInternalTestConsentVersions(viaUnlock) {
   });
 }
 
+function clearChildInfoConsent() {
+  for (const key of [CHILD_INFO_CONSENT_KEY, CHILD_INFO_CONSENT_VERSIONS_KEY]) {
+    try {
+      wx.removeStorageSync(key);
+    } catch {}
+  }
+}
+
 function ensureChildInfoConsent(redirect) {
   if (hasChildInfoConsent()) return true;
   const target = typeof redirect === "string" ? redirect : "";
@@ -42,6 +50,7 @@ function ensureChildInfoConsent(redirect) {
 module.exports = {
   CHILD_INFO_CONSENT_KEY,
   CHILD_INFO_CONSENT_VERSIONS_KEY,
+  clearChildInfoConsent,
   consentStamp,
   hasChildInfoConsent,
   grantChildInfoConsent,

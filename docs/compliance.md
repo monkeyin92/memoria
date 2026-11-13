@@ -266,7 +266,7 @@ async def on_session_end(session_id: str) -> SweepReceipt:
 | 这一轮孩子说的原话，以及机器人复述进去的原话 | 只在生成回复和生成摘要的服务器内存中。不写入 `archive_evidence_events` 的文本字段，不写入 `archive_transcript_versions`。正常运行时只在播放期未采取的决策行写一句脱敏摘要（见「应用日志」一行）；语音合成出错时，服务器日志会记下机器人那一句回复，其中可能复述孩子的原话（见「日志」一行）。 | 这一轮对话期间。出错时写进日志的那一句，最长约 8 天。 | 对话结束时从内存删除。若磁盘缓冲里出现这类原文，重放时丢弃该行，不入库。日志里的那一句到期由轮转删除，或按事故处理提前删除。 |
 | 交给对话模型的文字 | 百炼或 DeepSeek，用于生成当轮回复。可含这一轮的原话。 | 我们的服务器不留原文。厂商按合同。待最终确认。 | 同语音识别。 |
 | 对话摘要 | 家长同意「记住最近的对话」之后，写入 PostgreSQL `memory_records`，`kind=dialogue_summary`。一条不超过 200 字，是概括，不引用原话。这条字数上限待最终确认。同机数据库，境内以部署清单为准。Redis 事件流只携带摘要的出站副本。家长能在小程序里看见并删除。 | 30 天。这是物理删除的期限，不是读口隐藏。 | 到期后由维护角色执行 `DELETE`（control-api 的 `ChildLayerRetentionWorker` 启动时跑一次，之后每天一次；须先设置 `app.memory.subject_erase`，否则 `memory_records_immutable` 会拒绝），只删已到期的摘要行，然后计数剩余的到期摘要，不为零即失败。家长提前删除走同一条物理删除。Redis 里尚未被约 10 万条裁剪掉的副本，告知里写明会随裁剪消失。 |
-| 长期档案 | 另一项告知、另一项同意。写入同一张 `memory_records`，`kind=child_archive`，字段只允许称呼、喜好、宠物名。每条至多一句话，不引用原话。健康、住址、学校、家庭矛盾不写。不同意时不写这些行，对话照常。同机数据库。家长看得见、删得掉。 | 没有 30 天上限。保留到家长删除、解绑，或连续 180 天没有对话且家长也没有打开小程序。清除前 30 天、7 天各提醒一次。另外每 90 天提醒复核一次，家长不确认也不删除。 | 清除时只物理删除 `kind=child_archive` 的行，并计数确认为零。180 天无活跃的清除由 `ChildLayerRetentionWorker` 每天执行；读不到 `guardian_subject_activity` 时这一轮不清除档案。清除前的提醒今天还没有发送，清除不等提醒。整份按使用人删除仍走现有 `verified_empty`。解绑必定清除长期档案：2026-10-21 起解绑没有保留开关（issue #283）。 |
+| 长期档案 | 另一项告知、另一项同意。写入同一张 `memory_records`，`kind=child_archive`，字段只允许称呼、喜好、宠物名。每条至多一句话，不引用原话。健康、住址、学校、家庭矛盾不写。不同意时不写这些行，对话照常。同机数据库。家长看得见、删得掉。 | 没有 30 天上限。保留到家长删除、解绑，或连续 180 天没有对话且家长也没有打开小程序。清除前 30 天、7 天各提醒一次。另外每 90 天提醒复核一次，家长不确认也不删除。 | 清除时只物理删除 `kind=child_archive` 的行，并计数确认为零。180 天无活跃的清除由 `ChildLayerRetentionWorker` 每天执行；读不到 `guardian_subject_activity` 时这一轮不清除档案。清除前的提醒今天还没有发送，清除不等提醒。整份按使用人删除仍走现有 `verified_empty`。最后一条服务绑定解除后清除长期档案：2026-10-21 起解绑没有保留开关（issue #283）。 |
 | 没有对话摘要同意时的对话 | 内存。 | 这一轮对话。 | 结束即丢。不写摘要，也不写长期档案。对话照常。 |
 | 声纹 | 不采集，不存储。没有对应的表行、对象或厂商音色嵌入。 | 不适用。 | 不适用。账号关闭此功能。 |
 | 自定义音色样本 | 不采集，不存储。没有 `voice_samples` 行，也没有音色桶对象。 | 不适用。 | 不适用。账号关闭此功能。 |
@@ -287,7 +287,7 @@ async def on_session_end(session_id: str) -> SweepReceipt:
 | 对话摘要 | 沿用绑定页「长期记忆」同意。不同意则不写，对话照常。 | 概括，不引原话。工作上限每条 200 字，待最终确认。 | 30 天 | 到期物理删除；家长也可以提前删 |
 | 长期档案 | 新的同意项。不同意则不写，对话照常。 | 称呼、喜好、宠物名。每条至多一句话，不引原话。健康、住址、学校、家庭矛盾不存。 | 家长删除、解绑，或连续 180 天无对话 | 清除前 30 天和 7 天各提醒一次。家长打开小程序算恢复活跃，180 天重新计算。每 90 天另提醒复核一次，不确认不删除 |
 
-活跃的定义是：有一次儿童对话，或家长打开小程序。两者都把 180 天的时钟清零。今天没有这个时钟。解绑接口是 `POST /v1/devices/{device_id}/binding/unbind`（`services/control_api/app/routes/identity_lifecycle.py`）。2026-10-21 起解绑一律清除长期档案和对话摘要，并清除使用人的昵称和年龄段；请求体里已没有保留开关，旧客户端仍发 `purge_subject_data` 会被忽略。
+活跃的定义是：有一次儿童对话，或家长打开小程序。两者都把 180 天的时钟清零。今天没有这个时钟。解绑接口是 `POST /v1/devices/{device_id}/binding/unbind`（`services/control_api/app/routes/identity_lifecycle.py`）。2026-10-21 起最后一条服务绑定解除后清除长期档案和对话摘要，并清除使用人的昵称和年龄段；请求体里已没有保留开关，旧客户端仍发 `purge_subject_data` 会被忽略。
 
 两层都写在已有的 `memory_records` 里，用 `kind` 区分，不新建表。原因是这张表已经在按使用人删除里面。
 
@@ -322,7 +322,7 @@ async def on_session_end(session_id: str) -> SweepReceipt:
 | 评测与验收脚本 | 真机 findings 用 `speech.utterance_finalized` 的原文做相似度。实现后生产库不再有这段原文，脚本不能再向儿童会话要原文。 | 脚本改为断言儿童事件无文本字段、语料对象数为 0，相似度改在测试夹具里做，不读生产儿童库。不改历史 `docs/acceptance/` 收据。 |
 | 文档预算 | 本文件放在 `docs/compliance/`，属于 `tests/test_documentation_budget.py` 允许的前缀。 | `uv run pytest tests/test_documentation_budget.py`。不新增其他文档类别。 |
 | 既有 30 天记忆决定 | 30 天仍然是对话摘要的期限，但从读口隐藏改成物理删除。长期档案不使用这 30 天。 | 策略测试里未成年人记忆义务仍有 `RETENTION_TTL` 与 `NO_MODEL_TRAINING`。档案行没有 30 天到期。 |
-| 解绑 | 已实现（issue #283）：解绑一律清除长期档案、未到期摘要和 `identity_persons` 里的昵称与年龄段，不再有保留开关。 | `test_unbind_deletes_every_child_layer_without_a_data_switch` 锁住解绑后各层行数为零；`test_unbind_clears_the_child_and_ignores_the_legacy_data_switch` 锁住旧开关被忽略。 |
+| 解绑 | 已实现（issue #283）：最后一条服务绑定解除后清除长期档案、未到期摘要和 `identity_persons` 里的昵称与年龄段，不再有保留开关。 | `test_unbind_deletes_every_child_layer_without_a_data_switch` 锁住解绑后各层行数为零；`test_unbind_clears_the_child_and_ignores_the_legacy_data_switch` 锁住旧开关被忽略。 |
 | 小程序活跃 | 打开小程序要记下时间，用来重置 180 天，并承接 30 天、7 天和 90 天提醒。今天没有这个时钟。 | 只打开小程序、没有新对话时，清除日向后推。90 天不回应时档案还在。提醒文案不含原话。 |
 
 ### 工作量
@@ -333,7 +333,7 @@ async def on_session_end(session_id: str) -> SweepReceipt:
 - 关闭未成年人的 `corpus_recording` 会话写入。这是工作决定，待最终确认。表和历史行留到上线前清理。
 - 记忆编译改为消费 `DialogueSummary` 与 `ArchiveFact`。儿童不再写入 claim、时间线、知识条目。摘要概括且不超过 200 字；档案只收三个字段。字数和「不引原话」待最终确认，实现前按这个上限做。
 - 摘要到期删除和档案分层删除各一条维护角色语句，删完计数。整份按使用人删除不改语义。
-- 解绑固定清除长期档案。小程序打开写入活跃时间。30 天、7 天、90 天提醒走现有监护通知，不含原话。
+- 最后一条服务绑定解除后清除长期档案。仍被其他设备服务时保留该使用人的数据与同意，不启动删除任务。小程序打开写入活跃时间。30 天、7 天、90 天提醒走现有监护通知，不含原话。
 - 策略把 `voice_profile_create` 从未成年人可授权集合移出。账户门保持成人专用。
 - 儿童 `tic_counts` 不再写入用词；风格描述不再含用词片段。
 - 会话结束时释放进程内 PCM 和转写。spool 重放遇到儿童音频或儿童原文则丢弃。
@@ -374,7 +374,7 @@ async def on_session_end(session_id: str) -> SweepReceipt:
 下面几件不改变上面的结构，仍要单独定：
 
 - 告知的年龄范围。工程按全部未成年人和年龄不明处理。对外是只写不满 14 周岁，还是与 D1 一致写全部未成年人。
-- 解绑时未到期的对话摘要是否跟随长期档案一起删除：已按 issue #283 定为一起删除，解绑不再有第三态。
+- 解绑时未到期的对话摘要是否跟随长期档案一起删除：已按 issue #283 定为一起删除，最后解绑时一起删除；仍被其他设备服务时返回 `retained_still_served` 并保留数据。
 - 会话结束是否就用现有待机条件：连续无主人语音、明确道别、断开。崩溃由不落盘覆盖。
 - 境内表述是否在核对机房和桶 endpoint 之前就写进隐私声明。
 
@@ -393,6 +393,18 @@ async def on_session_end(session_id: str) -> SweepReceipt:
 本文是从 `HANDOFF.md` 迁出的合规参考，保留 2026-09-20 删除范围结论和 17 表 seal 契约分析。这里记录已验证边界与已知缺口，不把 `verified_empty` 写成“已擦除”，也不把未授权的窄片实现误报为完成。
 
 ### 2026-09-26 按使用人删除覆盖面复核（当前权威）
+
+注销账号会先通过身份 SQL 在 subject 锁下捕获允许擦除的无账号儿童，并持久保存到 `identity_subject_releases`。仍被其他 owner 的 active binding 服务的儿童不会进入名单。关系和身份删除之前，每个允许擦除的儿童必须完成 `SubjectDeletionService`，包括记忆两层、儿童 id 危机元数据、语料和 usage；失败由账号 ledger 重试。注销在清除身份图前检查该账号的 release 已全部完成，再删除已完成的账号与儿童映射；其他 owner 的 pending release 保留到擦除完成。若该儿童身份已由另一账号注销删除，重试只有在身份 SQL 确认当前 owner 持有 release 且 person 全局不存在后才跳过身份脱敏，仍须擦完该 owner 的数据。worker 可跨 owner 枚举待处理 release，complete SQL 要求匹配的事务 actor；两者仍使用服务内部的 Identity API 角色，没有新增独立 worker 凭据。此前已越过 `identity_rows_deleted` 且没有名单的历史注销不自动补清理。
+
+撤销 `minor_voice_session` 后，bound-subject hook 先撤销同一授权人在 active binding 上的 Consent 权威，再以该授权人拥有的 binding 集合及权威签名 profile 中已确认的 `active_subject_id` 选择设备会话；其他 owner 的有效授权会话保留。删除与注销仍覆盖该 subject 的全部会话。投影可能尚未反映切人，所以关闭权威会再次核对目标，沿用现有 profile CAS 拒绝检查后的切人。关闭复用 Session Runtime close、directory expire 和 Edge `/v1/internal/device-runtime/session-close`，全部成功后才关闭本地投影。Edge 失败返回失败并保留重试入口，不报停流成功。person id 不传给账号终止；已切到其他人和 unknown_safe 的会话保留。Control 以只读 `memoria_session_projector` 角色全局读取会话当前签名 profile 与 context，先验签并核对 session、当前 profile head、actor、设备和 binding 身份，再核对 subject 范围后，以 profile 的 `actor_id` 经原 close CAS 关闭，不以 `voice_sessions` 投影 owner 作关闭 actor；解绑撤销角色后该 actor 已看不到会话，也照样停流。只有确认 projector、API 与 action 连接来自同一权威主库后，全局不存在会话权威才允许跳过；已验签且与 context 一致的 profile 明确属于其他 subject 或 binding 时也可跳过。active context 的 subject、revision 和 epoch 必须匹配 profile；正常 close 保留 profile，将 context subject 清空并推进 epoch 一次，closed 重试按此终态核对。projector 未配置或角色不符、签名无效、profile 与 context 或设备投影不一致、目标 failed、CAS 输给并发切人以及 Edge 错误都使删除失败并可重放。control session 不承载音频流，撤销语音同意时保留 subject 并轮转签名 profile 去掉相应能力，重新授予后可再次刷新恢复；实际 voice session 仍永久终止。记忆同意单独撤销仍走降级，保留聊天。解绑由获得 `binding.manage` 的 member 发起时，同意撤销和即时擦除均使用绑定 owner 的 scope。
+
+Session Runtime 在 initialize、readiness 及每次 projector 只读事务中，比较三个实际连接的 PostgreSQL `system_identifier`、database OID、database name 和主库 TCP 地址与端口（`127.0.0.1` 与 `::1` 规范化为同一回环地址）。该身份直接读取既有 `pg_catalog.pg_control_system()` 与 `pg_catalog.pg_database`，不使用生成的时间戳或应用自建 UUID。模板克隆即使复制全部 schema，也因 database OID 与名称不同而拒绝；跨集群还会因 system identifier 不同而拒绝。PostgreSQL 17 的普通 API、action 和 projector 角色使用现有可读身份，无须增加 SQL port、持久 identity、授权或迁移。所有 catalog 函数和关系均以 `pg_catalog` 限定；撤销身份读取权限时拒绝就绪及停流完成，不授予 BYPASSRLS、superuser 或任何表写权限。
+
+仓库 `production_control_database_urls()` 为三个角色生成相同 host、port 和 database，默认指向 `memoria-postgres:5432/memoria`。该域允许三个 DSN 使用不同角色、密码、DNS alias，或经过最终连接同一主库的连接池。比较实际数据库身份，不要求 DSN 字符串相等。一个池内按角色路由到不同数据库、跨集群、不同实际后端地址或端口的连接均拒绝。只读副本、Unix socket、无法读回身份的连接与未知路由均失败关闭；不将错误或不可读当成全局 absence，也不缓存上次就绪结论。跨节点读写分离、物理克隆分叉及互相重叠地址空间的多主拓扑不在此域支持范围；所有角色必须路由到同一可识别的 TCP primary。身份检查失败时删除账本保持未完成，修正连接后按原流程重试。
+
+Agent 拉取 `/v1/interaction/session-policy` 时，只有 `410` 且 `detail.code=session_terminated` 会关闭并永久拒绝后续生成。已关闭会话、绑定撤销和语音授权撤销使用这个明确错误契约。网络、5xx 和其他未确认拒绝继续使用既有 unknown_safe。上述链路通过隔离 PG 与 Mock HTTP 验证，未部署，也没有实机音频停流验收。
+
+
 
 按使用人删除（`services/governance/subject_deletion.py`）的覆盖面按存储逐项复核，结论取代下方 09-20 结论中已过时的部分（`memory_scope` 已由 P1-11 的维护角色函数按使用人擦除，不再是"无法物理删除"）。
 
