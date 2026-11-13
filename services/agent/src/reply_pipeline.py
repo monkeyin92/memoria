@@ -1105,13 +1105,8 @@ class ReplyPipeline(
                             asyncio.shield(handle.record.task),
                             timeout=0.02,
                         )
-                    bridge_phrase = (
-                        f"好呀，我来给你讲一个{story_ip}的故事。"
-                        if story_ip is not None
-                        else LIVE_LOOKUP_FILLER
-                    )
                     bridge_intent = self._runtime.orchestrator.delegation.bridge_acknowledgement(
-                        bridge_phrase,
+                        LIVE_LOOKUP_FILLER,
                         fence=fence,
                         context_version=handle.request.context_version,
                         expires_at_ms=int(time.time() * 1_000) + 5_000,

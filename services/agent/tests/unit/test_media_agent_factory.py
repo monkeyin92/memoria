@@ -24,6 +24,7 @@ async def test_production_media_factory_builds_one_policy_bound_agent_session(
     from services.agent.src import media_agent_factory as factory_module
 
     closed: list[str] = []
+    spoken_voices: list[str] = []
 
     class PolicyClient:
         def __init__(self, _config: object) -> None:
@@ -121,6 +122,7 @@ async def test_production_media_factory_builds_one_policy_bound_agent_session(
             return None
 
         def stream(self, **_kwargs: object) -> TTSStream:
+            spoken_voices.append(self.current_voice)
             return TTSStream()
 
         async def synthesize(self, request: SpeechSynthesisRequest) -> Any:
@@ -142,7 +144,8 @@ async def test_production_media_factory_builds_one_policy_bound_agent_session(
         "build_realtime_search_resolver",
         lambda **_kwargs: Resolver(),
     )
-    monkeypatch.setattr(doubao_tts.DoubaoTTS, "from_env", classmethod(lambda cls: TTS()))
+    selected_tts = TTS()
+    monkeypatch.setattr(doubao_tts.DoubaoTTS, "from_env", classmethod(lambda cls: selected_tts))
     monkeypatch.setattr(
         factory_module.FunASRConfig,
         "from_env",
@@ -197,6 +200,34 @@ async def test_production_media_factory_builds_one_policy_bound_agent_session(
     fence = await resources.provider.prepare_committed_turn(identity, "你好")  # type: ignore[attr-defined]
     chunks = [chunk async for chunk in resources.provider.generate_reply(identity, "你好", fence)]
     assert chunks and chunks[-1].final
+
+    # Both bridge output and ordinary replies use the effective session TTS.
+    from services.agent.src.prompts import LIVE_LOOKUP_FILLER
+    from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
+
+    assert resources.provider.speech_synthesis is resources.runtime.tts
+    voices_before_bridge = list(spoken_voices)
+    bridge_chunks = [chunk async for chunk in resources.provider.generate_output(
+        identity,
+        media_pb2.OutputIntent(tts_source=LIVE_LOOKUP_FILLER),
+        fence,
+        work_id="lookup-voice",
+        source_start_sample=0,
+    )]
+    assert bridge_chunks and bridge_chunks[-1].final
+    assert spoken_voices == voices_before_bridge + [resources.runtime.tts.current_voice]
+    assert spoken_voices[0] == spoken_voices[-1]
+    selected_tts.current_voice = "session-selected-voice"
+    changed_voice_chunks = [chunk async for chunk in resources.provider.generate_output(
+        identity,
+        media_pb2.OutputIntent(tts_source=LIVE_LOOKUP_FILLER),
+        fence,
+        work_id="lookup-updated-voice",
+        source_start_sample=480,
+    )]
+    assert changed_voice_chunks and changed_voice_chunks[-1].final
+    assert spoken_voices[-1] == "session-selected-voice"
+
 
     await resources.runtime.close()
     await resources.provider.close(identity)
