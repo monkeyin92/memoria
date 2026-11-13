@@ -181,7 +181,9 @@ async def test_device_conversation_close_final_commits_before_vad_end() -> None:
 
 
 @pytest.mark.asyncio
-async def test_device_conversation_close_immediate_partial_commits_without_vad_end() -> None:
+@pytest.mark.parametrize("text", ["再见", "好的，再见", "那就先这样吧"])
+@pytest.mark.parametrize("final_text", ["好的，再见", "给我讲一个故事"])
+async def test_device_conversation_close_partial_waits_for_final(text: str, final_text: str) -> None:
     provider = _AckCapturingProvider()
     bridge = _CapturingGenerationBridge()
     registry = MediaVoiceCoreRegistry(
@@ -197,6 +199,11 @@ async def test_device_conversation_close_immediate_partial_commits_without_vad_e
     session = bridge.bridge.open(identity)
     try:
         context = await registry.open_session(identity)
+
+        async def semantic_close(value: str) -> bool:
+            return value == "那就先这样吧"
+
+        context.runtime.set_conversation_close_semantic_resolver(semantic_close)
         await registry.on_speech_segment(
             session,
             SpeechSegment(
@@ -219,14 +226,31 @@ async def test_device_conversation_close_immediate_partial_commits_without_vad_e
             revision=1,
             capture_start_sample=0,
             capture_end_sample=16_000,
-            text="好的，再见",
+            text=text,
             is_final=False,
             confidence=0.9,
         )
         assert await registry.accept_asr_result(identity.session_id, partial)
-        assert context.pending.conversation_close_endpoint_pinned == 16_000
-        assert context.pending.turn_endpoint_sample == 16_000
-        assert context.turn_endpoint_task is not None
+        assert context.pending.conversation_close_endpoint_pinned is None
+        assert context.pending.turn_endpoint_sample is None
+        context.pending.conversation_close_partial_stable_since = time.monotonic() - 2
+        registry._maybe_early_commit_stable_conversation_close_partial(context)
+        await asyncio.sleep(0)
+        assert context.pending.conversation_close_endpoint_pinned is None
+        assert context.pending.turn_endpoint_sample is None
+        context.pending.turn_endpoint_sample = 16_000
+        assert not await registry._commit_stable_partial_fallback(context, 16_000)
+        assert not context.standby_requested
+        assert context.pending.pending_partial is not None
+        assert not context.pending.pending_partial.is_final
+        context.pending.turn_endpoint_sample = None
+        final = replace(partial, text=final_text, is_final=True, revision=2)
+        assert await registry.accept_asr_result(identity.session_id, final)
+        if final_text == "好的，再见":
+            assert context.pending.conversation_close_endpoint_pinned == 16_000
+        else:
+            assert context.pending.conversation_close_endpoint_pinned is None
+            assert not context.standby_requested
     finally:
         await registry.finalize_session(identity.session_id)
 
@@ -1430,5 +1454,35 @@ async def test_device_empty_asr_without_owner_stays_silent() -> None:
         await asyncio.sleep(0.05)
         assert provider.texts == []
         assert not provider.started.is_set()
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+async def test_missing_final_classifier_error_keeps_session_open(caplog: pytest.LogCaptureFixture) -> None:
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(bridge=bridge, provider_factory=lambda _identity: provider)
+    registry.install()
+    identity = _device_identity("missing-final-classifier-error")
+    bridge.bridge.open(identity)
+    try:
+        context = await registry.open_session(identity)
+
+        async def broken_classifier(_text: str) -> bool:
+            raise RuntimeError("classifier unavailable")
+
+        context.runtime.set_conversation_close_semantic_resolver(broken_classifier)
+        context.pending.pending_partial = ASRResult(
+            stream_epoch=identity.stream_epoch, task_epoch=1, sentence_id="partial",
+            revision=1, capture_start_sample=0, capture_end_sample=16000,
+            text="那就先这样吧", is_final=False, confidence=0.9,
+        )
+        context.pending.turn_start_sample = 0
+        context.pending.turn_endpoint_sample = 16000
+        assert not await registry._commit_stable_partial_fallback(context, 16000)
+        assert not context.standby_requested
+        assert context.pending.conversation_close_endpoint_pinned is None
+        assert "close classifier unavailable" in caplog.text
     finally:
         await registry.finalize_session(identity.session_id)

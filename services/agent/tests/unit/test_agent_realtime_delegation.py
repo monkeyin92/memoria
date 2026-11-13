@@ -538,6 +538,42 @@ async def test_slow_realtime_delegation_uses_admitted_allowlisted_bridge() -> No
 
 
 @pytest.mark.asyncio
+async def test_story_lookup_uses_allowlisted_bridge_and_returns_story() -> None:
+    runtime = DuplexRuntime.create(session_id="story-bridge-intent")
+    release = asyncio.Event()
+
+    class SlowResolver:
+        async def resolve(self, *, query: str) -> str:
+            assert "西游记" in query
+            await release.wait()
+            return "孙悟空保护师父西天取经。"
+
+    async def grounded_story(_ctx: Any, _tools: Any) -> AsyncIterator[str]:
+        yield "孙悟空保护师父西天取经。"
+
+    agent = ReplyPipeline(
+        language_model=ScriptedChatModel(grounded_story),
+        instructions="test",
+        runtime=runtime,
+        realtime_search_resolver=SlowResolver(),
+    )
+    await runtime.on_turn_committed("给我讲一个孙悟空的故事")
+    agent.response_plans.store(_plan_for_fence(
+        runtime.fence,
+        instructions="先查询西游记角色事实，再讲孙悟空的故事。",
+        speaker_class="uncertain",
+    ))
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="给我讲一个孙悟空的故事")
+
+    output = agent.stream_reply(chat_ctx)
+    assert await asyncio.wait_for(anext(output), timeout=1) == BRIDGE_PHRASES[1]
+    release.set()
+    assert [item async for item in output if isinstance(item, str)] == ["孙悟空保护师父西天取经。"]
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_committed_turn_calls_provider_fast_model_prewarm() -> None:
     runtime = DuplexRuntime.create(session_id="fast-model-prewarm")
     calls = 0
