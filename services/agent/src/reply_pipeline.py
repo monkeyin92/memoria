@@ -491,6 +491,7 @@ class ReplyPipeline(
         fence = await self._runtime.on_turn_committed(
             text,
             input_modality=input_modality,
+            defer_delegation=True,
         )
         if (
             input_modality == "audio"
@@ -664,6 +665,7 @@ class ReplyPipeline(
             self._note_fixed_safety_script(plan.fixed_safety_script.display)
         self.cache_response_plan(plan)
         self._mark_context_ready(fence)
+        self._runtime.activate_committed_interaction(text, fence, input_modality=input_modality)
         self._bind_speculation(text=text, speaker=speaker, fence=fence, plan=plan)
         logger.info(
             "response_plan_cached reason=%s mode=%s direct_text=%s fallback=%s "
@@ -686,11 +688,7 @@ class ReplyPipeline(
         return fence
 
     async def stream_reply(self, chat_ctx: Any) -> AsyncGenerator[ReplyItem, None]:
-        """Reply phrases for ``chat_ctx`` under the current fence's frozen response plan.
-
-        Every model token passes the GenerationFence gate; the reply stops at
-        the voice budget, and the stream is registered as the active LLM task.
-        """
+        """Stream frozen-plan phrases under the generation fence and voice budget."""
         cancellation = self._runtime.cancellation_context()
         fence = cancellation.fence
         speech_plan = self._runtime.speech_plan_for_fence(fence)
@@ -1096,7 +1094,7 @@ class ReplyPipeline(
                     query=delegated_search_query,
                     fence=fence,
                 )
-                if handle is not None:
+                if handle is not None and story_ip is None:
                     # The acknowledgement is a control-plane cue, not the
                     # query result. Emit it before waiting so a slow provider
                     # never leaves the user in silence.
