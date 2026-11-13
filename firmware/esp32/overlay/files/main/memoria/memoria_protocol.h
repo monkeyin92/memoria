@@ -206,6 +206,11 @@ private:
     bool transport_pong_pending_ = false;
     std::deque<TransportAction> transport_actions_;
     std::function<void()> on_transport_action_ready_;
+    void ObserveMediaReceiveTask(uint32_t attempt, bool dedicated_wifi_wss);
+    uint32_t receive_priority_attempt_ = 0;
+    unsigned receive_priority_before_ = 0;
+    unsigned receive_priority_actual_ = 0;
+    bool receive_priority_pending_ = false;
     TaskHandle_t transport_owner_task_ = nullptr;
     EventGroupHandle_t event_group_ = nullptr;
     std::function<void(uint32_t)> on_local_flush_requested_;

@@ -1312,6 +1312,15 @@ mypy services --strict
 
 真机 session `154ab015-e824-43f0-9a01-79aedec0cb9a`、stream epoch 3192。串口持续监控，确认麦克风开启、监听恢复后，以 Mac 扬声器播放“给我讲一个孙悟空的故事”。DeepSeek search HTTP 200，5 个结果。generation 2 过渡语和 generation 3 最终回答均有 `actual_heard=True` 及 `playback_ended=True` 回执。没有原白名单异常。随后播放“好的，再见”，22:16:49 的 ASR `source=final rule_match=True` 正常走 `conversation_end_explicit`，设备回到 wifi_hold。partial 修订场景仍以回归测试验证，没有伪称通过自然语音复现。
 
-本次未修复卡顿。generation 3 的服务端 pacing 为 1009 frames、20180 ms、max_gap 26 ms；设备 output 969 frames，解码队列 depth 120 时丢包 40 条，supply_waits 7、supply_max 1944 ms、supply_total 3150 ms。设备播放队列供音不足和解码队列溢出已证实，尚未区分最后一跳网络突发与设备调度原因。播放回执不能证明无卡顿。三种本地网络提示的真机逐项听感仍未验收。
+上述告别和提示音部署未包含卡顿修复。generation 3 的服务端 pacing 为 1009 frames、20180 ms、max_gap 26 ms；设备 output 969 frames，解码队列 depth 120 时丢包 40 条，supply_waits 7、supply_max 1944 ms、supply_total 3150 ms。设备播放队列供音不足和解码队列溢出已证实，尚未区分最后一跳网络突发与设备调度原因。播放回执不能证明无卡顿。三种本地网络提示的真机逐项听感仍未验收。
 
 详细收据见 `docs/acceptance/network-prompts-20261113/receipt.md`。本次仅保留本地提交和发布标签，未创建 GitHub Release 或推送。
+
+
+## 2026-11-13 播放卡顿候选（build34，待设备验证）
+
+队列满时在 `audio_queue_mutex_` 内逐包打印串口日志，会阻塞消费者；真实函数 Host 回归已复现，候选 `0047` 改为原子累计，现有主任务每 10 秒锁外记录 `dropped_total`。队列容量 120 及拒绝语义不变。
+
+目标板 WiFi WSS 的专属接收回调每 attempt 提升至至少 priority 4，保留更高基础优先级，并用 attempt fence 与 retirement 串行化。优先级在状态锁外采样，防止将临时优先级继承误判为永久提优；新增回归修前在释放锁后仍为 1，修后为 4。未改网络窗口、RX buffer、起播水位或超时。
+
+完整固件 Host 测试 852 项通过。完整 ESP-IDF 6.0.2 构建及构建后 overlay 检查通过，独立 Gemini 评审运行时无阻塞，发现的门禁 pytest 依赖已修复，默认 IDF Python 完整检查通过。build34 已本地签名，尚未上传、刷写或证明真机卡顿消失。接收调度与网络突发仍需真机区分。基线与候选验收记录见 `docs/acceptance/stutter-20261113/receipt.md`。部署必须先获得针对该次操作的授权；仅更新目标设备 app，保留已替换女声的 assets、身份及其他分区，并验证实际 build、接收 priority、帧数守恒、供音等待和播放听感。
