@@ -115,6 +115,8 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: Require host C++ compiler
         run: c++ --version
+      - name: Prepare locked upstream for capture regression tests
+        run: bash firmware/esp32/scripts/bootstrap.sh --no-idf-install
       - name: Firmware host regression tests
         run: >-
           uv run --frozen --extra dev pytest --import-mode=importlib --no-cov
