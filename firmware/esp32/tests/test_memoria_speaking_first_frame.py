@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import re
 import runpy
+import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -14,8 +15,25 @@ function, run_cpp = HELPERS['function'], HELPERS['run_cpp']
 
 def test_first_frame(tmp_path: Path) -> None:
     upstream = Path(os.environ.get('MEMORIA_ESP32_UPSTREAM_DIR', ROOT / '.cache/upstream'))
-    audio = (upstream / 'main/audio/audio_service.cc').read_text()
-    app = (upstream / 'main/application.cc').read_text()
+    locked = re.search(r'^UPSTREAM_REF=(.+)$', (ROOT / 'upstream.lock').read_text(), re.MULTILINE)
+    assert locked is not None
+    actual = subprocess.check_output(['git', '-C', str(upstream), 'rev-parse', 'HEAD'], text=True).strip()
+    assert actual == locked.group(1), 'host fixture must use the pinned upstream revision'
+    # Build the fixture from pinned Git objects and every current patch, rather
+    # than trusting an already-generated cache from a different candidate.
+    fixture = tmp_path / 'overlay'
+    paths = ('main/audio/audio_service.cc', 'main/audio/audio_service.h', 'main/application.cc')
+    for relative in paths:
+        target = fixture / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(subprocess.check_output(
+            ['git', '-C', str(upstream), 'show', f'HEAD:{relative}']))
+    for patch in sorted((ROOT / 'overlay/patches').glob('*.patch')):
+        subprocess.run(['git', 'apply', '--unsafe-paths',
+                        *(f'--include={relative}' for relative in paths), str(patch)],
+                       cwd=fixture, check=True, capture_output=True)
+    audio = (fixture / 'main/audio/audio_service.cc').read_text()
+    app = (fixture / 'main/application.cc').read_text()
     protocol = (ROOT / 'overlay/files/main/memoria/memoria_protocol.cc').read_text()
     started = function(protocol, 'bool MemoriaProtocol::HandleGenerationStarted(')
     assert 'on_local_flush_requested_(fence_.generation_id);' in started
@@ -34,7 +52,7 @@ def test_first_frame(tmp_path: Path) -> None:
         'void AudioService::ResetDecoderForServerGeneration(',
         'AudioService::ServerPacketAdmit AudioService::PushServerPacketToDecodeQueue(',
     ))
-    header = (upstream / 'main/audio/audio_service.h').read_text()
+    header = (fixture / 'main/audio/audio_service.h').read_text()
     declaration = re.search(r'void ResetDecoder\([^;]+;', header)[0]
     for board in (1, 0):
         source = r'''
