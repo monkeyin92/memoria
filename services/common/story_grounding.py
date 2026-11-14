@@ -492,14 +492,15 @@ def extract_story_ip(query: str) -> str | None:
         return None
 
     quoted = re.search(r"《([^》]{1,80})》", query)
-    # A title-language task is not a request to narrate the work. Require a
-    # consumption directive before the title and a story object after it.
+    # Exclude title metadata tasks without restricting valid source modifiers
+    # such as "原著的故事" to an incomplete narrative-suffix allowlist.
     prefix = query[:quoted.start()] if quoted else ""
     suffix = query[quoted.end():].strip() if quoted else ""
-    consume = re.search(r"(?:想听|要听|讲|读|朗读|复述)[^，。！？!?《》]{0,8}$", prefix)
     negated = re.search(r"(?:不要|不用|不想|别|不讲|不听|不读)[^，。！？!?]{0,8}$", prefix)
-    narrative = re.match(r"^(?:的|这个|这篇|这本)?(?:故事|童话|绘本)(?!名)", suffix)
-    if quoted and consume and not negated and narrative:
+    metadata = re.match(
+        r"^(?:的|这个|这篇|这本)?(?:故事名|书名|名字|名称|标题|故事的(?:名字|名称|标题))", suffix,
+    )
+    if quoted and is_story_request(query) and not negated and not metadata:
         title = quoted[1].strip()
         if any(_normalize(title) == _normalize(info.title) for info in LOCAL_STORIES.values()):
             return None

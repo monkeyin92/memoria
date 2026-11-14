@@ -137,11 +137,14 @@ def test_original_brief_can_reject_canon_or_name_its_own_title(query: str) -> No
 
 def test_quoted_source_is_not_a_self_named_original_title() -> None:
     assert extract_story_ip("我想听《葫芦兄弟》的故事，里面要有七个兄弟。") == "葫芦兄弟"
+    assert extract_story_ip("给我讲《葫芦兄弟》原著的故事，里面要有七个兄弟。") == "葫芦兄弟"
+    assert keyword_requires_live_media_lookup("给我讲《葫芦兄弟》原著的故事，里面要有七个兄弟。") is True
     assert extract_story_ip("我想听《月亮不着急》的故事，里面要有小兔子。") is None
     assert match_local_story("我想听《月亮不着急》的故事，里面要有小兔子。") == "story_02"
     assert extract_story_ip("把《蓝色的梦》这几个字翻译成英语。") is None
     assert keyword_requires_live_media_lookup("把《蓝色的梦》这几个字翻译成英语。") is False
     assert keyword_requires_live_media_lookup("把《蓝色的梦》这个故事名翻译成英语并读出来。") is False
+    assert keyword_requires_live_media_lookup("帮我读《蓝色的梦》这个故事的标题。") is False
     assert keyword_requires_live_media_lookup("不讲《蓝色的梦》这个故事，只翻译名字。") is False
 
 
