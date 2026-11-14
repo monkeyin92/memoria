@@ -131,15 +131,15 @@ build35已定向发布，设备MAC核对为90:e5:b1:d7:83:2c。串口捕获OTA�
 
 已记录8次测试输入和8份对应机器输出，另保留两次唤醒文本：`outputs/acceptance/r02-ready-20261114/recorded-conversations.json`。输入字段是已验证来源的预设刺激，不冒充ASR识别原文；机器文字取自限定测试subject的reply_text_debug，已PII脱敏，不冒充逐字声学转写。R02尚未开始，按用户要求先关闭剩余卡顿问题。
 
-### build36 本地候选（未获部署授权）
+### build36 候选与定向部署
 
 候选提交844d1adecde568acb2cc7902e6053eb0bd19b727：0049只对目标板server generation在首次PCM仍留在队列时，通过释放队列锁的CV等待最多320ms，或本代16个20ms有效队列项提前放行；局部epoch变化/Stop取消后重新取队列。本地gen0不设预缓冲，不修改原PCM8/Opus120容量和服务器1x发送节奏。代价为约0.3s首次起播延迟；不把前代DMA尾部当成缓冲已完成，不把codec边界替身当真机声学证据。
 
 真实输出/Reset/Drain函数Host回归，反向移除0049后64帧first0ms/maxgap284ms，按相同fixture修后first305ms/maxgap29ms、全帧顺序无损。覆盖停止、异代/同代flush、延迟Speaking preserve、1/15帧短流、虚假通知固定截止、local混合/in-flight排除、完成通知与250ms timeout；其他板型仍first0ms/maxgap284ms。独立只读GPT评审无新增阻塞或应改，额外临时控制验证前代pending exact跨同代/异代flush及同epoch不重复预缓冲，仍不构成真机证明。
 
-完整构建完成，ELF符号表确认预缓冲helper及其predicate实际链接，build36已本地签名并用内置公钥验签。app为3391152字节，SHA-256 `824014f262512767ae3fdb7305df75d4c513794b779d5894bd87ac58be7a7440`；未上传或刷写。完整固件Host集854项通过（83.45s），默认IDF Python构建后overlay检查通过，Ruff、shell语法及diff检查通过。构建、全量测试、overlay及签名日志分别为stutter36-build.log、stutter36-firmware-tests.log、stutter36-overlay.log、stutter36-sign.log；源码差异与运行镜像保持分开。
+完整构建完成，ELF符号表确认预缓冲helper及其predicate实际链接，build36已本地签名并用内置公钥验签。app为3391152字节，SHA-256 `824014f262512767ae3fdb7305df75d4c513794b779d5894bd87ac58be7a7440`；随后已按本次授权定向部署。完整固件Host集854项通过（83.45s），默认IDF Python构建后overlay检查通过，Ruff、shell语法及diff检查通过。构建、全量测试、overlay及签名日志分别为stutter36-build.log、stutter36-firmware-tests.log、stutter36-overlay.log、stutter36-sign.log；源码差异与运行镜像保持分开。
 
-### 已证实的回答内容问题（尚未实施优化）
+### 已证实的回答内容问题与本地修复依据
 
 1. 原创题材误识别成IP：生产候选的extract_story_ip把“海底探险的长故事”提取为“海底探险的长”，无历史探针也会强制联网；搜索回答的严格grounding使其拒讲。不是必须依赖佩奇历史粘连。应修正IP判定边界，普通主题/角色条件走原创路径，真实IP与事实继续有来源，不伪装成官方剧情。
 2. 明确要求八颗行星、每颗三句，实际只讲到地球。日志voice_reply_budget_reached chars194/sentences10；student_minor extended硬上限300个alnum字符/10句，开场1句＋三颗各3句刚好耗尽。恐龙也在十句预算后截于“可能成群迁徙；”。不把provider_stream_complete解释成模型已讲完；优化需协调覆盖约束、预算和未完成状态，不只提高常量。
@@ -147,6 +147,40 @@ build35已定向发布，设备MAC核对为90:e5:b1:d7:83:2c。串口捕获OTA�
 
 产品/儿童审查还记录：资料缺失时语气生硬，缺少可执行的下一步；恐龙回答术语密度高，未解释新词。知识事实尚未逐条外部核验，不判事实准确性已通过。固定安全脚本不在本轮随意改写范围内，当前已修复的安全计划优先级必须保留。
 
-### 临时状态恢复
+### 临时状态恢复（build35阶段）
 
-本轮物理复测完成后已删除env中的REPLY_TEXT_DEBUG_LOG单项，按运行Compose authority仅重建同一v2桥加载原始关闭状态；回读实际revision=d43fe7f1、image=ec877b61、healthy/restarts=0、reply_debug_enabled=False。未修改subject白名单。Mac恢复output13/input94/alert100/mutedfalse；logger停止、命令socket及USB串口释放。线上仍为v2＋build35，build36只在本地，继续真机验证需本次新固件的明确授权。
+本轮物理复测完成后已删除env中的REPLY_TEXT_DEBUG_LOG单项，按运行Compose authority仅重建同一v2桥加载原始关闭状态；回读实际revision=d43fe7f1、image=ec877b61、healthy/restarts=0、reply_debug_enabled=False。未修改subject白名单。Mac恢复output13/input94/alert100/mutedfalse；logger停止、命令socket及USB串口释放。以上为build35阶段的恢复收据；build36后续授权、运行和环境阻塞见下。
+
+
+## 2026-11-14 build36 实际部署与环境阻塞
+
+用户明确授权更新build36后，定向指针仅更新dev_atk_a4cb8fd6095c；global current.json哈希仍为5e6030edd618747d71584d8b585d70ce5ab37f02492fa7dda5a5b12ac2bb0dea。串口复核MAC=90:e5:b1:d7:83:2c，12:00:46 staged ota_0，12:00:59 MEMORIA_FIRMWARE_BUILD=36并confirmed；app SHA-256为824014f262512767ae3fdb7305df75d4c513794b779d5894bd87ac58be7a7440，build35保留在ota_1。未更新assets、身份或其他分区。原始记录v36-device-serial.log。
+
+长回答控制run-20261114-stutter36-long的session为5e11e386-a3bc-4b81-9375-1c886fedac29：g1=131/131，g2太阳系=2384/2384帧、47.68s、server maxgap35ms，g3恐龙=3308/3308帧、66.16s、server maxgap32ms，g4=125/125；四代software supply waits/max/total均为0，dropped_total=0。45秒尾窗verified_idle。没有复现上轮258ms等待，但动态回答不同，且本轮server最大间隔更低，不能据此量化预缓冲的单独收益或宣布所有弱网/声学卡顿已治愈。Mac麦克风取得非静音现场WAV（build36-room-audio.wav），不是设备直采PCM，尚未做人工听音结论。
+
+同候选precheck使用独立规划的2步（问名字、静默40秒后再见），未混入正式R02分母。第一步得到“我没有名字，就是个陪你聊天的AI助手”；静默期间12:05:54出现约8.7秒device VAD，随后脚本外回答“小熊猫建房子”。用户明确确认当时有人说话或音视频，因此这组预检为受干扰样本，不判ASR幻听。第二步再见播放12:06:16.746–18.705，无预期回复，区间有低能量VAD抑制且未见start；不得把早于该刺激的12:06:08 speaker_authority_unverified归给这次再见，也未据此修改VAD/声纹阈值。结果no_reply、尾窗timeout、driver exit3，原始记录保留，不改写成PASS。
+
+用户随后确认暂不能保持环境安静，已停止现场刺激。本组合仅尝试precheck，受干扰未通过；safety、完整soak及R02 A–D尚未执行，旧Card5 PASS不沿用。A组0.8秒严格reducer结果须保留；权威卡11-11的“延迟仅记录”决定和C组未获豁免的1/2秒判据需分别报告，不静默放宽脚本。准备bank与155步矩阵继续保留。
+
+本窗口新增输入/机器输出与背景输出的区分记录在outputs/acceptance/r02-ready-20261114/recorded-conversations-build36.json。输入仍为预设刺激，ASR原文未知；机器输出来自限定subject的emitted debug，不冒充完整声学转写。12:09恢复REPLY_TEXT_DEBUG_LOG原始键不存在，运行桥仍v2/d43fe7f1/ec877b61、healthy/restarts0、debug=false；Mac恢复13/94/100/mutedfalse。设备复位后build36实测activating->idle、screen off/mic closed，收据v36-restored-idle-serial.log；logger停止，USB端口与命令socket释放。
+
+
+### 回答内容本地候选（尚未上线）
+
+最终源码为d954dc8f（前序dae6ab35、ff98bc15、41b29047及e051d0a8），生产仍d43fe7f1，不把当前分支的其他既有未发布改进当作已上线。修复内容：通用唤醒池移除困倦句，夜间仍可选；明确原创、自编、指定虚构角色条件避免错误IP查询和本地泛别名；保留已知角色及明确来源的grounding。首次独立评审发现“不要自编”反转、剧情描述误判以及自拟标题/否定官方词误路由，逐条在父提交/候选对照复现，补5个失败回归后修复；这版没有在线部署。
+
+长度部分没有提高300字/10句等原上限。真实授权profile、正式plan、有效generation voice与当前user输入下，四组stream回归验证模型请求预算和原句数门限；旧_reply_chat_context方法替换回去时4项真实失败。全量测试还发现简化后的实时分支遗漏general cap的min：原有8字回归失败，已恢复；未改断言，任务基线原1379行上限保持，撤回的是本轮过早收紧至1378的记录。不能把固定常量72组合等价误当成所有可变阈值边界已验证。
+
+实际deepseek-flash、生产原max_tokens=240的隔离纯文本探针表明，泛化“最多10句、覆盖每项”的提示不足：太阳系仍输出18句并中途停止，原创新故事可达17句，硬截断会留下危险悬念。因此增加可识别的“项数×每项句数”范围规划：超限先明确缩减，不承诺24句再只讲三颗；紧预算叙事用最多6短句、一个小困难、末句解决并回安全处。非故事否定请求不强制叙事。未改TTS、首包、VAD、声纹或保护脚本。
+
+最终三例纯文本探针：太阳系103个alnum字/9句，先明确八颗各一句，水星至海王星全部覆盖；恐龙171字/8句，覆盖种类、食物、生活、灭绝；原创海底153字/6句，包含小海龟和发光鱼，有互助与安全收尾，明确“新编”。这些输出都在当前预算内，因此这三例不会因字/句硬限被切去尾句。原始输出content-provider-final.jsonl，实际请求与重跑脚本位于outputs/acceptance/r02-ready-20261114；供应商凭证仅在既有容器进程内使用，未导出，未改变生产角色或配置，未发TTS音频。早先没有传入user消息的探针为fixture无效结果（content-provider-invalid-empty-user.log），不纳入前后内容比较；已补请求内必须包含当前问题的回归。
+
+产品/儿童维度审查：本组三例改善了范围诚实、要点覆盖、口语例子与故事情绪收尾；恐龙已避免以蜥臀/鸟臀分类术语开头，并明确非鸟恐龙与现代鸟类。这是每例一次的文本供应商观察，不代表所有表达都正确规划，也不是儿童实测、声学播报或事实准确性认证；科学断言未逐条外部核验。现场问名字仍答“没有名字/AI助手”，此线上问题已记录；当前分支已有未发布身份改进，不在本批新增diff或v2生产镜像内，不宣称本次新修复已解决它。内容涉及common共享模块，后续发布须按实际组件范围准备，不能绕过Agent-only scope门禁。硬件环境恢复安静后，先校准真实输入与precheck，再做同候选safety/完整soak/R02；不把当前文本结果记为R02通过。
+
+前提复核：前两轮失败共同假设“里面要有某角色即可覆盖来源、判为原创”。复审对照输入“我想听葫芦兄弟的故事，里面要有七个兄弟，不要瞎编”与同样带“里面要有”的海底自定义长故事，观察结果应不同；当前却都关闭来源，已证伪该前提。修正方向是明确来源优先于弱角色条件，只有明确原创或无来源的创作要求才走原创；不继续靠扩大题材排除词补偿。
+
+末轮来源复核先重放评审原始输入：7项失败、30项通过（source-priority-before.log）。明确来源/本地完整标题现优先于裸自编等词；不再以追加否定同义词作为唯一修复。自拟名字支持“名字叫/叫”，书名提取排除明确标题metadata及否定消费；原著等有效修饰语不再受不完整叙事后缀白名单限制，标题翻译不会触发。修后故事、范围、实际预算请求和委托四组88项通过；此前项数绑定和否定叙事回归继续保留。三份最终模型请求在d954dc8f重新导出后与实际供应商样本请求逐对象完全相同，未再发送供应商请求；证明文件provider-request-final-equivalence.json。之前缺user消息的无效样本、泛提示及17句失败样本原样保留为ignored日志，不把它们当作有效前后对照或最终成功。
+
+最终独立复评核对d954dc8f及19项原始正反控，19/19通过，相关四文件63项通过，无阻塞/应改/可选发现。主Agent独立重放88项通过，末轮新增原著正控修前1失败/36通过，修后保留真实原著来源并拒绝故事名翻译/标题朗读；没有改写或削弱旧断言。599源文件严格mypy、Ruff、33项模块预算通过，pyproject预算与任务基线无差异。最终冻结源码d954dc8f的Agent/common完整回归4972 passed、1条既有endpoint grace异步清理warning，256.34s，exit0（content-final-frozen-full.log）；该warning原样保留，未在本轮处理。
+
+恢复真机执行时，先现场核对生产v2/d43fe7f1＋目标build36，再做短预检和卡顿复测；环境有效后继续同候选safety、完整45步child_tapwake soak和R02。入口使用本worktree的devicetest/voice_soak_tapwake.py并单一串口owner，每次刺激都取新鲜监听/开麦/亮屏证据。旧precheck_card5.sh仍硬编码主checkout、build28/旧镜像；safety/soak旧wrapper也切回主checkout，且soak按silence截断场景，不能直接当作当前候选完整验收。须显式冻结实际45步分母；普通尾窗与keep-awake结论分别保存，不将后者冒充真实Idle。未获得新的具体生产变更授权，不发布本地内容候选。
