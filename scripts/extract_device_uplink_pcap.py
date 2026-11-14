@@ -10,6 +10,17 @@ Hard bounds: 16 flows, 32 MiB input, 128 KiB per reassembly/parser buffer,
 125-second wall alarm. One target session, starting at audio sequence/sample 0.
 Unsupported link types, IP fragments, sequence wrap and reconnects fail closed.
 
+--include-downlink additionally saves fresh 16 kHz mono generations observed
+on Edge->Nginx loopback, not internet transmission, device receipt or audible
+proof. It requires accepted 16 kHz with no reconnect snapshot. Downlink PCM is
+limited to 4 MiB TOTAL, with at most 256 generations and 4096 allowlisted control
+records; audio metadata is bounded by the PCM limit. No text/reasons are saved.
+Each generation begins at seq/sample 0 with a new decoder. Completed means an
+observed completion barrier (no final sample count exists on this wire), cancelled
+means a captured prefix cut off by a successor fence, and prefix_only means no
+terminal boundary was observed. Capture tail remains unknown in every case.
+Decodable bit corruption cannot be detected without an end-to-end checksum.
+
 This tool trusts the audited Edge's 101 as signature-verification evidence; it
 is not a JWT verifier. Run only in the separately authorized synthetic window.
 """
@@ -215,6 +226,159 @@ class Opus:
             self.state = None
 
 
+MAX_DOWNLINK_PCM = 4 * 1024 * 1024
+MAX_GENERATIONS = 256
+MAX_CONTROLS = 4096
+FENCE_KEYS = ("session_epoch", "turn_id", "generation_id", "tool_epoch")
+
+
+def uint(value, bits=32, positive=False):
+    require(type(value) is int and int(positive) <= value < 2**bits)
+    return value
+
+
+def fence_of(value):
+    require(isinstance(value, dict))
+    return tuple(uint(value.get(k), positive=k != "tool_epoch") for k in FENCE_KEYS)
+
+
+class Downlink:
+    """c442 device_ws_downlink.go projection; no Core-to-device remapping.
+
+    Only fresh, negotiated 16 kHz generations are accepted. Reconnect snapshots,
+    ambiguous priority-lane ordering and discontinuities fail closed. A completion
+    barrier proves only the observed Edge prefix, not delivery or audible playout.
+    Decoder state is isolated per full fence; production encoder equivalence is
+    deliberately unverified (the Edge encoder can persist across generations).
+    """
+
+    def __init__(self, flow):
+        self.flow = flow
+        self.generations = []
+        self.controls = []
+        self.current = None
+        self.last_fence = None
+        self.cancel_fence = None
+        self.flush_fence = None
+        self.total_pcm = 0
+        self.decoder = None
+        self.closed = False
+
+    def end_decoder(self):
+        if self.decoder:
+            self.decoder.close()
+            self.decoder = None
+
+    def control(self, msg, stamp):
+        kind = msg.get("type")
+        kinds = (
+            "generation.started",
+            "generation.completed",
+            "generation.cancelled",
+            "generation.pause",
+            "generation.resume",
+            "playback.flush",
+            "session.close",
+            "session.error",
+        )
+        if kind not in kinds:
+            return
+        require(
+            not self.closed
+            and msg.get("version") == 2
+            and msg.get("session_id") == self.flow.session
+            and msg.get("stream_epoch") == self.flow.epoch
+        )
+        require(len(self.controls) < MAX_CONTROLS)
+        record = {
+            "type": kind,
+            "control_sequence": uint(msg.get("control_sequence")),
+            "server_monotonic_ms": uint(msg.get("server_monotonic_ms"), 64),
+            "full_message_available_ns": stamp,
+        }
+        if kind in ("session.close", "session.error"):
+            self.closed = True
+            self.end_decoder()
+            self.controls.append(record)
+            return
+        fence = fence_of(msg.get("fence"))
+        record["fence"] = dict(zip(FENCE_KEYS, fence, strict=True))
+        g = self.current
+        if kind == "generation.started":
+            require(self.last_fence is None or fence > self.last_fence or fence == self.flush_fence)
+            require(len(self.generations) < MAX_GENERATIONS)
+            self.end_decoder()
+            g = {
+                "fence": record["fence"],
+                "status": "prefix_only",
+                "frames": [],
+                "pcm": bytearray(),
+                "sample_end": 0,
+            }
+            self.generations.append(g)
+            self.current = g
+            self.last_fence = fence
+            self.cancel_fence = None
+            self.flush_fence = None
+        elif kind in ("generation.cancelled", "playback.flush"):
+            # CANCEL announces the successor; FLUSH carries an explicit replacement.
+            # Neither is a start or permission to decode replacement audio.
+            if fence != self.cancel_fence:
+                require(g is not None and g["status"] == "prefix_only")
+                old = fence_of(g["fence"])
+                if kind == "generation.cancelled":
+                    require(fence == (old[0], old[1], old[2] + 1, old[3]))
+                else:
+                    require(fence > old)
+                g["status"] = "cancelled_prefix"
+                self.cancel_fence = fence
+                self.last_fence = fence
+                self.end_decoder()
+            if kind == "playback.flush":
+                replacement = uint(msg.get("replacement_generation_id"), positive=True)
+                require(replacement == fence[2])
+                record["replacement_generation_id"] = replacement
+                self.flush_fence = fence
+        else:
+            require(
+                g is not None and fence == fence_of(g["fence"]) and g["status"] == "prefix_only"
+            )
+            if kind == "generation.completed":
+                g["status"] = "completion_observed"
+                self.end_decoder()
+        self.controls.append(record)
+
+    def audio(self, payload, stamp):
+        require(not self.closed and len(payload) >= 31)
+        version, direct, flags, epoch, seq, sample, count, generation, size = struct.unpack(
+            "!BBHIIQIIH", payload[:30]
+        )
+        require((version, direct, flags, epoch, count) == (1, 2, 0, self.flow.epoch, 320))
+        require(0 < size <= 2048 and len(payload) == 30 + size)
+        g = self.current
+        require(
+            g is not None
+            and g["status"] == "prefix_only"
+            and generation == g["fence"]["generation_id"]
+        )
+        require(seq == len(g["frames"]) and sample == g["sample_end"])
+        require(self.total_pcm + 640 <= MAX_DOWNLINK_PCM)
+        if self.decoder is None:
+            self.decoder = Opus(self.flow.owner.libopus)
+        g["pcm"].extend(self.decoder.decode(payload[30:]))
+        self.total_pcm += 640
+        g["sample_end"] += count
+        g["frames"].append(
+            {
+                "sequence": seq,
+                "generation_id": generation,
+                "sample_start": sample,
+                "frame_samples": count,
+                "full_message_available_ns": stamp,
+            }
+        )
+
+
 class Flow:
     def __init__(self, owner):
         self.owner = owner
@@ -239,10 +403,13 @@ class Flow:
         self.fins = [None, None]
         self.pcm = bytearray()
         self.frames = []
+        self.available = [0, 0]
+        self.downlink = Downlink(self) if owner.include_downlink else None
 
     def consume(self, direction, data, stamp):
         if self.ignored:
             return
+        self.available[direction] = max(self.available[direction], stamp)
         if self.upgraded:
             self.ws[direction].feed(data, stamp)
             return
@@ -377,9 +544,21 @@ class Flow:
                     and msg.get("interaction_authority") == "python_authoritative"
                 )
                 self.accepted = True
-                self.session = None
+                if self.downlink:
+                    require(
+                        msg.get("downlink_sample_rate") == 16000
+                        and msg.get("current_fence") is None
+                        and msg.get("current_generation_active") is False
+                    )
+                else:
+                    self.session = None
+            elif direction == 1 and self.downlink:
+                self.downlink.control(msg, max(stamps[1], self.available[1]))
             return
         if direction == 1:
+            if self.downlink:
+                require(self.accepted)
+                self.downlink.audio(payload, max(stamps[1], self.available[1]))
             return
         require(self.accepted and len(payload) >= 31)
         version, direct, flags, epoch, seq, sample, count, generation, size = struct.unpack(
@@ -406,8 +585,9 @@ class Flow:
 
 
 class Capture:
-    def __init__(self, libopus):
+    def __init__(self, libopus, include_downlink=False):
         self.libopus = libopus
+        self.include_downlink = include_downlink
         self.flows = {}
         self.selected = None
 
@@ -500,6 +680,8 @@ class Capture:
         for flow in self.flows.values():
             if flow.decoder:
                 flow.decoder.close()
+            if flow.downlink:
+                flow.downlink.end_decoder()
 
 
 def save(flow, directory):
@@ -523,18 +705,43 @@ def save(flow, directory):
         "aec_effectiveness": "unknown",
         "frames": flow.frames,
     }
+    files = [("uplink.wav", flow.pcm)]
+    if flow.downlink:
+        dl = flow.downlink
+        generations = []
+        for index, g in enumerate(dl.generations):
+            name = f"downlink-{index:03d}.wav"
+            files.append((name, g["pcm"]))
+            generations.append(
+                {k: v for k, v in g.items() if k != "pcm"}
+                | {"wav": name, "pcm_sha256": hashlib.sha256(g["pcm"]).hexdigest()}
+            )
+        metadata["downlink"] = {
+            "observation_point": "edge_to_nginx_loopback",
+            "internet_send_device_receive_audible": "unverified",
+            "capture_tail": "unknown",
+            "sample_rate": 16000,
+            "integrity": "server_emitted_contiguous_prefixes",
+            "completion_scope": "observed_edge_barrier_only_no_final_sample_count",
+            "decoder_equivalence_to_production": "unverified",
+            "generations": generations,
+            "controls": dl.controls,
+        }
+    files.append(("metadata.json", metadata))
+    created = []
     try:
-        for name, data in [("uplink.wav", None), ("metadata.json", metadata)]:
+        for name, data in files:
             fd = os.open(directory / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            created.append(name)
             with os.fdopen(fd, "wb") as out:
-                if data is None:
+                if name.endswith(".wav"):
                     with wave.open(out, "wb") as wav:
                         wav.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
-                        wav.writeframes(flow.pcm)
+                        wav.writeframes(data)
                 else:
                     out.write(json.dumps(data, separators=(",", ":")).encode())
     except BaseException:
-        for name in ("uplink.wav", "metadata.json"):
+        for name in created:
             (directory / name).unlink(missing_ok=True)
         directory.rmdir()
         raise
@@ -544,8 +751,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--libopus", default="/opt/homebrew/lib/libopus.dylib")
+    parser.add_argument(
+        "--include-downlink",
+        action="store_true",
+        help="save bounded 16k Edge-to-Nginx reference prefixes; not audible proof",
+    )
     args = parser.parse_args()
-    capture = Capture(args.libopus)
+    capture = Capture(args.libopus, args.include_downlink)
 
     def timeout(*_):
         raise Invalid("capture timeout")
