@@ -1126,6 +1126,7 @@ uv run python scripts/evaluate_sensevoice_rescue.py --url http://127.0.0.1:18001
 - 水位有推进时，再检查 `provider_pcm_observed_samples`、`provider_pcm_rms`、`provider_pcm_peak_abs` 和 `provider_pcm_clipping_detected`。短噪声与削波不能靠延长尾超时修复。
 - 收麦期间的 VAD end 不创建新的回合或尾超时，也不能删除收麦前已经接收的真实输入。收麦后设备 VAD start 一律忽略（不恢复收音，也不产生回合）；只有点屏后的 `listening.resume` 恢复收音（phase cause 为 `screen_tap`），只送恢复点之后的音频，恢复后的 VAD 仍须能正常定端点。产品固件熄屏后进 wifi hold 关麦，所以 VAD 恢复只发生在熄屏前和 keep-awake 测试机上。
 - 收音窗口只在 `listening` 时到期，孩子说话时（`user_speaking`）不会收麦；说话期间由 max-user-speech watchdog 兜底。phase 显示 `listening` 但回合仍开着（有 pending turn、本 epoch 的 VAD 未结束、已准入输入或 turn commit 正在跑）时同样不收麦，判据与静音丢帧门共用 `_input_turn_open`。soak 20261031-160928 的 08:21:11 就是 VAD start 并进旧 pending turn、phase 停在 `listening`，窗口在 commit 途中到期。收麦状态下回复播完，playback ack 会先发 `listening`，standby 切回 `connecting` 时必须再发一次 `listening_closed`，否则设备以为麦开着而服务端丢掉每一帧（同一 soak 08:21:25 之后 11 次 `media vad ignored during listening capture hold`）。设备 VAD 在播放结束之后才打开时，`playback-followup` 不钉端点，由这次 VAD 的 end 定端点。soak 20261029-200043 的 t042 同时踩到这两条：逗号处的 final 被钉成端点，窗口又在说话中到期，句子被截断提交，收麦状态还延续到下一轮。
+- `media final committed without device VAD end` 只认同一 `stream_epoch` 在 `turn_end_sample` 之后的连续近零静音帧（复用 `MediaAudioIngress._is_silent_pcm`），不把单纯 `last_sent_sample` 推进当端点证据。`active_vad` 未结束时须满 1.2 s（19200 样本，跨过固件 900 ms VAD hangover 再加 300 ms 缺边沿等待）才允许兜底提交，句内短停顿不会抢在设备 `vad.end` 前截断；弱起音未触发 `vad.start` 时按 0.3 s（4800 样本）连续近零静音有界恢复。静音水位在 `cancel`、重连、播放边界、收麦/恢复及流不连续处重置；兜底提交后晚到的同轮 `vad.end` 打 `media vad_end ignored after final-wait commit`，不再触发 `finalize_speech_segment`。若环境底噪持续高于近零阈值且设备 VAD 卡住未闭合，服务端不凭低能量猜端点，仍由 `max_user_speech_duration_s` 兜底收束。
 - 收音窗口（`MEDIA_LISTENING_CAPTURE_WINDOW_S`，默认 30 s）从回复播完（或本轮被接受）时起算。之后 `listening` 期间收到的第一帧上行音频若已过期，就收麦并发 `assistant_state=listening_closed`。被当作空轮回收的噪声 VAD 不重新起算窗口，所以回复播完后没人说话时，`listening_closed` 在约 30 s 后发出；窗口到期时正好有噪声段在进行，就等这段噪声被回收时立即发出。每次发送都打一行 `media listening closed session=… silence_since_reply_s=…`；本轮已被接受、还没有新回复播完时，该值为 `None`。
 - 尾超时之前，同一 `task_epoch` 出现过 `reason=straddles_committed_without_timing is_final=True` 且 `text_len>0` 时，`empty+vendor_silent` 是误标。厂商把已提交的上一句和新的一句合成了一条没有词时间戳的 final。该句最后被接收的文本若是新 final 的前缀，supervisor 只收后面的新话；对不上时仍整条丢弃。
 
@@ -1134,7 +1135,7 @@ uv run python scripts/evaluate_sensevoice_rescue.py --url http://127.0.0.1:18001
 本地回归入口使用假 provider，不调用外网或播放音频：
 
 ```bash
-uv run --frozen --extra dev pytest --no-cov services/agent/tests/unit/test_listening_capture_window.py
+uv run --frozen --extra dev pytest --no-cov services/agent/tests/unit/test_listening_capture_window.py services/agent/tests/unit/test_media_commit_latency.py services/agent/tests/unit/test_media_endpoint_continuous_speech.py
 ```
 
 ### 待授权的线上调整（建议，未执行）

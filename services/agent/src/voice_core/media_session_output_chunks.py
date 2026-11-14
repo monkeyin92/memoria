@@ -216,6 +216,8 @@ class MediaOutputChunksMixin:
         segmented before the speaker actually stopped.
         """
 
+        context.ingress.clear_silent_run()
+        context.ingress.retired_vad_start_sample = None
         evidence = max(
             context.projection.latest_capture_sample,
             context.last_asr_evidence_end_sample,

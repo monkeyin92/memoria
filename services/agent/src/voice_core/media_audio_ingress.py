@@ -40,6 +40,9 @@ _PUMP_STALL_THRESHOLD_S = 2.0
 _PUMP_STALL_LOG_INTERVAL_S = 5.0
 # 16-bit peak at or below this is digital silence / dither, not uplink speech.
 _LISTENING_SILENCE_PEAK = 4
+_FIRMWARE_VAD_HANGOVER_SAMPLES = 14_400
+_FINAL_VAD_END_WAIT_SAMPLES = 4_800
+_OPEN_VAD_MISSING_END_SILENCE_SAMPLES = _FIRMWARE_VAD_HANGOVER_SAMPLES + _FINAL_VAD_END_WAIT_SAMPLES
 
 
 def _create_media_denoiser() -> TwoStageDenoiser:
@@ -82,10 +85,66 @@ class MediaAudioIngressState:
     listening_capture_dropped_samples: int = 0
     last_overflow_log: float = 0.0
     last_pump_stall_log: float = 0.0
+    silent_run_stream_epoch: int | None = None
+    silent_run_start_sample: int | None = None
+    silent_run_end_sample: int | None = None
+    retired_vad_start_sample: int | None = None
 
     @classmethod
     def create(cls, max_frames: int) -> MediaAudioIngressState:
         return cls(queue=asyncio.Queue(maxsize=max_frames))
+
+    def clear_silent_run(self) -> None:
+        self.silent_run_stream_epoch = None
+        self.silent_run_start_sample = None
+        self.silent_run_end_sample = None
+
+    def observe_frame_silence(
+        self,
+        *,
+        stream_epoch: int,
+        start_sample: int,
+        frame_samples: int,
+        silent: bool,
+        discontinuity: bool = False,
+    ) -> None:
+        if not silent or frame_samples <= 0:
+            self.clear_silent_run()
+            return
+        end_sample = start_sample + frame_samples
+        if (
+            not discontinuity
+            and self.silent_run_stream_epoch == stream_epoch
+            and self.silent_run_start_sample is not None
+            and self.silent_run_end_sample == start_sample
+        ):
+            self.silent_run_end_sample = end_sample
+            return
+        self.silent_run_stream_epoch = stream_epoch
+        self.silent_run_start_sample = start_sample
+        self.silent_run_end_sample = end_sample
+
+    def post_final_silence_ready(
+        self,
+        *,
+        stream_epoch: int,
+        turn_end_sample: int,
+        last_sent_sample: int,
+        open_vad: bool,
+    ) -> tuple[bool, float]:
+        required_samples = (
+            _OPEN_VAD_MISSING_END_SILENCE_SAMPLES if open_vad else _FINAL_VAD_END_WAIT_SAMPLES
+        )
+        waited_s = required_samples / 16_000
+        if (
+            self.silent_run_stream_epoch != stream_epoch
+            or self.silent_run_start_sample is None
+            or self.silent_run_end_sample is None
+            or self.silent_run_end_sample < last_sent_sample
+        ):
+            return False, waited_s
+        silence_start = max(turn_end_sample, self.silent_run_start_sample)
+        return self.silent_run_end_sample - silence_start >= required_samples, waited_s
 
 
 class MediaAudioIngressHost(Protocol):
@@ -148,6 +207,8 @@ class MediaAudioIngress:
         state.denoiser.reset()
         state.loss_concealed_ranges.clear()
         state.discontinuity_pending = False
+        state.clear_silent_run()
+        state.retired_vad_start_sample = None
         self._host.metrics.set_media_metric("media_pcm_queue_depth", 0.0)
 
     async def accept(self, context: _MediaVoiceSession, frame: AudioFrame) -> None:
@@ -266,6 +327,20 @@ class MediaAudioIngress:
             state.listening_capture_dropped_samples += frame.frame_samples
             return
         if self._is_listening_silence(context, frame):
+            last_sent = int(getattr(context.asr, "last_sent_sample", 0) or 0)
+            watermark = (
+                max(last_sent, state.silent_run_end_sample or 0)
+                if state.silent_run_stream_epoch == callback_stream_epoch
+                else last_sent
+            )
+            if frame.frame_samples > 0 and frame.capture_start_sample >= watermark:
+                state.observe_frame_silence(
+                    stream_epoch=callback_stream_epoch,
+                    start_sample=frame.capture_start_sample,
+                    frame_samples=frame.frame_samples,
+                    silent=True,
+                    discontinuity=frame.discontinuity or state.discontinuity_pending,
+                )
             state.listening_silence_dropped_frames += 1
             state.listening_silence_dropped_samples += frame.frame_samples
             return
@@ -307,6 +382,13 @@ class MediaAudioIngress:
             self._host.metrics.inc_media_metric("media_discontinuity_total")
             state.discontinuity_pending = True
             frame = replace(frame, discontinuity=True)
+        state.observe_frame_silence(
+            stream_epoch=callback_stream_epoch,
+            start_sample=frame.capture_start_sample,
+            frame_samples=frame.frame_samples,
+            silent=self._is_silent_pcm(frame.payload),
+            discontinuity=frame.discontinuity or state.discontinuity_pending,
+        )
         state.queue.put_nowait((frame, time.monotonic()))
         self._host.metrics.set_media_metric("media_pcm_queue_depth", float(state.queue.qsize()))
         task = state.pump_task
@@ -321,6 +403,8 @@ class MediaAudioIngress:
 
     def discard_queued(self, context: _MediaVoiceSession) -> None:
         state = context.ingress
+        state.clear_silent_run()
+        state.retired_vad_start_sample = None
         while True:
             try:
                 dropped, _enqueued_at = state.queue.get_nowait()
@@ -335,6 +419,8 @@ class MediaAudioIngress:
         context.ingress.denoiser.reset()
         context.ingress.provider_failed = False
         context.ingress.last_finalized_audio_watermark = -1
+        context.ingress.clear_silent_run()
+        context.ingress.retired_vad_start_sample = None
         # A reconnect advances the stream epoch; start a fresh tap file so the
         # capture file name matches the epoch it actually contains.
         tap = context.ingress.pcm_tap
