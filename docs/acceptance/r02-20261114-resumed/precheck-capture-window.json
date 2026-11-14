@@ -1,0 +1,16 @@
+[
+  {
+    "tag": "precheck-window-close",
+    "say": "你好呀，你叫什么名字？",
+    "gap": 80,
+    "reply_timeout": 60,
+    "end_timeout": 90
+  },
+  {
+    "tag": "precheck-resume-goodbye",
+    "say": "再见。",
+    "reply_timeout": 40,
+    "end_timeout": 60,
+    "gap": 2
+  }
+]

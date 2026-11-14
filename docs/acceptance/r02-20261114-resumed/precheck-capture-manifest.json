@@ -1,0 +1,16 @@
+{
+  "scenario_path": "docs/acceptance/r02-20261114-resumed/precheck-capture-window.json",
+  "scenario_hash": "1e2be063c6a9e9f63e96322936510bcf4208934d39b93e6ebb8029e6b063018d",
+  "expected_step_tags": [
+    "t001-precheck-window-close",
+    "t002-precheck-resume-goodbye"
+  ],
+  "required_logs": [
+    "bridge.log",
+    "serial.log"
+  ],
+  "min_valid_interrupt_samples": 0,
+  "require_started": true,
+  "require_completed": true,
+  "additional_gate": "real listening_closed=true between first reply and second stimulus; actual usb resume_listening before second stimulus; 40s predecessor remains unverified for closed resume"
+}

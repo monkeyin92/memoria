@@ -1,0 +1,23 @@
+[
+  {
+    "tag": "diag-near-bieshuole",
+    "original": "outputs/voice-bank/story-stop-stop.wav",
+    "copy": "outputs/voice-bank/diag-near-bieshuole.wav",
+    "sha256": "546e25676116d31ee19fc51e934f511d82b8aaca666d4d92b2ad7934d217c922",
+    "expected_text": "别说了。"
+  },
+  {
+    "tag": "diag-near-ting",
+    "original": "outputs/voice-bank/long-stop-stop.wav",
+    "copy": "outputs/voice-bank/diag-near-ting.wav",
+    "sha256": "67954e972750b5d9e34b07714f68d807e4e04f9ef18320efe11cb0bc20686698",
+    "expected_text": "停。"
+  },
+  {
+    "tag": "diag-near-bye",
+    "original": "outputs/voice-bank/precheck-resume-goodbye.wav",
+    "copy": "outputs/voice-bank/diag-near-bye.wav",
+    "sha256": "450a2d90aba51c506624311cea962edac3ffed8678d42d4825f03e451163faeb",
+    "expected_text": "再见。"
+  }
+]

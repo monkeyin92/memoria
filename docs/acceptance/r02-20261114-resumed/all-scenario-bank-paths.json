@@ -1,0 +1,38 @@
+[
+  {
+    "manifest": "docs/acceptance/r02-20261114-resumed/precheck-capture-manifest.json",
+    "steps": 2
+  },
+  {
+    "manifest": "docs/acceptance/r02-20261114-resumed/precheck-manifest.json",
+    "steps": 2
+  },
+  {
+    "manifest": "docs/acceptance/r02-20261114-resumed/r02-a-manifest.json",
+    "steps": 80
+  },
+  {
+    "manifest": "docs/acceptance/r02-20261114-resumed/r02-b-manifest.json",
+    "steps": 60
+  },
+  {
+    "manifest": "docs/acceptance/r02-20261114-resumed/r02-c-manifest.json",
+    "steps": 10
+  },
+  {
+    "manifest": "docs/acceptance/r02-20261114-resumed/r02-d-manifest.json",
+    "steps": 5
+  },
+  {
+    "manifest": "docs/acceptance/r02-20261114-resumed/safety-manifest.json",
+    "steps": 20
+  },
+  {
+    "manifest": "docs/acceptance/r02-20261114-resumed/soak-manifest.json",
+    "steps": 45
+  },
+  {
+    "manifest": "docs/acceptance/r02-20261114-resumed/stutter-manifest.json",
+    "steps": 3
+  }
+]

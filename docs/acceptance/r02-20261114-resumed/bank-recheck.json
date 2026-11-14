@@ -1,0 +1,1558 @@
+[
+  {
+    "path": "outputs/voice-bank/stutter-ip-sea.wav",
+    "sha256": "dbfea9633eb57e1a0cd1aaa0050c5dec402252efcf1ef66724a764ca3ef861ab"
+  },
+  {
+    "path": "outputs/voice-bank/stutter-sea.wav",
+    "sha256": "be14ac46069b23df0e88ad2fb433fb7348c46da2cf6cd64d33c6584d1cf0a83f"
+  },
+  {
+    "path": "outputs/voice-bank/stutter-ip-forest.wav",
+    "sha256": "d9aea79422ad4411ce7fb20a78864c89a5e71824ffa49212121f9cd751931b82"
+  },
+  {
+    "path": "outputs/voice-bank/stutter-weather.wav",
+    "sha256": "ca31edc3adae1edd17e676abed8809d4ba4a343e27d22cffa16644bc58269caa"
+  },
+  {
+    "path": "outputs/voice-bank/stutter-goodbye.wav",
+    "sha256": "450a2d90aba51c506624311cea962edac3ffed8678d42d4825f03e451163faeb"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-01.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-01-stop.wav",
+    "sha256": "7a6f7b645dec2b1fd6b88d228306c13abd31bd83c5db79b53e980018c3db1d01"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-02.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-02-stop.wav",
+    "sha256": "7a6f7b645dec2b1fd6b88d228306c13abd31bd83c5db79b53e980018c3db1d01"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-03.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-03-stop.wav",
+    "sha256": "7a6f7b645dec2b1fd6b88d228306c13abd31bd83c5db79b53e980018c3db1d01"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-04.wav",
+    "sha256": "6f533640e807b6aedcc48818387740c1480ff209a1e986d1ae85af9dab53ce81"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-04-stop.wav",
+    "sha256": "67954e972750b5d9e34b07714f68d807e4e04f9ef18320efe11cb0bc20686698"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-05.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-05-stop.wav",
+    "sha256": "7a6f7b645dec2b1fd6b88d228306c13abd31bd83c5db79b53e980018c3db1d01"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-06.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-06-stop.wav",
+    "sha256": "7a6f7b645dec2b1fd6b88d228306c13abd31bd83c5db79b53e980018c3db1d01"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-07.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-07-stop.wav",
+    "sha256": "7a6f7b645dec2b1fd6b88d228306c13abd31bd83c5db79b53e980018c3db1d01"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-08.wav",
+    "sha256": "e30b36c187dcb3e78307e40e141d466f8c99488bdea9ccd8a2b87fc7de053f5a"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-08-stop.wav",
+    "sha256": "67954e972750b5d9e34b07714f68d807e4e04f9ef18320efe11cb0bc20686698"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-09.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-09-stop.wav",
+    "sha256": "7a6f7b645dec2b1fd6b88d228306c13abd31bd83c5db79b53e980018c3db1d01"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-10.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/stop01-ting-10-stop.wav",
+    "sha256": "7a6f7b645dec2b1fd6b88d228306c13abd31bd83c5db79b53e980018c3db1d01"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-01.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-01-stop.wav",
+    "sha256": "4dc7f903b98062b38dd701843d42b06fb26516f3054232e414b299b1312c4c21"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-02.wav",
+    "sha256": "e30b36c187dcb3e78307e40e141d466f8c99488bdea9ccd8a2b87fc7de053f5a"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-02-stop.wav",
+    "sha256": "4a486fce7a727e6f94ae3a0668fff4256d72e13a72675a486a1e9296b582c15e"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-03.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-03-stop.wav",
+    "sha256": "4dc7f903b98062b38dd701843d42b06fb26516f3054232e414b299b1312c4c21"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-04.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-04-stop.wav",
+    "sha256": "4dc7f903b98062b38dd701843d42b06fb26516f3054232e414b299b1312c4c21"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-05.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-05-stop.wav",
+    "sha256": "4dc7f903b98062b38dd701843d42b06fb26516f3054232e414b299b1312c4c21"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-06.wav",
+    "sha256": "60d3625cd0afbe55b4a250914f2d44372c4880e710816e174bbae52aeabd5ff7"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-06-stop.wav",
+    "sha256": "4a486fce7a727e6f94ae3a0668fff4256d72e13a72675a486a1e9296b582c15e"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-07.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-07-stop.wav",
+    "sha256": "4dc7f903b98062b38dd701843d42b06fb26516f3054232e414b299b1312c4c21"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-08.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-08-stop.wav",
+    "sha256": "4dc7f903b98062b38dd701843d42b06fb26516f3054232e414b299b1312c4c21"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-09.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-09-stop.wav",
+    "sha256": "4dc7f903b98062b38dd701843d42b06fb26516f3054232e414b299b1312c4c21"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-10.wav",
+    "sha256": "7450f1a5d1846d8b3385576547ca3c56a4d58301a68850586e445619c60e5aa6"
+  },
+  {
+    "path": "outputs/voice-bank/stop02-ting-yixia-10-stop.wav",
+    "sha256": "4a486fce7a727e6f94ae3a0668fff4256d72e13a72675a486a1e9296b582c15e"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-01.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-01-stop.wav",
+    "sha256": "7e2d5cb6fed3ee7556b29ac35d0ac56c2dde5956e99708e881fb74dfd7ecc3b7"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-02.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-02-stop.wav",
+    "sha256": "7e2d5cb6fed3ee7556b29ac35d0ac56c2dde5956e99708e881fb74dfd7ecc3b7"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-03.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-03-stop.wav",
+    "sha256": "7e2d5cb6fed3ee7556b29ac35d0ac56c2dde5956e99708e881fb74dfd7ecc3b7"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-04.wav",
+    "sha256": "7450f1a5d1846d8b3385576547ca3c56a4d58301a68850586e445619c60e5aa6"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-04-stop.wav",
+    "sha256": "546e25676116d31ee19fc51e934f511d82b8aaca666d4d92b2ad7934d217c922"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-05.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-05-stop.wav",
+    "sha256": "7e2d5cb6fed3ee7556b29ac35d0ac56c2dde5956e99708e881fb74dfd7ecc3b7"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-06.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-06-stop.wav",
+    "sha256": "7e2d5cb6fed3ee7556b29ac35d0ac56c2dde5956e99708e881fb74dfd7ecc3b7"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-07.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-07-stop.wav",
+    "sha256": "7e2d5cb6fed3ee7556b29ac35d0ac56c2dde5956e99708e881fb74dfd7ecc3b7"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-08.wav",
+    "sha256": "aa62300ab67c63425f0ee9417ef7d5fe3818eb498b806904c4ff0d4eba053846"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-08-stop.wav",
+    "sha256": "546e25676116d31ee19fc51e934f511d82b8aaca666d4d92b2ad7934d217c922"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-09.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-09-stop.wav",
+    "sha256": "7e2d5cb6fed3ee7556b29ac35d0ac56c2dde5956e99708e881fb74dfd7ecc3b7"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-10.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/stop03-bie-shuo-le-10-stop.wav",
+    "sha256": "7e2d5cb6fed3ee7556b29ac35d0ac56c2dde5956e99708e881fb74dfd7ecc3b7"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-01.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-01-stop.wav",
+    "sha256": "ee1d31212592f9e54adbae8c9b67bc853deb1cee71722614d91703e558f44175"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-02.wav",
+    "sha256": "aa62300ab67c63425f0ee9417ef7d5fe3818eb498b806904c4ff0d4eba053846"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-02-stop.wav",
+    "sha256": "770b19f54f4baf56d2e30c827ebec631a94c56539df557017fb60cb9dfb7d569"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-03.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-03-stop.wav",
+    "sha256": "ee1d31212592f9e54adbae8c9b67bc853deb1cee71722614d91703e558f44175"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-04.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-04-stop.wav",
+    "sha256": "ee1d31212592f9e54adbae8c9b67bc853deb1cee71722614d91703e558f44175"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-05.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-05-stop.wav",
+    "sha256": "ee1d31212592f9e54adbae8c9b67bc853deb1cee71722614d91703e558f44175"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-06.wav",
+    "sha256": "6f533640e807b6aedcc48818387740c1480ff209a1e986d1ae85af9dab53ce81"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-06-stop.wav",
+    "sha256": "770b19f54f4baf56d2e30c827ebec631a94c56539df557017fb60cb9dfb7d569"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-07.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-07-stop.wav",
+    "sha256": "ee1d31212592f9e54adbae8c9b67bc853deb1cee71722614d91703e558f44175"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-08.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-08-stop.wav",
+    "sha256": "ee1d31212592f9e54adbae8c9b67bc853deb1cee71722614d91703e558f44175"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-09.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-09-stop.wav",
+    "sha256": "ee1d31212592f9e54adbae8c9b67bc853deb1cee71722614d91703e558f44175"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-10.wav",
+    "sha256": "e30b36c187dcb3e78307e40e141d466f8c99488bdea9ccd8a2b87fc7de053f5a"
+  },
+  {
+    "path": "outputs/voice-bank/stop04-bu-yao-shuo-le-10-stop.wav",
+    "sha256": "770b19f54f4baf56d2e30c827ebec631a94c56539df557017fb60cb9dfb7d569"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-01.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-01-stop.wav",
+    "sha256": "e3560439396aa1346622cdd57ea39a52d2dfe4f39d67257c40111f69a6d24d75"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-02.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-02-stop.wav",
+    "sha256": "e3560439396aa1346622cdd57ea39a52d2dfe4f39d67257c40111f69a6d24d75"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-03.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-03-stop.wav",
+    "sha256": "e3560439396aa1346622cdd57ea39a52d2dfe4f39d67257c40111f69a6d24d75"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-04.wav",
+    "sha256": "e30b36c187dcb3e78307e40e141d466f8c99488bdea9ccd8a2b87fc7de053f5a"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-04-stop.wav",
+    "sha256": "6a98e618a7d3f902959d4191f68e258f505fffd9f374f6bbe6bc084502cf2bc5"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-05.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-05-stop.wav",
+    "sha256": "e3560439396aa1346622cdd57ea39a52d2dfe4f39d67257c40111f69a6d24d75"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-06.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-06-stop.wav",
+    "sha256": "e3560439396aa1346622cdd57ea39a52d2dfe4f39d67257c40111f69a6d24d75"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-07.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-07-stop.wav",
+    "sha256": "e3560439396aa1346622cdd57ea39a52d2dfe4f39d67257c40111f69a6d24d75"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-08.wav",
+    "sha256": "60d3625cd0afbe55b4a250914f2d44372c4880e710816e174bbae52aeabd5ff7"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-08-stop.wav",
+    "sha256": "6a98e618a7d3f902959d4191f68e258f505fffd9f374f6bbe6bc084502cf2bc5"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-09.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-09-stop.wav",
+    "sha256": "e3560439396aa1346622cdd57ea39a52d2dfe4f39d67257c40111f69a6d24d75"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-10.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/stop05-hao-le-hao-le-10-stop.wav",
+    "sha256": "e3560439396aa1346622cdd57ea39a52d2dfe4f39d67257c40111f69a6d24d75"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-01.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-01-stop.wav",
+    "sha256": "ec0baa1f48f5f0876292229a9076e30424dca7524fd2482489e0f8992c3d600f"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-02.wav",
+    "sha256": "60d3625cd0afbe55b4a250914f2d44372c4880e710816e174bbae52aeabd5ff7"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-02-stop.wav",
+    "sha256": "7fccf8a5ed50c8c97dd967a1d10db08ba0c0b046f81ce3b239cd34eac6e9a28f"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-03.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-03-stop.wav",
+    "sha256": "ec0baa1f48f5f0876292229a9076e30424dca7524fd2482489e0f8992c3d600f"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-04.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-04-stop.wav",
+    "sha256": "ec0baa1f48f5f0876292229a9076e30424dca7524fd2482489e0f8992c3d600f"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-05.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-05-stop.wav",
+    "sha256": "ec0baa1f48f5f0876292229a9076e30424dca7524fd2482489e0f8992c3d600f"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-06.wav",
+    "sha256": "7450f1a5d1846d8b3385576547ca3c56a4d58301a68850586e445619c60e5aa6"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-06-stop.wav",
+    "sha256": "7fccf8a5ed50c8c97dd967a1d10db08ba0c0b046f81ce3b239cd34eac6e9a28f"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-07.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-07-stop.wav",
+    "sha256": "ec0baa1f48f5f0876292229a9076e30424dca7524fd2482489e0f8992c3d600f"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-08.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-08-stop.wav",
+    "sha256": "ec0baa1f48f5f0876292229a9076e30424dca7524fd2482489e0f8992c3d600f"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-09.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-09-stop.wav",
+    "sha256": "ec0baa1f48f5f0876292229a9076e30424dca7524fd2482489e0f8992c3d600f"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-10.wav",
+    "sha256": "aa62300ab67c63425f0ee9417ef7d5fe3818eb498b806904c4ff0d4eba053846"
+  },
+  {
+    "path": "outputs/voice-bank/stop06-gou-le-10-stop.wav",
+    "sha256": "7fccf8a5ed50c8c97dd967a1d10db08ba0c0b046f81ce3b239cd34eac6e9a28f"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-01.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-01-stop.wav",
+    "sha256": "ea03449d424e274ddd8111dfba0d0047844fca8575c5b81198ed358b999a9ff5"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-02.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-02-stop.wav",
+    "sha256": "ea03449d424e274ddd8111dfba0d0047844fca8575c5b81198ed358b999a9ff5"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-03.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-03-stop.wav",
+    "sha256": "ea03449d424e274ddd8111dfba0d0047844fca8575c5b81198ed358b999a9ff5"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-04.wav",
+    "sha256": "aa62300ab67c63425f0ee9417ef7d5fe3818eb498b806904c4ff0d4eba053846"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-04-stop.wav",
+    "sha256": "974499c41eee7265798227a608c29de372e59ed0b8f3017966e43631e028baa2"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-05.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-05-stop.wav",
+    "sha256": "ea03449d424e274ddd8111dfba0d0047844fca8575c5b81198ed358b999a9ff5"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-06.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-06-stop.wav",
+    "sha256": "ea03449d424e274ddd8111dfba0d0047844fca8575c5b81198ed358b999a9ff5"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-07.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-07-stop.wav",
+    "sha256": "ea03449d424e274ddd8111dfba0d0047844fca8575c5b81198ed358b999a9ff5"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-08.wav",
+    "sha256": "6f533640e807b6aedcc48818387740c1480ff209a1e986d1ae85af9dab53ce81"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-08-stop.wav",
+    "sha256": "974499c41eee7265798227a608c29de372e59ed0b8f3017966e43631e028baa2"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-09.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-09-stop.wav",
+    "sha256": "ea03449d424e274ddd8111dfba0d0047844fca8575c5b81198ed358b999a9ff5"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-10.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/stop07-anjing-10-stop.wav",
+    "sha256": "ea03449d424e274ddd8111dfba0d0047844fca8575c5b81198ed358b999a9ff5"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-01.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-01-stop.wav",
+    "sha256": "51e1fe7995c5e03737cfdce04415183b955006ec275c4060ca0c3a569b3d5ad8"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-02.wav",
+    "sha256": "6f533640e807b6aedcc48818387740c1480ff209a1e986d1ae85af9dab53ce81"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-02-stop.wav",
+    "sha256": "a968764c73802832f185feba85ed33c2b2a8fd27a35782baa34613ecc5f62ffd"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-03.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-03-stop.wav",
+    "sha256": "51e1fe7995c5e03737cfdce04415183b955006ec275c4060ca0c3a569b3d5ad8"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-04.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-04-stop.wav",
+    "sha256": "51e1fe7995c5e03737cfdce04415183b955006ec275c4060ca0c3a569b3d5ad8"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-05.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-05-stop.wav",
+    "sha256": "51e1fe7995c5e03737cfdce04415183b955006ec275c4060ca0c3a569b3d5ad8"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-06.wav",
+    "sha256": "e30b36c187dcb3e78307e40e141d466f8c99488bdea9ccd8a2b87fc7de053f5a"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-06-stop.wav",
+    "sha256": "a968764c73802832f185feba85ed33c2b2a8fd27a35782baa34613ecc5f62ffd"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-07.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-07-stop.wav",
+    "sha256": "51e1fe7995c5e03737cfdce04415183b955006ec275c4060ca0c3a569b3d5ad8"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-08.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-08-stop.wav",
+    "sha256": "51e1fe7995c5e03737cfdce04415183b955006ec275c4060ca0c3a569b3d5ad8"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-09.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-09-stop.wav",
+    "sha256": "51e1fe7995c5e03737cfdce04415183b955006ec275c4060ca0c3a569b3d5ad8"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-10.wav",
+    "sha256": "60d3625cd0afbe55b4a250914f2d44372c4880e710816e174bbae52aeabd5ff7"
+  },
+  {
+    "path": "outputs/voice-bank/stop08-deng-yixia-10-stop.wav",
+    "sha256": "a968764c73802832f185feba85ed33c2b2a8fd27a35782baa34613ecc5f62ffd"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-01.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-01-stop.wav",
+    "sha256": "c245bac0ccc558928564d91fc5718fa66f33ae530d195575fc50cd9652818968"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-02.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-02-stop.wav",
+    "sha256": "c245bac0ccc558928564d91fc5718fa66f33ae530d195575fc50cd9652818968"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-03.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-03-stop.wav",
+    "sha256": "c245bac0ccc558928564d91fc5718fa66f33ae530d195575fc50cd9652818968"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-04.wav",
+    "sha256": "6f533640e807b6aedcc48818387740c1480ff209a1e986d1ae85af9dab53ce81"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-04-stop.wav",
+    "sha256": "b5197f8be8b5ec41b009e40f8e25bc7aa257de16b15c0885767cb0197abdc123"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-05.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-05-stop.wav",
+    "sha256": "c245bac0ccc558928564d91fc5718fa66f33ae530d195575fc50cd9652818968"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-06.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-06-stop.wav",
+    "sha256": "c245bac0ccc558928564d91fc5718fa66f33ae530d195575fc50cd9652818968"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-07.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-07-stop.wav",
+    "sha256": "c245bac0ccc558928564d91fc5718fa66f33ae530d195575fc50cd9652818968"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-08.wav",
+    "sha256": "e30b36c187dcb3e78307e40e141d466f8c99488bdea9ccd8a2b87fc7de053f5a"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-08-stop.wav",
+    "sha256": "b5197f8be8b5ec41b009e40f8e25bc7aa257de16b15c0885767cb0197abdc123"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-09.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-09-stop.wav",
+    "sha256": "c245bac0ccc558928564d91fc5718fa66f33ae530d195575fc50cd9652818968"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-10.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/back01-en-10-stop.wav",
+    "sha256": "c245bac0ccc558928564d91fc5718fa66f33ae530d195575fc50cd9652818968"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-01.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-01-stop.wav",
+    "sha256": "7d5ca48090982b2f49e6381ff9ef572e9f6d7ba9c5997bc5125ea0dff4c35c46"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-02.wav",
+    "sha256": "e30b36c187dcb3e78307e40e141d466f8c99488bdea9ccd8a2b87fc7de053f5a"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-02-stop.wav",
+    "sha256": "efdc055f75a881266d38c4af6cc52f568d8ba57c8c849ef3a705499af694e4ce"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-03.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-03-stop.wav",
+    "sha256": "7d5ca48090982b2f49e6381ff9ef572e9f6d7ba9c5997bc5125ea0dff4c35c46"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-04.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-04-stop.wav",
+    "sha256": "7d5ca48090982b2f49e6381ff9ef572e9f6d7ba9c5997bc5125ea0dff4c35c46"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-05.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-05-stop.wav",
+    "sha256": "7d5ca48090982b2f49e6381ff9ef572e9f6d7ba9c5997bc5125ea0dff4c35c46"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-06.wav",
+    "sha256": "60d3625cd0afbe55b4a250914f2d44372c4880e710816e174bbae52aeabd5ff7"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-06-stop.wav",
+    "sha256": "efdc055f75a881266d38c4af6cc52f568d8ba57c8c849ef3a705499af694e4ce"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-07.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-07-stop.wav",
+    "sha256": "7d5ca48090982b2f49e6381ff9ef572e9f6d7ba9c5997bc5125ea0dff4c35c46"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-08.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-08-stop.wav",
+    "sha256": "7d5ca48090982b2f49e6381ff9ef572e9f6d7ba9c5997bc5125ea0dff4c35c46"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-09.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-09-stop.wav",
+    "sha256": "7d5ca48090982b2f49e6381ff9ef572e9f6d7ba9c5997bc5125ea0dff4c35c46"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-10.wav",
+    "sha256": "7450f1a5d1846d8b3385576547ca3c56a4d58301a68850586e445619c60e5aa6"
+  },
+  {
+    "path": "outputs/voice-bank/back02-dui-10-stop.wav",
+    "sha256": "efdc055f75a881266d38c4af6cc52f568d8ba57c8c849ef3a705499af694e4ce"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-01.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-01-stop.wav",
+    "sha256": "208d25ded4e9598f26488f4fd47ed85e55ba7892a96ea8b239d27bcf4ecc4011"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-02.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-02-stop.wav",
+    "sha256": "208d25ded4e9598f26488f4fd47ed85e55ba7892a96ea8b239d27bcf4ecc4011"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-03.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-03-stop.wav",
+    "sha256": "208d25ded4e9598f26488f4fd47ed85e55ba7892a96ea8b239d27bcf4ecc4011"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-04.wav",
+    "sha256": "7450f1a5d1846d8b3385576547ca3c56a4d58301a68850586e445619c60e5aa6"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-04-stop.wav",
+    "sha256": "6c3e37fbbaaf14edfc722793bee9068f8806b40e8c6c3a088e5aac0e0ac3b2e2"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-05.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-05-stop.wav",
+    "sha256": "208d25ded4e9598f26488f4fd47ed85e55ba7892a96ea8b239d27bcf4ecc4011"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-06.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-06-stop.wav",
+    "sha256": "208d25ded4e9598f26488f4fd47ed85e55ba7892a96ea8b239d27bcf4ecc4011"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-07.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-07-stop.wav",
+    "sha256": "208d25ded4e9598f26488f4fd47ed85e55ba7892a96ea8b239d27bcf4ecc4011"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-08.wav",
+    "sha256": "aa62300ab67c63425f0ee9417ef7d5fe3818eb498b806904c4ff0d4eba053846"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-08-stop.wav",
+    "sha256": "6c3e37fbbaaf14edfc722793bee9068f8806b40e8c6c3a088e5aac0e0ac3b2e2"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-09.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-09-stop.wav",
+    "sha256": "208d25ded4e9598f26488f4fd47ed85e55ba7892a96ea8b239d27bcf4ecc4011"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-10.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/back03-hao-10-stop.wav",
+    "sha256": "208d25ded4e9598f26488f4fd47ed85e55ba7892a96ea8b239d27bcf4ecc4011"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-01.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-01-stop.wav",
+    "sha256": "12c90fadf0ce96d32e1f853437bef8b2c1128027af9477edeb0b44f585e30bd4"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-02.wav",
+    "sha256": "aa62300ab67c63425f0ee9417ef7d5fe3818eb498b806904c4ff0d4eba053846"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-02-stop.wav",
+    "sha256": "d430041038dd241115b1fd4f3ad95bf61d92c2a2f2f3ce47d2c5941c708f28f8"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-03.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-03-stop.wav",
+    "sha256": "12c90fadf0ce96d32e1f853437bef8b2c1128027af9477edeb0b44f585e30bd4"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-04.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-04-stop.wav",
+    "sha256": "12c90fadf0ce96d32e1f853437bef8b2c1128027af9477edeb0b44f585e30bd4"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-05.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-05-stop.wav",
+    "sha256": "12c90fadf0ce96d32e1f853437bef8b2c1128027af9477edeb0b44f585e30bd4"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-06.wav",
+    "sha256": "6f533640e807b6aedcc48818387740c1480ff209a1e986d1ae85af9dab53ce81"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-06-stop.wav",
+    "sha256": "d430041038dd241115b1fd4f3ad95bf61d92c2a2f2f3ce47d2c5941c708f28f8"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-07.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-07-stop.wav",
+    "sha256": "12c90fadf0ce96d32e1f853437bef8b2c1128027af9477edeb0b44f585e30bd4"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-08.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-08-stop.wav",
+    "sha256": "12c90fadf0ce96d32e1f853437bef8b2c1128027af9477edeb0b44f585e30bd4"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-09.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-09-stop.wav",
+    "sha256": "12c90fadf0ce96d32e1f853437bef8b2c1128027af9477edeb0b44f585e30bd4"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-10.wav",
+    "sha256": "e30b36c187dcb3e78307e40e141d466f8c99488bdea9ccd8a2b87fc7de053f5a"
+  },
+  {
+    "path": "outputs/voice-bank/back04-haha-10-stop.wav",
+    "sha256": "d430041038dd241115b1fd4f3ad95bf61d92c2a2f2f3ce47d2c5941c708f28f8"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-01.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-01-stop.wav",
+    "sha256": "48c03664839fda524a63a3e65da88923e93b75a356350fd379a31e94e00820f1"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-02.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-02-stop.wav",
+    "sha256": "48c03664839fda524a63a3e65da88923e93b75a356350fd379a31e94e00820f1"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-03.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-03-stop.wav",
+    "sha256": "48c03664839fda524a63a3e65da88923e93b75a356350fd379a31e94e00820f1"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-04.wav",
+    "sha256": "e30b36c187dcb3e78307e40e141d466f8c99488bdea9ccd8a2b87fc7de053f5a"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-04-stop.wav",
+    "sha256": "654e3834e29629ca2331e10fc4bbd5a61193a73ced661bc4cf3f7be98eb9af9d"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-05.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-05-stop.wav",
+    "sha256": "48c03664839fda524a63a3e65da88923e93b75a356350fd379a31e94e00820f1"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-06.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-06-stop.wav",
+    "sha256": "48c03664839fda524a63a3e65da88923e93b75a356350fd379a31e94e00820f1"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-07.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-07-stop.wav",
+    "sha256": "48c03664839fda524a63a3e65da88923e93b75a356350fd379a31e94e00820f1"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-08.wav",
+    "sha256": "60d3625cd0afbe55b4a250914f2d44372c4880e710816e174bbae52aeabd5ff7"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-08-stop.wav",
+    "sha256": "654e3834e29629ca2331e10fc4bbd5a61193a73ced661bc4cf3f7be98eb9af9d"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-09.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-09-stop.wav",
+    "sha256": "48c03664839fda524a63a3e65da88923e93b75a356350fd379a31e94e00820f1"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-10.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/back05-shi-ma-10-stop.wav",
+    "sha256": "48c03664839fda524a63a3e65da88923e93b75a356350fd379a31e94e00820f1"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-01.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-01-stop.wav",
+    "sha256": "02af5be138dbd4b06be044baa1d43626e32c90935967abe432cde54663f954b4"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-02.wav",
+    "sha256": "60d3625cd0afbe55b4a250914f2d44372c4880e710816e174bbae52aeabd5ff7"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-02-stop.wav",
+    "sha256": "dfa8ae1c526dcd61d727f0047c2505c43d4549e52d82ec66b2deec53508073a3"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-03.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-03-stop.wav",
+    "sha256": "02af5be138dbd4b06be044baa1d43626e32c90935967abe432cde54663f954b4"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-04.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-04-stop.wav",
+    "sha256": "02af5be138dbd4b06be044baa1d43626e32c90935967abe432cde54663f954b4"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-05.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-05-stop.wav",
+    "sha256": "02af5be138dbd4b06be044baa1d43626e32c90935967abe432cde54663f954b4"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-06.wav",
+    "sha256": "7450f1a5d1846d8b3385576547ca3c56a4d58301a68850586e445619c60e5aa6"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-06-stop.wav",
+    "sha256": "dfa8ae1c526dcd61d727f0047c2505c43d4549e52d82ec66b2deec53508073a3"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-07.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-07-stop.wav",
+    "sha256": "02af5be138dbd4b06be044baa1d43626e32c90935967abe432cde54663f954b4"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-08.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-08-stop.wav",
+    "sha256": "02af5be138dbd4b06be044baa1d43626e32c90935967abe432cde54663f954b4"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-09.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-09-stop.wav",
+    "sha256": "02af5be138dbd4b06be044baa1d43626e32c90935967abe432cde54663f954b4"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-10.wav",
+    "sha256": "aa62300ab67c63425f0ee9417ef7d5fe3818eb498b806904c4ff0d4eba053846"
+  },
+  {
+    "path": "outputs/voice-bank/back06-ranhou-ne-10-stop.wav",
+    "sha256": "dfa8ae1c526dcd61d727f0047c2505c43d4549e52d82ec66b2deec53508073a3"
+  },
+  {
+    "path": "outputs/voice-bank/content-01.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/content-01-stop.wav",
+    "sha256": "10d607e6bd2369d04b63138a7e7983f1093b4f0a98a4c917b91efa682a374d6d"
+  },
+  {
+    "path": "outputs/voice-bank/content-02.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/content-02-stop.wav",
+    "sha256": "10d607e6bd2369d04b63138a7e7983f1093b4f0a98a4c917b91efa682a374d6d"
+  },
+  {
+    "path": "outputs/voice-bank/content-03.wav",
+    "sha256": "5d7a025024742b9723b72a9bca15142e53a5ed62a43a6b6e72fb3aecdd99a86a"
+  },
+  {
+    "path": "outputs/voice-bank/content-03-stop.wav",
+    "sha256": "10d607e6bd2369d04b63138a7e7983f1093b4f0a98a4c917b91efa682a374d6d"
+  },
+  {
+    "path": "outputs/voice-bank/content-04.wav",
+    "sha256": "e30b36c187dcb3e78307e40e141d466f8c99488bdea9ccd8a2b87fc7de053f5a"
+  },
+  {
+    "path": "outputs/voice-bank/content-04-stop.wav",
+    "sha256": "dbc4171e2cd3ce8f57fb930f34e5b29c0e16cbc8a507ccaa7d81d9945b2910ce"
+  },
+  {
+    "path": "outputs/voice-bank/content-05.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/content-05-stop.wav",
+    "sha256": "10d607e6bd2369d04b63138a7e7983f1093b4f0a98a4c917b91efa682a374d6d"
+  },
+  {
+    "path": "outputs/voice-bank/content-06.wav",
+    "sha256": "c3144a354309f502e1a5d195a4fe5046d06239ed2a0129fc3b9f476dcd04ea9a"
+  },
+  {
+    "path": "outputs/voice-bank/content-06-stop.wav",
+    "sha256": "10d607e6bd2369d04b63138a7e7983f1093b4f0a98a4c917b91efa682a374d6d"
+  },
+  {
+    "path": "outputs/voice-bank/content-07.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/content-07-stop.wav",
+    "sha256": "10d607e6bd2369d04b63138a7e7983f1093b4f0a98a4c917b91efa682a374d6d"
+  },
+  {
+    "path": "outputs/voice-bank/content-08.wav",
+    "sha256": "60d3625cd0afbe55b4a250914f2d44372c4880e710816e174bbae52aeabd5ff7"
+  },
+  {
+    "path": "outputs/voice-bank/content-08-stop.wav",
+    "sha256": "dbc4171e2cd3ce8f57fb930f34e5b29c0e16cbc8a507ccaa7d81d9945b2910ce"
+  },
+  {
+    "path": "outputs/voice-bank/content-09.wav",
+    "sha256": "e71692d92518216a927093139169a4ef9f485de3fc0abd0771ed70209b9e27ab"
+  },
+  {
+    "path": "outputs/voice-bank/content-09-stop.wav",
+    "sha256": "10d607e6bd2369d04b63138a7e7983f1093b4f0a98a4c917b91efa682a374d6d"
+  },
+  {
+    "path": "outputs/voice-bank/content-10.wav",
+    "sha256": "dc13620aa9fd01256c801dc726ecf2ed32eb16e6b358ac662f2a56e5ff0921b4"
+  },
+  {
+    "path": "outputs/voice-bank/content-10-stop.wav",
+    "sha256": "10d607e6bd2369d04b63138a7e7983f1093b4f0a98a4c917b91efa682a374d6d"
+  },
+  {
+    "path": "outputs/voice-bank/crisis-01.wav",
+    "sha256": "e95ed4391589a5e96b3f005cad84003f50a4cdac57074bfc8aa40725208d8f55"
+  },
+  {
+    "path": "outputs/voice-bank/crisis-01-stop.wav",
+    "sha256": "7a6f7b645dec2b1fd6b88d228306c13abd31bd83c5db79b53e980018c3db1d01"
+  },
+  {
+    "path": "outputs/voice-bank/crisis-02.wav",
+    "sha256": "9023016d5253119fcb88fb588c7404a80686742c9aa20107ee3bfd4ce7dfca4a"
+  },
+  {
+    "path": "outputs/voice-bank/crisis-02-stop.wav",
+    "sha256": "7a6f7b645dec2b1fd6b88d228306c13abd31bd83c5db79b53e980018c3db1d01"
+  },
+  {
+    "path": "outputs/voice-bank/crisis-03.wav",
+    "sha256": "e95ed4391589a5e96b3f005cad84003f50a4cdac57074bfc8aa40725208d8f55"
+  },
+  {
+    "path": "outputs/voice-bank/crisis-03-stop.wav",
+    "sha256": "7a6f7b645dec2b1fd6b88d228306c13abd31bd83c5db79b53e980018c3db1d01"
+  },
+  {
+    "path": "outputs/voice-bank/crisis-04.wav",
+    "sha256": "fe529d748e890f1c1776548f9cd3bd382991faebb3064e8b2c8b150cb6a02423"
+  },
+  {
+    "path": "outputs/voice-bank/crisis-04-stop.wav",
+    "sha256": "67954e972750b5d9e34b07714f68d807e4e04f9ef18320efe11cb0bc20686698"
+  },
+  {
+    "path": "outputs/voice-bank/crisis-05.wav",
+    "sha256": "e95ed4391589a5e96b3f005cad84003f50a4cdac57074bfc8aa40725208d8f55"
+  },
+  {
+    "path": "outputs/voice-bank/crisis-05-stop.wav",
+    "sha256": "7a6f7b645dec2b1fd6b88d228306c13abd31bd83c5db79b53e980018c3db1d01"
+  },
+  {
+    "path": "outputs/voice-bank/c1-self-1.wav",
+    "sha256": "9023016d5253119fcb88fb588c7404a80686742c9aa20107ee3bfd4ce7dfca4a"
+  },
+  {
+    "path": "outputs/voice-bank/c1-escalation-1.wav",
+    "sha256": "e95ed4391589a5e96b3f005cad84003f50a4cdac57074bfc8aa40725208d8f55"
+  },
+  {
+    "path": "outputs/voice-bank/c1-self-2.wav",
+    "sha256": "9023016d5253119fcb88fb588c7404a80686742c9aa20107ee3bfd4ce7dfca4a"
+  },
+  {
+    "path": "outputs/voice-bank/c1-escalation-2.wav",
+    "sha256": "ce2b305b71597021f7791d3974fd7912bd17508625144fa911a43cd2f255c748"
+  },
+  {
+    "path": "outputs/voice-bank/c1-self-3.wav",
+    "sha256": "9023016d5253119fcb88fb588c7404a80686742c9aa20107ee3bfd4ce7dfca4a"
+  },
+  {
+    "path": "outputs/voice-bank/c1-escalation-3.wav",
+    "sha256": "e95ed4391589a5e96b3f005cad84003f50a4cdac57074bfc8aa40725208d8f55"
+  },
+  {
+    "path": "outputs/voice-bank/c1-self-4.wav",
+    "sha256": "9023016d5253119fcb88fb588c7404a80686742c9aa20107ee3bfd4ce7dfca4a"
+  },
+  {
+    "path": "outputs/voice-bank/c1-escalation-4.wav",
+    "sha256": "ce2b305b71597021f7791d3974fd7912bd17508625144fa911a43cd2f255c748"
+  },
+  {
+    "path": "outputs/voice-bank/c1-self-5.wav",
+    "sha256": "9023016d5253119fcb88fb588c7404a80686742c9aa20107ee3bfd4ce7dfca4a"
+  },
+  {
+    "path": "outputs/voice-bank/c1-escalation-5.wav",
+    "sha256": "e95ed4391589a5e96b3f005cad84003f50a4cdac57074bfc8aa40725208d8f55"
+  },
+  {
+    "path": "outputs/voice-bank/c2-victim-1.wav",
+    "sha256": "ab537af74152661b6d9e173ba028972e843c8d1160beb854a26113871216a9f2"
+  },
+  {
+    "path": "outputs/voice-bank/c2-victim-2.wav",
+    "sha256": "e43c3e7635a0e945631c812c20cc4e95d6b00f483efa5da3d903ac2cfe7fb3bf"
+  },
+  {
+    "path": "outputs/voice-bank/c2-victim-3.wav",
+    "sha256": "ab537af74152661b6d9e173ba028972e843c8d1160beb854a26113871216a9f2"
+  },
+  {
+    "path": "outputs/voice-bank/c2-victim-4.wav",
+    "sha256": "ab537af74152661b6d9e173ba028972e843c8d1160beb854a26113871216a9f2"
+  },
+  {
+    "path": "outputs/voice-bank/c2-victim-5.wav",
+    "sha256": "ab537af74152661b6d9e173ba028972e843c8d1160beb854a26113871216a9f2"
+  },
+  {
+    "path": "outputs/voice-bank/c3-other-1.wav",
+    "sha256": "d7a75e1f2242b39c3b2da22392415c597b1aee3ec5eca9eba547914df89fcd04"
+  },
+  {
+    "path": "outputs/voice-bank/c3-other-2.wav",
+    "sha256": "896c2a4a7590174626f584bad73fa33036f2be34b9e107565471bba5719a8a1a"
+  },
+  {
+    "path": "outputs/voice-bank/c3-other-3.wav",
+    "sha256": "896c2a4a7590174626f584bad73fa33036f2be34b9e107565471bba5719a8a1a"
+  },
+  {
+    "path": "outputs/voice-bank/c3-other-4.wav",
+    "sha256": "896c2a4a7590174626f584bad73fa33036f2be34b9e107565471bba5719a8a1a"
+  },
+  {
+    "path": "outputs/voice-bank/c3-other-5.wav",
+    "sha256": "d7a75e1f2242b39c3b2da22392415c597b1aee3ec5eca9eba547914df89fcd04"
+  },
+  {
+    "path": "outputs/voice-bank/hello.wav",
+    "sha256": "4927d20db5d2dc6e1a2943e54e2621e6d571962b89fafbb4dbe0c389db3069ef"
+  },
+  {
+    "path": "outputs/voice-bank/day.wav",
+    "sha256": "a9f0e11f3bba848b8cd01e7134b28e1ec6ba13c8768a3dccef60176851805199"
+  },
+  {
+    "path": "outputs/voice-bank/why-sky.wav",
+    "sha256": "89dd8ed571db54a45faf4814c5a0d643b509b81052187e4e2d6cbee8221bb2b2"
+  },
+  {
+    "path": "outputs/voice-bank/why-rain.wav",
+    "sha256": "73b9924d8d57d79bdea79b6bed9334c04fa17c8c23cb138e7e1da7bbb6df4454"
+  },
+  {
+    "path": "outputs/voice-bank/moon-follow.wav",
+    "sha256": "7da0e4855d0104444da36e1e3ae1adcc83f150111cf39722fcbd390463ac5c5a"
+  },
+  {
+    "path": "outputs/voice-bank/follow-1.wav",
+    "sha256": "1a1784490fc62cb96c5b2d113d242bdacedd19b85ff534599d5320631930c106"
+  },
+  {
+    "path": "outputs/voice-bank/dino.wav",
+    "sha256": "158c19a1eb43e6572beaf0426a5a6d88abc6144bcddd11b1f5384e3519450e28"
+  },
+  {
+    "path": "outputs/voice-bank/math.wav",
+    "sha256": "0c66d6dd87bce7a5f4066978eebed28c0ecd7b6253bd91afb44d34338d076b7c"
+  },
+  {
+    "path": "outputs/voice-bank/english.wav",
+    "sha256": "cbf93f35ab8beec5537988ce18fb41173d075cc761c21e0f6fa3e9a74947a41a"
+  },
+  {
+    "path": "outputs/voice-bank/weather.wav",
+    "sha256": "da91d65ff4fd4094965500a1fc49cfa46e94c363baf2822013ec00cb31349468"
+  },
+  {
+    "path": "outputs/voice-bank/weather-follow.wav",
+    "sha256": "05b799876b7b80859372e699aa77a001d6cf132c082bbf483165256b592ad01b"
+  },
+  {
+    "path": "outputs/voice-bank/story-stop.wav",
+    "sha256": "6f533640e807b6aedcc48818387740c1480ff209a1e986d1ae85af9dab53ce81"
+  },
+  {
+    "path": "outputs/voice-bank/story-stop-stop.wav",
+    "sha256": "546e25676116d31ee19fc51e934f511d82b8aaca666d4d92b2ad7934d217c922"
+  },
+  {
+    "path": "outputs/voice-bank/after-stop.wav",
+    "sha256": "2c6379ae999653ff81650a0c13db586f8bda2f11978923a84ffb3d23b8cc3730"
+  },
+  {
+    "path": "outputs/voice-bank/story-short.wav",
+    "sha256": "ff8e7e12f4804a67f1b301e22c65c6708d8835c076811410dcb014237051af46"
+  },
+  {
+    "path": "outputs/voice-bank/haha.wav",
+    "sha256": "ca1e0379316be4ae1fe24734a326797850c40869fc85fa27adde24271c04d889"
+  },
+  {
+    "path": "outputs/voice-bank/long-stop.wav",
+    "sha256": "aa62300ab67c63425f0ee9417ef7d5fe3818eb498b806904c4ff0d4eba053846"
+  },
+  {
+    "path": "outputs/voice-bank/long-stop-stop.wav",
+    "sha256": "67954e972750b5d9e34b07714f68d807e4e04f9ef18320efe11cb0bc20686698"
+  },
+  {
+    "path": "outputs/voice-bank/new-question-mid.wav",
+    "sha256": "516a25545dc6973abfb2c12bb6f421347537946f6ed913cf24533ddfc8b3965b"
+  },
+  {
+    "path": "outputs/voice-bank/new-question-mid-stop.wav",
+    "sha256": "9cd6b9e6474231929bd0fad9958f885c3755b846b07f46129b6ee3f898da1f67"
+  },
+  {
+    "path": "outputs/voice-bank/backchannel.wav",
+    "sha256": "18cc19dcbbac58b2ee683a717d89acb6ad43806e587a1b3101ec91b32511caa8"
+  },
+  {
+    "path": "outputs/voice-bank/backchannel-stop.wav",
+    "sha256": "c245bac0ccc558928564d91fc5718fa66f33ae530d195575fc50cd9652818968"
+  },
+  {
+    "path": "outputs/voice-bank/early-mid.wav",
+    "sha256": "bfad55df5ea92f791addb51e230f9b550481f2a0e6528154485b4bccff88f5f5"
+  },
+  {
+    "path": "outputs/voice-bank/early-mid-stop.wav",
+    "sha256": "10d607e6bd2369d04b63138a7e7983f1093b4f0a98a4c917b91efa682a374d6d"
+  },
+  {
+    "path": "outputs/voice-bank/lonely.wav",
+    "sha256": "5b8a93d7810df563def0a7223156481fa5cd25afcc0622115ac5401bc3942a28"
+  },
+  {
+    "path": "outputs/voice-bank/no-play.wav",
+    "sha256": "f93ee9292afade89911f42981bc9a22ee0958aea95560c86e6ebfdd19c40fc88"
+  },
+  {
+    "path": "outputs/voice-bank/sad-exam.wav",
+    "sha256": "d471bfa37b4408359ee895dbd4ee94d44e1caa92872702c7efa44c3a2a1f4532"
+  },
+  {
+    "path": "outputs/voice-bank/bullied.wav",
+    "sha256": "817c397e657ad038e3227b64196d3233a6ccee461d862fd4eda5fcb0f85fcb2d"
+  },
+  {
+    "path": "outputs/voice-bank/anxious.wav",
+    "sha256": "2d80c6300d3d19f078faf57429b836a0eb32b627922c609710f7d09ee0bfec78"
+  },
+  {
+    "path": "outputs/voice-bank/teen-stress.wav",
+    "sha256": "aa4cbf710fb46ceb01fb095767cf9802ed15f8d0ead007b6d55e188e83512972"
+  },
+  {
+    "path": "outputs/voice-bank/angry.wav",
+    "sha256": "93570b730fbb4dfb024b311fdb7bb2e877ddbb0da248c50042f8b0635c6e6c8b"
+  },
+  {
+    "path": "outputs/voice-bank/scared.wav",
+    "sha256": "df75ff8721575111bd3419e82d3a13f1a6241c7a03d26355b0853a06c87b879c"
+  },
+  {
+    "path": "outputs/voice-bank/cry.wav",
+    "sha256": "30f83402de9e4e0a2eae1f7a5dc43b1093a150ed07e2fb115cf50e59af9d588a"
+  },
+  {
+    "path": "outputs/voice-bank/thanks.wav",
+    "sha256": "efc6e3a15e6305b2a31b1492be79eda20c18daf79e49a824222bfe1c2e9d56f9"
+  },
+  {
+    "path": "outputs/voice-bank/homework.wav",
+    "sha256": "2333c6cf1f8e5e3e479206d5e2d164cf7d25ce98fad5b79b3f9f4a20b2582eb5"
+  },
+  {
+    "path": "outputs/voice-bank/homework-hint.wav",
+    "sha256": "17fbb94ccd56000cbbbff66c450f29c376c78fe2d6e0830595b1fb7415d5ae08"
+  },
+  {
+    "path": "outputs/voice-bank/ask-ai.wav",
+    "sha256": "7623e5fd0bcc63d80b5c08004486f34b68816409d7a8de1c43fdec9334102000"
+  },
+  {
+    "path": "outputs/voice-bank/secret.wav",
+    "sha256": "2c166fad52f03f7bc7a5a029d5eeaf66fe3508f96f5653e8e16d2ecc2f031ae3"
+  },
+  {
+    "path": "outputs/voice-bank/stranger.wav",
+    "sha256": "c2494b05bc626fe917b7e93adf41f90755a2a68f79305287d88d0c4277949932"
+  },
+  {
+    "path": "outputs/voice-bank/bad-word.wav",
+    "sha256": "070a0111062a005528857f761c6bed9dde5ef9ee25060290d0e55e481bd86682"
+  },
+  {
+    "path": "outputs/voice-bank/game.wav",
+    "sha256": "c126873081d7b5db4aca066d3023cec037a2350309cda7fa5ad1d0ca3c860db0"
+  },
+  {
+    "path": "outputs/voice-bank/game-2.wav",
+    "sha256": "e6e0d9efdd17e0f42847521143cf50e23a7032fa8320dbeaabe1d71874c8f0b4"
+  },
+  {
+    "path": "outputs/voice-bank/riddle.wav",
+    "sha256": "652d341166186628a3e43024f0f845dfb9c793b51b93205579ddc39a619fc006"
+  },
+  {
+    "path": "outputs/voice-bank/riddle-answer.wav",
+    "sha256": "ff5cc527015f2ac6ab696200d5f871de24c329fd73062819b2359f8405cd3001"
+  },
+  {
+    "path": "outputs/voice-bank/sing.wav",
+    "sha256": "f7e355dc0add72712fab1d409776ee6b0dd7a832e316900a5aad6be9ce4d4de2"
+  },
+  {
+    "path": "outputs/voice-bank/tired.wav",
+    "sha256": "de1ffa3f8b933569d77fe29ffacf4ed46b5dc1985d60aa0d2d21ad21bf364c9e"
+  },
+  {
+    "path": "outputs/voice-bank/rewake-hello.wav",
+    "sha256": "521513088b2dd9499c817c598ecc762d4e73ccc2a672dbed3a13b4aec686d45d"
+  },
+  {
+    "path": "outputs/voice-bank/memory-dog.wav",
+    "sha256": "95d915d19ac2daa835cc0192f0c0ea6a53f41d9f0ca28b244a0f679994b53501"
+  },
+  {
+    "path": "outputs/voice-bank/bye.wav",
+    "sha256": "450a2d90aba51c506624311cea962edac3ffed8678d42d4825f03e451163faeb"
+  },
+  {
+    "path": "outputs/voice-bank/stutter-long-solar.wav",
+    "sha256": "9710426fa8fbf904ca4d1dc1a39c2ed158748ce1c71170ade2a3fe859e94cf31"
+  },
+  {
+    "path": "outputs/voice-bank/stutter-long-dino.wav",
+    "sha256": "6c6c97a96a1d318d83bbcf0c7b2c4ad8ef6a91f009153f55d2c48022e1613f99"
+  },
+  {
+    "path": "outputs/voice-bank/stutter-long-goodbye.wav",
+    "sha256": "52027f2ca3bf1876524636eff9e4c7b12434998e3ee6fc4f9ef5a0cee9634862"
+  },
+  {
+    "path": "outputs/voice-bank/precheck-window-close.wav",
+    "sha256": "4927d20db5d2dc6e1a2943e54e2621e6d571962b89fafbb4dbe0c389db3069ef"
+  },
+  {
+    "path": "outputs/voice-bank/precheck-resume-goodbye.wav",
+    "sha256": "450a2d90aba51c506624311cea962edac3ffed8678d42d4825f03e451163faeb"
+  }
+]

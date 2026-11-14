@@ -1,0 +1,66 @@
+{
+  "scope": {
+    "device_serial_wall_window": [
+      "13:36:26.000",
+      "13:56:41.526"
+    ],
+    "server_sessions": [
+      "2b4b65a9-7980-47ac-a868-841daa48c8ed",
+      "81082bf6-df4d-452e-afe7-305cd5967ee8"
+    ],
+    "join_rule": "generation26 unique within scoped serial and exact server session/turn/fence; no ambiguous cross-session generation joins"
+  },
+  "device_summary_count": 52,
+  "device_max_software_wait_ms": 583,
+  "device_nonzero_wait_summaries": 2,
+  "server_pacing_count": 49,
+  "server_max_gap_ms": 196,
+  "decode_dropped_total_max": 0,
+  "largest_wait": {
+    "delivery_id": "2b4b65a9-7980-47ac-a868-841daa48c8ed/epoch-1/turn-23/generation-26/tool-0",
+    "device": {
+      "time": "13:42:45.105",
+      "layer": "playout_queue",
+      "scope": "software_queue_wait",
+      "generation": "26",
+      "close": "channel_flush",
+      "output_frames": "467",
+      "first_output": "yes",
+      "first_output_latency_ms": "1923",
+      "supply_waits": "1",
+      "supply_max_ms": "583",
+      "supply_total_ms": "583",
+      "prestart_waits": "1",
+      "prestart_max_ms": "1930",
+      "boundary_waits": "0",
+      "boundary_max_ms": "0",
+      "close_dropped_waits": "0",
+      "close_dropped_ms": "0",
+      "outside_waits": "0",
+      "outside_max_ms": "0",
+      "exact_confirmed": "2",
+      "exact_timeouts": "0",
+      "exact_polls": "32"
+    },
+    "server": {
+      "measurement": "post_pacer_send",
+      "session": "2b4b65a9-7980-47ac-a868-841daa48c8ed",
+      "session_epoch": "1",
+      "stream_epoch": "3206",
+      "turn_id": "23",
+      "generation_id": "26",
+      "tool_epoch": "0",
+      "reason": "final_frame",
+      "frames": "467",
+      "audio_ms": "9340",
+      "wall_ms": "9341",
+      "max_gap_ms": "39",
+      "send_audio_ratio": "1.00",
+      "queue_high_water": "1"
+    },
+    "wait_event": "13:42:44.493 W (1869561) AudioService: media playback supply wait layer=playout_queue scope=software_queue_wait generation=26 wait_ms=583 supply_waits=1",
+    "terminal": "playback_completed",
+    "frame_counts_equal": true
+  },
+  "inference": "The same-generation server record shows maxgap39ms, not a583ms source gap. Downstream forwarding/network/receive/decode/scheduling and software wait-accounting remain unresolved; no acoustic underrun proof."
+}

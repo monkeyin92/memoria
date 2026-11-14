@@ -1,0 +1,23 @@
+[
+  {
+    "tag": "diag-near-bieshuole",
+    "say": "别说了。",
+    "reply_timeout": 8,
+    "end_timeout": 60,
+    "gap": 2
+  },
+  {
+    "tag": "diag-near-ting",
+    "say": "停。",
+    "reply_timeout": 8,
+    "end_timeout": 60,
+    "gap": 2
+  },
+  {
+    "tag": "diag-near-bye",
+    "say": "再见。",
+    "reply_timeout": 40,
+    "end_timeout": 60,
+    "gap": 2
+  }
+]

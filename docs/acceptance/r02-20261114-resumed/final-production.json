@@ -1,0 +1,13 @@
+{
+  "observed_at": "2026-11-14T06:02:19.141991+00:00",
+  "image": "memoria-agent:20261114-stutter-v2",
+  "image_id": "sha256:ec877b61cceb8019a38a1d5e4ab3672c03daab7800ef1767cc763bc053359172",
+  "health": "healthy",
+  "restarts": 0,
+  "debug_env": {},
+  "resolved_settings": {
+    "resolved_reply_debug": false,
+    "media_owner_silence_timeout_s": 180.0,
+    "media_listening_capture_window_s": 30.0
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "scripted_responses": "2/2",
+  "closed_at": 1794633656.855,
+  "resumed_at": 1794633706.94,
+  "tail": {
+    "kind": "post_scenario_observation",
+    "idle_observed": true,
+    "last_stimulus_ended_at": "13:21:49.958",
+    "idle_evidence_since": null,
+    "final_state": "idle",
+    "final_state_source": "serial_transition",
+    "final_state_since": "13:21:53.653",
+    "settled_s": 0.0,
+    "waited_s": 45.01,
+    "timeout_s": 45.0,
+    "verdict": "verified_idle",
+    "timed_out": false,
+    "t": "13:22:40.528",
+    "ts": 1794633760.529
+  },
+  "pass": true
+}

@@ -4299,3 +4299,12 @@ Gemini 对 `35248264` 的复审结论为 PASS + NOTES，实际 PG 核心回归 1
 原三个独立报告已被本节取代，完整原文保留于 Git 历史 `35248264:docs/reviews/`，并已 SHA-256 备份到主仓 ignored 目录 `/Users/monkeyin/projects/memoria/outputs/five-software-archive-20261112/pr591-followup/`，摘要见其中 report-sha256.json。此前实施日志 274 份和 CI 原始日志 26 份已由主协调者校验归档到 `/Users/monkeyin/projects/memoria/outputs/five-software-archive-20261112/`。这些本机归档不在 Git 中。
 
 本轮本机组合选择 20 passed、0 skipped；Linux 新进程完整身份套件 15 passed、0 skipped，四项 PG + Go HTTP 矩阵 4 passed、0 skipped；Ruff、593 文件 strict mypy、33 项模块预算和文档与 gitignore 两项检查通过。Linux 一次合并运行在 evolution_store.is_account_deleting 发生线程 TimeoutError，结果 1 failed、18 passed，原因未归因，失败日志和后续独立运行均保留于验证收据。未运行完整 CI shard 或对此提交重新独立审查。
+
+
+## 2026-11-14 build36 安静窗口复验
+
+生产v2/d43fe7f1与设备build36现场核对一致，本轮未部署或改配置。同候选80秒闭窗预检、Safety20通过；完整child_tapwake 45步全部完成，44个主刺激均有播报、0 no_reply，但“别说了/停”两次纯停止失败，仅另外两次内容打断确认成功。附和保持播放，静默步及最终240秒尾窗均有真实Idle。严格判定和按既有时延只记录政策重算均FAIL，不能将driver exit0、keepawake标记或旧候选PASS替代本轮门禁；正式R02 A/B/C/D为0/155、前置阻塞。
+
+太阳系/恐龙长答逐帧守恒、decode drops0，但设备仍记录76ms及153/49ms软件供音等待，完整Soak另有583ms等待（该代服务端maxgap39ms、467/467帧）；用户未留意听感，声学结论未知。同波形非播放对照中“别说了”命中停止控制，“停”出现VAD后仍提交普通聊天，识别原文未记录；尚不统一归因于AEC或某供应商。现场WAV与ffmpeg时间轴存在差异，未转写或认定逐字实际听到内容。第三段上下文更新及回答内容审查仍未验，本地内容候选d954dc8f未发布。
+
+[本轮完整收据](acceptance/r02-20261114-resumed/receipt.md)记录原始失败、离线复核、录音限制和清理结果。设备最后真实Idle，Mac完整音量、USB与命令socket均恢复。Notion仅只读核对，未回写。

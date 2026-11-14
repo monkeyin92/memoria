@@ -183,4 +183,4 @@ build35已定向发布，设备MAC核对为90:e5:b1:d7:83:2c。串口捕获OTA�
 
 最终独立复评核对d954dc8f及19项原始正反控，19/19通过，相关四文件63项通过，无阻塞/应改/可选发现。主Agent独立重放88项通过，末轮新增原著正控修前1失败/36通过，修后保留真实原著来源并拒绝故事名翻译/标题朗读；没有改写或削弱旧断言。599源文件严格mypy、Ruff、33项模块预算通过，pyproject预算与任务基线无差异。最终冻结源码d954dc8f的Agent/common完整回归4972 passed、1条既有endpoint grace异步清理warning，256.34s，exit0（content-final-frozen-full.log）；该warning原样保留，未在本轮处理。
 
-恢复真机执行时，先现场核对生产v2/d43fe7f1＋目标build36，再做短预检和卡顿复测；环境有效后继续同候选safety、完整45步child_tapwake soak和R02。入口使用本worktree的devicetest/voice_soak_tapwake.py并单一串口owner，每次刺激都取新鲜监听/开麦/亮屏证据。旧precheck_card5.sh仍硬编码主checkout、build28/旧镜像；safety/soak旧wrapper也切回主checkout，且soak按silence截断场景，不能直接当作当前候选完整验收。须显式冻结实际45步分母；普通尾窗与keep-awake结论分别保存，不将后者冒充真实Idle。未获得新的具体生产变更授权，不发布本地内容候选。
+2026-11-14用户确认环境安静后，现场重验同一v2/d43fe7f1＋build36：闭窗预检和Safety20通过，完整45步Soak已执行，44主刺激均有播报、0 no_reply，但“别说了/停”两次纯停止未生效，前置FAIL；正式R02为0/155、未启动。真实静默Idle及240秒尾窗均核实，不以这些通过项覆盖停止失败。两段长答帧数守恒、无decode drops，仍有最大153ms软件供音等待，完整Soak另有583ms等待（该代服务端maxgap39ms、467/467帧）；用户未留意听感，不宣布声学卡顿治愈。另做同失败波形的非播放对照，结果与识别/录音缺证见[恢复验收收据](../r02-20261114-resumed/receipt.md)。本轮未变更生产，全部本次音频/串口进程释放，完整音量恢复、设备真实Idle。旧wrapper不适用于本候选，未用silence截断或沿用旧PASS；本地内容候选仍未发布。
