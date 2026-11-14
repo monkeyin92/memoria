@@ -78,18 +78,35 @@ build35 产物为 3,390,960 bytes，SHA-256 `ceaafd33284e7c646c5b13d4a475d0a6c7e
 
 正式最小发布候选 `7965b77e` 的组件脚本 dry-run 已 exit0：Ruff、33 项预算、mypy(213源文件)、必需测试及 source/base provenance 预检通过。测试日志含既有环境跳过项及异步清理 warning，原始输出为 `component-preflight.log`。`agent_component_preflight=PASS`、`agent_component_dry_run=PASS`。基座 image ID 为 `sha256:2d768b036395918d39a9fab45c603b9b828e538e99a948d00dae073771c022ee`，source archive SHA-256 `d6ce82c34e2ee3b5c7ec5f3bacbf53790f6926520b1294292906197dc8e17980`，目标镜像名 `memoria-agent:20261114-stutter-v1`。本次是 dry-run，没有上传、构建生产镜像或切流。
 
-仅在容器内比较哈希，已确认当前故事 session 匹配既有唯一测试 subject，未输出或修改 subject 白名单。既有 `REPLY_TEXT_DEBUG_LOG` 为未配置，后续内容记录可按现有双重门控仅覆盖该测试 subject；当前未启用，也未取得历史正文。独立评审仍待结论，build35 当时未签名；最新状态见最终候选就绪段。
+仅在容器内比较哈希，已确认当前故事 session 匹配既有唯一测试 subject，未输出或修改 subject 白名单。既有 `REPLY_TEXT_DEBUG_LOG` 为未配置，后续内容记录可按现有双重门控仅覆盖该测试 subject；当前未启用，也未取得历史正文。独立评审仍待结论，build35 当时未签名；最新状态见复评阻塞与修复段。
 
 Gemini 独立评审两次因内部错误失败，均无有效结论；按用户资源故障切换约定改为独立上下文 GPT 只读评审，仍未据此批准上线。R02 四套场景已生成至 `outputs/acceptance/r02-ready-20261114/scenarios`，80/60/10/5 共155步，tag唯一、各场景哈希已留manifest。`content-review-template.json` 只含证据字段与产品/儿童审查维度，没有伪造对话内容或审查结果；硬件测试仍未启动。
 
-## 最终候选就绪（待本次生产更新授权）
+## 原候选构建记录（复评发现阻塞，禁止切流）
 
-两次 Gemini 内部错误均无评审结果，独立上下文 GPT 完成只读评审：本次两组 diff 无新增阻塞项，独立相关测试106项通过。还复现了一项既有极快 resolver 接纳竞态：task完成而 `_done` 回调尚未填好record时，coordinator可拒收真实结果。它不是本补丁引入，本次不扩展修改，作为已知限制保留，不能宣称所有委托时序问题已解决。评审建议的Host来源锁校验已补上，6项相关检查再过，未改固件二进制。
+两次 Gemini 内部错误均无评审结果，独立上下文 GPT 完成只读评审：本次两组 diff 无新增阻塞项，独立相关测试106项通过。还复现了一项既有极快 resolver 接纳竞态：直接调用coordinator时，task完成而 `_done` 回调尚未填好record可拒收真实结果。Gemini复评进一步确认生产MediaSession先经 `asyncio.wait({task})`，受FIFO回调顺序保护；该既有直接调用边界不阻塞本次修复，本次不扩展修改。评审建议的Host来源锁校验已补上，6项相关检查再过，未改固件二进制。
 
 build35 已完成本地签名并以固件内置公钥验签，完整固件 Host 集为853 passed in73.81s，构建及构建后 overlay 通过。真实硬件仍为build34；build35尚未上传或刷写，女声assets及身份未改动。
 
 正式组件脚本在相同最小候选上再次完整运行门禁并仅上传构建镜像成功，`agent_component_upload_build=PASS`、`agent_component_cutover=SKIPPED`。候选 `memoria-agent:20261114-stutter-v1`，image ID `sha256:a6fb1b37e6e876f45b3cb64fb814e40d67785f7b95043db79a91d1935aa5a5b1`，revision `7965b77ed9ffe10c2f0e90f3e41a8d967086842a`。现场核实运行桥仍为 `memoria-agent:20261113-dialogue-hotfix-v1`、image `sha256:2d768b036395918d39a9fab45c603b9b828e538e99a948d00dae073771c022ee`，healthy/restarts0，将保留为回滚。该运行组件同时是候选基座，正式cutover按脚本文档需要 `--allow-manual-base-image --reason` 记录这个已核实事实；不跳过其他门禁。
 
-计划中的本次变更仅为：切换Voice Core Media Bridge至上述候选；仅对dev_atk_a4cb8fd6095c发布build35 app OTA；在R02测试窗口向 `/etc/memoria-agent.env` 临时添加 `REPLY_TEXT_DEBUG_LOG=true`，沿用且不扩大已核实的唯一测试subject白名单，完成或中止后恢复此单项原状态。已只读核实env文件当前无该键。所有三项均尚待本次明确授权，其他服务和全局固件发布指针保持当前值。
+计划中的本次变更仅为：切换Voice Core Media Bridge至修复安全阻塞并完成验证的新候选（原stutter-v1不可用）；仅对dev_atk_a4cb8fd6095c发布build35 app OTA；在R02测试窗口向 `/etc/memoria-agent.env` 临时添加 `REPLY_TEXT_DEBUG_LOG=true`，沿用且不扩大已核实的唯一测试subject白名单，完成或中止后恢复此单项原状态。已只读核实env文件当前无该键。所有三项均尚待本次明确授权，其他服务和全局固件发布指针保持当前值。
 
 执行顺序为先复测卡顿，再按同候选前置要求进行R02及真实内容审查。R02 driver仅看listening状态可能漏掉listening_closed窗口，正式155步前还需补齐此门禁验证，避免重演本轮已作废的窗口碰撞。场景准备和模板不是专项验收通过证据。
+
+
+## 复评阻塞与修复（2026-11-14，未上线）
+
+用户要求重试的 Gemini 只读评审成功返回，确认服务端候选存在阻塞：Planner 已安排固定危机脚本时，冻结后有效的联网委托仍会占据输出。原 `20261114-stutter-v1` 镜像即使门禁通过也不能切流；原标签与镜像不覆盖。首帧固件修复无阻塞，build35 二进制无需因这项 Python 修复重建。
+
+真实 MediaBridge + MediaSession + ReplyPipeline 回归使用未命中本地危机规则的“我已经准备行动了，先看看明天杭州天气怎么样”，由测试 Planner 安排真实固定安全脚本。修前已缓存安全计划（reason=ok、direct_text=True、fallback=False），仍输出天气；普通天气正控通过。修复在 `_can_start_realtime_delegation` 拒收已有固定安全计划的轮次，沿用 claim 释放及普通 reply 回退，不在 prepare 阶段直接关掉 starter，避免 live_lookup_pending 静音。
+
+新增回归验证受保护的 generation start、桥输出音频帧、完整固定安全脚本文字、零天气检索，并保留普通天气恰好一次检索和正确回答的正控。ASR、Planner、检索及TTS为可控替身，PCM为静音替身；该回归证明输出归属和脚本选择，不是供应商合成或真机听音验收。两项通过；相关五组 175 项通过。Ruff、33 项模块预算和599个源文件 mypy 通过，主工作区完整组件必需测试选择为4112 passed、61 skipped、2条异步清理warning，252.21s；未把环境跳过项算作通过。原始失败与修后日志分别保存在 `safety-lookup-baseline.log`、`safety-lookup-final.log`、`safety-lookup-tests.log`。尚未更新服务端、build35 或测试日志配置，卡顿真机复测与R02仍未开始。
+
+
+安全修复主工作区提交 `2b82dae3`，已独立集成至生产基线最小候选 `d43fe7f1762b4f84445de66c9729d6dc099cf67f`，使用新的本地标签 `20261114-stutter-v2`，不重写v1。最小候选两项针对性媒体回归及213个源文件mypy通过，正式组件dry-run已通过：`agent_component_preflight=PASS`、`agent_component_dry_run=PASS`，必需门禁未跳过，源包SHA-256为 `09910a01b30aba3de283f952844bce49b17c9992901718659b464a5e0d8371d4`。随后按同一脚本再次完成必需门禁及仅构建镜像流程，`agent_component_import_smoke=PASS`、`agent_component_upload_build=PASS`、`agent_component_cutover=SKIPPED`。只读现场核实生产仍为 `9efcf9d7` / `sha256:2d768b036395918d39a9fab45c603b9b828e538e99a948d00dae073771c022ee`，healthy、restarts=0。
+
+
+v2 镜像构建于 `2026-11-14T02:44:34Z`，目标 `memoria-agent:20261114-stutter-v2`，image ID `sha256:ec877b61cceb8019a38a1d5e4ab3672c03daab7800ef1767cc763bc053359172`，revision `d43fe7f1762b4f84445de66c9729d6dc099cf67f`。只读 docker inspect 已独立核对上述镜像和revision；运行桥仍为旧revision `9efcf9d7` / image `sha256:2d768b036395918d39a9fab45c603b9b828e538e99a948d00dae073771c022ee`，healthy、restarts=0，保留作回滚。全局current.json仍为 `5e6030edd618747d71584d8b585d70ce5ab37f02492fa7dda5a5b12ac2bb0dea`，env文件仍不存在 `REPLY_TEXT_DEBUG_LOG` 键。build35 app SHA-256再次核实为 `ceaafd33284e7c646c5b13d4a475d0a6c7e88ae51cd5c9d9a57fd7da01271cac`，未重新构建或上传。
+
+原始完整门禁、预检和镜像构建输出为 `safety-final-full-tests.log`、`safety-component-preflight.log`、`safety-component-build.log`；日志保留既有异步清理warning和跳过信息，不表示相关环境已验收。新的v2切流、目标设备build35 OTA及仅测试subject的临时回答记录，仍待针对本次操作的明确授权；随后先做卡顿复测，再做R02及真实内容审查。当前结果不能宣称卡顿已治愈或专项已通过。

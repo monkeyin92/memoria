@@ -1317,7 +1317,7 @@ mypy services --strict
 详细收据见 `docs/acceptance/network-prompts-20261113/receipt.md`。本次仅保留本地提交和发布标签，未创建 GitHub Release 或推送。
 
 
-## 2026-11-13 播放卡顿候选（build34，待设备验证）
+## 2026-11-13—14 播放卡顿定位与候选验证
 
 队列满时在 `audio_queue_mutex_` 内逐包打印串口日志，会阻塞消费者；真实函数 Host 回归已复现，候选 `0047` 改为原子累计，现有主任务每 10 秒锁外记录 `dropped_total`。队列容量 120 及拒绝语义不变。
 
@@ -1326,4 +1326,4 @@ mypy services --strict
 完整固件 Host 测试 852 项通过。完整 ESP-IDF 6.0.2 构建及构建后 overlay 检查通过，独立 Gemini 评审运行时无阻塞，发现的门禁 pytest 依赖已修复，默认 IDF Python 完整检查通过。build34 已按 2026-11-14 用户授权定向 OTA 至目标设备，实际 ota_0 并 confirmed、接收 priority=4。三段故事全程 dropped_total=0，但第三段仍有服务端 max_gap866ms 与设备供音等待795ms；尚未证明卡顿全部消失。接收调度与网络突发仍需真机区分。基线与候选验收记录见 `docs/acceptance/stutter-20261113/receipt.md`。部署必须先获得针对该次操作的授权；仅更新目标设备 app，保留已替换女声的 assets、身份及其他分区，并验证实际 build、接收 priority、帧数守恒、供音等待和播放听感。
 
 
-后续本地复现确认了两个需继续修复的边界：准备轮次期间委托先绑定旧 context_version，冻结后版本改变会拒收结果；IP 故事回退将短过渡语与等待后正文接入同一 TTS 流会断供。候选延后委托至 context 冻结完成，并移除 IP 故事 fallback 的同流过渡语，保留 MediaSession 独立辅助代际。首帧差也已在真实函数 Host 中复现为异步 Speaking 的 ResetDecoder 清帧，0048 在既有同步 server-generation barrier 下保留首帧，默认本地/显式清理不变。build35 完整构建、签名、853项固件Host检查及独立GPT评审已完成；服务端最小候选7965b77e正式门禁和镜像构建通过但尚未切流，设备尚未更新。既有极快检索接纳竞态仍未修复，不能视为所有时序均已解决；详细修前/后证据和未验证边界见上述收据。
+后续本地复现确认了两个需继续修复的边界：准备轮次期间委托先绑定旧 context_version，冻结后版本改变会拒收结果；IP 故事回退将短过渡语与等待后正文接入同一 TTS 流会断供。候选延后委托至 context 冻结完成，并移除 IP 故事 fallback 的同流过渡语，保留 MediaSession 独立辅助代际。首帧差也已在真实函数 Host 中复现为异步 Speaking 的 ResetDecoder 清帧，0048 在既有同步 server-generation barrier 下保留首帧，默认本地/显式清理不变。build35 完整构建、签名、853项固件Host检查及独立GPT评审已完成；服务端最小候选7965b77e虽通过正式门禁和镜像构建，但Gemini复评发现固定安全脚本可被联网委托覆盖，原stutter-v1禁止切流。修复在联网委托准入处拒收已有固定安全计划的轮次，并验证真实媒体路径恢复安全脚本、保护播放及普通天气正控；主工作区完整组件测试4112通过、61跳过、2条异步清理warning，最小候选d43fe7f1正式组件预检通过；v2镜像ec877b61已构建、导入冒烟通过，仍未切流；生产桥现场核实仍为9efcf9d7且healthy/restarts=0。设备尚未更新。极快检索的直接coordinator调用仍有既有回调顺序边界；生产MediaSession的asyncio.wait路径受FIFO保护，此项不阻塞本修复；详细修前/后证据和未验证边界见上述收据。
