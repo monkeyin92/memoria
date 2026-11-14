@@ -62,6 +62,8 @@ async def _open(
     grace_s: float = 0.5,
 ) -> SimpleNamespace:
     window = await device_media_session(session_id, during_playback=False)
+    window.context.ingress.denoiser.process(_SILENT_PCM)
+    window.context.ingress.denoiser.reset()
     window.provider.ingest_audio = _no_asr
     window.next_seq = 1
     window.close_verdict = _Verdict()
@@ -936,8 +938,9 @@ async def test_playback_boundary_keeps_ignoring_prior_turn_late_vad_end(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("turn2_mode", ["normal", "end_before_final", "weak_onset"])
 async def test_unrotated_asr_pre_playback_tail_after_missing_vad_end_does_not_pin_after_playback(
-    device_media_session: Any,
+    device_media_session: Any, turn2_mode: str,
 ) -> None:
     window = await _open(device_media_session, "commit-unrotated-pre-playback-tail", grace_s=0.05)
     task_epoch = 1
@@ -1024,6 +1027,22 @@ async def test_unrotated_asr_pre_playback_tail_after_missing_vad_end_does_not_pi
     assert window.provider.prepared == [_HEAD]
     assert window.context.pending.pending_turn_playback_overlap is False
     assert window.context.pending.turn_endpoint_sample is None
+    start2 = sample + 16_000
+    if turn2_mode != "weak_onset":
+        await _device_vad(window, "vad-start-2", start2, final=False)
+    end2 = await _send_uplink_frames(window, start_sample=start2, count=25, pcm=_VOICED_PCM)
+    if turn2_mode == "end_before_final":
+        await _device_vad(window, "vad-end-2", end2, final=True)
+    await _accept_media_asr_final(
+        window.registry, window.identity, sentence_id="f-2",
+        start_sample=start2, end_sample=end2, text="今天天气怎么样",
+    )
+    if turn2_mode == "normal":
+        await _device_vad(window, "vad-end-2", end2, final=True)
+    elif turn2_mode == "weak_onset":
+        await _send_uplink_frames(window, start_sample=end2, count=20, pcm=_SILENT_PCM)
+    await _wait_until(lambda: len(window.provider.prepared) == 2, timeout=1.5)
+    assert window.provider.prepared == [_HEAD, "今天天气怎么样"]
 
 
 @pytest.mark.asyncio
@@ -1054,3 +1073,89 @@ async def test_stale_silent_pump_frames_preserve_newer_listening_silence(
         silent=True,
     )
     assert state.silent_run_end_sample == 42_560
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("open_vad", [True, False])
+async def test_unaligned_final_silence_retires_late_vad(device_media_session: Any, open_vad: bool) -> None:
+    window = await _open(device_media_session, f"unaligned-{open_vad}", grace_s=0.01)
+    if open_vad:
+        await _device_vad(window, "start", 321000, final=False)
+    await _send_uplink_frames(window, start_sample=321000, count=1, pcm=_VOICED_PCM)
+    await window.registry._audio_ingress._wait_until_idle(window.context)
+    await _accept_media_asr_final(window.registry, window.identity, sentence_id="unaligned",
+        start_sample=321000, end_sample=321152, text=_HEAD)
+    end = await _send_uplink_frames(window, start_sample=321320, count=70, pcm=_SILENT_PCM)
+    await _wait_until(lambda: bool(window.provider.prepared), timeout=1.0)
+    assert window.provider.prepared == [_HEAD]
+    assert window.context.asr.last_committed_sample >= 321320 + 4800
+    await _device_vad(window, "late-end", end, final=True)
+    assert window.context.pending.turn_endpoint_sample is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delay", [0.019, 0.021])
+@pytest.mark.parametrize("pending_partial", [False, True])
+async def test_live_silent_pump_commits_processed_window(
+    device_media_session: Any, delay: float, pending_partial: bool
+) -> None:
+    window = await _open(device_media_session, f"live-pump-{delay}", grace_s=0.01)
+    await _device_vad(window, "start", _START, final=False)
+    end = await _send_uplink_frames(window, start_sample=_START, count=1, pcm=_VOICED_PCM)
+    await window.registry._audio_ingress._wait_until_idle(window.context)
+    await _accept_media_asr_final(window.registry, window.identity, sentence_id="head",
+        start_sample=_START, end_sample=end, text=_HEAD)
+    async def slow_ingest(_identity: Any, _frame: AudioFrame) -> tuple[Any, ...]:
+        await asyncio.sleep(delay)
+        return ()
+    window.provider.ingest_audio = slow_ingest
+    if pending_partial:
+        await _accept_media_asr_decision(
+            window.registry, window.identity, sentence_id="slow-tail",
+            start_sample=end, end_sample=end + 320, text=_TAIL, is_final=False,
+        )
+    await _send_uplink_frames(window, start_sample=end, count=110, pcm=_SILENT_PCM, pace_s=0.02)
+    if pending_partial:
+        assert window.provider.prepared == []
+        await _accept_media_asr_decision(
+            window.registry, window.identity, sentence_id="slow-tail", revision=2,
+            start_sample=end, end_sample=end + 320, text=_TAIL, is_final=True,
+        )
+        await _wait_until(lambda: bool(window.provider.prepared), timeout=1.0)
+        assert window.provider.prepared == [f"{_HEAD} {_TAIL}"]
+    else:
+        assert window.provider.prepared == [_HEAD]
+
+
+@pytest.mark.asyncio
+async def test_unaligned_final_cannot_skip_a_later_whole_voiced_frame(device_media_session: Any) -> None:
+    window = await _open(device_media_session, "unaligned-whole-clause", grace_s=0.01)
+    await _device_vad(window, "start", 321000, final=False)
+    await _send_uplink_frames(window, start_sample=321000, count=2, pcm=_VOICED_PCM)
+    await _accept_media_asr_final(window.registry, window.identity, sentence_id="head",
+        start_sample=321000, end_sample=321152, text=_HEAD)
+    await _send_uplink_frames(window, start_sample=321640, count=70, pcm=_SILENT_PCM)
+    await asyncio.sleep(0.5)
+    assert window.provider.prepared == []
+
+
+@pytest.mark.asyncio
+async def test_silent_window_does_not_skip_admitted_unprocessed_voice(device_media_session: Any) -> None:
+    window = await _open(device_media_session, "silent-window-queued-voice", grace_s=0.01)
+    await _device_vad(window, "start", _START, final=False)
+    end = await _send_uplink_frames(window, start_sample=_START, count=1, pcm=_VOICED_PCM)
+    sample = await _send_uplink_frames(window, start_sample=end, count=65, pcm=_SILENT_PCM)
+    await window.registry._audio_ingress._wait_until_idle(window.context)
+    release = asyncio.Event()
+    async def held_ingest(_identity: Any, _frame: AudioFrame) -> tuple[Any, ...]:
+        await release.wait()
+        return ()
+    window.provider.ingest_audio = held_ingest
+    await _send_uplink_frames(window, start_sample=sample, count=1, pcm=_VOICED_PCM)
+    await _accept_media_asr_final(window.registry, window.identity, sentence_id="head",
+        start_sample=_START, end_sample=end, text=_HEAD)
+    try:
+        await asyncio.sleep(0.4)
+        assert window.provider.prepared == []
+    finally:
+        release.set()
