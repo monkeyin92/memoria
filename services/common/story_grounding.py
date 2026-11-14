@@ -433,16 +433,18 @@ def _is_story_creation_brief(query: str) -> bool:
     )
     if re.search(r"原著|原版|官方", source_context):
         return False
-    references = re.sub(r"(?:名叫|叫作|取名|名字是|题目是|故事叫)《[^》]+》", "", text)
+    references = re.sub(r"(?:名叫|名字叫|叫(?:作)?|取名|名字是|题目是|故事叫)《[^》]+》", "", text)
     if "《" in references:
         return False
-    if re.search(r"原创|自创|自编|(?:编|创作)(?:一个|个|一篇|一段)", unquoted):
+    # Source structure wins before creation words, including negated or later
+    # requests. Source preservation does not depend on an exhaustive deny list.
+    if any(info.title in references for info in LOCAL_STORIES.values()):
+        return False
+    named = re.search(r"(?:讲|听|读)(?:一个|个)?(?P<name>[一-龥a-zA-Z0-9]{2,12})的(?:故事|童话|绘本)", references)
+    if named and named["name"] not in {"原创", "自创", "自编", "新编"}:
+        return False
+    if re.search(r"原创|自创|自编|新编|(?:编|创作)(?:一个|个|一篇|一段)", unquoted):
         return True
-    # Desired cast alone cannot override a named source or a local title.
-    if any(info.title in text for info in LOCAL_STORIES.values()):
-        return False
-    if re.search(r"(?:讲|听|读)(?:一个|个)?[一-龥a-zA-Z0-9]{2,12}的(?:故事|童话|绘本)", text):
-        return False
     return bool(re.search(r"(?:里面|故事里)(?:要|希望)(?:有|出现)", unquoted))
 
 
@@ -490,7 +492,14 @@ def extract_story_ip(query: str) -> str | None:
         return None
 
     quoted = re.search(r"《([^》]{1,80})》", query)
-    if quoted and is_story_request(query):
+    # A title-language task is not a request to narrate the work. Require a
+    # consumption directive before the title and a story object after it.
+    prefix = query[:quoted.start()] if quoted else ""
+    suffix = query[quoted.end():].strip() if quoted else ""
+    consume = re.search(r"(?:想听|要听|讲|读|朗读|复述)[^，。！？!?《》]{0,8}$", prefix)
+    negated = re.search(r"(?:不要|不用|不想|别|不讲|不听|不读)[^，。！？!?]{0,8}$", prefix)
+    narrative = re.match(r"^(?:的|这个|这篇|这本)?(?:故事|童话|绘本)(?!名)", suffix)
+    if quoted and consume and not negated and narrative:
         title = quoted[1].strip()
         if any(_normalize(title) == _normalize(info.title) for info in LOCAL_STORIES.values()):
             return None
