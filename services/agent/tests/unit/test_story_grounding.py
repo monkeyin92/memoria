@@ -105,6 +105,9 @@ def test_original_cast_brief_does_not_replay_an_unrelated_local_story() -> None:
 @pytest.mark.parametrize("query", [
     "我想听葫芦兄弟的故事，不要自编。",
     "我想听葫芦兄弟的故事，里面有七个兄弟。",
+    "我想听葫芦兄弟的故事，里面要有七个兄弟，不要瞎编。",
+    "我想听葫芦兄弟的故事，里面要有七个兄弟。",
+    "我想听葫芦兄弟的故事，禁止自编。",
 ])
 def test_existing_source_and_negated_creation_keep_grounding(query: str) -> None:
     assert extract_story_ip(query) == "葫芦兄弟"
@@ -113,6 +116,7 @@ def test_existing_source_and_negated_creation_keep_grounding(query: str) -> None
 
 def test_existing_local_plot_description_keeps_local_source() -> None:
     assert match_local_story("我想听月亮不着急的故事，里面有小兔子。") == "story_02"
+    assert match_local_story("我想听月亮不着急的故事，里面要有小兔子。") == "story_02"
 
 
 @pytest.mark.parametrize("query", [
@@ -122,6 +126,14 @@ def test_existing_local_plot_description_keeps_local_source() -> None:
 def test_original_brief_can_reject_canon_or_name_its_own_title(query: str) -> None:
     assert extract_story_ip(query) is None
     assert match_local_story(query) is None
+
+
+def test_quoted_source_is_not_a_self_named_original_title() -> None:
+    assert extract_story_ip("我想听《葫芦兄弟》的故事，里面要有七个兄弟。") == "葫芦兄弟"
+    assert extract_story_ip("我想听《月亮不着急》的故事，里面要有小兔子。") is None
+    assert match_local_story("我想听《月亮不着急》的故事，里面要有小兔子。") == "story_02"
+    assert extract_story_ip("把《蓝色的梦》这几个字翻译成英语。") is None
+    assert keyword_requires_live_media_lookup("把《蓝色的梦》这几个字翻译成英语。") is False
 
 
 def test_extract_story_ip_excludes_common_story_words_and_local_titles() -> None:

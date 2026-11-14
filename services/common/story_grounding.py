@@ -419,19 +419,31 @@ def is_continuation_story_request(query: str) -> bool:
     return any(pattern in compact for pattern in _CONTINUATION_PATTERNS)
 
 
-def _is_story_creation_brief(compact: str) -> bool:
+def _is_story_creation_brief(query: str) -> bool:
     # Titles can be supplied by the child; their words are not directives.
-    unquoted = re.sub(r"《[^》]*》", "", compact)
-    if re.search(r"(?:不要|不用|别|不许|不能|不想)(?:要|听)?(?:自己)?(?:原创|自创|自编|编|创作)", unquoted):
+    text = re.sub(r"\s+", "", query)
+    unquoted = re.sub(r"《[^》]*》", "", text)
+    if re.search(
+        r"(?:不要|不用|别|不许|不能|不想|禁止|不得|不准|不需要|不允许)"
+        r"(?:要|听|再|自己|自行|瞎|胡|乱|擅自|任意|随意|你){0,3}(?:原创|自创|自编|编|创作)", unquoted,
+    ):
         return False
     source_context = re.sub(
         r"(?:不要|不用|别|无需)(?:用|照着|按|照)?(?:原著|原版|官方)(?:角色|剧情|设定)?", "", unquoted,
     )
     if re.search(r"原著|原版|官方", source_context):
         return False
-    return bool(re.search(
-        r"原创|自创|自编|(?:编|创作)(?:一个|个|一篇|一段)|(?:里面|故事里)(?:要|希望)(?:有|出现)", unquoted,
-    ))
+    references = re.sub(r"(?:名叫|叫作|取名|名字是|题目是|故事叫)《[^》]+》", "", text)
+    if "《" in references:
+        return False
+    if re.search(r"原创|自创|自编|(?:编|创作)(?:一个|个|一篇|一段)", unquoted):
+        return True
+    # Desired cast alone cannot override a named source or a local title.
+    if any(info.title in text for info in LOCAL_STORIES.values()):
+        return False
+    if re.search(r"(?:讲|听|读)(?:一个|个)?[一-龥a-zA-Z0-9]{2,12}的(?:故事|童话|绘本)", text):
+        return False
+    return bool(re.search(r"(?:里面|故事里)(?:要|希望)(?:有|出现)", unquoted))
 
 
 def match_local_story(query: str, *, prioritize_generic: bool = True) -> str | None:
@@ -443,7 +455,7 @@ def match_local_story(query: str, *, prioritize_generic: bool = True) -> str | N
        naming an external IP, returns "story_01" (the primary bedtime story).
     """
     compact = _normalize(query)
-    if not compact or _is_story_creation_brief(compact):
+    if not compact or _is_story_creation_brief(query):
         return None
 
     # Check explicit alias match first across all local stories
@@ -474,8 +486,15 @@ def extract_story_ip(query: str) -> str | None:
 
     # A creation brief names invented settings/cast, not a source to retrieve.
     # Explicit source requests and known characters keep their grounding route.
-    if _is_story_creation_brief(compact):
+    if _is_story_creation_brief(query):
         return None
+
+    quoted = re.search(r"《([^》]{1,80})》", query)
+    if quoted and is_story_request(query):
+        title = quoted[1].strip()
+        if any(_normalize(title) == _normalize(info.title) for info in LOCAL_STORIES.values()):
+            return None
+        return title
 
     # 2. Check regex patterns for generic "[IP]的故事" or "我想听[IP]"
     patterns = (

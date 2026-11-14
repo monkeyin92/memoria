@@ -39,6 +39,10 @@ def test_overcommitted_enumeration_gets_an_explicit_achievable_scope() -> None:
     assert "不要再承诺每项3句" in instruction
     assert "必须先缩减承诺" not in spoken_reply_budget_instruction(300, 10, query="请介绍三种动物，每种两句。")
     assert "前9项、每项一句" in spoken_reply_budget_instruction(300, 10, query="请介绍20种动物，每种三句。")
+    assert "用户要求8项各6句" in spoken_reply_budget_instruction(300, 10, query="请给两个孩子详细介绍八颗行星，每颗六句话。")
+    assert "用户要求8项各6句" in spoken_reply_budget_instruction(300, 10, query="请给两个孩子介绍八个方案，每个方案讲六句。")
+    assert "用户要求8项各6句" in spoken_reply_budget_instruction(300, 10, query="请把八个方案分成两个组，每个方案讲六句。")
+    assert "用户要求8项各6句" in spoken_reply_budget_instruction(300, 10, query="请给两个孩子每个介绍八颗行星每颗六句话。")
 
 
 def test_a_short_audience_story_plans_its_resolution_before_the_cutoff() -> None:
@@ -50,6 +54,8 @@ def test_a_short_audience_story_plans_its_resolution_before_the_cutoff() -> None
     assert "不在结尾增加新危险" in instruction
     assert "这轮故事必须讲完" not in spoken_reply_budget_instruction(560, 12, query="给我讲个长故事")
     assert "这轮故事必须讲完" not in spoken_reply_budget_instruction(300, 10, query="不要讲一个故事，解释下雨的原因。")
+    assert "这轮故事必须讲完" not in spoken_reply_budget_instruction(300, 10, query="我不想听海底探险的故事，请解释海水为什么咸。")
+    assert "这轮故事必须讲完" not in spoken_reply_budget_instruction(300, 10, query="不要给我讲长故事，请解释海水为什么咸。")
 
 
 def test_controlled_standard_turn_stays_brief_but_explicit_detail_is_preserved() -> None:

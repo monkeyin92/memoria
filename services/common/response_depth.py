@@ -166,7 +166,7 @@ def _small_count(value: str) -> int:
 def spoken_reply_budget_instruction(max_chars: int, max_sentences: int, *, query: str = "") -> str:
     scope = ""
     story = re.search(r"(?:给我讲|讲一个|讲个|编一个|编个|自创|想听|要听).{0,32}(?:故事|童话)", query)
-    no_story = re.search(r"(?:不要|不用|别|不想)(?:给我)?(?:讲|编|听)(?:一个|个|任何)?(?:故事|童话)", query)
+    no_story = re.search(r"(?:不要|不用|别|不想)(?:给我)?(?:讲|编|听)[^。！？!?，,；;]{0,32}(?:故事|童话)", query)
     if story and not no_story and max_sentences <= 10:
         story_sentences = min(6, max(1, max_sentences - 1))
         scope += (
@@ -174,11 +174,18 @@ def spoken_reply_budget_instruction(max_chars: int, max_sentences: int, *, query
             "第一句交代主角和地点，只安排一个小困难，最后一句必须解决困难、回到安全处。"
             "不要长篇承诺，不在结尾增加新危险，不留下主角遇险的悬念。"
         )
-    count = r"([一二三四五六七八九十两\d]{1,3})"
-    groups = re.search(count + r"(?:个|颗|项|种|位|本|条|类|方面)", query)
-    per_group = re.search(r"每(?:个|颗|项|种|位|本|条|类)[^。！？!?，,]{0,12}?" + count + r"句", query)
+    count = r"(?P<count>[一二三四五六七八九十两\d]{1,3})"
+    scope_query = re.sub(r"\s+", "", query)
+    per_group = re.search(
+        r"每一?(?P<unit>个|颗|项|种|位|本|条|类)(?P<noun>(?:(?!每)[一-龥a-zA-Z]){0,8}?)"
+        r"(?:都|只|要|各|分别|至少)?(?:讲|说|写|用|介绍|解释|回答|描述)?" + count + r"句", scope_query,
+    )
+    # Bind to the corresponding topic, not a recipient or an intervening group.
+    groups = list(re.finditer(
+        count + re.escape(per_group["unit"] + per_group["noun"]), scope_query[:per_group.start()],
+    )) if per_group else []
     if groups and per_group:
-        requested, each = _small_count(groups[1]), _small_count(per_group[1])
+        requested, each = _small_count(groups[-1]["count"]), _small_count(per_group["count"])
         if requested > 0 and requested * each > max_sentences:
             selected = min(requested, max(1, max_sentences - 1), max(1, (max_chars - 12) // 12))
             coverage = f"全部{selected}项" if selected == requested else f"前{selected}项"
