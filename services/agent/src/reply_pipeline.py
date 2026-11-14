@@ -140,7 +140,8 @@ def reply_limits_for(
     elif not barge_in_enabled:
         chars, sentences = MAX_CONTROLLED_VOICE_REPLY_CHARS, MAX_CONTROLLED_VOICE_REPLY_SENTENCES
     elif depth is ResponseDepth.BRIEF and realtime:
-        chars, sentences = MAX_REALTIME_REPLY_CHARS, MAX_REALTIME_REPLY_SENTENCES
+        chars = min(MAX_VOICE_REPLY_CHARS, MAX_REALTIME_REPLY_CHARS)
+        sentences = min(MAX_VOICE_REPLY_SENTENCES, MAX_REALTIME_REPLY_SENTENCES)
     else:
         chars, sentences = MAX_VOICE_REPLY_CHARS, MAX_VOICE_REPLY_SENTENCES
     if audience in SHORT_REPLY_AUDIENCES:
@@ -317,7 +318,7 @@ class ReplyPipeline(
         )
         if self._runtime.fixed_safety_heard and depth_policy.depth is ResponseDepth.BRIEF:
             max_chars, max_sentences = min(max_chars, MAX_CONTROLLED_VOICE_REPLY_CHARS), min(max_sentences, 2)
-        delivery_instruction += "\n" + spoken_reply_budget_instruction(max_chars, max_sentences)
+        delivery_instruction += "\n" + spoken_reply_budget_instruction(max_chars, max_sentences, query=last_user)
         anonymous_public = policy.allows_anonymous_public_conversation(speaker_class)
         safe_chat_ctx = self._context_assembler.assemble(
             chat_ctx=chat_ctx,

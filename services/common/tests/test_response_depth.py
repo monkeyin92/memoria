@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from services.common.response_depth import ResponseDepth, response_depth_for
+from services.common.response_depth import (
+    ResponseDepth,
+    response_depth_for,
+    spoken_reply_budget_instruction,
+)
 
 
 def test_realtime_planning_defaults_to_a_brief_conclusion() -> None:
@@ -25,6 +29,27 @@ def test_a_named_long_story_asks_for_extended_child_delivery() -> None:
         audience="student_minor",
     )
     assert policy.depth is ResponseDepth.EXTENDED
+
+
+def test_overcommitted_enumeration_gets_an_explicit_achievable_scope() -> None:
+    instruction = spoken_reply_budget_instruction(
+        300, 10, query="请介绍太阳系的八颗行星，每颗行星都讲三句话。",
+    )
+    assert "全部8项、每项一句" in instruction
+    assert "不要再承诺每项3句" in instruction
+    assert "必须先缩减承诺" not in spoken_reply_budget_instruction(300, 10, query="请介绍三种动物，每种两句。")
+    assert "前9项、每项一句" in spoken_reply_budget_instruction(300, 10, query="请介绍20种动物，每种三句。")
+
+
+def test_a_short_audience_story_plans_its_resolution_before_the_cutoff() -> None:
+    instruction = spoken_reply_budget_instruction(
+        300, 10, query="给我讲一个海底探险的长故事，里面要有小海龟和发光的鱼。",
+    )
+    assert "正文最多6句短话" in instruction
+    assert "最后一句必须解决困难、回到安全处" in instruction
+    assert "不在结尾增加新危险" in instruction
+    assert "这轮故事必须讲完" not in spoken_reply_budget_instruction(560, 12, query="给我讲个长故事")
+    assert "这轮故事必须讲完" not in spoken_reply_budget_instruction(300, 10, query="不要讲一个故事，解释下雨的原因。")
 
 
 def test_controlled_standard_turn_stays_brief_but_explicit_detail_is_preserved() -> None:

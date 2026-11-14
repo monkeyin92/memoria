@@ -420,9 +420,18 @@ def is_continuation_story_request(query: str) -> bool:
 
 
 def _is_story_creation_brief(compact: str) -> bool:
-    creative = re.search(r"原创|自创|自编|(?:编|创作)(?:一个|个|一篇|一段)|(?:里面|故事里)(?:要|希望)?有", compact)
-    source = re.search(r"原著|原版|官方|《|(?:不要|别|不许|不能)(?:自己)?(?:编|原创|自创)", compact)
-    return bool(creative and not source)
+    # Titles can be supplied by the child; their words are not directives.
+    unquoted = re.sub(r"《[^》]*》", "", compact)
+    if re.search(r"(?:不要|不用|别|不许|不能|不想)(?:要|听)?(?:自己)?(?:原创|自创|自编|编|创作)", unquoted):
+        return False
+    source_context = re.sub(
+        r"(?:不要|不用|别|无需)(?:用|照着|按|照)?(?:原著|原版|官方)(?:角色|剧情|设定)?", "", unquoted,
+    )
+    if re.search(r"原著|原版|官方", source_context):
+        return False
+    return bool(re.search(
+        r"原创|自创|自编|(?:编|创作)(?:一个|个|一篇|一段)|(?:里面|故事里)(?:要|希望)(?:有|出现)", unquoted,
+    ))
 
 
 def match_local_story(query: str, *, prioritize_generic: bool = True) -> str | None:

@@ -45,15 +45,20 @@ async def test_generation_request_exposes_its_actual_spoken_bounds(
         speaker_sha256=designed_voice_speaker_sha256(plan.voice_target.profile_id) or "",
     )
     requests: list[str] = []
+    user_questions: list[str] = []
 
     async def model(ctx: Any, *_args: Any) -> AsyncIterator[str]:
         requests.append("\n".join(m.text_content or "" for m in ctx.items if m.role == "system"))
+        user_questions.extend(m.text_content or "" for m in ctx.items if m.role == "user")
         for _ in range(14):
             yield "一个简短要点。"
 
     agent.language_model = ScriptedChatModel(model)
-    output = [item async for item in agent.stream_reply(llm.ChatContext.empty())]
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content=query)
+    output = [item async for item in agent.stream_reply(chat_ctx)]
     assert len(requests) == 1
+    assert query in user_questions
     assert f"最多{chars}字、{sentences}句" in requests[0]
     assert "先覆盖每个要点" in requests[0]
     assert "不承诺未讲出的内容" in requests[0]
