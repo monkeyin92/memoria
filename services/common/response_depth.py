@@ -32,6 +32,7 @@ _EXTENDED_HINTS = (
     "逐步",
     "一步一步",
     "长一点",
+    "长故事",
     "多讲一点",
     "解释原因",
     "为什么",
@@ -152,9 +153,20 @@ def response_depth_for(
     return ResponseDepthPolicy(depth=depth, instruction=instructions[depth])
 
 
+def spoken_reply_budget_instruction(max_chars: int, max_sentences: int) -> str:
+    return (
+        f"【本轮口语范围】正文最多{max_chars}字、{max_sentences}句；在这个范围内讲完整。"
+        "多部分问题先覆盖每个要点，再补细节，不要只讲前几项就结束。"
+        "要求的篇幅或句数放不下时，开头简短说明这次缩减的范围，不承诺未讲出的内容。"
+        "使用短句和熟悉的词，不堆术语和长铺垫；结尾自然收住，不朗读这些限制。"
+        "要求原创时明确是新编的故事，不冒充某部作品的原版剧情。"
+    )
+
+
 __all__ = [
     "SHORT_REPLY_AUDIENCES",
     "ResponseDepth",
     "ResponseDepthPolicy",
     "response_depth_for",
+    "spoken_reply_budget_instruction",
 ]

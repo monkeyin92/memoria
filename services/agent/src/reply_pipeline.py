@@ -83,6 +83,7 @@ from services.common.response_depth import (
     ResponseDepth,
     ResponseDepthPolicy,
     response_depth_for,
+    spoken_reply_budget_instruction,
 )
 from services.common.story_grounding import (
     build_grounded_story_system_instruction,
@@ -134,22 +135,14 @@ def reply_limits_for(
 ) -> tuple[int, int]:
     """(max characters, max sentences) one spoken reply may use."""
 
-    if barge_in_enabled:
-        chars, sentences = MAX_VOICE_REPLY_CHARS, MAX_VOICE_REPLY_SENTENCES
-    else:
-        chars, sentences = MAX_CONTROLLED_VOICE_REPLY_CHARS, MAX_CONTROLLED_VOICE_REPLY_SENTENCES
     if depth is ResponseDepth.EXTENDED:
         chars, sentences = MAX_VOICE_REPLY_CHARS_LONGFORM, MAX_VOICE_REPLY_SENTENCES_LONGFORM
-    elif depth is ResponseDepth.BRIEF:
-        if not barge_in_enabled:
-            chars = min(chars, MAX_CONTROLLED_VOICE_REPLY_CHARS)
-            sentences = min(sentences, MAX_CONTROLLED_VOICE_REPLY_SENTENCES)
-        elif realtime:
-            chars = min(chars, MAX_REALTIME_REPLY_CHARS)
-            sentences = min(sentences, MAX_REALTIME_REPLY_SENTENCES)
-        else:
-            chars = min(chars, MAX_VOICE_REPLY_CHARS)
-            sentences = min(sentences, MAX_VOICE_REPLY_SENTENCES)
+    elif not barge_in_enabled:
+        chars, sentences = MAX_CONTROLLED_VOICE_REPLY_CHARS, MAX_CONTROLLED_VOICE_REPLY_SENTENCES
+    elif depth is ResponseDepth.BRIEF and realtime:
+        chars, sentences = MAX_REALTIME_REPLY_CHARS, MAX_REALTIME_REPLY_SENTENCES
+    else:
+        chars, sentences = MAX_VOICE_REPLY_CHARS, MAX_VOICE_REPLY_SENTENCES
     if audience in SHORT_REPLY_AUDIENCES:
         standard_cap, extended_cap = AUDIENCE_REPLY_LIMITS[audience or ""]
         cap_chars, cap_sentences = extended_cap if depth is ResponseDepth.EXTENDED else standard_cap
@@ -315,10 +308,16 @@ class ReplyPipeline(
             controlled=(not self._runtime.barge_in_enabled or self._runtime.fixed_safety_heard),
             audience=profile.profile.service_mode if profile is not None else None,
         )
-        delivery_instruction = speech_instruction.strip()
-        if delivery_instruction:
-            delivery_instruction += "\n"
-        delivery_instruction += depth_policy.instruction
+        delivery_instruction = "\n".join(filter(None, (speech_instruction.strip(), depth_policy.instruction)))
+        max_chars, max_sentences = reply_limits_for(
+            ResponseDepth.EXTENDED if is_story_request(last_user) else depth_policy.depth,
+            barge_in_enabled=self._runtime.barge_in_enabled,
+            realtime=realtime,
+            audience=profile.profile.service_mode if profile is not None else None,
+        )
+        if self._runtime.fixed_safety_heard and depth_policy.depth is ResponseDepth.BRIEF:
+            max_chars, max_sentences = min(max_chars, MAX_CONTROLLED_VOICE_REPLY_CHARS), min(max_sentences, 2)
+        delivery_instruction += "\n" + spoken_reply_budget_instruction(max_chars, max_sentences)
         anonymous_public = policy.allows_anonymous_public_conversation(speaker_class)
         safe_chat_ctx = self._context_assembler.assemble(
             chat_ctx=chat_ctx,

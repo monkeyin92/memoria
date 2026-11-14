@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from services.agent.src.live_lookup_router import keyword_requires_live_media_lookup
 from services.agent.src.orchestration.prosody import speech_plan_for_turn
 from services.common.companion_response_safety import fixed_companion_reply
@@ -80,6 +81,25 @@ def test_extract_story_ip_generic_regex() -> None:
     assert extract_story_ip("给我讲个哪吒的故事吧") == "哪吒"
     assert extract_story_ip("我想听白雪公主的故事") == "白雪公主"
     assert extract_story_ip("我想听孙悟空的故事") == "孙悟空"
+
+
+@pytest.mark.parametrize("query", [
+    "给我讲一个海底探险的长故事，里面要有小海龟和发光的鱼。",
+    "我想听一个原创故事。",
+    "编一个月球探险的故事，里面有会跳舞的石头。",
+    "自创一个彩虹城的故事。",
+])
+def test_original_story_brief_does_not_become_an_external_ip(query: str) -> None:
+    assert extract_story_ip(query) is None
+
+
+def test_original_story_detection_preserves_named_source_grounding() -> None:
+    assert extract_story_ip("编一个小猪佩奇的故事，里面要有小海龟。") == "小猪佩奇"
+    assert extract_story_ip("不要编故事，我想听葫芦兄弟的故事。") == "葫芦兄弟"
+
+
+def test_original_cast_brief_does_not_replay_an_unrelated_local_story() -> None:
+    assert match_local_story("编一个月亮探险的故事，里面有会跳舞的石头。") is None
 
 
 def test_extract_story_ip_excludes_common_story_words_and_local_titles() -> None:

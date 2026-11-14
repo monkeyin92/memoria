@@ -96,7 +96,6 @@ CONNECTION_RETRY_PHRASE = BRIDGE_PHRASES[3]
 DEVICE_WAKE_PHRASES = (
     "我在。",
     "哎，我来了。",
-    "哎呀，好困呀。",
 )
 
 _WAKE_PERIOD_PHRASES: dict[str, tuple[str, ...]] = {

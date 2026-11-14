@@ -419,6 +419,12 @@ def is_continuation_story_request(query: str) -> bool:
     return any(pattern in compact for pattern in _CONTINUATION_PATTERNS)
 
 
+def _is_story_creation_brief(compact: str) -> bool:
+    creative = re.search(r"原创|自创|自编|(?:编|创作)(?:一个|个|一篇|一段)|(?:里面|故事里)(?:要|希望)?有", compact)
+    source = re.search(r"原著|原版|官方|《|(?:不要|别|不许|不能)(?:自己)?(?:编|原创|自创)", compact)
+    return bool(creative and not source)
+
+
 def match_local_story(query: str, *, prioritize_generic: bool = True) -> str | None:
     """Match request to a pre-stored local Flash/SD story ID.
 
@@ -428,7 +434,7 @@ def match_local_story(query: str, *, prioritize_generic: bool = True) -> str | N
        naming an external IP, returns "story_01" (the primary bedtime story).
     """
     compact = _normalize(query)
-    if not compact:
+    if not compact or _is_story_creation_brief(compact):
         return None
 
     # Check explicit alias match first across all local stories
@@ -456,6 +462,11 @@ def extract_story_ip(query: str) -> str | None:
     for key, canon in KNOWN_CHILD_IPS.items():
         if any(_normalize(alias) in compact for alias in canon.aliases):
             return key
+
+    # A creation brief names invented settings/cast, not a source to retrieve.
+    # Explicit source requests and known characters keep their grounding route.
+    if _is_story_creation_brief(compact):
+        return None
 
     # 2. Check regex patterns for generic "[IP]的故事" or "我想听[IP]"
     patterns = (

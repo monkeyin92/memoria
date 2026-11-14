@@ -19,6 +19,14 @@ def test_explicit_detail_request_overrides_realtime_brief_default() -> None:
     assert policy.depth is ResponseDepth.EXTENDED
 
 
+def test_a_named_long_story_asks_for_extended_child_delivery() -> None:
+    policy = response_depth_for(
+        "给我讲一个海底探险的长故事，里面要有小海龟和发光的鱼。",
+        audience="student_minor",
+    )
+    assert policy.depth is ResponseDepth.EXTENDED
+
+
 def test_controlled_standard_turn_stays_brief_but_explicit_detail_is_preserved() -> None:
     assert response_depth_for("今天过得怎么样", controlled=True).depth is ResponseDepth.BRIEF
     assert (
