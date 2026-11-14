@@ -203,6 +203,36 @@ class ExtractTest(unittest.TestCase):
         f.send(0, ws(b"", 8))
         self.assertEqual(len(self.parse(f).frames), 1)
 
+    def test_rejects_sequence_wrap_at_end_of_capture(self):
+        for fin in (False, True):
+            with self.subTest(fin=fin):
+                f = Fixture().handshake()
+                f.send(0, ws(audio(), 2))
+                shift = 2**32 - f.seq[0] + (-1 if fin else 10)
+                if fin:
+                    f.packet(0, f.seq[0], b"", flags=17)
+                packets = []
+                for packet in f.packets:
+                    packet = bytearray(packet)
+                    if struct.unpack("!H", packet[36:38])[0] == 8794:
+                        seq = struct.unpack("!I", packet[38:42])[0]
+                        struct.pack_into("!I", packet, 38, seq + shift)
+                    packets.append(bytes(packet))
+                f.packets = packets
+                with tempfile.TemporaryDirectory() as root:
+                    output = Path(root) / "evidence"
+                    result = subprocess.run(
+                        [sys.executable, str(SCRIPT), "--output", str(output), "--libopus", LIB],
+                        input=f.pcap(), capture_output=True,
+                    )
+                    self.assertEqual(result.returncode, 1)
+                    self.assertFalse(output.exists())
+                    self.assertNotIn(b"synthetic", result.stderr)
+
+    def test_rejects_syn_at_sequence_wrap_boundary(self):
+        with self.assertRaises(m.Invalid):
+            m.TCP(2**32 - 1, lambda *_: None)
+
     def test_reject_invalid_evidence(self):
         cases = []
         for opts in ({"target": "other"}, {"status": 401}, {"claim": "other"}):

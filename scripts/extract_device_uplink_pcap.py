@@ -75,11 +75,13 @@ class Buffer:
 
 class TCP:
     def __init__(self, seq, consume):
+        require(0 <= seq < 2**32 - 1)
         self.next = seq + 1
         self.pending = []
         self.consume = consume
 
     def feed(self, seq, data, stamp):
+        require(0 <= seq and seq + len(data) < 2**32)
         # Sequence wrap and ambiguous overlap fail closed; duplicates already
         # delivered are ignored. Retransmission timestamps never replace originals.
         require(abs(seq - self.next) < 2**31)
@@ -450,6 +452,7 @@ class Capture:
                 flow.acks[1 - direction], int.from_bytes(tcp[8:12], "big")
             )
         if flags & 1:
+            require(seq + len(data) + 1 < 2**32)
             flow.fins[direction] = seq + len(data)
         if data:
             require(flow.fins[direction] is None or seq + len(data) <= flow.fins[direction])
