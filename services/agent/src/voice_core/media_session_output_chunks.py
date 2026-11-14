@@ -216,10 +216,15 @@ class MediaOutputChunksMixin:
         segmented before the speaker actually stopped.
         """
 
+        last_sent = int(getattr(context.asr, "last_sent_sample", 0) or 0)
+        context.ingress.clear_progress(
+            stream_epoch=context.stream_epoch,
+            floor_sample=last_sent,
+        )
         evidence = max(
             context.projection.latest_capture_sample,
             context.last_asr_evidence_end_sample,
-            int(getattr(context.asr, "last_sent_sample", 0) or 0),
+            last_sent,
         )
         playback_floor = evidence + _PLAYBACK_ECHO_TAIL_MARGIN_SAMPLES
         if playback_floor > (context.last_playback_end_sample or 0):

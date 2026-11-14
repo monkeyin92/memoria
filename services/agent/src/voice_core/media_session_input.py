@@ -109,6 +109,27 @@ def _vad_precedes_pending_turn(segment: SpeechSegment, context: _MediaVoiceSessi
     return sample < floor
 
 
+def _vad_end_covered_by_committed_turn(
+    segment: SpeechSegment,
+    context: _MediaVoiceSession,
+    voiced_end_sample: int,
+) -> bool:
+    if (
+        context.pending.active_vad_start_sample is not None
+        or context.pending.turn_start_sample is not None
+        or segment.stream_epoch != context.stream_epoch
+    ):
+        return False
+    committed = int(getattr(context.asr, "last_committed_sample", 0) or 0)
+    if committed <= 0:
+        return False
+    silent_end = context.ingress.contiguous_silent_end_from(
+        stream_epoch=context.stream_epoch,
+        sample=committed,
+    )
+    return voiced_end_sample <= max(committed, silent_end or 0)
+
+
 class MediaSessionInputMixin:
     """Translate transport input into the existing turn/interaction fences."""
 
@@ -263,6 +284,7 @@ class MediaSessionInputMixin:
         context.pending.turn_retire_sample = None
         context.pending.turn_endpoint_grace_deadline = None
         context.pending.turn_endpoint_tail_deadline = None
+        context.pending.final_vad_endpoint_pinned = None
         if context.pending.evidence_less_hold_since is not None:
             # Resumed VAD resets the tail timeout above, but may only nudge,
             # never lift, the cap on output waiting behind an empty turn.
@@ -644,6 +666,23 @@ class MediaSessionInputMixin:
                     )
                     self._clear_pending_turn_state(context)
                     return
+                voiced_end_sample = (
+                    segment.voiced_end_sample
+                    if segment.voiced_end_sample is not None
+                    else segment.capture_start_sample
+                )
+                if (
+                    context.pending.final_vad_endpoint_pinned is not None
+                    or _vad_end_covered_by_committed_turn(segment, context, voiced_end_sample)
+                ):
+                    logger.info(
+                        "media vad_end ignored after final-wait commit session=%s "
+                        "pinned_endpoint=%s voiced_end=%s",
+                        context.identity.session_id,
+                        context.pending.final_vad_endpoint_pinned,
+                        voiced_end_sample,
+                    )
+                    return
                 # Keep the accepted utterance's absolute deadline across ASR
                 # finalization: silence is paused and endpoint-tail timing
                 # has not taken ownership yet. A hung provider must stay bounded.
@@ -672,11 +711,6 @@ class MediaSessionInputMixin:
                     # utterance (or terminal/reconnected session) must not be
                     # endpointed by the old VAD when its ASR call returns.
                     return
-                voiced_end_sample = (
-                    segment.voiced_end_sample
-                    if segment.voiced_end_sample is not None
-                    else segment.capture_start_sample
-                )
                 if context.pending.clock_fact_endpoint_pinned is not None:
                     logger.info(
                         "media vad_end ignored after clock-fact pin session=%s "

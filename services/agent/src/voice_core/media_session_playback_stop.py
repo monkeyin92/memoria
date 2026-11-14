@@ -728,28 +728,7 @@ class MediaPlaybackStopMixin:
     ) -> None:
         """Bound an unanchored candidate after the reply ended.
 
-        Two policies close the abandoned echo window: a completed playback
-        boundary (a final that starts wholly after it, or owner speech that
-        straddles it, begins a new turn even while the echo-holdover VAD is
-        still marked active), and the conservative unvoiced-gap fallback.
-        Neither may segment ordinary long pauses or an endpointed turn; the
-        resulting sample fence also applies before ASR/rescue/VAD ingest.
-
-        The fallback also bounds a candidate that began inside the echo window
-        after the reply ended (2026-10-02 round 10 t015: a 「停」 as the story
-        finished by itself).  No playback overlapped it, yet the follow-up
-        endpoint leaves any pending turn begun before the boundary to this
-        split: without the fallback each left the reset to the other and the
-        next question waited for a VAD edge that never came.
-
-        The reply's own voice finalized after its playback ended is such a
-        candidate.  Field 2026-10-03 (round 11, 3 of 24 questions lost): the next
-        question's final is accepted while its device VAD end is still being
-        finalized, so the VAD latch is live and the gap guard below refused;
-        the echo and the question merged and the whole turn was dropped at
-        commit as ``assistant_echo``.  A live VAD that began past the echo
-        window, after the candidate ended, is new speech: then an echo
-        candidate gives way at once.
+        Playback boundaries and unvoiced gaps fence abandoned candidates; later VAD is new speech.
         """
 
         if context.identity.client_type != "device":
@@ -968,10 +947,7 @@ class MediaPlaybackStopMixin:
             return False
         if result.capture_start_sample >= started[1]:
             return False
-        return (
-            result.capture_end_sample
-            < started[1] + _BARGE_MIN_LIVE_RUN_SAMPLES
-        )
+        return result.capture_end_sample < started[1] + _BARGE_MIN_LIVE_RUN_SAMPLES
 
     @staticmethod
     def _pinned_turn_holds_no_words(
