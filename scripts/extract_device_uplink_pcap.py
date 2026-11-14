@@ -258,6 +258,7 @@ class Downlink:
         self.controls = []
         self.current = None
         self.last_fence = None
+        self.seen_generation_ids = set()
         self.cancel_fence = None
         self.flush_fence = None
         self.total_pcm = 0
@@ -305,6 +306,9 @@ class Downlink:
         record["fence"] = dict(zip(FENCE_KEYS, fence, strict=True))
         g = self.current
         if kind == "generation.started":
+            # Audio carries only the generation ID, so fence reuse is ambiguous.
+            require(fence[2] not in self.seen_generation_ids)
+            self.seen_generation_ids.add(fence[2])
             require(self.last_fence is None or fence > self.last_fence or fence == self.flush_fence)
             require(len(self.generations) < MAX_GENERATIONS)
             self.end_decoder()

@@ -511,6 +511,37 @@ class DownlinkTest(unittest.TestCase):
                     self.assertEqual((wav.getframerate(), wav.getnchannels()), (16000, 1))
                     self.assertEqual(wav.readframes(1280), flow.downlink.generations[i]["pcm"])
 
+    def test_cross_turn_generation_id_must_be_unique(self):
+        packet = encoded_fixture(1)[0]
+        for generation in (1, 2):
+            f = self.fixture()
+            self.send_control(f, "generation.started", 1)
+            fence = {"session_epoch": 7, "turn_id": 2, "generation_id": generation, "tool_epoch": 0}
+            self.send_control(f, "generation.started", generation, fence=fence)
+            f.send(1, ws(down_audio(packet, generation=1), 2, masked=False))
+            with self.subTest(replacement=generation), self.assertRaises(m.Invalid):
+                self.parse(f, downlink=True)
+        f = self.fixture()
+        self.send_control(f, "generation.started", 1)
+        self.send_control(
+            f,
+            "generation.started",
+            2,
+            fence={
+                "session_epoch": 7,
+                "turn_id": 2,
+                "generation_id": 2,
+                "tool_epoch": 0,
+            },
+        )
+        f.send(1, ws(down_audio(packet, generation=2), 2, masked=False))
+        flow = self.parse(f, downlink=True)
+        self.assertEqual(len(flow.downlink.generations[1]["frames"]), 1)
+        self.assertEqual(
+            list(struct.unpack("<320h", flow.downlink.generations[1]["pcm"])),
+            reference_decode([packet]),
+        )
+
     def test_reject_downlink_wire_and_boundary_errors(self):
         packet = encoded_fixture(1)[0]
         for changes in (
