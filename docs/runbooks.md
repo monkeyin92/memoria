@@ -1246,7 +1246,7 @@ uv run --frozen --extra dev pytest --no-cov services/agent/tests/unit/test_liste
 | `request.model_name` | `bigmodel` | 目前只有 `bigmodel` | 一致 |
 | `audio` 字段 | `format=pcm, codec=raw, rate=16000, bits=16, channel=1` | `format` 必填（pcm/wav/ogg/mp3，pcm 内部须 pcm_s16le），`codec` 默认 raw，`rate` 仅支持 16000，`bits` 仅 16，`channel` 默认 1 | 一致 |
 | `request.end_window_size` | 由 `VOLC_ASR_END_WINDOW_MS` 配置，默认 550 | 强制判停静音阈值，单位 ms，默认 800，最小 200 | 一致（取值在允许范围） |
-| `request.enable_nonstream` | 默认 true | 仅双向流式优化版支持二遍识别；开启后默认 VAD 分句 | 一致 |
+| `request.enable_nonstream` | 候选默认 false；显式 true 可开启 | 仅双向流式优化版支持二遍识别；开启后默认 VAD 分句 | 一致 |
 | `request.show_utterances` | 默认 true | 输出分句/分词信息，供 `extract_transcript` 取 `utterances[].words` | 一致 |
 | 热词表 | 原先写在 `request.boosting_table_id` | 文档层级为 `request.corpus.boosting_table_id` | 不一致，已改 |
 | `request.result_type` | 未发送（服务端默认 `full`） | 默认 `full`，即 `result.text` 为整段文本 | 一致（依赖默认值，已在代码注释说明） |
@@ -1258,7 +1258,7 @@ uv run --frozen --extra dev pytest --no-cov services/agent/tests/unit/test_liste
 ### 仍未验证的部分
 
 - **没有对真实端点打过合成音**。仓库与运行环境都没有 `VOLC_ASR_APP_ID` / `VOLC_ASR_ACCESS_TOKEN`，本次只做了文档与官方 Demo 的静态核对加本地假服务端单测。打开 `ASR_FAILOVER_ENABLED` 前必须用合成音对 `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async` 实连一次，确认：拿到首包结果、负包后收到 `is_last` 响应、错误帧能被识别。
-- `end_window_ms=550` 与 `enable_nonstream=true` 的组合会触发服务端 VAD 分句，中间结果里可能出现 `definite: true` 的分句。当前实现把 `definite` 分句当作句末结果转发，同时继续等负包边界；这一行为与 FunASR 路径的 `sentence_end` 语义一致，但没有在真实端点上观察过中间 `definite` 的时序。
+- `enable_nonstream` 控制供应商二遍识别。2026-11-15 候选将默认值改为 false；`VOLC_ASR_ENABLE_NONSTREAM=true` 仍可显式开启。相同受控上行停止词 PCM 在 true 模式下三次由 partial“停”改为 final“行”，false 模式三次返回 final“停”。false 模式也已在客户端 finish 前观察到供应商原生 final。适配器仍仅接受服务端末包或 `definite` 作为 final，不把 partial 提升为命令，也不把“行”加入停止词。关闭二遍同时放弃其纠错收益，必须重跑同候选真机 Precheck、Safety、Soak 后再执行 R02；17 份不同 PCM 的 34 次配对请求不能代表整体准确率或声学验收。候选未部署时，线上仍使用原镜像默认 true；部署与回滚走现有 Agent 组件版本流程，不改共享生产 env。
 - 文档未给出“一条连接能否承载第二个任务”的明确禁止。即使允许，当前实现选择一段一连接，成本是多一次 WebSocket 建连，收益是任务边界与连接生命周期一致，不依赖未写明的服务端行为。
 
 ### finalize 预算：从负包到 final
