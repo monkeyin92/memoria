@@ -90,9 +90,9 @@ build35 已完成本地签名并以固件内置公钥验签，完整固件 Host 
 
 正式组件脚本在相同最小候选上再次完整运行门禁并仅上传构建镜像成功，`agent_component_upload_build=PASS`、`agent_component_cutover=SKIPPED`。候选 `memoria-agent:20261114-stutter-v1`，image ID `sha256:a6fb1b37e6e876f45b3cb64fb814e40d67785f7b95043db79a91d1935aa5a5b1`，revision `7965b77ed9ffe10c2f0e90f3e41a8d967086842a`。现场核实运行桥仍为 `memoria-agent:20261113-dialogue-hotfix-v1`、image `sha256:2d768b036395918d39a9fab45c603b9b828e538e99a948d00dae073771c022ee`，healthy/restarts0，将保留为回滚。该运行组件同时是候选基座，正式cutover按脚本文档需要 `--allow-manual-base-image --reason` 记录这个已核实事实；不跳过其他门禁。
 
-计划中的本次变更仅为：切换Voice Core Media Bridge至修复安全阻塞并完成验证的新候选（原stutter-v1不可用）；仅对dev_atk_a4cb8fd6095c发布build35 app OTA；在R02测试窗口向 `/etc/memoria-agent.env` 临时添加 `REPLY_TEXT_DEBUG_LOG=true`，沿用且不扩大已核实的唯一测试subject白名单，完成或中止后恢复此单项原状态。已只读核实env文件当前无该键。所有三项均尚待本次明确授权，其他服务和全局固件发布指针保持当前值。
+计划中的本次变更仅为：切换Voice Core Media Bridge至修复安全阻塞并完成验证的新候选（原stutter-v1不可用）；仅对dev_atk_a4cb8fd6095c发布build35 app OTA；在R02测试窗口向 `/etc/memoria-agent.env` 临时添加 `REPLY_TEXT_DEBUG_LOG=true`，沿用且不扩大已核实的唯一测试subject白名单，完成或中止后恢复此单项原状态。已只读核实env文件当前无该键。2026-11-14 用户已明确授权以上三项，其他服务和全局固件发布指针保持当前值。
 
-执行顺序为先复测卡顿，再按同候选前置要求进行R02及真实内容审查。R02 driver仅看listening状态可能漏掉listening_closed窗口，正式155步前还需补齐此门禁验证，避免重演本轮已作废的窗口碰撞。场景准备和模板不是专项验收通过证据。
+执行顺序为先复测卡顿，再按同候选前置要求进行R02及真实内容审查。已复核R02实际使用devicetest/voice_soak_tapwake.py，而非scripts/voice_soak.py：它已解析listening_closed并通过USB resume_listening恢复麦克风，需用实际路径验证窗口恢复。此前把另一份驱动的缺口套用到R02的判断不成立，不据此修改正确路径。场景准备和模板不是专项验收通过证据。
 
 
 ## 复评阻塞与修复（2026-11-14，未上线）
@@ -109,4 +109,44 @@ build35 已完成本地签名并以固件内置公钥验签，完整固件 Host 
 
 v2 镜像构建于 `2026-11-14T02:44:34Z`，目标 `memoria-agent:20261114-stutter-v2`，image ID `sha256:ec877b61cceb8019a38a1d5e4ab3672c03daab7800ef1767cc763bc053359172`，revision `d43fe7f1762b4f84445de66c9729d6dc099cf67f`。只读 docker inspect 已独立核对上述镜像和revision；运行桥仍为旧revision `9efcf9d7` / image `sha256:2d768b036395918d39a9fab45c603b9b828e538e99a948d00dae073771c022ee`，healthy、restarts=0，保留作回滚。全局current.json仍为 `5e6030edd618747d71584d8b585d70ce5ab37f02492fa7dda5a5b12ac2bb0dea`，env文件仍不存在 `REPLY_TEXT_DEBUG_LOG` 键。build35 app SHA-256再次核实为 `ceaafd33284e7c646c5b13d4a475d0a6c7e88ae51cd5c9d9a57fd7da01271cac`，未重新构建或上传。
 
-原始完整门禁、预检和镜像构建输出为 `safety-final-full-tests.log`、`safety-component-preflight.log`、`safety-component-build.log`；日志保留既有异步清理warning和跳过信息，不表示相关环境已验收。新的v2切流、目标设备build35 OTA及仅测试subject的临时回答记录，仍待针对本次操作的明确授权；随后先做卡顿复测，再做R02及真实内容审查。当前结果不能宣称卡顿已治愈或专项已通过。
+原始完整门禁、预检和镜像构建输出为 `safety-final-full-tests.log`、`safety-component-preflight.log`、`safety-component-build.log`；日志保留既有异步清理warning和跳过信息，不表示相关环境已验收。新的v2切流、目标设备build35 OTA及仅测试subject的临时回答记录，2026-11-14 已获得用户针对本次操作的明确授权；随后先做卡顿复测，再做R02及真实内容审查。当前结果不能宣称卡顿已治愈或专项已通过。
+
+
+## 2026-11-14 授权后的部署与验收（进行中）
+
+用户确认部署v2、目标设备build35，并继续卡顿、R02及内容优化。临时在env添加REPLY_TEXT_DEBUG_LOG=true，原键不存在、原测试subject白名单未改，完成或中止后删除该单项并让运行桥重新加载。Mac本轮原音量为output13/input94/alert100/mutedfalse。串口仅由本轮logger持有。
+
+build35已定向发布，设备MAC核对为90:e5:b1:d7:83:2c。串口捕获OTA下载、staged ota_1、重启后MEMORIA_FIRMWARE_BUILD=35和Firmware build35 confirmed，以及真实activating->idle。服务端正式cutover已PASS，现场核实d43fe7f1 / ec877b61、healthy/restarts=0；设备更新不表示卡顿或R02通过。完整串口为v2-device-serial.log。
+
+
+### v2＋build35 实际复测与 R02 前置状态
+
+本轮正式测试前完成素材合成，使用94份独立供应商音频覆盖384个别名片段，格式/非静音/时长/哈希检查通过，最短0.567s。补充两段科普使用macOS Tingting成人合成音作为控制，不当作真人儿童录音。实际刺激与来源见 `outputs/acceptance/r02-ready-20261114/bank-manifest.json` 和 `stutter-long-bank-manifest.json`。先前合成素材期间的预唤醒不计入正式卡顿验收，原始记录保留在v2-device-serial.log。
+
+正式第一组位于 `outputs/acceptance/run-20261114-stutter-v2`，5次测试输入均收到回复，含唤醒共6个generation：服务端/设备帧数分别为120/120、1020/1020、438/438、867/867、780/780、132/132；服务端最大间隔25/29/25/28/99/24ms，设备最大软件供音等待12/0/12/25/20/0ms，decode drops始终0。三次故事请求的实际回复很短，其中两次是资料缺失式拒绝，不能拿它们代替长回答压力验证。
+
+补充长回答位于 `outputs/acceptance/run-20261114-stutter-v2-long`：太阳系52.1s、2605/2605帧，server max gap41ms、device software wait max35ms；恐龙53.78s、2689/2689帧，server max gap128ms、device software wait max258ms（total283ms）。首帧计数差已消失，但258ms软件等待仍需处理，不能判卡顿全面修复。这是软件队列和codec提交层观察，不等同DAC声学下溢；不同动态回答也不是严格A/B。尚无人耳验收。
+
+第一组尾窗原样报evidence_insufficient：告别后真实listening->idle在尾窗开始前约2s发生。driver提交27213b47记录最近测试语音结束时间，仅接受其后真实serial_transition的idle；默认无锚点时仍拒绝旧idle，assumed_idle也不通过。修前Host回归1失败/10通过，修后相关126项通过；补充真机组尾窗45s为verified_idle，记录last_stimulus_ended_at=11:23:32.914，真实idle=11:23:36.658。原失败时间线未覆盖或改写。
+
+已记录8次测试输入和8份对应机器输出，另保留两次唤醒文本：`outputs/acceptance/r02-ready-20261114/recorded-conversations.json`。输入字段是已验证来源的预设刺激，不冒充ASR识别原文；机器文字取自限定测试subject的reply_text_debug，已PII脱敏，不冒充逐字声学转写。R02尚未开始，按用户要求先关闭剩余卡顿问题。
+
+### build36 本地候选（未获部署授权）
+
+候选提交844d1adecde568acb2cc7902e6053eb0bd19b727：0049只对目标板server generation在首次PCM仍留在队列时，通过释放队列锁的CV等待最多320ms，或本代16个20ms有效队列项提前放行；局部epoch变化/Stop取消后重新取队列。本地gen0不设预缓冲，不修改原PCM8/Opus120容量和服务器1x发送节奏。代价为约0.3s首次起播延迟；不把前代DMA尾部当成缓冲已完成，不把codec边界替身当真机声学证据。
+
+真实输出/Reset/Drain函数Host回归，反向移除0049后64帧first0ms/maxgap284ms，按相同fixture修后first305ms/maxgap29ms、全帧顺序无损。覆盖停止、异代/同代flush、延迟Speaking preserve、1/15帧短流、虚假通知固定截止、local混合/in-flight排除、完成通知与250ms timeout；其他板型仍first0ms/maxgap284ms。独立只读GPT评审无新增阻塞或应改，额外临时控制验证前代pending exact跨同代/异代flush及同epoch不重复预缓冲，仍不构成真机证明。
+
+完整构建完成，ELF符号表确认预缓冲helper及其predicate实际链接，build36已本地签名并用内置公钥验签。app为3391152字节，SHA-256 `824014f262512767ae3fdb7305df75d4c513794b779d5894bd87ac58be7a7440`；未上传或刷写。完整固件Host集854项通过（83.45s），默认IDF Python构建后overlay检查通过，Ruff、shell语法及diff检查通过。构建、全量测试、overlay及签名日志分别为stutter36-build.log、stutter36-firmware-tests.log、stutter36-overlay.log、stutter36-sign.log；源码差异与运行镜像保持分开。
+
+### 已证实的回答内容问题（尚未实施优化）
+
+1. 原创题材误识别成IP：生产候选的extract_story_ip把“海底探险的长故事”提取为“海底探险的长”，无历史探针也会强制联网；搜索回答的严格grounding使其拒讲。不是必须依赖佩奇历史粘连。应修正IP判定边界，普通主题/角色条件走原创路径，真实IP与事实继续有来源，不伪装成官方剧情。
+2. 明确要求八颗行星、每颗三句，实际只讲到地球。日志voice_reply_budget_reached chars194/sentences10；student_minor extended硬上限300个alnum字符/10句，开场1句＋三颗各3句刚好耗尽。恐龙也在十句预算后截于“可能成群迁徙；”。不把provider_stream_complete解释成模型已讲完；优化需协调覆盖约束、预算和未完成状态，不只提高常量。
+3. 上海11:14唤醒“哎呀，好困呀。”可由通用DEVICE_WAKE_PHRASES无条件选中，不需要时区错误。应从白天通用候选排除睡意句，夜间按家庭设置选择简短温和问候。
+
+产品/儿童审查还记录：资料缺失时语气生硬，缺少可执行的下一步；恐龙回答术语密度高，未解释新词。知识事实尚未逐条外部核验，不判事实准确性已通过。固定安全脚本不在本轮随意改写范围内，当前已修复的安全计划优先级必须保留。
+
+### 临时状态恢复
+
+本轮物理复测完成后已删除env中的REPLY_TEXT_DEBUG_LOG单项，按运行Compose authority仅重建同一v2桥加载原始关闭状态；回读实际revision=d43fe7f1、image=ec877b61、healthy/restarts=0、reply_debug_enabled=False。未修改subject白名单。Mac恢复output13/input94/alert100/mutedfalse；logger停止、命令socket及USB串口释放。线上仍为v2＋build35，build36只在本地，继续真机验证需本次新固件的明确授权。
