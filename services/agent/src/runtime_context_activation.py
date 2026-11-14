@@ -20,6 +20,12 @@ from services.agent.src.orchestration.context_snapshot_manager import (
     PendingSnapshot,
     scope_context_snapshot_draft,
 )
+from services.agent.src.orchestration.interaction_plane import (
+    InteractionDecision,
+    InteractionEvent,
+    InteractionSnapshot,
+)
+from services.agent.src.orchestration.utterance_router import UtteranceRoute
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +68,46 @@ class DuplexRuntimeContextActivationMixin:
 
         def _spawn(self, coro: Any, *, name: str) -> asyncio.Task[Any]: ...
 
+        def route_user_turn(self, text: str) -> UtteranceRoute: ...
+
+        def decide_interaction(self, snapshot: InteractionSnapshot) -> InteractionDecision: ...
+
+        def apply_interaction_decision(
+            self, decision: InteractionDecision, *, text: str = "",
+            fence: GenerationFence | None = None, allow_delegation: bool = True,
+        ) -> None: ...
+
         def speech_plan_for_fence(self, fence: GenerationFence) -> SpeechPlan: ...
+
+    def activate_committed_interaction(
+        self,
+        user_text: str,
+        fence: GenerationFence,
+        *,
+        input_modality: Literal["audio", "text"] = "audio",
+        allow_delegation: bool = True,
+    ) -> None:
+        """Activate turn work, deferring delegation until its context is ready."""
+        if not self.fence.matches(fence):
+            return
+        committed_interaction = self.decide_interaction(
+            InteractionSnapshot(
+                event=InteractionEvent.TRANSCRIPT,
+                assistant_speaking=False,
+                text=user_text,
+                final=True,
+                has_speech_energy=input_modality == "audio",
+                semantic_evidence=True,
+                utterance_route=self.route_user_turn(user_text),
+                turn_committed=True,
+            )
+        )
+        self.apply_interaction_decision(
+            committed_interaction,
+            text=user_text,
+            fence=fence,
+            allow_delegation=allow_delegation,
+        )
 
     def _context_snapshot_draft(
         self,

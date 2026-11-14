@@ -1,0 +1,39 @@
+{
+  "volume": "output volume:13, input volume:94, alert volume:100, output muted:false",
+  "serial_owner": null,
+  "logger_socket_exists": false,
+  "owned_audio_processes": [],
+  "recordings": {
+    "soak": {
+      "sample_rate": 16000,
+      "channels": 1,
+      "duration_s": 1200.878,
+      "path": "outputs/acceptance/run-20261114-resumed-soak/session_mic.wav",
+      "sha256": "5dc659e8fd27b01797c1704d9f3c8331801d8aa1ba3f7cdff8b99bac97789706",
+      "source": "Mac room microphone; not device PCM",
+      "transcription": "not performed",
+      "diagnostic_only": false
+    },
+    "near-only": {
+      "sample_rate": 16000,
+      "channels": 1,
+      "duration_s": 202.3386875,
+      "path": "outputs/acceptance/run-20261114-resumed-near-only/session_mic.wav",
+      "sha256": "6e27c87473293f7b4be4e98a46376ed8f5fcfa6d78c8e307539cec966ab80111",
+      "source": "Mac room microphone; not device PCM",
+      "transcription": "not performed",
+      "diagnostic_only": true
+    }
+  },
+  "bench_status": {
+    "exit_code": 1,
+    "result": "non-bench image ignored status; not reflashed"
+  },
+  "last_device_state": {
+    "state": "idle",
+    "source": "serial_transition",
+    "time": "13:58:24.088",
+    "near_tail_s": 45,
+    "near_tail_verdict": "verified_idle"
+  }
+}

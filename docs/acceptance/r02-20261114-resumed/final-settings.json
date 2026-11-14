@@ -1,0 +1,5 @@
+{
+  "resolved_reply_debug": false,
+  "media_owner_silence_timeout_s": 180.0,
+  "media_listening_capture_window_s": 30.0
+}

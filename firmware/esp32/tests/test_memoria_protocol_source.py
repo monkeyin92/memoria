@@ -1917,7 +1917,7 @@ def test_transport_attempt_fence_blocks_late_old_websocket_callbacks() -> None:
     assert "transport_close_notified_ = false" in open_channel
     assert open_channel.count("websocket_attempt != websocket_attempt_id_.load()") == 2
     assert "WebSocket* const websocket = websocket_.get()" in open_channel
-    assert "OnData([this, websocket, websocket_attempt]" in open_channel
+    assert "OnData([this, websocket, websocket_attempt, dedicated_wifi_wss]" in open_channel
     assert "OnDisconnected([this, websocket, websocket_attempt]" in open_channel
     assert "OnError([this, websocket_attempt]" in open_channel
     assert "websocket->Close()" not in open_channel

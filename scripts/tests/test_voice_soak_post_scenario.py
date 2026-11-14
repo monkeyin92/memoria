@@ -133,3 +133,24 @@ def test_post_scenario_window_returns_timeout_without_idle(driver, monkeypatch) 
     assert result["verdict"] == "timeout"
     assert result["timed_out"] is True
     assert result["waited_s"] == 5.0
+
+
+@pytest.mark.parametrize("driver", ["devicetest.voice_soak_tapwake"], indirect=True)
+@pytest.mark.parametrize(
+    ("state_since", "source", "expected"),
+    [
+        (BASE - 1, "serial_transition", "verified_idle"),
+        (BASE - 10, "serial_transition", "evidence_insufficient"),
+        (BASE - 1, "assumed_idle", "evidence_insufficient"),
+    ],
+    ids=["real-idle-after-last-input", "stale-idle-before-last-input", "assumed-idle"],
+)
+def test_device_tail_hands_off_only_real_idle_after_last_stimulus(
+    driver, monkeypatch, state_since, source, expected
+) -> None:
+    clock = FakeClock()
+    watcher = make_watcher(driver, monkeypatch, clock, "idle", state_since, source)
+    watcher.last_stimulus_ended_at = BASE - 2
+    result = watcher.observe_post_scenario(5.0)
+    assert result["verdict"] == expected
+    assert result["waited_s"] == 5.0

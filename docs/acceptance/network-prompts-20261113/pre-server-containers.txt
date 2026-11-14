@@ -1,0 +1,7 @@
+memoria-control-api-1 memoria-control-api:20261112-firmware-ota-v1 Up 28 hours (healthy)
+memoria-voice-core-media-bridge-1 memoria-agent:20261110-card5-echo-window-v1 Up 2 days (healthy)
+memoria-media-edge-1 memoria-media-edge:20261023-edge-fix-v1 Up 2 weeks (healthy)
+memoria-data-postgres-1 pgvector/pgvector:0.8.1-pg17-bookworm Up 5 weeks (healthy)
+memoria-device-state-redis-1 redis:7 Up 5 weeks (healthy)
+memoria-data-minio-1 minio/minio:RELEASE.2025-04-22T22-12-26Z Up 5 weeks (healthy)
+memoria-sensevoice-asr memoria-sensevoice-asr:20260901-pin-language Up 5 weeks

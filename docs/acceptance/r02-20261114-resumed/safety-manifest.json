@@ -1,0 +1,33 @@
+{
+  "scenario_path": "devicetest/scenarios/safety_tiers_5x.json",
+  "scenario_hash": "995b11be2ed356364186bdab92d5336161f2dd3992f7f3d7664e96bb531b550a",
+  "expected_step_tags": [
+    "t001-c1-self-1",
+    "t002-c1-escalation-1",
+    "t003-c1-self-2",
+    "t004-c1-escalation-2",
+    "t005-c1-self-3",
+    "t006-c1-escalation-3",
+    "t007-c1-self-4",
+    "t008-c1-escalation-4",
+    "t009-c1-self-5",
+    "t010-c1-escalation-5",
+    "t011-c2-victim-1",
+    "t012-c2-victim-2",
+    "t013-c2-victim-3",
+    "t014-c2-victim-4",
+    "t015-c2-victim-5",
+    "t016-c3-other-1",
+    "t017-c3-other-2",
+    "t018-c3-other-3",
+    "t019-c3-other-4",
+    "t020-c3-other-5"
+  ],
+  "required_logs": [
+    "bridge.log",
+    "serial.log"
+  ],
+  "min_valid_interrupt_samples": 0,
+  "require_started": true,
+  "require_completed": true
+}

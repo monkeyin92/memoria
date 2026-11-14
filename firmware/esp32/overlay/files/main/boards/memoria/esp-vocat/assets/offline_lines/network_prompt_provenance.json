@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "source": {
+    "generated_at": "2026-11-13T13:54:30.680771+00:00",
+    "voice_id": "zh_female_shaoergushi_uranus_bigtts",
+    "voice_profile": "warm_companion",
+    "resource_id": "seed-tts-2.0",
+    "sample_rate_hz": 24000,
+    "speech_rate": 0,
+    "loudness_rate": 0,
+    "pitch": 0,
+    "content_producer": "Memoria",
+    "content_propagator": "Memoria",
+    "wav_sha256": {
+      "offline-reconnecting-v1.wav": "fcc2f0a8d4d3957b97ec32366f2aa06c63c649f8edb3cc28d335fd3aec60e2e8",
+      "online-restored-v1.wav": "27629ec6cf2e95903dfd2a4316a0df9638b118e029c7f76e999f9d5186c6526c",
+      "online-restored-chat-v1.wav": "738e51dc5b8628c25437dd3ffaaea32206909a414f95b3c13916ce9fecaf4041"
+    }
+  },
+  "codec": "opus",
+  "sample_rate_hz": 16000,
+  "channels": 1,
+  "bitrate_bps": 16000,
+  "clips": {
+    "offline-reconnecting-v1": {
+      "text": "还在连网，再等一小会儿。",
+      "sha256": "8a7cd36219d29e787513d2bc6cf12a3fc72e957b9e933fd26500b3224556e2e2",
+      "audio_packets_sha256": "839d7a6fffb995f4de9f31e2f3e912ade39160e5e6d34faffc599fc461759221",
+      "previous_sha256": "c5bb1e9fb56fcd32b75e0cb984ab62f9d7b0520492d17a9dd4b166ceef7eb35a",
+      "previous_audio_packets_sha256": "447d9066025c6b05910a86a8d4fdfb6a2aaee85dfab6b1d5d2d4bcdc5786b601",
+      "previous_voice_id": "wenrounansheng"
+    },
+    "online-restored-v1": {
+      "text": "网络连好了。",
+      "sha256": "5037dde95e14accd6e75af2d47d28d5abda1cf02a06bfd132d8015177c061902",
+      "audio_packets_sha256": "bf638babca62c149a9867602f576c48b55ce6d7759e92267a3da7aac2d68f2c6",
+      "previous_sha256": "8dfb0cae5f9d53411671d254cd06bd78002a7a18706b0777b33a836d270f1552",
+      "previous_audio_packets_sha256": "2252c042ba1b0043a9fde1e67cf90fb75d0254978890471982ff55b4b149f4cf",
+      "previous_voice_id": "wenrounansheng"
+    },
+    "online-restored-chat-v1": {
+      "text": "现在可以和我聊天了。",
+      "sha256": "71580df588d4b110d5ac3abd4fba620f52bedaffab4f6349da2991f0a8b77fd0",
+      "audio_packets_sha256": "df2ba5e0408adf1b37d92ac6153f06e890f32ba315476b615c5b812078faa0b1",
+      "previous_sha256": "7f6ea9ffb238b2d611ac6a23a73c4f0784c4d91d3580860c999a08663a445831",
+      "previous_audio_packets_sha256": "58811b0a8af532cd38cc9535acc49a75f14b97f2f458850e5baeb6b3b45fa76c",
+      "previous_voice_id": "wenrounansheng"
+    }
+  }
+}

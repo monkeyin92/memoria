@@ -5,7 +5,8 @@
 # (source: Notion R02 card and the 内测准入门禁 v1 page; do not substitute words).
 # Receipts: devicetest/r02-<stamp>/ and outputs/acceptance/run-<stamp>-r02-<suite>/.
 set -uo pipefail
-cd "$HOME/projects/memoria"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$ROOT"
 
 STAMP=$(date +%Y%m%d-%H%M%S)
 RUN="devicetest/r02-${STAMP}"

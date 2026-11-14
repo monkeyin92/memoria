@@ -1278,3 +1278,52 @@ uv run --frozen --extra dev pytest --no-cov services/agent/tests/unit/test_liste
 空段分类也改为使用 `ASRSegmentEvidence` 保存的段级 RMS、峰值和失败原因。`rotate_task` 结束时会清空 provider task 的 PCM 证据，旧分类读到的 RMS 已经是 0，真实语音会被误标成 `low_rms`。现在分类读段级快照，`final_result_timeout` 归到 `empty+vendor_silent`，`provider_error` 归到 `empty+vendor_error`。
 
 ---
+
+### 2026-11-13 partial 误结束、联网回答与网络提示音部署
+
+设备 ASR partial（含稳定 partial）不能取得结束会话的权限。`media_session_turns_close.py` 只允许真实 final 进入规则或语义的提前结束路径；缺 final 兜底在提升 partial 前检查规则和语义告别，命中时等待真实 final，最终仍缺失则按既有空输入 tail 清理及重听提示处理。普通问句缺 final 的兜底保留。真实 final 告别和播放中停止、打断沿用现有路径。原先要求 partial 立即结束的两个测试改为“partial 不结束、真实 final 才结束”的可观察契约，另覆盖 partial 被最终问句修订及语义告别。
+
+`reply_pipeline.py` 的故事联网分支曾把动态故事开场送给只接受固定话术的 `bridge_acknowledgement`，触发 `ValueError('bridge acknowledgement is not allowlisted')`。现与普通查询一致使用 `LIVE_LOOKUP_FILLER`；未扩大白名单。回归走真实 ReplyPipeline 和 delegation coordinator，以受控搜索及模型替身验证过渡后继续输出最终故事；不代表供应商在线验收。
+
+声线分开核对：生产 `media_agent_factory.py` 将同一个会话 TTS 注入 runtime 与 provider，在线过渡 `generate_output → _synthesize_phrase → _provider_pcm_chunks` 与正常回答使用它。测试验证相同有效 voice，及有效 voice 改变后过渡语随之改变。旧 `build_production_provider_factory` 仍独立构造 DoubaoTTS，但源码没有生产调用方；不能将该旧入口当作当前生产链路的证据。
+
+本地重连走 `memoria_offline_menu.h → memoria_esp_vocat.cc::PlayLocalAssetClip → Application::PlaySound`，不经过服务端 voice resolver。三份 OGG `offline-reconnecting-v1`、`online-restored-v1`、`online-restored-chat-v1` 原先实际使用 `wenrounansheng`。本次通过生产容器既有 Doubao 配置真实重合成，使用正常对话的 `warm_companion`、`zh_female_shaoergushi_uranus_bigtts` 与 `seed-tts-2.0`。来源及前后音频包哈希记录于同目录 `network_prompt_provenance.json`。其余 12 份板载 OGG 未改。index 顶层的 2026-10-14 为原素材批次日期，本次三份的日期以逐项 provenance 为准，原有 terms 备注不构成商用许可核验。
+
+部署分成两部分。Agent 采用当前生产 `ad40fe60` 的最小补丁，不带 main 上其他源码变更。设备仅更新独立 assets 分区，普通 app OTA 不包含它。目标 `dev_atk_a4cb8fd6095c`、MAC `90:e5:b1:d7:83:2c`、现场分区表已匹配，assets 为 `0x800000/0x800000`，8 MiB 备份已与芯片 MD5 一致。候选 `generated_assets.bin` 为 2,493,448 bytes，SHA-256 `f8c78f641527a684e735460ea286ff918b64ca0aff1dc3c5783a1cba18fd1d5a`，40 个 entry 中只有三份 OGG、index 及新增 provenance 与旧包不同。写入前补齐到 4096 bytes，对写入区间、未写尾部和其他分区分别校验。不重刷 app 或整片擦除。备份在被忽略的 `firmware/esp32/artifacts/network-prompts-20261113/`，含秘密的 identity 备份为 0600。
+
+独立 Claude 评审对 Agent 和 assets 均无阻塞。告别分类器异常时保留真实 final 等待，不提升 partial，避免产生新终态权限。新增异常回归先复现 RuntimeError 后通过。音频相关 67 项、OGG 解码、AIGC、overlay 检查及完整 assets 构建通过。人工听音及设备播放验收尚未完成。
+验证环境：使用既有 `/Users/monkeyin/projects/memoria/.venv/bin/` 下 Python、ruff、mypy。修复前，改写后的 partial 契约在 `conversation_close_endpoint_pinned == 16000` 处失败；故事用例在真实白名单检查处复现相同 ValueError。
+
+```sh
+python -m pytest services/agent/tests/unit/test_media_session_device_turns.py services/agent/tests/unit/test_agent_realtime_delegation.py services/agent/tests/unit/test_media_session_endpoint_tails.py services/agent/tests/unit/test_media_session_playback_stop.py services/agent/tests/unit/test_media_session_interruption.py services/agent/tests/unit/test_delegation_coordinator.py services/agent/tests/unit/test_media_agent_factory.py -q
+ruff check .
+python scripts/check_module_budget.py check
+mypy services --strict
+```
+
+相关回归 205 项通过（exit 0），随后扩充有效 voice 变化断言，单独 factory 用例再次通过。Ruff 通过；模块预算 33 项通过（reply_pipeline 预算随删行从 1386 收紧为 1381）；mypy 对 599 个源文件通过，仅提示两个既存 unused override。上述 Agent 回归未调用在线供应商；本地提示音已通过生产容器真实调用 Doubao 重合成。真机听音验收尚未完成。
+
+
+
+
+## 部署与实际链路结果
+
+22:15:31，正式组件脚本完成切流。线上 `memoria-agent:20261113-dialogue-hotfix-v1`，revision `9efcf9d7feb0d9abd219a6cb0f567c9ed9d6c2b1`，healthy，restart 0。三份修复源码 SHA-256 与本 worktree 一致。回滚镜像 `memoria-agent:rollback-20261113-dialogue-hotfix-v1-pre` 保留，image ID 为 `sha256:14a9d4a6ca4b9298b12526867fe1c4a69e426316a2cb7cba95a99e4d5f39b522`。部署前核对运行容器的 services 和 packages 源码与 `ad40fe60` 一致，无手工源码漂移。Control API、Edge 和数据服务未切换。
+
+真机 session `154ab015-e824-43f0-9a01-79aedec0cb9a`、stream epoch 3192。串口持续监控，确认麦克风开启、监听恢复后，以 Mac 扬声器播放“给我讲一个孙悟空的故事”。DeepSeek search HTTP 200，5 个结果。generation 2 过渡语和 generation 3 最终回答均有 `actual_heard=True` 及 `playback_ended=True` 回执。没有原白名单异常。随后播放“好的，再见”，22:16:49 的 ASR `source=final rule_match=True` 正常走 `conversation_end_explicit`，设备回到 wifi_hold。partial 修订场景仍以回归测试验证，没有伪称通过自然语音复现。
+
+上述告别和提示音部署未包含卡顿修复。generation 3 的服务端 pacing 为 1009 frames、20180 ms、max_gap 26 ms；设备 output 969 frames，解码队列 depth 120 时丢包 40 条，supply_waits 7、supply_max 1944 ms、supply_total 3150 ms。设备播放队列供音不足和解码队列溢出已证实，尚未区分最后一跳网络突发与设备调度原因。播放回执不能证明无卡顿。三种本地网络提示的真机逐项听感仍未验收。
+
+详细收据见 `docs/acceptance.md#network-prompts-20261113`。本次仅保留本地提交和发布标签，未创建 GitHub Release 或推送。
+
+
+## 2026-11-13—14 播放卡顿定位与候选验证
+
+队列满时在 `audio_queue_mutex_` 内逐包打印串口日志，会阻塞消费者；真实函数 Host 回归已复现，候选 `0047` 改为原子累计，现有主任务每 10 秒锁外记录 `dropped_total`。队列容量 120 及拒绝语义不变。
+
+目标板 WiFi WSS 的专属接收回调每 attempt 提升至至少 priority 4，保留更高基础优先级，并用 attempt fence 与 retirement 串行化。优先级在状态锁外采样，防止将临时优先级继承误判为永久提优；新增回归修前在释放锁后仍为 1，修后为 4。未改网络窗口、RX buffer、起播水位或超时。
+
+完整固件 Host 测试 852 项通过。完整 ESP-IDF 6.0.2 构建及构建后 overlay 检查通过，独立 Gemini 评审运行时无阻塞，发现的门禁 pytest 依赖已修复，默认 IDF Python 完整检查通过。build34 已按 2026-11-14 用户授权定向 OTA 至目标设备，实际 ota_0 并 confirmed、接收 priority=4。三段故事全程 dropped_total=0，但第三段仍有服务端 max_gap866ms 与设备供音等待795ms；尚未证明卡顿全部消失。接收调度与网络突发仍需真机区分。基线与候选验收记录见 `docs/acceptance.md#stutter-20261113`。部署必须先获得针对该次操作的授权；仅更新目标设备 app，保留已替换女声的 assets、身份及其他分区，并验证实际 build、接收 priority、帧数守恒、供音等待和播放听感。
+
+
+后续本地复现确认了两个需继续修复的边界：准备轮次期间委托先绑定旧 context_version，冻结后版本改变会拒收结果；IP 故事回退将短过渡语与等待后正文接入同一 TTS 流会断供。候选延后委托至 context 冻结完成，并移除 IP 故事 fallback 的同流过渡语，保留 MediaSession 独立辅助代际。首帧差也已在真实函数 Host 中复现为异步 Speaking 的 ResetDecoder 清帧，0048 在既有同步 server-generation barrier 下保留首帧，默认本地/显式清理不变。build35 完整构建、签名、853项固件Host检查及独立GPT评审已完成；服务端最小候选7965b77e虽通过正式门禁和镜像构建，但Gemini复评发现固定安全脚本可被联网委托覆盖，原stutter-v1禁止切流。修复在联网委托准入处拒收已有固定安全计划的轮次，并验证真实媒体路径恢复安全脚本、保护播放及普通天气正控；主工作区完整组件测试4112通过、61跳过、2条异步清理warning，最小候选d43fe7f1正式组件预检通过；v2镜像ec877b61已按用户授权切流，生产桥现场核实为d43fe7f1且healthy/restarts=0；设备build35 ota_1已confirmed。真实52.1s/53.78s长答逐帧守恒且无decode drops，但后者仍有258ms软件供音等待，不能判卡顿全面修复。0049/build36提供最多320ms可取消起播预缓冲，保持发送节奏和队列容量，经完整构建、854项固件Host、overlay、签名与独立评审后，已按本次明确授权定向OTA到目标设备ota_0并confirmed，build35留在ota_1。两段47.68s/66.16s长答逐帧守恒、software supply wait和decode drops均为0；本轮网络间隔较低，不量化独立收益或宣称所有弱网/声学卡顿治愈。早先R02预检受背景人声/音视频干扰而停测。11月14日用户确认安静后，在同一v2/d43fe7f1＋build36重跑：80秒闭窗预检及Safety20通过；完整Soak45中44个主刺激均有播报、0 no_reply，但两次纯停止词未生效，四次停止/内容打断仅两次确认。185秒静默及最终240秒尾窗均有真实Idle，不能抵消停止失败；正式R02仍为0/155、前置阻塞。两段长答逐帧守恒、decode drops0，但软件供音等待最大153ms，完整Soak另有583ms等待（该代服务端maxgap39ms、467/467帧）；用户未留意听感，声学卡顿仍未知。现场WAV与ffmpeg时间轴不完全一致，也未取得转写，不作为逐字实际听到证据。未改生产配置/镜像/固件；本次进程和串口均释放，完整音量恢复，设备最后真实Idle。新收据见 [安静窗口复验](acceptance.md#r02-20261114-resumed)。回答内容本地候选d954dc8f修正原创路由、困倦问候及预算范围提示，最终独立复评无阻塞，Agent/common回归4972通过（保留1条既有异步清理warning），真实供应商三例在原上限内完整收尾，尚未上线、未做儿童真机验收；共享common变更须遵守实际发布范围。极快检索的直接coordinator调用仍有既有回调顺序边界；生产MediaSession的asyncio.wait路径受FIFO保护，此项不阻塞本修复；详细修前/后证据和未验证边界见上述收据。

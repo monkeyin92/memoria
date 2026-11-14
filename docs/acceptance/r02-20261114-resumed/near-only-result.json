@@ -1,0 +1,27 @@
+{
+  "diagnostic_only": true,
+  "gate_eligible": false,
+  "volume": 30,
+  "same_waveforms_verified": true,
+  "bieshuole": {
+    "stop_word": true,
+    "reason": "no_reply_in_flight",
+    "followup": "user_turn_ignored interrupt_command_only",
+    "actual_asr_text": "not recorded"
+  },
+  "ting": {
+    "vad_start": true,
+    "ordinary_turn_committed": true,
+    "text_len": 2,
+    "generated_audio_frames": 105,
+    "generated_audio_ms": 2100,
+    "actual_asr_text": "not recorded",
+    "recognition_or_routing_root_cause": "unknown"
+  },
+  "tail": {
+    "waited_s": 45,
+    "state": "idle",
+    "since": "13:58:24.088",
+    "verdict": "verified_idle"
+  }
+}

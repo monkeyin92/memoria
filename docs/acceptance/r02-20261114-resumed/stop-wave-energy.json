@@ -1,0 +1,20 @@
+[
+  {
+    "tag": "story-stop-stop",
+    "duration_s": 1.11875,
+    "peak_abs": 16052,
+    "peak_20ms_rms": 0.18352012818409585,
+    "energy_span_s": 0.54,
+    "relative_energy_threshold": 0.1,
+    "meaning": "energy envelope only; not validated phoneme duration or device SNR"
+  },
+  {
+    "tag": "long-stop-stop",
+    "duration_s": 0.74375,
+    "peak_abs": 19091,
+    "peak_20ms_rms": 0.22855757201555849,
+    "energy_span_s": 0.18,
+    "relative_energy_threshold": 0.1,
+    "meaning": "energy envelope only; not validated phoneme duration or device SNR"
+  }
+]

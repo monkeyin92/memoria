@@ -538,6 +538,45 @@ async def test_slow_realtime_delegation_uses_admitted_allowlisted_bridge() -> No
 
 
 @pytest.mark.asyncio
+async def test_story_lookup_waits_for_grounded_text_without_in_stream_filler() -> None:
+    runtime = DuplexRuntime.create(session_id="story-bridge-intent")
+    release = asyncio.Event()
+
+    class SlowResolver:
+        async def resolve(self, *, query: str) -> str:
+            assert "西游记" in query
+            await release.wait()
+            return "孙悟空保护师父西天取经。"
+
+    async def grounded_story(_ctx: Any, _tools: Any) -> AsyncIterator[str]:
+        yield "孙悟空保护师父西天取经。"
+
+    agent = ReplyPipeline(
+        language_model=ScriptedChatModel(grounded_story),
+        instructions="test",
+        runtime=runtime,
+        realtime_search_resolver=SlowResolver(),
+    )
+    await runtime.on_turn_committed("给我讲一个孙悟空的故事")
+    agent.response_plans.store(_plan_for_fence(
+        runtime.fence,
+        instructions="先查询西游记角色事实，再讲孙悟空的故事。",
+        speaker_class="uncertain",
+    ))
+    chat_ctx = llm.ChatContext.empty()
+    chat_ctx.add_message(role="user", content="给我讲一个孙悟空的故事")
+
+    output = agent.stream_reply(chat_ctx)
+    pending = asyncio.create_task(anext(output))
+    await asyncio.sleep(0.05)
+    assert not pending.done(), "lookup filler must use the MediaSession's auxiliary generation"
+    release.set()
+    assert await asyncio.wait_for(pending, timeout=1) == "孙悟空保护师父西天取经。"
+    assert [item async for item in output if isinstance(item, str)] == []
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_committed_turn_calls_provider_fast_model_prewarm() -> None:
     runtime = DuplexRuntime.create(session_id="fast-model-prewarm")
     calls = 0
@@ -786,3 +825,37 @@ async def test_realtime_search_recovery_does_not_cross_owner_public_scope(
     assert "待完成实时查询恢复" not in system_text
     assert "南京" not in system_text
     assert runtime.pending_realtime_request is None
+
+
+@pytest.mark.asyncio
+async def test_prepared_turn_starts_delegation_after_context_freeze(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = DuplexRuntime.create(session_id="lookup-context-freeze-race")
+    agent = ReplyPipeline(instructions="test", runtime=runtime)
+    frozen = False
+    starts: list[tuple[bool, int]] = []
+    original = DuplexRuntime.freeze_context_capsules_for_generation
+
+    async def delayed_freeze(self: Any, *args: Any, **kwargs: Any) -> Any:
+        nonlocal frozen
+        await asyncio.sleep(0.02)
+        snapshot = await original(self, *args, **kwargs)
+        frozen = True
+        return snapshot
+
+    def start(text: str, fence: Any) -> None:
+        starts.append((frozen, runtime.orchestrator.context_version_for_fence(fence)))
+
+    monkeypatch.setattr(DuplexRuntime, "freeze_context_capsules_for_generation", delayed_freeze)
+    runtime.set_delegation_starter(start)
+    try:
+        fence = await agent.prepare_turn(
+            text="给我讲一个孙悟空的故事",
+            speaker=SimpleNamespace(classification="owner"),
+            input_modality="text",
+        )
+        await asyncio.sleep(0)
+        assert starts == [(True, runtime.orchestrator.context_version_for_fence(fence))]
+    finally:
+        await runtime.close()

@@ -1118,13 +1118,17 @@ async def test_device_farewell_after_a_held_candidate_still_ends_the_session() -
 
 
 @pytest.mark.asyncio
-async def test_device_farewell_partial_after_a_held_candidate_still_ends_the_session() -> None:
+async def test_device_farewell_partial_during_story_waits_for_final() -> None:
     async def script(harness: _StoryHarness) -> None:
         await harness.start_story()
         context = harness.context
         await harness.audio_frames(20, final_text="嗯")
         harness.story.partials[harness._audio_sequence + 9] = ("再见", harness.sample)
         await harness.audio_frames(10)
+        assert not harness.closed()
+        assert not context.standby_requested
+        assert context.pending.conversation_close_endpoint_pinned is None
+        await harness.audio_frames(15, final_text="再见")
         await harness.wait_for(harness.closed)
         assert context.standby_reason == "conversation_end_explicit"
         assert harness.story.reply_calls == 1

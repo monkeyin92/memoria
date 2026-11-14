@@ -1,0 +1,52 @@
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -869,9 +869,8 @@
+         return kServerPacketGenerationMismatch;
+     }
+     if (audio_decode_queue_.size() >= MAX_DECODE_PACKETS_IN_QUEUE) {
+-        ESP_LOGW(TAG, "Dropping server packet; decode queue full generation=%u depth=%u",
+-                 static_cast<unsigned int>(packet->generation_id),
+-                 static_cast<unsigned int>(audio_decode_queue_.size()));
++        // Receive holds the protocol state lock too. Never wait on serial here.
++        server_decode_queue_drops_.fetch_add(1, std::memory_order_relaxed);
+         return kServerPacketQueueFull;
+     }
+     playback_drained_notified_ = false;
+diff --git a/main/audio/audio_service.h b/main/audio/audio_service.h
+--- a/main/audio/audio_service.h
++++ b/main/audio/audio_service.h
+@@ -181,6 +181,9 @@
+         kServerPacketGenerationMismatch,
+         kServerPacketQueueFull,
+     };
++    uint32_t ServerDecodeQueueDrops() const {
++        return server_decode_queue_drops_.load(std::memory_order_relaxed);
++    }
+     ServerPacketAdmit PushServerPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet);
+     std::unique_ptr<AudioStreamPacket> PopPacketFromSendQueue();
+     void PlaySound(const std::string_view& sound);
+@@ -210,6 +213,8 @@
+     int decoder_duration_ms_ = OPUS_FRAME_DURATION_MS;
+     int decoder_frame_size_ = 0;
+     DebugStatistics debug_statistics_;
++    // Lifetime cumulative count; never reset by a generation switch or flush.
++    std::atomic<uint32_t> server_decode_queue_drops_{0};
+     int64_t last_encode_drop_log_time_ = 0;
+     srmodel_list_t* models_list_ = nullptr;
+ 
+diff --git a/main/application.cc b/main/application.cc
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -419,6 +419,11 @@
+ 
+             // Print debug info every 10 seconds
+             if (clock_ticks_ % 10 == 0) {
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++                // Existing 10-second owner stats context, outside audio/state locks.
++                ESP_LOGI(TAG, "media decode queue stats dropped_total=%lu",
++                         static_cast<unsigned long>(audio_service_.ServerDecodeQueueDrops()));
++#endif
+                 SystemInfo::PrintHeapStats();
+                 // SystemInfo::PrintTaskList();
+                 // SystemInfo::PrintTaskCpuUsage(pdMS_TO_TICKS(1000));

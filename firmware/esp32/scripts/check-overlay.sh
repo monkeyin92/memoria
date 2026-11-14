@@ -73,6 +73,19 @@ rg -Fq 'CONFIG_MEMORIA_KEEP_AWAKE=y' "$SCRIPT_DIR/flash.sh" || \
 
 "$SCRIPT_DIR/bootstrap.sh" --no-idf-install
 
+# Execute the real patched admission and receive-priority functions on the host.
+MEMORIA_ESP32_UPSTREAM_DIR="$MEMORIA_UPSTREAM_DIR" "$python_bin" \
+    "$MEMORIA_FIRMWARE_ROOT/tests/test_memoria_media_realtime.py"
+MEMORIA_ESP32_UPSTREAM_DIR="$MEMORIA_UPSTREAM_DIR" "$python_bin" \
+    "$MEMORIA_FIRMWARE_ROOT/tests/test_memoria_speaking_first_frame.py"
+MEMORIA_ESP32_UPSTREAM_DIR="$MEMORIA_UPSTREAM_DIR" "$python_bin" \
+    "$MEMORIA_FIRMWARE_ROOT/tests/test_memoria_playout_prefill.py"
+rg -q 'server_decode_queue_drops_\.fetch_add' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
+    die "media decode drops must be counted without receive-path serial I/O"
+rg -q 'ServerDecodeQueueDrops\(\)' "$MEMORIA_UPSTREAM_DIR/main/application.cc" || \
+    die "media decode drop stats must be wired to the owner"
+
+
 [[ -s "$MEMORIA_FIRMWARE_ROOT/overlay/files/dependencies.lock" ]] || \
     die "pinned ESP component dependency lock is missing"
 cmp -s \
@@ -275,6 +288,8 @@ rg -Fq 'HoldDurationMsOnRelease' "$board_dir/memoria_esp_vocat.cc" || \
     die "offline story/line assets failed budget or manifest checks"
 "$python_bin" "$MEMORIA_FIRMWARE_ROOT/scripts/check_device_ogg_aigc.py" || \
     die "board asset oggs failed decode or AIGC OpusTags checks"
+"$python_bin" "$MEMORIA_FIRMWARE_ROOT/../../scripts/render_network_prompt_audio.py" --check-only || \
+    die "network prompt provenance, voice or audio packets mismatch"
 rg -q 'espressif/libsodium:[[:space:]]*\^1\.0\.22' "$MEMORIA_UPSTREAM_DIR/main/idf_component.yml" || \
     die "libsodium dependency missing"
 rg -q 'memoria/device_identity\.cc' "$MEMORIA_UPSTREAM_DIR/main/CMakeLists.txt" || die "device identity is not in CMake"
@@ -587,8 +602,8 @@ application_source="$MEMORIA_UPSTREAM_DIR/main/application.cc"
 audio_service_source="$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc"
 rg -q 'kServerPacketQueueFull' "$application_source" || \
     die "applied application.cc must not terminal-fail on decode queue overflow"
-rg -Fq 'Dropping server packet; decode queue full' "$audio_service_source" || \
-    die "applied audio_service.cc must log and drop decode queue overflow"
+rg -Fq 'server_decode_queue_drops_.fetch_add' "$audio_service_source" || \
+    die "applied audio_service.cc must count decode queue overflow without serial I/O"
 
 # interrupt_assist keeps capture open during playback. 0006's simplex VAD fence
 # would swallow vad.start while Speaking, so an owner barge-in never reaches

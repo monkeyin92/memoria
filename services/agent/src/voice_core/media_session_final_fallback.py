@@ -216,6 +216,17 @@ class MediaFinalMissingFallbackMixin:
             and partial.capture_end_sample > (context.pending.turn_start_sample or 0)
         ):
             return False
+        # Promoting a partial must not manufacture authority to end a session.
+        # Hold close candidates for a real provider final, including semantic
+        # farewells; ordinary missing-final questions retain the fallback.
+        try:
+            close_needed = await context.runtime.resolve_conversation_close_needed(partial.text)
+        except Exception:
+            logger.warning("close classifier unavailable; waiting for provider final session=%s",
+                           context.identity.session_id, exc_info=True)
+            return False
+        if close_needed:
+            return False
         # A stable partial inside this turn is safer than dropping a complete utterance when
         # the final marker is lost; a device VAD end can trail the last word (t014: 3.5 s).
         fallback_confidence = (

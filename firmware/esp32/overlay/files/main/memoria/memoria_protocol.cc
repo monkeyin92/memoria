@@ -901,8 +901,19 @@ bool MemoriaProtocol::OpenAudioChannel() {
     } else {
         websocket->SetHeader("X-Client-ID", identity_.client_id().c_str());
     }
-    websocket->OnData([this, websocket, websocket_attempt](const char* data, size_t size,
-                                                           bool binary) {
+    // WifiBoard -> EspNetwork -> a new EspSsl per WSS socket. EspSsl owns a
+    // dedicated ssl_receive task; WebSocket::OnTcpData calls OnData inline on
+    // that task. AT/network callbacks can be shared and must never be boosted.
+    const bool dedicated_wifi_wss =
+#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+        Board::GetInstance().GetBoardType() == "wifi" &&
+        session.websocket_url.rfind("wss://", 0) == 0;
+#else
+        false;
+#endif
+    websocket->OnData([this, websocket, websocket_attempt, dedicated_wifi_wss](
+                          const char* data, size_t size, bool binary) {
+        ObserveMediaReceiveTask(websocket_attempt, dedicated_wifi_wss);
         std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
         if (websocket_attempt != websocket_attempt_id_.load()) {
             return;
@@ -1102,11 +1113,54 @@ bool MemoriaProtocol::IsAudioChannelOpened() const {
            !error_occurred_;
 }
 
+// Called only by the media OnData callback; serialize the fence and priority
+// change with retirement so a late callback cannot affect even its old task.
+void MemoriaProtocol::ObserveMediaReceiveTask(uint32_t attempt, bool dedicated_wifi_wss) {
+#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+    // Sample before this mutex can lend us a waiter's priority. OnData calls
+    // here before taking the state lock; otherwise a temporary inheritance
+    // could be mistaken for a permanent receive-task priority.
+    const UBaseType_t before = uxTaskPriorityGet(nullptr);
+    std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+    if (!dedicated_wifi_wss || attempt != websocket_attempt_id_.load() ||
+        receive_priority_attempt_ == attempt) {
+        return;
+    }
+    if (before < 4) {
+        vTaskPrioritySet(nullptr, 4);
+    }
+    receive_priority_before_ = before;
+    receive_priority_actual_ = uxTaskPriorityGet(nullptr);
+    receive_priority_attempt_ = attempt;
+    receive_priority_pending_ = true;
+#else
+    (void)attempt;
+    (void)dedicated_wifi_wss;
+#endif
+}
+
 void MemoriaProtocol::PollTransportLiveness() {
     if (transport_owner_task_ == nullptr) {
         transport_owner_task_ = xTaskGetCurrentTaskHandle();
     }
     configASSERT(transport_owner_task_ == xTaskGetCurrentTaskHandle());
+    uint32_t receive_attempt = 0;
+    unsigned receive_before = 0;
+    unsigned receive_actual = 0;
+    {
+        std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+        if (receive_priority_pending_) {
+            receive_attempt = receive_priority_attempt_;
+            receive_before = receive_priority_before_;
+            receive_actual = receive_priority_actual_;
+            receive_priority_pending_ = false;
+        }
+    }
+    // At most once per observed attempt; no serial I/O in the receive callback.
+    if (receive_attempt != 0) {
+        ESP_LOGI(kTag, "media receive task attempt=%lu priority_before=%u priority_actual=%u",
+                 static_cast<unsigned long>(receive_attempt), receive_before, receive_actual);
+    }
     WebSocket* ping_websocket = nullptr;
     {
         std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);

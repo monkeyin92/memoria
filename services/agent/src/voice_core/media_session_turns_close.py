@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from typing import TYPE_CHECKING
 
 from services.agent.src.voice_core.speech_timeline import ASRResult
@@ -21,8 +20,6 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
-
-_CONVERSATION_CLOSE_PARTIAL_STABLE_S = 0.6
 
 
 class MediaTurnConversationCloseMixin:
@@ -137,7 +134,7 @@ class MediaTurnConversationCloseMixin:
     ) -> None:
         """Commit farewell/standby turns without waiting for a stuck device VAD end."""
 
-        if context.identity.client_type != "device":
+        if not result.is_final or context.identity.client_type != "device":
             return
         if context.pending.turn_endpoint_sample is not None:
             return
@@ -164,65 +161,8 @@ class MediaTurnConversationCloseMixin:
         self,
         context: _MediaVoiceSession,
     ) -> None:
-        partial = context.pending.pending_partial
-        if partial is None:
-            context.pending.conversation_close_partial_text = None
-            context.pending.conversation_close_partial_stable_since = None
-            context.pending.cancel_close_semantic()
-            return
-        text = partial.text.strip()
-        if not text:
-            context.pending.conversation_close_partial_text = None
-            context.pending.conversation_close_partial_stable_since = None
-            context.pending.cancel_close_semantic()
-            return
-        # A deterministic farewell is a terminal device command. Commit it at
-        # the first accepted partial instead of waiting for another partial
-        # revision and the 600 ms stability window. Real devices can lose the
-        # following VAD end (or the provider final) while returning to idle;
-        # the partial itself is enough to enter the existing terminal close
-        # and playback-interruption path.
-        if (
-            context.identity.client_type == "device"
-            and context.pending.turn_endpoint_sample is None
-            and context.runtime.conversation_close_needed(text)
-        ):
-            self._pin_conversation_close_endpoint(
-                context,
-                partial.capture_end_sample,
-                text=text,
-                source="partial_immediate",
-                result=partial,
-            )
-            self._schedule_turn_commit(context)
-            return
-        now = time.monotonic()
-        if context.pending.conversation_close_partial_text == text:
-            if context.pending.conversation_close_partial_stable_since is None:
-                context.pending.conversation_close_partial_stable_since = now
-            elif (
-                context.pending.turn_endpoint_sample is None
-                and context.pending.conversation_close_endpoint_pinned is None
-                and now - context.pending.conversation_close_partial_stable_since
-                >= _CONVERSATION_CLOSE_PARTIAL_STABLE_S
-            ):
-                if context.runtime.conversation_close_needed(text):
-                    self._pin_conversation_close_endpoint(
-                        context,
-                        partial.capture_end_sample,
-                        text=text,
-                        source="partial",
-                        result=partial,
-                    )
-                    self._schedule_turn_commit(context)
-                else:
-                    self._schedule_conversation_close_semantic_evaluation(
-                        context,
-                        text=text,
-                        capture_end_sample=partial.capture_end_sample,
-                        source="partial",
-                    )
-        else:
-            context.pending.conversation_close_partial_text = text
-            context.pending.conversation_close_partial_stable_since = now
-            context.pending.cancel_close_semantic()
+        # Stability is not finality: a later ASR revision may turn a farewell
+        # prefix into a question. Only provider finals may endpoint a close.
+        context.pending.conversation_close_partial_text = None
+        context.pending.conversation_close_partial_stable_since = None
+        context.pending.cancel_close_semantic()

@@ -51,6 +51,8 @@ class ReplyDelegationMixin:
         # Core pipeline members consumed by this mixin.
         def _realtime_sources_available(self) -> bool: ...
 
+        def fixed_safety_planned(self, fence: GenerationFence) -> bool: ...
+
     async def _forced_realtime_search_stream(
         self,
         *,
@@ -214,6 +216,8 @@ class ReplyDelegationMixin:
             return handle
 
     def _can_start_realtime_delegation(self, fence: GenerationFence) -> bool:
+        if self.fixed_safety_planned(fence):
+            return False
         if not self._runtime.fence.matches(fence):
             return False
         if self._runtime.mode_policy_enforced:

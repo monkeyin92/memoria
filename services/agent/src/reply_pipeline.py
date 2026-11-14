@@ -83,6 +83,7 @@ from services.common.response_depth import (
     ResponseDepth,
     ResponseDepthPolicy,
     response_depth_for,
+    spoken_reply_budget_instruction,
 )
 from services.common.story_grounding import (
     build_grounded_story_system_instruction,
@@ -134,22 +135,15 @@ def reply_limits_for(
 ) -> tuple[int, int]:
     """(max characters, max sentences) one spoken reply may use."""
 
-    if barge_in_enabled:
-        chars, sentences = MAX_VOICE_REPLY_CHARS, MAX_VOICE_REPLY_SENTENCES
-    else:
-        chars, sentences = MAX_CONTROLLED_VOICE_REPLY_CHARS, MAX_CONTROLLED_VOICE_REPLY_SENTENCES
     if depth is ResponseDepth.EXTENDED:
         chars, sentences = MAX_VOICE_REPLY_CHARS_LONGFORM, MAX_VOICE_REPLY_SENTENCES_LONGFORM
-    elif depth is ResponseDepth.BRIEF:
-        if not barge_in_enabled:
-            chars = min(chars, MAX_CONTROLLED_VOICE_REPLY_CHARS)
-            sentences = min(sentences, MAX_CONTROLLED_VOICE_REPLY_SENTENCES)
-        elif realtime:
-            chars = min(chars, MAX_REALTIME_REPLY_CHARS)
-            sentences = min(sentences, MAX_REALTIME_REPLY_SENTENCES)
-        else:
-            chars = min(chars, MAX_VOICE_REPLY_CHARS)
-            sentences = min(sentences, MAX_VOICE_REPLY_SENTENCES)
+    elif not barge_in_enabled:
+        chars, sentences = MAX_CONTROLLED_VOICE_REPLY_CHARS, MAX_CONTROLLED_VOICE_REPLY_SENTENCES
+    elif depth is ResponseDepth.BRIEF and realtime:
+        chars = min(MAX_VOICE_REPLY_CHARS, MAX_REALTIME_REPLY_CHARS)
+        sentences = min(MAX_VOICE_REPLY_SENTENCES, MAX_REALTIME_REPLY_SENTENCES)
+    else:
+        chars, sentences = MAX_VOICE_REPLY_CHARS, MAX_VOICE_REPLY_SENTENCES
     if audience in SHORT_REPLY_AUDIENCES:
         standard_cap, extended_cap = AUDIENCE_REPLY_LIMITS[audience or ""]
         cap_chars, cap_sentences = extended_cap if depth is ResponseDepth.EXTENDED else standard_cap
@@ -315,10 +309,16 @@ class ReplyPipeline(
             controlled=(not self._runtime.barge_in_enabled or self._runtime.fixed_safety_heard),
             audience=profile.profile.service_mode if profile is not None else None,
         )
-        delivery_instruction = speech_instruction.strip()
-        if delivery_instruction:
-            delivery_instruction += "\n"
-        delivery_instruction += depth_policy.instruction
+        delivery_instruction = "\n".join(filter(None, (speech_instruction.strip(), depth_policy.instruction)))
+        max_chars, max_sentences = reply_limits_for(
+            ResponseDepth.EXTENDED if is_story_request(last_user) else depth_policy.depth,
+            barge_in_enabled=self._runtime.barge_in_enabled,
+            realtime=realtime,
+            audience=profile.profile.service_mode if profile is not None else None,
+        )
+        if self._runtime.fixed_safety_heard and depth_policy.depth is ResponseDepth.BRIEF:
+            max_chars, max_sentences = min(max_chars, MAX_CONTROLLED_VOICE_REPLY_CHARS), min(max_sentences, 2)
+        delivery_instruction += "\n" + spoken_reply_budget_instruction(max_chars, max_sentences, query=last_user)
         anonymous_public = policy.allows_anonymous_public_conversation(speaker_class)
         safe_chat_ctx = self._context_assembler.assemble(
             chat_ctx=chat_ctx,
@@ -491,6 +491,7 @@ class ReplyPipeline(
         fence = await self._runtime.on_turn_committed(
             text,
             input_modality=input_modality,
+            defer_delegation=True,
         )
         if (
             input_modality == "audio"
@@ -664,6 +665,7 @@ class ReplyPipeline(
             self._note_fixed_safety_script(plan.fixed_safety_script.display)
         self.cache_response_plan(plan)
         self._mark_context_ready(fence)
+        self._runtime.activate_committed_interaction(text, fence, input_modality=input_modality)
         self._bind_speculation(text=text, speaker=speaker, fence=fence, plan=plan)
         logger.info(
             "response_plan_cached reason=%s mode=%s direct_text=%s fallback=%s "
@@ -686,11 +688,7 @@ class ReplyPipeline(
         return fence
 
     async def stream_reply(self, chat_ctx: Any) -> AsyncGenerator[ReplyItem, None]:
-        """Reply phrases for ``chat_ctx`` under the current fence's frozen response plan.
-
-        Every model token passes the GenerationFence gate; the reply stops at
-        the voice budget, and the stream is registered as the active LLM task.
-        """
+        """Stream frozen-plan phrases under the generation fence and voice budget."""
         cancellation = self._runtime.cancellation_context()
         fence = cancellation.fence
         speech_plan = self._runtime.speech_plan_for_fence(fence)
@@ -1096,7 +1094,7 @@ class ReplyPipeline(
                     query=delegated_search_query,
                     fence=fence,
                 )
-                if handle is not None:
+                if handle is not None and story_ip is None:
                     # The acknowledgement is a control-plane cue, not the
                     # query result. Emit it before waiting so a slow provider
                     # never leaves the user in silence.
@@ -1105,13 +1103,8 @@ class ReplyPipeline(
                             asyncio.shield(handle.record.task),
                             timeout=0.02,
                         )
-                    bridge_phrase = (
-                        f"好呀，我来给你讲一个{story_ip}的故事。"
-                        if story_ip is not None
-                        else LIVE_LOOKUP_FILLER
-                    )
                     bridge_intent = self._runtime.orchestrator.delegation.bridge_acknowledgement(
-                        bridge_phrase,
+                        LIVE_LOOKUP_FILLER,
                         fence=fence,
                         context_version=handle.request.context_version,
                         expires_at_ms=int(time.time() * 1_000) + 5_000,

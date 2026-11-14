@@ -1,0 +1,11 @@
+{
+  "started_at": "2026-11-14T13:11:01.564254+08:00",
+  "volume": "output volume:13, input volume:94, alert volume:100, output muted:false",
+  "port": "/dev/cu.usbmodem1101",
+  "device": "dev_atk_a4cb8fd6095c",
+  "expected_mac": "90:e5:b1:d7:83:2c",
+  "expected_build": 36,
+  "expected_bridge": "memoria-agent:20261114-stutter-v2",
+  "expected_revision": "d43fe7f1762b4f84445de66c9729d6dc099cf67f",
+  "production_debug_changed": false
+}

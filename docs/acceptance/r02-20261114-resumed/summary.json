@@ -1,0 +1,68 @@
+{
+  "candidate": {
+    "agent_revision": "d43fe7f1762b4f84445de66c9729d6dc099cf67f",
+    "firmware_build": 36,
+    "production_changed": false,
+    "firmware_changed": false
+  },
+  "precheck": {
+    "status": "pass",
+    "closed_at": "13:20:56.855",
+    "resumed_at": "13:21:46.940"
+  },
+  "safety": {
+    "status": "pass",
+    "steps": 20,
+    "no_reply": 0,
+    "tail_s": 210,
+    "actual_idle_at": "13:34:29.138"
+  },
+  "soak": {
+    "status": "fail",
+    "steps": 45,
+    "main_stimuli": 44,
+    "main_replies": 44,
+    "no_reply": 0,
+    "stop_or_content_interruptions": 4,
+    "confirmed": 2,
+    "failed": [
+      "t012-story-stop",
+      "t016-long-stop"
+    ],
+    "backchannel_kept_playing": true,
+    "latency_p90_s": 2.23,
+    "latency_max_s": 4.58,
+    "latency_policy": "record-only; strict verdict also retained",
+    "silence_step_idle_at": "13:51:44.751",
+    "final_idle_at": "13:52:39.860",
+    "tail_s": 240,
+    "tail_verdict": "verified_idle"
+  },
+  "r02": {
+    "status": "not_run_blocked",
+    "reason": "same-candidate soak stop failures",
+    "planned_steps": 155,
+    "executed_steps": 0
+  },
+  "stutter": {
+    "server_frames_match_device": true,
+    "decode_drops": 0,
+    "max_device_software_wait_ms": 583,
+    "audible_verdict": "unknown; user did not notice",
+    "zero_stutter_verified": false,
+    "two_long_replies_max_software_wait_ms": 153,
+    "soak_max_server_gap_ms": 196,
+    "soak_largest_wait_same_generation_server_gap_ms": 39
+  },
+  "content": {
+    "local_candidate": "d954dc8f",
+    "deployed": false,
+    "fresh_actual_response_transcript_review": "not performed"
+  },
+  "recordings": {
+    "device_pcm": false,
+    "continuous_wall_aligned_acoustic_evidence": false,
+    "transcription": "not performed; Flow read-only"
+  },
+  "cleanup": "cleanup.json"
+}

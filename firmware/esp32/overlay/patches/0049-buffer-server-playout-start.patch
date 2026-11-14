@@ -1,0 +1,84 @@
+diff --git a/main/audio/audio_service.cc b/main/audio/audio_service.cc
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -1,4 +1,5 @@
+ #include "audio_service.h"
++#include <algorithm>
+ #include <esp_log.h>
+ #include <cstring>
+ #include <cmath>
+@@ -417,6 +418,35 @@
+     }
+ 
+     ESP_LOGW(TAG, "Audio input task stopped");
++}
++
++bool AudioService::WaitForServerPlayoutPrefillLocked(std::unique_lock<std::mutex>& lock) {
++    const uint32_t generation = audio_playback_queue_.front()->generation_id;
++    const uint32_t epoch = playback_generation_;
++    if (generation == 0 || server_playout_prefill_epoch_ == epoch) {
++        return true;
++    }
++    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(320);
++    const size_t frame_samples = static_cast<size_t>(codec_->output_sample_rate()) / 50;
++    audio_queue_cv_.wait_until(lock, deadline, [this, generation, epoch, frame_samples]() {
++        if (service_stopped_.load() || playback_generation_ != epoch) {
++            return true;
++        }
++        const auto pcm_frames = std::count_if(audio_playback_queue_.begin(), audio_playback_queue_.end(),
++            [generation, frame_samples](const auto& task) {
++                return task->generation_id == generation && task->pcm.size() == frame_samples;
++            });
++        const auto opus_frames = std::count_if(audio_decode_queue_.begin(), audio_decode_queue_.end(),
++            [generation](const auto& packet) {
++                return packet->generation_id == generation && packet->frame_duration == 20;
++            });
++        return pcm_frames + opus_frames >= 16;
++    });
++    if (service_stopped_.load() || playback_generation_ != epoch || audio_playback_queue_.empty()) {
++        return false;
++    }
++    server_playout_prefill_epoch_ = epoch;
++    return true;
+ }
+ 
+ void AudioService::AudioOutputTask() {
+@@ -484,6 +514,11 @@
+             break;
+         }
+ 
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++        if (!WaitForServerPlayoutPrefillLocked(lock)) {
++            continue;
++        }
++#endif
+         auto task = std::move(audio_playback_queue_.front());
+         audio_playback_queue_.pop_front();
+         output_in_flight_ = true;
+diff --git a/main/audio/audio_service.h b/main/audio/audio_service.h
+--- a/main/audio/audio_service.h
++++ b/main/audio/audio_service.h
+@@ -7,6 +7,7 @@
+ #include <condition_variable>
+ #include <chrono>
+ #include <mutex>
++#include <optional>
+ 
+ #include <freertos/FreeRTOS.h>
+ #include <freertos/task.h>
+@@ -241,6 +242,7 @@
+     uint32_t exact_output_sequence_ = 0;
+     std::chrono::steady_clock::time_point exact_output_started_{};
+     uint32_t playback_generation_ = 0;
++    std::optional<uint32_t> server_playout_prefill_epoch_;
+     uint32_t accepted_server_generation_ = 0;
+     /* Memoria playback supply metering: observation only, every call under
+      * audio_queue_mutex_.  See memoria_playback_supply_meter.h. */
+@@ -273,6 +275,7 @@
+     bool InitializeAudioEngine();
+     void SetDecodeSampleRate(int sample_rate, int frame_duration);
+     void CheckAndUpdateAudioPowerState();
++    bool WaitForServerPlayoutPrefillLocked(std::unique_lock<std::mutex>& lock);
+     bool ResetDecoderLocked(uint32_t accepted_server_generation);
+     bool IsPlaybackDrainedLocked() const;
+     bool MarkPlaybackDrainedLocked();

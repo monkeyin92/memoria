@@ -1,0 +1,15 @@
+{
+  "scenario_path": "outputs/acceptance/r02-ready-20261114/build36-precheck.json",
+  "scenario_hash": "0fffa001a2589ed45a8a68d337d5659839c4f14bd89ccee265e630e916f6ba93",
+  "expected_step_tags": [
+    "t001-precheck-window-close",
+    "t002-precheck-resume-goodbye"
+  ],
+  "required_logs": [
+    "bridge.log",
+    "serial.log"
+  ],
+  "min_valid_interrupt_samples": 0,
+  "require_started": true,
+  "require_completed": true
+}

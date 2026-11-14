@@ -1,0 +1,34 @@
+[
+  {
+    "path": "outputs/acceptance/r02-resumed-20261114-room.wav",
+    "pcm_duration_s": 395.4590625,
+    "last_ffmpeg_pts_s": 424.37,
+    "difference_s": 28.910937,
+    "wall_alignment_verified": false,
+    "continuous_acoustic_evidence": false
+  },
+  {
+    "path": "outputs/acceptance/r02-resumed-20261114-gates-room.wav",
+    "pcm_duration_s": 886.83975,
+    "last_ffmpeg_pts_s": 958.86,
+    "difference_s": 72.02025,
+    "wall_alignment_verified": false,
+    "continuous_acoustic_evidence": false
+  },
+  {
+    "path": "outputs/acceptance/r02-resumed-20261114-soak-room.wav",
+    "pcm_duration_s": 1200.878,
+    "last_ffmpeg_pts_s": 1282.35,
+    "difference_s": 81.472,
+    "wall_alignment_verified": false,
+    "continuous_acoustic_evidence": false
+  },
+  {
+    "path": "outputs/acceptance/r02-resumed-20261114-near-room.wav",
+    "pcm_duration_s": 202.3386875,
+    "last_ffmpeg_pts_s": 215.86,
+    "difference_s": 13.521313,
+    "wall_alignment_verified": false,
+    "continuous_acoustic_evidence": false
+  }
+]

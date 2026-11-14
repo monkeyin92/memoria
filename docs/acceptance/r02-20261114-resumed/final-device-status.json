@@ -1,0 +1,9 @@
+{
+  "exit_code": 1,
+  "result": "non-bench image ignored status; not reflashed",
+  "state": "idle",
+  "source": "serial_transition",
+  "time": "13:58:24.088",
+  "near_tail_s": 45,
+  "near_tail_verdict": "verified_idle"
+}
