@@ -88,20 +88,18 @@ class FakeVolcConnection:
         *,
         last: bool,
         sequence: int = 1,
+        definite: bool = False,
     ) -> None:
         payload = gzip.compress(
             json.dumps(
-                {"result": {"text": text, "utterances": []}},
+                {"result": {"text": text, "utterances": [], "definite": definite}},
                 ensure_ascii=False,
             ).encode()
         )
         flags = 0b0011 if last else 0b0001
         header = bytes([0x11, (FULL_SERVER_RESPONSE << 4) | flags, 0x11, 0x00])
         self._incoming.put_nowait(
-            header
-            + struct.pack(">i", abs(sequence))
-            + struct.pack(">I", len(payload))
-            + payload
+            header + struct.pack(">i", abs(sequence)) + struct.pack(">I", len(payload)) + payload
         )
 
     def _push_error(self, code: int) -> None:
@@ -180,18 +178,23 @@ def _pcm(samples: int = 1600, amplitude: int = 200) -> bytes:
 
 
 @pytest.mark.asyncio
-async def test_connect_sends_configuration_before_any_audio() -> None:
+@pytest.mark.parametrize("mode", [None, False, True])
+async def test_connect_sends_configuration_before_any_audio(mode: bool | None) -> None:
     conn = FakeVolcConnection()
-    session = VolcASRSession(_config(_one_connection(conn)))
-    await session.connect()
-    assert session.task_id
-    assert session.task_epoch == 1
-    first = parse_frame(conn.sent[0])
-    assert first.message_type == FULL_CLIENT_REQUEST
-    assert first.sequence == 1
-    assert first.payload["request"]["model_name"] == "bigmodel"
-    assert first.payload["audio"]["rate"] == 16_000
-    await session.aclose()
+    options = {} if mode is None else {"enable_nonstream": mode}
+    session = VolcASRSession(_config(_one_connection(conn), **options))
+    try:
+        await session.connect()
+        assert session.task_id
+        assert session.task_epoch == 1
+        first = parse_frame(conn.sent[0])
+        assert first.message_type == FULL_CLIENT_REQUEST
+        assert first.sequence == 1
+        assert first.payload["request"]["enable_nonstream"] is (mode is True)
+        assert first.payload["request"]["model_name"] == "bigmodel"
+        assert first.payload["audio"]["rate"] == 16_000
+    finally:
+        await session.aclose()
     assert conn.closed is True
 
 
@@ -400,3 +403,32 @@ def test_header_matches_the_documented_layout() -> None:
     assert raw[0] == 0x11
     assert raw[3] == 0x00
     assert struct.unpack(">i", raw[4:8])[0] == 1
+
+
+def test_second_pass_defaults_off_with_explicit_opt_in() -> None:
+    assert VolcASRConfig(app_id="app", access_token="token").enable_nonstream is False
+    assert VolcASRConfig.from_env({}).enable_nonstream is False
+    assert VolcASRConfig.from_env({"VOLC_ASR_ENABLE_NONSTREAM": "true"}).enable_nonstream is True
+    assert VolcASRConfig.from_env({"VOLC_ASR_ENABLE_NONSTREAM": "false"}).enable_nonstream is False
+
+
+@pytest.mark.asyncio
+async def test_streaming_mode_keeps_partials_partial_and_accepts_native_definite() -> None:
+    conn = FakeVolcConnection()
+    session = VolcASRSession(_config(_one_connection(conn), enable_nonstream=False))
+    try:
+        await session.connect()
+        await session.send_pcm(_pcm())
+        conn._push_result("停", last=False)
+        partial = await _next_event(session)
+        assert partial.sentence.text == "停"
+        assert partial.sentence.sentence_end is False
+        conn._push_result("停", last=False, definite=True)
+        final = await _next_event(session)
+        assert final.sentence.text == "停"
+        assert final.sentence.sentence_end is True
+        assert session.rotation_pending is False
+        assert conn.closed is False
+        assert not any(frame.is_last for frame in conn.audio_frames)
+    finally:
+        await session.aclose()
