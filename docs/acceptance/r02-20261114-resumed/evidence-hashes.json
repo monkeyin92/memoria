@@ -102,7 +102,9 @@
   {
     "path": "docs/acceptance/r02-20261114-resumed/receipt.md",
     "bytes": 8846,
-    "sha256": "dea637bbdf487101d1447d4647b425f0c9417fbf165f55e73ba06ac087870947"
+    "sha256": "dea637bbdf487101d1447d4647b425f0c9417fbf165f55e73ba06ac087870947",
+    "preserved_in_git": "1f701d992164f50905d249b9d9a9a2e1ab3cb394:docs/acceptance/r02-20261114-resumed/receipt.md",
+    "archived_at": "/Users/monkeyin/.t3/archives/memoria/stutter-20261114-1421/docs-before-consolidation/r02-20261114-resumed/receipt.md"
   },
   {
     "path": "docs/acceptance/r02-20261114-resumed/restored-volume.txt",
@@ -152,17 +154,19 @@
   {
     "path": "docs/acceptance/stutter-20261113/receipt.md",
     "bytes": 34001,
-    "sha256": "178ddd401acc9492f024695c9573e3193da5f51b7c7e528554486ffc84dc2e35"
+    "sha256": "178ddd401acc9492f024695c9573e3193da5f51b7c7e528554486ffc84dc2e35",
+    "preserved_in_git": "1f701d992164f50905d249b9d9a9a2e1ab3cb394:docs/acceptance/stutter-20261113/receipt.md",
+    "archived_at": "/Users/monkeyin/.t3/archives/memoria/stutter-20261114-1421/docs-before-consolidation/stutter-20261113/receipt.md"
   },
   {
     "path": "docs/acceptance.md",
-    "bytes": 487441,
-    "sha256": "ef351ed16f33113c4a5978f70cb69aa6efc5a79999189a5d1faaee5c2f094082"
+    "bytes": 533227,
+    "sha256": "afe26d1f74d280f1977500ba4dbd2af5a6cc25e124c4848901b1a2fa2b3865a7"
   },
   {
     "path": "docs/runbooks.md",
-    "bytes": 190627,
-    "sha256": "0c5e5a0aab3f9c69232af6f12f119a38b31365239279f629327486d214b96bf9"
+    "bytes": 190603,
+    "sha256": "ba4e225281d261c1ed4985af32e0ed08383096c94db65c5fb166770ca0088cd3"
   },
   {
     "path": "outputs/acceptance/run-20261114-resumed-near-only/bridge.log",
