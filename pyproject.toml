@@ -145,4 +145,4 @@ show_missing = true
 "services/agent/src/voice_core/media_session_commit.py" = 1376
 "services/agent/src/providers/doubao_tts.py" = 1442
 "services/agent/src/voice_core/media_session_output_stream.py" = 1438
-"services/agent/src/voice_core/media_session_playback_stop.py" = 1303
+"services/agent/src/voice_core/media_session_playback_stop.py" = 1301

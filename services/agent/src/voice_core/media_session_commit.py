@@ -206,6 +206,8 @@ class MediaSessionCommitMixin(MediaSessionCommitRecoveryMixin):
             self, context: _MediaVoiceSession, *, reason: str, text: str
         ) -> None: ...
 
+        def _retire_pre_playback_final(self, context: _MediaVoiceSession, result: ASRResult) -> bool: ...
+
         def _observe_partial_asr_result(
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
@@ -252,8 +254,6 @@ class MediaSessionCommitMixin(MediaSessionCommitRecoveryMixin):
             )
             return ASRAcceptDecision(None, ASRDecisionReason.STALE_STREAM_EPOCH)
         if self._asr_precedes_pending_turn(context, result):
-            # Neither a late semantic rescue nor an untimed cross-boundary
-            # revision may put abandoned candidate text into the new turn.
             self._log_asr_rejection(
                 session_id, result, ASRDecisionReason.INTERVAL_CONFLICT,
                 stage="pending_turn_boundary",
@@ -274,6 +274,8 @@ class MediaSessionCommitMixin(MediaSessionCommitRecoveryMixin):
                     reason=preview.reason,
                 )
             return preview
+        if self._retire_pre_playback_final(context, candidate):
+            return ASRAcceptDecision(None, ASRDecisionReason.FULLY_COMMITTED)
         candidate_segment = asr_result_to_segment(candidate, session_id=session_id)
         if not context.runtime.speech_timeline.can_add(candidate_segment):
             runtime_task_epoch = context.runtime.speech_timeline.latest_task_epoch(
@@ -310,8 +312,6 @@ class MediaSessionCommitMixin(MediaSessionCommitRecoveryMixin):
             context.pending.last_accepted_final = accepted
             # Establish the range fence before projection/transcript yields.
             self._split_pending_turn_at_unvoiced_gap(context, accepted)
-        # The provider result is never forwarded after supervisor policy has
-        # normalized it (e.g. a committed-watermark tail).
         segment = asr_result_to_segment(accepted, session_id=session_id)
         if not context.runtime.ingest_media_speech_segment(segment):
             raise RuntimeError("ASR runtime timeline changed during atomic acceptance")

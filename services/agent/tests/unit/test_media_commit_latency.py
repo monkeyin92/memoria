@@ -1043,6 +1043,13 @@ async def test_unrotated_asr_pre_playback_tail_after_missing_vad_end_does_not_pi
         await _send_uplink_frames(window, start_sample=end2, count=20, pcm=_SILENT_PCM)
     await _wait_until(lambda: len(window.provider.prepared) == 2, timeout=1.5)
     assert window.provider.prepared == [_HEAD, "今天天气怎么样"]
+    await _wait_until(
+        lambda: any(
+            result.fence.matches(window.context.runtime.fence)
+            for result in window.context.output.output_results
+        ),
+        timeout=1.5,
+    )
 
 
 @pytest.mark.asyncio

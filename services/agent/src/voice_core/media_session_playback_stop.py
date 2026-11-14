@@ -728,28 +728,7 @@ class MediaPlaybackStopMixin:
     ) -> None:
         """Bound an unanchored candidate after the reply ended.
 
-        Two policies close the abandoned echo window: a completed playback
-        boundary (a final that starts wholly after it, or owner speech that
-        straddles it, begins a new turn even while the echo-holdover VAD is
-        still marked active), and the conservative unvoiced-gap fallback.
-        Neither may segment ordinary long pauses or an endpointed turn; the
-        resulting sample fence also applies before ASR/rescue/VAD ingest.
-
-        The fallback also bounds a candidate that began inside the echo window
-        after the reply ended (2026-10-02 round 10 t015: a 「停」 as the story
-        finished by itself).  No playback overlapped it, yet the follow-up
-        endpoint leaves any pending turn begun before the boundary to this
-        split: without the fallback each left the reset to the other and the
-        next question waited for a VAD edge that never came.
-
-        The reply's own voice finalized after its playback ended is such a
-        candidate.  Field 2026-10-03 (round 11, 3 of 24 questions lost): the next
-        question's final is accepted while its device VAD end is still being
-        finalized, so the VAD latch is live and the gap guard below refused;
-        the echo and the question merged and the whole turn was dropped at
-        commit as ``assistant_echo``.  A live VAD that began past the echo
-        window, after the candidate ended, is new speech: then an echo
-        candidate gives way at once.
+        Playback boundaries and unvoiced gaps fence abandoned candidates; later VAD is new speech.
         """
 
         if context.identity.client_type != "device":
@@ -951,6 +930,25 @@ class MediaPlaybackStopMixin:
             and result.capture_end_sample > start
             and result.capture_end_sample - end < _BARGE_MIN_LIVE_RUN_SAMPLES
         )
+
+    def _retire_pre_playback_final(self, context: _MediaVoiceSession, result: ASRResult) -> bool:
+        started = context.output.playback_started
+        if (
+            context.identity.client_type != "device" or not result.is_final
+            or not self._reply_in_flight(context)
+            or started is None or not started[0].matches(context.runtime.fence)
+            or result.capture_end_sample > started[1]
+            or is_stop_command_only(result.text)
+            or context.pending.turn_start_sample is not None
+            or context.asr.last_committed_sample <= 0
+        ):
+            return False
+        context.runtime.commit_media_speech_range(
+            stream_epoch=result.stream_epoch,
+            start_sample=result.capture_start_sample, end_sample=result.capture_end_sample,
+        )
+        context.asr.mark_committed(result.capture_end_sample)
+        return True
 
     @staticmethod
     def _final_is_pre_playback_tail(

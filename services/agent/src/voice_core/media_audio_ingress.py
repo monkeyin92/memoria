@@ -90,6 +90,9 @@ class MediaAudioIngressState:
     last_ingested_enqueued_at: float | None = None
     progress_floor_stream_epoch: int | None = None
     progress_floor_sample: int = 0
+    admitted_end_sample: int = 0
+    admitted_unsafe_end_sample: int = 0
+    last_voiced_frame: tuple[int, int, int] | None = None
     silent_run_stream_epoch: int | None = None
     silent_run_start_sample: int | None = None
     silent_run_end_sample: int | None = None
@@ -107,6 +110,9 @@ class MediaAudioIngressState:
         self, *, stream_epoch: int | None = None, floor_sample: int | None = None
     ) -> None:
         self.clear_silent_run()
+        self.admitted_end_sample = 0
+        self.admitted_unsafe_end_sample = 0
+        self.last_voiced_frame = None
         self.processed_stream_epoch = None
         self.processed_end_sample = None
         self.last_ingested_enqueued_at = None
@@ -182,6 +188,8 @@ class MediaAudioIngressState:
             and end_sample <= self.progress_floor_sample
         ):
             return
+        if not silent:
+            self.last_voiced_frame = (stream_epoch, start_sample, end_sample)
         if enqueued_at is not None:
             self.last_ingested_enqueued_at = enqueued_at
         if self.processed_stream_epoch != stream_epoch or discontinuity:
@@ -198,6 +206,13 @@ class MediaAudioIngressState:
         )
 
     def contiguous_silent_end_from(self, *, stream_epoch: int, sample: int) -> int | None:
+        boundary = self.last_voiced_frame
+        if (
+            boundary is not None and boundary[0] == stream_epoch
+            and boundary[1] < sample < boundary[2]
+            and boundary[2] == self.silent_run_start_sample
+        ):
+            sample = boundary[2]
         if (
             self.silent_run_stream_epoch != stream_epoch
             or self.silent_run_start_sample is None
@@ -220,23 +235,30 @@ class MediaAudioIngressState:
             _OPEN_VAD_MISSING_END_SILENCE_SAMPLES if open_vad else _FINAL_VAD_END_WAIT_SAMPLES
         )
         threshold_s = required / 16_000
+        processed_end = (
+            self.processed_end_sample if self.processed_stream_epoch == stream_epoch else None
+        )
+        # A live silent uplink need not drain. Every admitted non-silent or
+        # discontinuous frame must finish ASR ingestion before endpointing.
+        backlog_safe = (
+            self.admitted_end_sample >= last_sent_sample
+            and self.admitted_unsafe_end_sample <= (processed_end or 0)
+        )
         pump_busy = self.pump_task is not None and not self.pump_task.done()
-        if self.finalize_lock.locked() or pump_busy or not self.queue.empty():
+        if self.finalize_lock.locked() or ((pump_busy or not self.queue.empty()) and not backlog_safe):
             return False, threshold_s, turn_end_sample
         silent_end = self.contiguous_silent_end_from(
             stream_epoch=stream_epoch, sample=turn_end_sample
         )
         if open_vad:
-            if silent_end is None or silent_end < last_sent_sample:
+            if silent_end is None or (silent_end < last_sent_sample and not backlog_safe):
                 return False, threshold_s, turn_end_sample
-            return silent_end - turn_end_sample >= required, threshold_s, silent_end
+            silent_start = max(turn_end_sample, self.silent_run_start_sample or 0)
+            return silent_end - silent_start >= required, threshold_s, silent_end
         if capture_hold:
             return True, threshold_s, turn_end_sample
-        processed_end = (
-            self.processed_end_sample if self.processed_stream_epoch == stream_epoch else None
-        )
         covered_end = max(silent_end or 0, processed_end or 0)
-        if covered_end < last_sent_sample:
+        if covered_end < last_sent_sample and not backlog_safe:
             return False, threshold_s, turn_end_sample
         retire_end = silent_end if silent_end is not None else turn_end_sample
         return covered_end - turn_end_sample >= required, threshold_s, retire_end
@@ -476,6 +498,9 @@ class MediaAudioIngress:
             self._host.metrics.inc_media_metric("media_discontinuity_total")
             state.discontinuity_pending = True
             frame = replace(frame, discontinuity=True)
+        state.admitted_end_sample = frame.capture_start_sample + frame.frame_samples
+        if frame.discontinuity or not self._is_silent_pcm(frame.payload):
+            state.admitted_unsafe_end_sample = state.admitted_end_sample
         state.queue.put_nowait((frame, time.monotonic()))
         self._host.metrics.set_media_metric("media_pcm_queue_depth", float(state.queue.qsize()))
         task = state.pump_task
