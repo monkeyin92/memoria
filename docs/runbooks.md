@@ -1255,9 +1255,9 @@ uv run --frozen --extra dev pytest --no-cov services/agent/tests/unit/test_liste
 | `audio_info.duration` | 未使用 | 已处理音频时长（ms） | 不影响判定，未使用 |
 | 文本帧 | 忽略 | 协议只有二进制帧 | 一致（防御性忽略） |
 
-### 仍未验证的部分
+### 实连验证与边界
 
-- **没有对真实端点打过合成音**。仓库与运行环境都没有 `VOLC_ASR_APP_ID` / `VOLC_ASR_ACCESS_TOKEN`，本次只做了文档与官方 Demo 的静态核对加本地假服务端单测。打开 `ASR_FAILOVER_ENABLED` 前必须用合成音对 `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async` 实连一次，确认：拿到首包结果、负包后收到 `is_last` 响应、错误帧能被识别。
+- 2026-11-15 已在真实 `bigmodel_async` 端点重放受控合成音及目标设备上行停止词，凭据由既有生产配置内部读取，未导出。17 份不同 PCM 的 34 次模式配对请求全部返回 final；另已验证 false 模式的原生 final 在客户端 finish 前到达。此前的静态协议审计不再代表当前实连覆盖。供应商错误帧的实连触发、一般识别准确率、弱网恢复及真实停播仍未由这些重放验证。
 - `enable_nonstream` 控制供应商二遍识别。2026-11-15 候选将默认值改为 false；`VOLC_ASR_ENABLE_NONSTREAM=true` 仍可显式开启。相同受控上行停止词 PCM 在 true 模式下三次由 partial“停”改为 final“行”，false 模式三次返回 final“停”。false 模式也已在客户端 finish 前观察到供应商原生 final。适配器仍仅接受服务端末包或 `definite` 作为 final，不把 partial 提升为命令，也不把“行”加入停止词。关闭二遍同时放弃其纠错收益，必须重跑同候选真机 Precheck、Safety、Soak 后再执行 R02；17 份不同 PCM 的 34 次配对请求不能代表整体准确率或声学验收。候选未部署时，线上仍使用原镜像默认 true；部署与回滚走现有 Agent 组件版本流程，不改共享生产 env。
 - 文档未给出“一条连接能否承载第二个任务”的明确禁止。即使允许，当前实现选择一段一连接，成本是多一次 WebSocket 建连，收益是任务边界与连接生命周期一致，不依赖未写明的服务端行为。
 
