@@ -8,17 +8,27 @@ and the commit's projection differed.
 from __future__ import annotations
 
 import asyncio
+import logging
+import re
 import time
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from services.agent.src.voice_core.media_protocol import AudioFrame
+from services.agent.src.orchestration.state_machine import InteractionPhase
+from services.agent.src.voice_core.asr_stream_supervisor import ASRDecisionReason
+from services.agent.src.voice_core.media_protocol import (
+    AudioFrame,
+    PlaybackEventType,
+    PlaybackProgress,
+)
 from services.agent.src.voice_core.media_session_commit import _resolve_media_turn_text
+from services.agent.src.voice_core.speech_timeline import ASRResult
 from services.agent.tests.unit.media_session_support import (
     _accept_media_asr_decision,
     _accept_media_asr_final,
     _device_vad,
+    _finish_previous_reply,
     _wait_until,
 )
 
@@ -26,6 +36,7 @@ _START = 40_000
 _HEAD = "明天我们去"
 _TAIL = "动物园好不好"
 _VOICED_PCM = b"\x01\x10" * 320
+_QUIET_ROOM_PCM = b"\x08\x00" * 320
 _SILENT_PCM = b"\x00\x00" * 320
 
 
@@ -110,12 +121,27 @@ def _turn_text(window: SimpleNamespace, start: int, end: int) -> str:
     return text
 
 
+def _extract_missing_vad_end_log(caplog: pytest.LogCaptureFixture) -> tuple[float, float]:
+    matches = [
+        record.getMessage()
+        for record in caplog.records
+        if "media final committed without device VAD end" in record.getMessage()
+    ]
+    assert len(matches) == 1
+    waited = re.search(r"waited_s=([0-9.]+)", matches[0])
+    threshold = re.search(r"threshold_s=([0-9.]+)", matches[0])
+    assert waited is not None and threshold is not None, matches[0]
+    return float(waited.group(1)), float(threshold.group(1))
+
+
 @pytest.mark.asyncio
 async def test_a_final_commits_without_a_device_vad_end_after_the_cap(
     device_media_session: Any,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Missing device VAD end recovers once post-final silence passes the 900 ms hangover + 300 ms wait."""
 
+    caplog.set_level(logging.INFO)
     window = await _open(device_media_session, "commit-final-wait-no-vad-end")
     await _device_vad(window, "vad-start", _START, final=False)
 
@@ -138,9 +164,12 @@ async def test_a_final_commits_without_a_device_vad_end_after_the_cap(
 
     await _wait_until(lambda: bool(window.provider.prepared), timeout=2.0)
     elapsed = time.monotonic() - started
+    waited_s, threshold_s = _extract_missing_vad_end_log(caplog)
 
     assert window.provider.prepared == [_HEAD]
     assert 0.2 <= elapsed < 0.8
+    assert threshold_s == 1.2
+    assert 0.25 <= waited_s < 0.65
 
 
 @pytest.mark.asyncio
@@ -236,6 +265,8 @@ async def test_each_classifier_answers_once_for_the_turn(device_media_session: A
     assert window.provider.prepared == [committed]
     assert window.live_verdict.calls == [_HEAD]
     assert window.close_verdict.calls == [_HEAD]
+
+
 @pytest.mark.asyncio
 async def test_the_endpoint_grace_absorbs_the_provider_finalize(
     device_media_session: Any,
@@ -286,9 +317,7 @@ async def test_a_resumed_utterance_still_cancels_the_pending_commit(
     the 0.5 s grace, which now runs from the VAD end rather than from the end of the finalize.
     """
 
-    window = await _open(
-        device_media_session, f"commit-grace-resume-{resume_after_s}", grace_s=0.5
-    )
+    window = await _open(device_media_session, f"commit-grace-resume-{resume_after_s}", grace_s=0.5)
     registry, context = window.registry, window.context
     registry.turn_endpoint_grace_complete_s = 0.6
     registry.turn_endpoint_grace_incomplete_s = 0.6
@@ -309,9 +338,7 @@ async def test_a_resumed_utterance_still_cancels_the_pending_commit(
     window.provider.finalize_speech_segment = slow_finalize
     context.asr.last_sent_sample = _START + 16_000
 
-    pending_end = asyncio.create_task(
-        _device_vad(window, "vad-end", _START + 16_000, final=True)
-    )
+    pending_end = asyncio.create_task(_device_vad(window, "vad-end", _START + 16_000, final=True))
     await asyncio.sleep(resume_after_s)
     assert window.provider.prepared == []
     await _device_vad(window, "vad-start-2", _START + 20_000, final=False)
@@ -364,10 +391,10 @@ async def test_continuous_voiced_uplink_without_new_partial_keeps_open_vad_turn_
 
 
 @pytest.mark.asyncio
-async def test_continuous_voiced_uplink_without_vad_start_waits_for_post_speech_silence(
+async def test_no_vad_start_holds_for_live_partial_and_commits_under_quiet_room_noise_floor(
     device_media_session: Any,
 ) -> None:
-    window = await _open(device_media_session, "commit-continuous-voiced-no-vad-start")
+    window = await _open(device_media_session, "commit-no-vad-start-partial-noise-floor")
     sample = await _send_uplink_frames(window, start_sample=_START, count=25, pcm=_VOICED_PCM)
     await _accept_media_asr_final(
         window.registry,
@@ -379,24 +406,35 @@ async def test_continuous_voiced_uplink_without_vad_start_waits_for_post_speech_
     )
 
     tail_start = sample
+    await _accept_media_asr_decision(
+        window.registry,
+        window.identity,
+        sentence_id="f-2",
+        start_sample=tail_start,
+        end_sample=tail_start + 3_200,
+        text="动物园",
+        is_final=False,
+    )
     sample = await _send_uplink_frames(
         window,
         start_sample=sample,
-        count=30,
+        count=25,
         pcm=_VOICED_PCM,
         pace_s=0.02,
     )
     assert window.provider.prepared == []
 
-    await _accept_media_asr_final(
+    await _accept_media_asr_decision(
         window.registry,
         window.identity,
         sentence_id="f-2",
         start_sample=tail_start,
         end_sample=sample,
         text=_TAIL,
+        is_final=True,
+        revision=2,
     )
-    await _send_uplink_frames(window, start_sample=sample, count=16, pcm=_SILENT_PCM)
+    await _send_uplink_frames(window, start_sample=sample, count=16, pcm=_QUIET_ROOM_PCM)
     await _wait_until(lambda: bool(window.provider.prepared), timeout=1.5)
     assert window.provider.prepared == [f"{_HEAD} {_TAIL}"]
 
@@ -595,3 +633,394 @@ async def test_silence_watermark_resets_across_cancel_reconnect_playback_and_cap
     )
     assert window.provider.prepared == []
 
+
+@pytest.mark.asyncio
+async def test_paced_open_vad_missing_end_waits_full_hangover_and_logs_measured_elapsed(
+    device_media_session: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    window = await _open(device_media_session, "commit-paced-open-vad-missing-end", grace_s=0.05)
+    await _device_vad(window, "vad-start", _START, final=False)
+    sample = await _send_uplink_frames(window, start_sample=_START, count=25, pcm=_VOICED_PCM)
+
+    started = time.monotonic()
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="f-1",
+        start_sample=_START,
+        end_sample=sample,
+        text=_HEAD,
+    )
+    await _send_uplink_frames(
+        window,
+        start_sample=sample,
+        count=60,
+        pcm=_SILENT_PCM,
+        pace_s=0.02,
+    )
+    await _wait_until(lambda: bool(window.provider.prepared), timeout=1.0)
+    elapsed = time.monotonic() - started
+    waited_s, threshold_s = _extract_missing_vad_end_log(caplog)
+
+    assert window.provider.prepared == [_HEAD]
+    assert 1.15 <= elapsed < 1.65
+    assert threshold_s == 1.2
+    assert 1.15 <= waited_s < 1.65
+
+
+@pytest.mark.asyncio
+async def test_pump_backlog_delays_post_final_commit_until_queued_clause_is_ingested(
+    device_media_session: Any,
+) -> None:
+    window = await _open(device_media_session, "commit-pump-backlog-second-clause", grace_s=0.05)
+    sample = await _send_uplink_frames(window, start_sample=_START, count=25, pcm=_VOICED_PCM)
+    await window.registry._audio_ingress._wait_until_idle(window.context)
+
+    clause2_start = sample
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="f-1",
+        start_sample=_START,
+        end_sample=clause2_start,
+        text=_HEAD,
+    )
+
+    async def delayed_ingest(identity: Any, frame: AudioFrame) -> tuple[Any, ...]:
+        if frame.capture_start_sample == clause2_start:
+            await asyncio.sleep(0.45)
+        if frame.capture_start_sample == clause2_start + 24 * 320:
+            return (
+                ASRResult(
+                    task_epoch=1,
+                    sentence_id="f-2",
+                    revision=1,
+                    capture_start_sample=clause2_start,
+                    capture_end_sample=clause2_start + 25 * 320,
+                    text=_TAIL,
+                    is_final=True,
+                    confidence=0.95,
+                    stream_epoch=identity.stream_epoch,
+                ),
+            )
+        return ()
+
+    window.provider.ingest_audio = delayed_ingest
+    sample = await _send_uplink_frames(window, start_sample=sample, count=25, pcm=_VOICED_PCM)
+    await _send_uplink_frames(window, start_sample=sample, count=16, pcm=_SILENT_PCM)
+
+    await asyncio.sleep(0.6)
+    assert window.provider.prepared == [f"{_HEAD} {_TAIL}"]
+
+
+@pytest.mark.asyncio
+async def test_open_vad_voiced_second_clause_with_delayed_final_is_not_skipped_by_later_silence(
+    device_media_session: Any,
+) -> None:
+    window = await _open(
+        device_media_session, "commit-open-vad-voiced-gap-delayed-final", grace_s=0.05
+    )
+    await _device_vad(window, "vad-start", _START, final=False)
+    sample = await _send_uplink_frames(window, start_sample=_START, count=25, pcm=_VOICED_PCM)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="f-1",
+        start_sample=_START,
+        end_sample=sample,
+        text=_HEAD,
+    )
+
+    clause2_start = sample
+    sample = await _send_uplink_frames(window, start_sample=sample, count=25, pcm=_VOICED_PCM)
+    clause2_end = sample
+    await _send_uplink_frames(window, start_sample=sample, count=65, pcm=_SILENT_PCM)
+    await asyncio.sleep(0.45)
+    assert window.provider.prepared == []
+
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="f-2",
+        start_sample=clause2_start,
+        end_sample=clause2_end,
+        text=_TAIL,
+    )
+    await _wait_until(lambda: bool(window.provider.prepared), timeout=1.0)
+    assert window.provider.prepared == [f"{_HEAD} {_TAIL}"]
+
+
+@pytest.mark.asyncio
+async def test_no_vad_start_weak_onset_commits_under_quiet_room_noise_floor(
+    device_media_session: Any,
+) -> None:
+    window = await _open(device_media_session, "commit-weak-onset-quiet-room-floor", grace_s=0.05)
+    sample = await _send_uplink_frames(window, start_sample=_START, count=25, pcm=_VOICED_PCM)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="f-1",
+        start_sample=_START,
+        end_sample=sample,
+        text=_HEAD,
+    )
+    await _send_uplink_frames(window, start_sample=sample, count=75, pcm=_QUIET_ROOM_PCM)
+
+    await asyncio.sleep(0.5)
+    assert window.provider.prepared == [_HEAD]
+
+
+@pytest.mark.asyncio
+async def test_open_vad_quiet_room_noise_floor_commits_when_late_asr_arrives_after_vad_end(
+    device_media_session: Any,
+) -> None:
+    window = await _open(device_media_session, "commit-open-vad-noise-floor-late-asr", grace_s=0.05)
+    window.provider.finalize_speech_segment = _no_finals
+    await _device_vad(window, "vad-start", _START, final=False)
+    sample = await _send_uplink_frames(window, start_sample=_START, count=25, pcm=_VOICED_PCM)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="f-1",
+        start_sample=_START,
+        end_sample=sample,
+        text=_HEAD,
+    )
+    sample = await _send_uplink_frames(
+        window,
+        start_sample=sample,
+        count=20,
+        pcm=_QUIET_ROOM_PCM,
+        pace_s=0.02,
+    )
+    assert window.provider.prepared == []
+
+    clause2_start = sample
+    sample = await _send_uplink_frames(window, start_sample=sample, count=60, pcm=_VOICED_PCM)
+    clause2_end = sample
+    sample = await _send_uplink_frames(window, start_sample=sample, count=10, pcm=_QUIET_ROOM_PCM)
+    window.context.ingress.last_finalized_audio_watermark = sample
+    await _device_vad(window, "vad-end", clause2_end, final=True)
+    await asyncio.sleep(0.1)
+    assert window.provider.prepared == []
+
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="f-2",
+        start_sample=clause2_start,
+        end_sample=clause2_end,
+        text=_TAIL,
+    )
+    await _wait_until(lambda: bool(window.provider.prepared), timeout=1.0)
+    assert window.provider.prepared == [f"{_HEAD} {_TAIL}"]
+
+
+@pytest.mark.asyncio
+async def test_late_weak_onset_final_commits_after_listening_silence_drop_and_capture_hold(
+    device_media_session: Any,
+) -> None:
+    window = await _open(device_media_session, "commit-late-final-after-capture-hold", grace_s=0.05)
+    window.registry.listening_capture_window_s = 0.15
+    window.context.runtime.set_interaction_phase(
+        InteractionPhase.LISTENING,
+        cause="test_listening",
+        publish=False,
+    )
+    window.registry._restart_listening_capture(window.context)
+
+    sample = await _send_uplink_frames(window, start_sample=_START, count=20, pcm=_VOICED_PCM)
+    speech_end = sample
+    await window.registry._audio_ingress._wait_until_idle(window.context)
+    sample = await _send_uplink_frames(window, start_sample=sample, count=20, pcm=_SILENT_PCM)
+    assert window.context.ingress.listening_silence_dropped_frames == 20
+
+    await asyncio.sleep(0.2)
+    await _send_uplink_frames(window, start_sample=sample, count=5, pcm=_SILENT_PCM)
+    assert window.context.listening_capture_hold is True
+
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="f-1",
+        start_sample=_START,
+        end_sample=speech_end,
+        text=_HEAD,
+    )
+    await asyncio.sleep(0.45)
+    assert window.provider.prepared == [_HEAD]
+
+
+@pytest.mark.asyncio
+async def test_missing_vad_end_recovery_does_not_swallow_next_weak_onset_turn_vad_end(
+    device_media_session: Any,
+) -> None:
+    window = await _open(device_media_session, "commit-next-weak-onset-vad-end", grace_s=0.05)
+    finalize_calls = 0
+
+    async def finalize_turn2(identity: Any) -> tuple[Any, ...]:
+        nonlocal finalize_calls
+        finalize_calls += 1
+        return (
+            ASRResult(
+                task_epoch=1,
+                sentence_id="f-2",
+                revision=1,
+                capture_start_sample=90_000,
+                capture_end_sample=106_000,
+                text=_TAIL,
+                is_final=True,
+                confidence=0.95,
+                stream_epoch=identity.stream_epoch,
+            ),
+        )
+
+    window.provider.finalize_speech_segment = finalize_turn2
+    await _device_vad(window, "vad-start-1", _START, final=False)
+    sample = await _send_uplink_frames(window, start_sample=_START, count=20, pcm=_VOICED_PCM)
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="f-1",
+        start_sample=_START,
+        end_sample=sample,
+        text=_HEAD,
+    )
+    await _send_uplink_frames(window, start_sample=sample, count=65, pcm=_SILENT_PCM)
+    await _wait_until(lambda: window.provider.prepared == [_HEAD], timeout=1.0)
+
+    sample = await _send_uplink_frames(window, start_sample=90_000, count=50, pcm=_VOICED_PCM)
+    await window.registry._audio_ingress._wait_until_idle(window.context)
+    await _device_vad(window, "vad-end-2", sample, final=True)
+    await _wait_until(lambda: len(window.provider.prepared) == 2, timeout=1.0)
+
+    assert finalize_calls == 1
+    assert window.provider.prepared == [_HEAD, _TAIL]
+
+
+@pytest.mark.asyncio
+async def test_playback_boundary_keeps_ignoring_prior_turn_late_vad_end(
+    device_media_session: Any,
+) -> None:
+    window = await _open(
+        device_media_session, "commit-playback-boundary-late-vad-end", grace_s=0.05
+    )
+    finalize_calls = 0
+
+    async def count_finalize(_identity: Any) -> tuple[Any, ...]:
+        nonlocal finalize_calls
+        finalize_calls += 1
+        return ()
+
+    window.provider.finalize_speech_segment = count_finalize
+    await _device_vad(window, "vad-start-1", _START, final=False)
+    sample = await _send_uplink_frames(window, start_sample=_START, count=20, pcm=_VOICED_PCM)
+    speech_end = sample
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="f-1",
+        start_sample=_START,
+        end_sample=speech_end,
+        text=_HEAD,
+    )
+    await _send_uplink_frames(window, start_sample=sample, count=65, pcm=_SILENT_PCM)
+    await _wait_until(lambda: window.provider.prepared == [_HEAD], timeout=1.0)
+
+    window.registry._record_playback_boundary(window.context)
+    await _device_vad(window, "vad-end-1-late", speech_end, final=True)
+
+    assert finalize_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_unrotated_asr_pre_playback_tail_after_missing_vad_end_does_not_pin_after_playback(
+    device_media_session: Any,
+) -> None:
+    window = await _open(device_media_session, "commit-unrotated-pre-playback-tail", grace_s=0.05)
+    task_epoch = 1
+
+    async def rotating_finalize(_identity: Any) -> tuple[Any, ...]:
+        nonlocal task_epoch
+        task_epoch += 1
+        return ()
+
+    window.provider.finalize_speech_segment = rotating_finalize
+    await _device_vad(window, "vad-start-1", _START, final=False)
+    sample = await _send_uplink_frames(window, start_sample=_START, count=25, pcm=_VOICED_PCM)
+    speech_end = sample
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="f-1",
+        start_sample=_START,
+        end_sample=speech_end,
+        text=_HEAD,
+    )
+    sample = await _send_uplink_frames(window, start_sample=sample, count=65, pcm=_SILENT_PCM)
+    await _wait_until(lambda: window.provider.prepared == [_HEAD], timeout=1.0)
+
+    await _device_vad(window, "vad-end-1-late", speech_end, final=True)
+    assert task_epoch == 1
+
+    synth_gap_start = sample
+    sample = await _send_uplink_frames(window, start_sample=sample, count=10, pcm=_QUIET_ROOM_PCM)
+    await window.registry._audio_ingress._wait_until_idle(window.context)
+
+    fence = window.context.runtime.fence
+    window.context.output.playback_started = (fence, sample)
+    window.context.output.playback.start(fence)
+    assert window.context.output.playback.register_audio(fence, 0, 0, 1_600)
+    window.context.output.provider_complete = True
+    window.context.runtime.set_interaction_phase(
+        InteractionPhase.SPEAKING,
+        cause="test_reply_speaking",
+        publish=False,
+    )
+
+    retired_tail = await _accept_media_asr_decision(
+        window.registry,
+        window.identity,
+        sentence_id="f-1-retired-tail",
+        start_sample=speech_end,
+        end_sample=speech_end + 8_000,
+        text=_TAIL,
+        is_final=True,
+        revision=1,
+    )
+    assert retired_tail.reason is ASRDecisionReason.FULLY_COMMITTED
+
+    await _accept_media_asr_decision(
+        window.registry,
+        window.identity,
+        sentence_id="f-1-synth-tail",
+        start_sample=synth_gap_start,
+        end_sample=sample - 320,
+        text=_TAIL,
+        is_final=True,
+        revision=1,
+    )
+
+    await window.registry.on_playback_progress(
+        window.session,
+        PlaybackProgress(
+            identity=window.identity,
+            generation_id=fence.generation_id,
+            received_sequence=0,
+            rendered_sample_end=1_600,
+            client_monotonic_ms=100,
+            turn_id=fence.turn_id,
+            tool_epoch=fence.tool_epoch,
+            session_epoch=fence.session_epoch,
+            event_type=PlaybackEventType.ENDED,
+        ),
+    )
+    _finish_previous_reply(window.context)
+    window.registry.endpoint_overlapped_pending_after_playback(window.context)
+    await asyncio.sleep(0.25)
+
+    assert window.provider.prepared == [_HEAD]
+    assert window.context.pending.pending_turn_playback_overlap is False
+    assert window.context.pending.turn_endpoint_sample is None

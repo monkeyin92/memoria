@@ -85,10 +85,14 @@ class MediaAudioIngressState:
     listening_capture_dropped_samples: int = 0
     last_overflow_log: float = 0.0
     last_pump_stall_log: float = 0.0
+    processed_stream_epoch: int | None = None
+    processed_end_sample: int | None = None
+    last_ingested_enqueued_at: float | None = None
+    progress_floor_stream_epoch: int | None = None
+    progress_floor_sample: int = 0
     silent_run_stream_epoch: int | None = None
     silent_run_start_sample: int | None = None
     silent_run_end_sample: int | None = None
-    retired_vad_start_sample: int | None = None
 
     @classmethod
     def create(cls, max_frames: int) -> MediaAudioIngressState:
@@ -99,6 +103,16 @@ class MediaAudioIngressState:
         self.silent_run_start_sample = None
         self.silent_run_end_sample = None
 
+    def clear_progress(
+        self, *, stream_epoch: int | None = None, floor_sample: int | None = None
+    ) -> None:
+        self.clear_silent_run()
+        self.processed_stream_epoch = None
+        self.processed_end_sample = None
+        self.last_ingested_enqueued_at = None
+        self.progress_floor_stream_epoch = stream_epoch if floor_sample is not None else None
+        self.progress_floor_sample = floor_sample if floor_sample is not None else 0
+
     def observe_frame_silence(
         self,
         *,
@@ -108,10 +122,25 @@ class MediaAudioIngressState:
         silent: bool,
         discontinuity: bool = False,
     ) -> None:
-        if not silent or frame_samples <= 0:
+        if frame_samples <= 0:
             self.clear_silent_run()
             return
         end_sample = start_sample + frame_samples
+        if (
+            self.progress_floor_stream_epoch == stream_epoch
+            and end_sample <= self.progress_floor_sample
+        ):
+            return
+        if not silent:
+            if (
+                not discontinuity
+                and self.silent_run_stream_epoch == stream_epoch
+                and self.silent_run_start_sample is not None
+                and end_sample <= self.silent_run_start_sample
+            ):
+                return
+            self.clear_silent_run()
+            return
         if (
             not discontinuity
             and self.silent_run_stream_epoch == stream_epoch
@@ -124,27 +153,83 @@ class MediaAudioIngressState:
         self.silent_run_start_sample = start_sample
         self.silent_run_end_sample = end_sample
 
-    def post_final_silence_ready(
+    def observe_ingested_frame(
+        self,
+        *,
+        stream_epoch: int,
+        start_sample: int,
+        frame_samples: int,
+        silent: bool,
+        discontinuity: bool = False,
+        enqueued_at: float | None = None,
+    ) -> None:
+        if frame_samples <= 0:
+            self.clear_silent_run()
+            return
+        end_sample = start_sample + frame_samples
+        if (
+            self.progress_floor_stream_epoch == stream_epoch
+            and end_sample <= self.progress_floor_sample
+        ):
+            return
+        if enqueued_at is not None:
+            self.last_ingested_enqueued_at = enqueued_at
+        if self.processed_stream_epoch != stream_epoch or discontinuity:
+            self.processed_stream_epoch = stream_epoch
+            self.processed_end_sample = end_sample
+        else:
+            self.processed_end_sample = max(self.processed_end_sample or 0, end_sample)
+        self.observe_frame_silence(
+            stream_epoch=stream_epoch,
+            start_sample=start_sample,
+            frame_samples=frame_samples,
+            silent=silent,
+            discontinuity=discontinuity,
+        )
+
+    def contiguous_silent_end_from(self, *, stream_epoch: int, sample: int) -> int | None:
+        if (
+            self.silent_run_stream_epoch != stream_epoch
+            or self.silent_run_start_sample is None
+            or self.silent_run_end_sample is None
+            or not (self.silent_run_start_sample <= sample <= self.silent_run_end_sample)
+        ):
+            return None
+        return self.silent_run_end_sample
+
+    def post_final_ready(
         self,
         *,
         stream_epoch: int,
         turn_end_sample: int,
         last_sent_sample: int,
         open_vad: bool,
-    ) -> tuple[bool, float]:
-        required_samples = (
+        capture_hold: bool = False,
+    ) -> tuple[bool, float, int]:
+        required = (
             _OPEN_VAD_MISSING_END_SILENCE_SAMPLES if open_vad else _FINAL_VAD_END_WAIT_SAMPLES
         )
-        waited_s = required_samples / 16_000
-        if (
-            self.silent_run_stream_epoch != stream_epoch
-            or self.silent_run_start_sample is None
-            or self.silent_run_end_sample is None
-            or self.silent_run_end_sample < last_sent_sample
-        ):
-            return False, waited_s
-        silence_start = max(turn_end_sample, self.silent_run_start_sample)
-        return self.silent_run_end_sample - silence_start >= required_samples, waited_s
+        threshold_s = required / 16_000
+        pump_busy = self.pump_task is not None and not self.pump_task.done()
+        if self.finalize_lock.locked() or pump_busy or not self.queue.empty():
+            return False, threshold_s, turn_end_sample
+        silent_end = self.contiguous_silent_end_from(
+            stream_epoch=stream_epoch, sample=turn_end_sample
+        )
+        if open_vad:
+            if silent_end is None or silent_end < last_sent_sample:
+                return False, threshold_s, turn_end_sample
+            return silent_end - turn_end_sample >= required, threshold_s, silent_end
+        if capture_hold:
+            return True, threshold_s, turn_end_sample
+        processed_end = (
+            self.processed_end_sample if self.processed_stream_epoch == stream_epoch else None
+        )
+        covered_end = max(silent_end or 0, processed_end or 0)
+        if covered_end < last_sent_sample:
+            return False, threshold_s, turn_end_sample
+        retire_end = silent_end if silent_end is not None else turn_end_sample
+        return covered_end - turn_end_sample >= required, threshold_s, retire_end
 
 
 class MediaAudioIngressHost(Protocol):
@@ -207,8 +292,7 @@ class MediaAudioIngress:
         state.denoiser.reset()
         state.loss_concealed_ranges.clear()
         state.discontinuity_pending = False
-        state.clear_silent_run()
-        state.retired_vad_start_sample = None
+        state.clear_progress()
         self._host.metrics.set_media_metric("media_pcm_queue_depth", 0.0)
 
     async def accept(self, context: _MediaVoiceSession, frame: AudioFrame) -> None:
@@ -382,13 +466,6 @@ class MediaAudioIngress:
             self._host.metrics.inc_media_metric("media_discontinuity_total")
             state.discontinuity_pending = True
             frame = replace(frame, discontinuity=True)
-        state.observe_frame_silence(
-            stream_epoch=callback_stream_epoch,
-            start_sample=frame.capture_start_sample,
-            frame_samples=frame.frame_samples,
-            silent=self._is_silent_pcm(frame.payload),
-            discontinuity=frame.discontinuity or state.discontinuity_pending,
-        )
         state.queue.put_nowait((frame, time.monotonic()))
         self._host.metrics.set_media_metric("media_pcm_queue_depth", float(state.queue.qsize()))
         task = state.pump_task
@@ -403,8 +480,8 @@ class MediaAudioIngress:
 
     def discard_queued(self, context: _MediaVoiceSession) -> None:
         state = context.ingress
-        state.clear_silent_run()
-        state.retired_vad_start_sample = None
+        last_sent = int(getattr(context.asr, "last_sent_sample", 0) or 0)
+        state.clear_progress(stream_epoch=context.stream_epoch, floor_sample=last_sent)
         while True:
             try:
                 dropped, _enqueued_at = state.queue.get_nowait()
@@ -419,8 +496,8 @@ class MediaAudioIngress:
         context.ingress.denoiser.reset()
         context.ingress.provider_failed = False
         context.ingress.last_finalized_audio_watermark = -1
-        context.ingress.clear_silent_run()
-        context.ingress.retired_vad_start_sample = None
+        last_sent = int(getattr(context.asr, "last_sent_sample", 0) or 0)
+        context.ingress.clear_progress(stream_epoch=context.stream_epoch, floor_sample=last_sent)
         # A reconnect advances the stream epoch; start a fresh tap file so the
         # capture file name matches the epoch it actually contains.
         tap = context.ingress.pcm_tap
@@ -466,6 +543,7 @@ class MediaAudioIngress:
                     await result
             context.ingress.denoiser.reset()
             context.ingress.discontinuity_pending = False
+            context.ingress.clear_progress()
 
     async def finalize_speech_segment(
         self,
@@ -490,10 +568,11 @@ class MediaAudioIngress:
             previous_watermark = context.ingress.last_finalized_audio_watermark
             task_epoch_before = self._provider_task_epoch(context)
             provider_audio_before = self._provider_audio_snapshot(context)
-            if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
+
+            def log_boundary(result: str, task_epoch_after: int) -> None:
                 self._log_asr_boundary(
                     context,
-                    result="stale",
+                    result=result,
                     finalize_reason=finalize_reason,
                     vad_start_sample=vad_start_sample,
                     vad_event_sample=vad_event_sample,
@@ -501,40 +580,19 @@ class MediaAudioIngress:
                     audio_watermark=audio_watermark,
                     previous_watermark=previous_watermark,
                     task_epoch_before=task_epoch_before,
-                    task_epoch_after=self._provider_task_epoch(context),
+                    task_epoch_after=task_epoch_after,
                     provider_audio=provider_audio_before,
                 )
+
+            if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
+                log_boundary("stale", self._provider_task_epoch(context))
                 return False
             if audio_watermark <= previous_watermark:
-                self._log_asr_boundary(
-                    context,
-                    result="duplicate",
-                    finalize_reason=finalize_reason,
-                    vad_start_sample=vad_start_sample,
-                    vad_event_sample=vad_event_sample,
-                    voiced_end_sample=voiced_end_sample,
-                    audio_watermark=audio_watermark,
-                    previous_watermark=previous_watermark,
-                    task_epoch_before=task_epoch_before,
-                    task_epoch_after=task_epoch_before,
-                    provider_audio=provider_audio_before,
-                )
+                log_boundary("duplicate", task_epoch_before)
                 return True
             finalize = getattr(context.provider, "finalize_speech_segment", None)
             if not callable(finalize):
-                self._log_asr_boundary(
-                    context,
-                    result="no-provider-finalize",
-                    finalize_reason=finalize_reason,
-                    vad_start_sample=vad_start_sample,
-                    vad_event_sample=vad_event_sample,
-                    voiced_end_sample=voiced_end_sample,
-                    audio_watermark=audio_watermark,
-                    previous_watermark=previous_watermark,
-                    task_epoch_before=task_epoch_before,
-                    task_epoch_after=task_epoch_before,
-                    provider_audio=provider_audio_before,
-                )
+                log_boundary("no-provider-finalize", task_epoch_before)
                 return True
             try:
                 results = finalize(context.identity)
@@ -574,34 +632,10 @@ class MediaAudioIngress:
                     context.stream_epoch,
                     audio_watermark,
                 )
-                self._log_asr_boundary(
-                    context,
-                    result="failed",
-                    finalize_reason=finalize_reason,
-                    vad_start_sample=vad_start_sample,
-                    vad_event_sample=vad_event_sample,
-                    voiced_end_sample=voiced_end_sample,
-                    audio_watermark=audio_watermark,
-                    previous_watermark=previous_watermark,
-                    task_epoch_before=task_epoch_before,
-                    task_epoch_after=self._provider_task_epoch(context),
-                    provider_audio=provider_audio_before,
-                )
+                log_boundary("failed", self._provider_task_epoch(context))
                 return False
             if not self._host._stream_epoch_is_current(context, callback_stream_epoch):
-                self._log_asr_boundary(
-                    context,
-                    result="stale",
-                    finalize_reason=finalize_reason,
-                    vad_start_sample=vad_start_sample,
-                    vad_event_sample=vad_event_sample,
-                    voiced_end_sample=voiced_end_sample,
-                    audio_watermark=audio_watermark,
-                    previous_watermark=previous_watermark,
-                    task_epoch_before=task_epoch_before,
-                    task_epoch_after=self._provider_task_epoch(context),
-                    provider_audio=provider_audio_before,
-                )
+                log_boundary("stale", self._provider_task_epoch(context))
                 return False
             # The returned finals belong to the task that just ended. Accept them
             # before announcing the freshly started task epoch; doing it in the
@@ -620,19 +654,7 @@ class MediaAudioIngress:
             # by the absolute tail timeout.
             if context.pending.turn_endpoint_sample is not None:
                 self._host._schedule_turn_commit(context)
-            self._log_asr_boundary(
-                context,
-                result="success",
-                finalize_reason=finalize_reason,
-                vad_start_sample=vad_start_sample,
-                vad_event_sample=vad_event_sample,
-                voiced_end_sample=voiced_end_sample,
-                audio_watermark=audio_watermark,
-                previous_watermark=previous_watermark,
-                task_epoch_before=task_epoch_before,
-                task_epoch_after=self._provider_task_epoch(context),
-                provider_audio=provider_audio_before,
-            )
+            log_boundary("success", self._provider_task_epoch(context))
 
             return True
 
@@ -842,10 +864,12 @@ class MediaAudioIngress:
         if context.ingress.input_revoked:
             return
 
-        if frame.discontinuity or context.ingress.discontinuity_pending:
+        had_discontinuity = frame.discontinuity or context.ingress.discontinuity_pending
+        if had_discontinuity:
             await self._reset_discontinuity(context, frame)
 
         raw_payload = frame.payload
+        raw_silent = self._is_silent_pcm(raw_payload)
         denoised_payload, _vad_probability, denoising_stats = context.ingress.denoiser.process(
             raw_payload
         )
@@ -902,6 +926,18 @@ class MediaAudioIngress:
             results,
             callback_stream_epoch=callback_stream_epoch,
         )
+        if (
+            self._host._stream_epoch_is_current(context, callback_stream_epoch)
+            and not context.ingress.input_revoked
+        ):
+            context.ingress.observe_ingested_frame(
+                stream_epoch=callback_stream_epoch,
+                start_sample=frame.capture_start_sample,
+                frame_samples=frame.frame_samples,
+                silent=raw_silent,
+                discontinuity=had_discontinuity,
+                enqueued_at=enqueued_at,
+            )
 
     def _drop_oldest_frame(self, context: _MediaVoiceSession) -> None:
         # A slow provider must not silently destroy admitted speech.  Drop only

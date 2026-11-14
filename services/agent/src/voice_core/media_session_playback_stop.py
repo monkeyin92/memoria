@@ -755,7 +755,10 @@ class MediaPlaybackStopMixin:
         if context.identity.client_type != "device":
             return
         if self._reply_in_flight(context):
-            if context.pending.turn_endpoint_sample is None:
+            if (
+                context.pending.turn_endpoint_sample is None
+                and not self._final_is_pre_playback_tail(context, result)
+            ):
                 context.pending.pending_turn_playback_overlap = True
             return
         # Everything before a straddling follow-up lies inside the echo window;
@@ -968,10 +971,7 @@ class MediaPlaybackStopMixin:
             return False
         if result.capture_start_sample >= started[1]:
             return False
-        return (
-            result.capture_end_sample
-            < started[1] + _BARGE_MIN_LIVE_RUN_SAMPLES
-        )
+        return result.capture_end_sample < started[1] + _BARGE_MIN_LIVE_RUN_SAMPLES
 
     @staticmethod
     def _pinned_turn_holds_no_words(
