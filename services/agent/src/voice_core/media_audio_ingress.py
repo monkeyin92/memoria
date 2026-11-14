@@ -107,11 +107,13 @@ class MediaAudioIngressState:
         self.silent_run_end_sample = None
 
     def clear_progress(
-        self, *, stream_epoch: int | None = None, floor_sample: int | None = None
+        self, *, stream_epoch: int | None = None, floor_sample: int | None = None,
+        preserve_admission: bool = False,
     ) -> None:
         self.clear_silent_run()
-        self.admitted_end_sample = 0
-        self.admitted_unsafe_end_sample = 0
+        if not preserve_admission:
+            self.admitted_end_sample = 0
+            self.admitted_unsafe_end_sample = 0
         self.last_voiced_frame = None
         self.processed_stream_epoch = None
         self.processed_end_sample = None
@@ -578,7 +580,7 @@ class MediaAudioIngress:
                     await result
             context.ingress.denoiser.reset()
             context.ingress.discontinuity_pending = False
-            context.ingress.clear_progress()
+            context.ingress.clear_progress(preserve_admission=True)
 
     async def finalize_speech_segment(
         self,

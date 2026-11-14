@@ -734,10 +734,7 @@ class MediaPlaybackStopMixin:
         if context.identity.client_type != "device":
             return
         if self._reply_in_flight(context):
-            if (
-                context.pending.turn_endpoint_sample is None
-                and not self._final_is_pre_playback_tail(context, result)
-            ):
+            if context.pending.turn_endpoint_sample is None:
                 context.pending.pending_turn_playback_overlap = True
             return
         # Everything before a straddling follow-up lies inside the echo window;
@@ -930,25 +927,6 @@ class MediaPlaybackStopMixin:
             and result.capture_end_sample > start
             and result.capture_end_sample - end < _BARGE_MIN_LIVE_RUN_SAMPLES
         )
-
-    def _retire_pre_playback_final(self, context: _MediaVoiceSession, result: ASRResult) -> bool:
-        started = context.output.playback_started
-        if (
-            context.identity.client_type != "device" or not result.is_final
-            or not self._reply_in_flight(context)
-            or started is None or not started[0].matches(context.runtime.fence)
-            or result.capture_end_sample > started[1]
-            or is_stop_command_only(result.text)
-            or context.pending.turn_start_sample is not None
-            or context.asr.last_committed_sample <= 0
-        ):
-            return False
-        context.runtime.commit_media_speech_range(
-            stream_epoch=result.stream_epoch,
-            start_sample=result.capture_start_sample, end_sample=result.capture_end_sample,
-        )
-        context.asr.mark_committed(result.capture_end_sample)
-        return True
 
     @staticmethod
     def _final_is_pre_playback_tail(

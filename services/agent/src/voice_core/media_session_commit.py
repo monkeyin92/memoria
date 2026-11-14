@@ -206,8 +206,6 @@ class MediaSessionCommitMixin(MediaSessionCommitRecoveryMixin):
             self, context: _MediaVoiceSession, *, reason: str, text: str
         ) -> None: ...
 
-        def _retire_pre_playback_final(self, context: _MediaVoiceSession, result: ASRResult) -> bool: ...
-
         def _observe_partial_asr_result(
             self, context: _MediaVoiceSession, result: ASRResult
         ) -> None: ...
@@ -274,8 +272,6 @@ class MediaSessionCommitMixin(MediaSessionCommitRecoveryMixin):
                     reason=preview.reason,
                 )
             return preview
-        if self._retire_pre_playback_final(context, candidate):
-            return ASRAcceptDecision(None, ASRDecisionReason.FULLY_COMMITTED)
         candidate_segment = asr_result_to_segment(candidate, session_id=session_id)
         if not context.runtime.speech_timeline.can_add(candidate_segment):
             runtime_task_epoch = context.runtime.speech_timeline.latest_task_epoch(

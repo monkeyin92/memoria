@@ -939,7 +939,7 @@ async def test_playback_boundary_keeps_ignoring_prior_turn_late_vad_end(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("turn2_mode", ["normal", "end_before_final", "weak_onset"])
-async def test_unrotated_asr_pre_playback_tail_after_missing_vad_end_does_not_pin_after_playback(
+async def test_post_commit_synthesis_gap_final_stays_separate_from_next_turn(
     device_media_session: Any, turn2_mode: str,
 ) -> None:
     window = await _open(device_media_session, "commit-unrotated-pre-playback-tail", grace_s=0.05)
@@ -1024,7 +1024,8 @@ async def test_unrotated_asr_pre_playback_tail_after_missing_vad_end_does_not_pi
     window.registry.endpoint_overlapped_pending_after_playback(window.context)
     await asyncio.sleep(0.25)
 
-    assert window.provider.prepared == [_HEAD]
+    await _wait_until(lambda: window.provider.prepared == [_HEAD, _TAIL], timeout=1.5)
+    _finish_previous_reply(window.context)
     assert window.context.pending.pending_turn_playback_overlap is False
     assert window.context.pending.turn_endpoint_sample is None
     start2 = sample + 16_000
@@ -1041,8 +1042,8 @@ async def test_unrotated_asr_pre_playback_tail_after_missing_vad_end_does_not_pi
         await _device_vad(window, "vad-end-2", end2, final=True)
     elif turn2_mode == "weak_onset":
         await _send_uplink_frames(window, start_sample=end2, count=20, pcm=_SILENT_PCM)
-    await _wait_until(lambda: len(window.provider.prepared) == 2, timeout=1.5)
-    assert window.provider.prepared == [_HEAD, "今天天气怎么样"]
+    await _wait_until(lambda: len(window.provider.prepared) == 3, timeout=1.5)
+    assert window.provider.prepared == [_HEAD, _TAIL, "今天天气怎么样"]
     await _wait_until(
         lambda: any(
             result.fence.matches(window.context.runtime.fence)
@@ -1166,3 +1167,96 @@ async def test_silent_window_does_not_skip_admitted_unprocessed_voice(device_med
         assert window.provider.prepared == []
     finally:
         release.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("evidence", ["none", "partial", "vad"])
+@pytest.mark.parametrize("text", ["今天天气怎么样", "等一下", "停"])
+async def test_new_synthesis_gap_question_or_control_is_preserved(device_media_session, evidence, text):
+    window = await _open(device_media_session, "commit-unrotated-pre-playback-tail", grace_s=0.05)
+    task_epoch = 1
+
+    async def rotating_finalize(_identity: Any) -> tuple[Any, ...]:
+        nonlocal task_epoch
+        task_epoch += 1
+        return ()
+
+    window.provider.finalize_speech_segment = rotating_finalize
+    await _device_vad(window, "vad-start-1", _START, final=False)
+    sample = await _send_uplink_frames(window, start_sample=_START, count=25, pcm=_VOICED_PCM)
+    speech_end = sample
+    await _accept_media_asr_final(
+        window.registry,
+        window.identity,
+        sentence_id="f-1",
+        start_sample=_START,
+        end_sample=speech_end,
+        text=_HEAD,
+    )
+    sample = await _send_uplink_frames(window, start_sample=sample, count=65, pcm=_SILENT_PCM)
+    await _wait_until(lambda: window.provider.prepared == [_HEAD], timeout=1.0)
+
+    await _device_vad(window, "vad-end-1-late", speech_end, final=True)
+    assert task_epoch == 1
+
+    synth_gap_start = sample
+    sample = await _send_uplink_frames(window, start_sample=sample, count=25, pcm=_VOICED_PCM)
+    await window.registry._audio_ingress._wait_until_idle(window.context)
+
+    fence = window.context.runtime.fence
+    window.context.output.playback_started = (fence, sample)
+    window.context.output.playback.start(fence)
+    assert window.context.output.playback.register_audio(fence, 0, 0, 1_600)
+    window.context.output.provider_complete = True
+    window.context.runtime.set_interaction_phase(
+        InteractionPhase.SPEAKING,
+        cause="test_reply_speaking",
+        publish=False,
+    )
+
+    if evidence == "partial":
+        partial = await _accept_media_asr_decision(window.registry, window.identity,
+            sentence_id="new-question", start_sample=synth_gap_start,
+            end_sample=sample - 320, text="今天天气", is_final=False, revision=1)
+        assert partial.accepted is not None
+    elif evidence == "vad":
+        await _device_vad(window, "new-vad", synth_gap_start, final=False)
+    decision = await _accept_media_asr_decision(window.registry, window.identity,
+        sentence_id="new-question", start_sample=synth_gap_start,
+        end_sample=sample - 320, text=text, is_final=True, revision=2)
+    assert decision.accepted is not None
+
+
+
+@pytest.mark.asyncio
+async def test_discontinuity_preserves_admission_during_provider_reset(device_media_session):
+    import asyncio
+    w = await _open(device_media_session, "review-reset-queued-voice", grace_s=0.01)
+    w.context.ingress.queue = asyncio.Queue(maxsize=256)
+    resetting, release_reset, held_voice, release_voice = (asyncio.Event() for _ in range(4))
+    async def reset(*args, **kwargs):
+        resetting.set()
+        await release_reset.wait()
+    unsafe_start = _START + 320 * 66
+    async def ingest(identity, frame):
+        if frame.capture_start_sample == unsafe_start:
+            held_voice.set()
+            await release_voice.wait()
+        return ()
+    w.provider.reset_after_discontinuity = reset
+    w.provider.ingest_audio = ingest
+    await _send_uplink_frames(w, start_sample=_START, count=1, pcm=_VOICED_PCM, discontinuity_first=True)
+    await resetting.wait()
+    sample = await _send_uplink_frames(w, start_sample=_START + 320, count=65, pcm=_SILENT_PCM)
+    sample = await _send_uplink_frames(w, start_sample=sample, count=1, pcm=_VOICED_PCM)
+    release_reset.set()
+    await held_voice.wait()
+    await _send_uplink_frames(w, start_sample=sample, count=1, pcm=_SILENT_PCM)
+    await _device_vad(w, "new-start", _START, final=False)
+    await _accept_media_asr_final(w.registry, w.identity, sentence_id="head",
+        start_sample=_START, end_sample=_START + 320, text=_HEAD)
+    try:
+        await asyncio.sleep(0.4)
+        assert w.provider.prepared == []
+    finally:
+        release_voice.set()
