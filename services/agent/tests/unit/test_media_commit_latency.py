@@ -1085,8 +1085,28 @@ async def test_stale_silent_pump_frames_preserve_newer_listening_silence(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("open_vad", [True, False])
-async def test_unaligned_final_silence_retires_late_vad(device_media_session: Any, open_vad: bool) -> None:
+async def test_unaligned_final_silence_retires_late_vad(
+    device_media_session: Any, open_vad: bool, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     window = await _open(device_media_session, f"unaligned-{open_vad}", grace_s=0.01)
+    generation_entered = asyncio.Event()
+    release_generation = asyncio.Event()
+    emit_generation = window.registry.bridge.emit_generation
+    finalize_calls = 0
+
+    async def count_finalize(_identity: Any) -> tuple[Any, ...]:
+        nonlocal finalize_calls
+        finalize_calls += 1
+        return ()
+
+    window.provider.finalize_speech_segment = count_finalize
+
+    async def held_generation(_bridge: Any, *args: Any, **kwargs: Any) -> Any:
+        generation_entered.set()
+        await release_generation.wait()
+        return await emit_generation(*args, **kwargs)
+
+    monkeypatch.setattr(type(window.registry.bridge), "emit_generation", held_generation)
     if open_vad:
         await _device_vad(window, "start", 321000, final=False)
     await _send_uplink_frames(window, start_sample=321000, count=1, pcm=_VOICED_PCM)
@@ -1094,11 +1114,40 @@ async def test_unaligned_final_silence_retires_late_vad(device_media_session: An
     await _accept_media_asr_final(window.registry, window.identity, sentence_id="unaligned",
         start_sample=321000, end_sample=321152, text=_HEAD)
     end = await _send_uplink_frames(window, start_sample=321320, count=70, pcm=_SILENT_PCM)
-    await _wait_until(lambda: bool(window.provider.prepared), timeout=1.0)
-    assert window.provider.prepared == [_HEAD]
-    assert window.context.asr.last_committed_sample >= 321320 + 4800
-    await _device_vad(window, "late-end", end, final=True)
-    assert window.context.pending.turn_endpoint_sample is None
+    # Preparation and input retirement precede START; pending cleanup belongs
+    # to the outer endpoint task, after START returns. Hold that real await so
+    # the old prepared-only observation cannot accidentally imply completion.
+    async with asyncio.timeout(1.0):
+        await generation_entered.wait()
+        owner = window.context.turn_endpoint_task
+        assert owner is not None and not owner.done()
+        try:
+            assert window.provider.prepared == [_HEAD]
+            committed_sample = window.context.asr.last_committed_sample
+            assert committed_sample >= 321320 + 4800
+            timeline_sample = window.context.runtime.speech_timeline.committed_sample
+            fence = window.context.runtime.fence
+            assert window.context.pending.turn_endpoint_sample == 321152
+            await _device_vad(window, "late-end-during-commit", end, final=True)
+            assert finalize_calls == 0
+            assert window.context.pending.turn_endpoint_sample == 321152
+            assert window.context.asr.last_committed_sample == committed_sample
+            assert window.context.runtime.speech_timeline.committed_sample == timeline_sample
+            assert window.context.runtime.fence == fence
+        finally:
+            release_generation.set()
+            # Task completion is independent of the pending value being tested.
+            # The inner turn_commit_task alone ends before pending cleanup.
+            await asyncio.shield(owner)
+
+        assert window.context.pending.turn_endpoint_sample is None
+        await _device_vad(window, "late-end-after-commit", end, final=True)
+        assert window.context.pending.turn_endpoint_sample is None
+        assert finalize_calls == 0
+        assert window.provider.prepared == [_HEAD]
+        assert window.context.asr.last_committed_sample == committed_sample
+        assert window.context.runtime.speech_timeline.committed_sample == timeline_sample
+        assert window.context.runtime.fence == fence
 
 
 @pytest.mark.asyncio
