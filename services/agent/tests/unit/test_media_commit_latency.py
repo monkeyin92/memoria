@@ -1024,3 +1024,33 @@ async def test_unrotated_asr_pre_playback_tail_after_missing_vad_end_does_not_pi
     assert window.provider.prepared == [_HEAD]
     assert window.context.pending.pending_turn_playback_overlap is False
     assert window.context.pending.turn_endpoint_sample is None
+
+
+@pytest.mark.asyncio
+async def test_stale_silent_pump_frames_preserve_newer_listening_silence(
+    device_media_session: Any,
+) -> None:
+    window = await _open(device_media_session, "stale-silent-pump-progress")
+    state = window.context.ingress
+    for start in range(40_640, 42_240, 320):
+        state.observe_frame_silence(
+            stream_epoch=window.context.stream_epoch,
+            start_sample=start,
+            frame_samples=320,
+            silent=True,
+        )
+    for start in (40_000, 40_320):
+        state.observe_frame_silence(
+            stream_epoch=window.context.stream_epoch,
+            start_sample=start,
+            frame_samples=320,
+            silent=True,
+        )
+    assert state.silent_run_end_sample == 42_240
+    state.observe_frame_silence(
+        stream_epoch=window.context.stream_epoch,
+        start_sample=42_240,
+        frame_samples=320,
+        silent=True,
+    )
+    assert state.silent_run_end_sample == 42_560

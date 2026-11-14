@@ -145,6 +145,16 @@ class MediaAudioIngressState:
             not discontinuity
             and self.silent_run_stream_epoch == stream_epoch
             and self.silent_run_start_sample is not None
+            and self.silent_run_end_sample is not None
+            and end_sample <= self.silent_run_end_sample
+        ):
+            if end_sample == self.silent_run_start_sample:
+                self.silent_run_start_sample = start_sample
+            return
+        if (
+            not discontinuity
+            and self.silent_run_stream_epoch == stream_epoch
+            and self.silent_run_start_sample is not None
             and self.silent_run_end_sample == start_sample
         ):
             self.silent_run_end_sample = end_sample
