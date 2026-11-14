@@ -102,6 +102,7 @@ class SerialWatcher:
     state_since: float = field(default_factory=now)
     state_source: str = "unknown"
     mic_closed: bool = False  # serial `listening_closed closed=...`: the hold mic is shut while state says listening
+    last_stimulus_ended_at: float | None = None
     events: list[tuple[float, str, str]] = field(default_factory=list)  # (t, kind, payload)
     booted_at: float | None = None  # set when the ROM banner shows up: opening the port reset the board
     cond: threading.Condition = field(default_factory=threading.Condition)
@@ -257,6 +258,10 @@ class SerialWatcher:
             state_source = self.state_source
 
         accepted_since = started_at if idle_evidence_since is None else min(started_at, idle_evidence_since)
+        # A final reply may idle during the driver's inter-step gap. Keep that
+        # real transition, bounded by the most recent test speech, for the tail.
+        if self.last_stimulus_ended_at is not None:
+            accepted_since = min(started_at, self.last_stimulus_ended_at)
         idle_observed = (
             final_state == "idle"
             and state_source == "serial_transition"
@@ -270,6 +275,9 @@ class SerialWatcher:
 
         return {
             "idle_observed": idle_observed,
+            "last_stimulus_ended_at": (
+                stamp(self.last_stimulus_ended_at) if self.last_stimulus_ended_at is not None else None
+            ),
             "idle_evidence_since": stamp(idle_evidence_since) if idle_evidence_since is not None else None,
             "final_state": final_state,
             "final_state_source": state_source,
@@ -694,6 +702,7 @@ def main() -> int:
                         reason=str(exc),
                     )
                     return 8
+                watcher.last_stimulus_ended_at = t1
                 record(kind="said", tag=tag, text=step["say"], voice="bank" if bank is not None and (bank / f"{step.get('tag')}.wav").exists() else "Tingting",
                        rate=step.get("rate", 175), clip_s=round(clip, 2), start=stamp(t0), end=stamp(t1))
                 started = watcher.wait_state({"speaking"}, float(step.get("reply_timeout", 30)), since=t1 - 0.5)
@@ -742,6 +751,7 @@ def main() -> int:
                                 reason=str(exc),
                             )
                             return 8
+                        watcher.last_stimulus_ended_at = i1
                         expect_playing = bool(interrupt.get("expect_playing"))
                         settle = float(interrupt.get("settle", 8))
                         # A backchannel must leave the reply playing, so sample the state right after the
