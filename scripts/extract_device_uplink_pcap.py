@@ -28,6 +28,7 @@ is not a JWT verifier. Run only in the separately authorized synthetic window.
 import argparse
 import base64
 import ctypes
+import ctypes.util
 import hashlib
 import json
 import os
@@ -42,6 +43,16 @@ TARGET = "dev_atk_a4cb8fd6095c"
 LIMIT = 131072
 MAX_INPUT = 32 * 1024 * 1024
 MAX_SECONDS = 120
+
+
+def find_libopus():
+    found = ctypes.util.find_library("opus")
+    if found:
+        return found
+    for path in ("/opt/homebrew/lib/libopus.dylib", "/usr/local/lib/libopus.dylib"):
+        if Path(path).is_file():
+            return path
+    return None
 
 
 class Invalid(Exception):
@@ -754,13 +765,15 @@ def save(flow, directory):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--libopus", default="/opt/homebrew/lib/libopus.dylib")
+    parser.add_argument("--libopus", default=find_libopus())
     parser.add_argument(
         "--include-downlink",
         action="store_true",
         help="save bounded 16k Edge-to-Nginx reference prefixes; not audible proof",
     )
     args = parser.parse_args()
+    if not args.libopus:
+        parser.error("libopus not found; install it or specify --libopus")
     capture = Capture(args.libopus, args.include_downlink)
 
     def timeout(*_):

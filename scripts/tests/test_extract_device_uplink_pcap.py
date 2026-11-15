@@ -20,7 +20,9 @@ SCRIPT = Path(__file__).resolve().parents[1] / "extract_device_uplink_pcap.py"
 spec = importlib.util.spec_from_file_location("extractor", SCRIPT)
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
-LIB = "/opt/homebrew/lib/libopus.dylib"
+LIB = m.find_libopus()
+if not LIB:
+    raise RuntimeError("libopus is required for the real codec regression tests")
 
 
 def ws(payload, op=1, masked=True, fin=True):
@@ -687,3 +689,16 @@ class DownlinkTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_system_opus_library_takes_precedence():
+    with patch.object(m.ctypes.util, "find_library", return_value="libopus.so.0"):
+        assert m.find_libopus() == "libopus.so.0"
+
+
+def test_missing_opus_library_is_explicit():
+    with (
+        patch.object(m.ctypes.util, "find_library", return_value=None),
+        patch.object(m.Path, "is_file", return_value=False),
+    ):
+        assert m.find_libopus() is None
