@@ -25,6 +25,16 @@ if not LIB:
     raise RuntimeError("libopus is required for the real codec regression tests")
 
 
+def cli_command(*args, platform="darwin"):
+    # Synthetic PCAP only: exercise the supported-host path on Linux CI too.
+    bootstrap = (
+        "import ctypes.util,runpy,sys; "
+        f"sys.platform={platform!r}; "
+        "sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name='__main__')"
+    )
+    return [sys.executable, "-c", bootstrap, str(SCRIPT), "--libopus", LIB, *args]
+
+
 def ws(payload, op=1, masked=True, fin=True):
     if isinstance(payload, dict):
         payload = json.dumps(payload).encode()
@@ -235,7 +245,7 @@ class ExtractTest(unittest.TestCase):
                 with tempfile.TemporaryDirectory() as root:
                     output = Path(root) / "evidence"
                     result = subprocess.run(
-                        [sys.executable, str(SCRIPT), "--output", str(output), "--libopus", LIB],
+                        cli_command("--output", str(output)),
                         input=f.pcap(),
                         capture_output=True,
                     )
@@ -342,7 +352,7 @@ class ExtractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             output = Path(root) / "evidence"
             result = subprocess.run(
-                [sys.executable, str(SCRIPT), "--output", str(output)],
+                cli_command("--output", str(output)),
                 input=target.pcap(),
                 capture_output=True,
             )
@@ -355,7 +365,7 @@ class ExtractTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             out = Path(root) / "capture"
             result = subprocess.run(
-                [sys.executable, str(SCRIPT), "--output", str(out)],
+                cli_command("--output", str(out)),
                 input=f.pcap(),
                 capture_output=True,
             )
@@ -657,15 +667,7 @@ class DownlinkTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             out = Path(root) / "capture"
             result = subprocess.run(
-                [
-                    sys.executable,
-                    str(SCRIPT),
-                    "--output",
-                    str(out),
-                    "--include-downlink",
-                    "--libopus",
-                    LIB,
-                ],
+                cli_command("--output", str(out), "--include-downlink"),
                 input=f.pcap(),
                 capture_output=True,
             )
@@ -702,3 +704,15 @@ def test_missing_opus_library_is_explicit():
         patch.object(m.Path, "is_file", return_value=False),
     ):
         assert m.find_libopus() is None
+
+
+def test_non_mac_cli_still_rejects_audio_output():
+    f = Fixture().handshake()
+    f.send(0, ws(audio(), 2))
+    with tempfile.TemporaryDirectory() as root:
+        out = Path(root) / "must-not-exist"
+        result = subprocess.run(
+            cli_command("--output", str(out), platform="linux"), input=f.pcap(), capture_output=True
+        )
+        assert result.returncode == 1
+        assert not out.exists()
