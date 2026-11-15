@@ -4598,3 +4598,9 @@ $PY devicetest/keepawake_verdict.py "$RUN" --serial "$RUN/serial.log" --gate-sil
 ~~~
 
 下一步先取得失败短词的实际ASR原文与可对齐输入证据，再按根因修复并重跑同候选前置；本轮不继续正式R02。
+
+## 2026-11-15 endpoint and streaming-final deployment
+
+Agent `memoria-agent:20261115-asr-streaming-default`, revision `f4f38dd942858c2fbf78cdeba75a6d63538a5f14`, was deployed at 01:39:44 UTC. Runtime verification found healthy status, zero restarts, and `VolcASRConfig.from_env().enable_nonstream=False`. The rollback image is `memoria-agent:rollback-20261115-asr-streaming-default-pre`. Firmware remains build36.
+
+[CI run 43623965980](https://github.com/monkeyin92/memoria/actions/runs/43623965980) passed all 16 jobs. The Agent image job built and verified artifacts but did not run Trivy; no Agent vulnerability scan is claimed. Edge image scanning passed. This is deployment evidence, not hardware acceptance. Precheck, Safety, Soak and R02 must be completed on this candidate; R02 remains 0/155. Room capture tooling passed independent review and actual 5-second, 240-second, SIGINT and SIGTERM checks, which establish recording integrity only.
