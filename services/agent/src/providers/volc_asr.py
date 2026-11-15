@@ -105,7 +105,7 @@ class VolcASRConfig:
     sample_rate: int = 16_000
     chunk_ms: int = 100
     end_window_ms: int = 550
-    enable_nonstream: bool = True
+    enable_nonstream: bool = False
     show_utterances: bool = True
     boosting_table_id: str | None = None
     connect_timeout_s: float = 5.0
@@ -149,7 +149,7 @@ class VolcASRConfig:
             model_name=e.get("VOLC_ASR_MODEL", "bigmodel").strip() or "bigmodel",
             chunk_ms=int(e.get("VOLC_ASR_CHUNK_MS", "100")),
             end_window_ms=int(e.get("VOLC_ASR_END_WINDOW_MS", "550")),
-            enable_nonstream=e.get("VOLC_ASR_ENABLE_NONSTREAM", "true").lower() == "true",
+            enable_nonstream=e.get("VOLC_ASR_ENABLE_NONSTREAM", "false").lower() == "true",
             show_utterances=e.get("VOLC_ASR_SHOW_UTTERANCES", "true").lower() == "true",
             boosting_table_id=e.get("VOLC_ASR_BOOSTING_TABLE_ID", "").strip() or None,
             connect_timeout_s=float(e.get("VOLC_ASR_CONNECT_TIMEOUT_S", "5")),

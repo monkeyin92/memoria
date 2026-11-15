@@ -1126,6 +1126,7 @@ uv run python scripts/evaluate_sensevoice_rescue.py --url http://127.0.0.1:18001
 - 水位有推进时，再检查 `provider_pcm_observed_samples`、`provider_pcm_rms`、`provider_pcm_peak_abs` 和 `provider_pcm_clipping_detected`。短噪声与削波不能靠延长尾超时修复。
 - 收麦期间的 VAD end 不创建新的回合或尾超时，也不能删除收麦前已经接收的真实输入。收麦后设备 VAD start 一律忽略（不恢复收音，也不产生回合）；只有点屏后的 `listening.resume` 恢复收音（phase cause 为 `screen_tap`），只送恢复点之后的音频，恢复后的 VAD 仍须能正常定端点。产品固件熄屏后进 wifi hold 关麦，所以 VAD 恢复只发生在熄屏前和 keep-awake 测试机上。
 - 收音窗口只在 `listening` 时到期，孩子说话时（`user_speaking`）不会收麦；说话期间由 max-user-speech watchdog 兜底。phase 显示 `listening` 但回合仍开着（有 pending turn、本 epoch 的 VAD 未结束、已准入输入或 turn commit 正在跑）时同样不收麦，判据与静音丢帧门共用 `_input_turn_open`。soak 20261031-160928 的 08:21:11 就是 VAD start 并进旧 pending turn、phase 停在 `listening`，窗口在 commit 途中到期。收麦状态下回复播完，playback ack 会先发 `listening`，standby 切回 `connecting` 时必须再发一次 `listening_closed`，否则设备以为麦开着而服务端丢掉每一帧（同一 soak 08:21:25 之后 11 次 `media vad ignored during listening capture hold`）。设备 VAD 在播放结束之后才打开时，`playback-followup` 不钉端点，由这次 VAD 的 end 定端点。soak 20261029-200043 的 t042 同时踩到这两条：逗号处的 final 被钉成端点，窗口又在说话中到期，句子被截断提交，收麦状态还延续到下一轮。
+- `media final committed without device VAD end` 在已处理的 post-final 音频窗口达到门限、所有已准入的非近零帧及不连续帧均已处理且无 `pending_partial` 后判定；持续上行的近零静音无需等待入口队列或泵完全清空，并记录实测 `waited_s`、门限 `threshold_s` 与 `open_vad`。`active_vad` 未结束时要求从 `turn_end_sample` 起算的连续近零静音（复用 `MediaAudioIngress._is_silent_pcm`；final 若落在最后一个已处理有声帧内部，可对齐到该帧末尾，余量严格小于该真实帧长度，1.2 s 从静音起点计算；不得跨过后续整帧有声）满 1.2 s（19200 样本，900 ms 固件 VAD hangover 加 300 ms 缺边沿等待）才允许兜底提交，同时将该段静音水位一并拨入 `last_committed_sample` 以防未旋转 task 的旧尾句在播放后复活；若环境底噪高于近零阈值且设备 VAD 卡住未闭合，服务端不引入声学能量阈值猜端点，仍由 `max_user_speech_duration_s` 兜底收束。无 `vad.start` 的弱起音路径不依赖近零静音，待泵消费推进满 0.3 s（4800 样本）或进入 `listening_capture_hold` 后有界提交（无 `vad.start` 且句间无 `pending_partial` 覆盖的 >300 ms 长停顿不保证跨分句合并）。统计水位在 `cancel`、重连、播放边界、收麦/恢复处重置；流不连续重置已处理证据，但保留等待 provider reset 期间仍在排队或在途音频的 admission 水位，直到实际处理完成；已被 `last_committed_sample`（含提交时连续静音段）覆盖的迟到 `vad.end` 打 `media vad_end ignored after final-wait commit`，不保留跨轮 `retired_vad_start_sample`。播放开始时间不能证明 final 属于旧轮次；旧结果仍以已提交采样水位及 ASR 版本裁决。提交后新录到、稍后才返回的 final 保留为新输入；在播放结束后单独提交，与后续新问题分轮，不按时间位置直接删除。新 partial、新问题及完整播放控制词均不获得额外退休条件。
 - 收音窗口（`MEDIA_LISTENING_CAPTURE_WINDOW_S`，默认 30 s）从回复播完（或本轮被接受）时起算。之后 `listening` 期间收到的第一帧上行音频若已过期，就收麦并发 `assistant_state=listening_closed`。被当作空轮回收的噪声 VAD 不重新起算窗口，所以回复播完后没人说话时，`listening_closed` 在约 30 s 后发出；窗口到期时正好有噪声段在进行，就等这段噪声被回收时立即发出。每次发送都打一行 `media listening closed session=… silence_since_reply_s=…`；本轮已被接受、还没有新回复播完时，该值为 `None`。
 - 尾超时之前，同一 `task_epoch` 出现过 `reason=straddles_committed_without_timing is_final=True` 且 `text_len>0` 时，`empty+vendor_silent` 是误标。厂商把已提交的上一句和新的一句合成了一条没有词时间戳的 final。该句最后被接收的文本若是新 final 的前缀，supervisor 只收后面的新话；对不上时仍整条丢弃。
 
@@ -1134,7 +1135,7 @@ uv run python scripts/evaluate_sensevoice_rescue.py --url http://127.0.0.1:18001
 本地回归入口使用假 provider，不调用外网或播放音频：
 
 ```bash
-uv run --frozen --extra dev pytest --no-cov services/agent/tests/unit/test_listening_capture_window.py
+uv run --frozen --extra dev pytest --no-cov services/agent/tests/unit/test_listening_capture_window.py services/agent/tests/unit/test_media_commit_latency.py services/agent/tests/unit/test_media_endpoint_continuous_speech.py
 ```
 
 ### 待授权的线上调整（建议，未执行）
@@ -1245,7 +1246,7 @@ uv run --frozen --extra dev pytest --no-cov services/agent/tests/unit/test_liste
 | `request.model_name` | `bigmodel` | 目前只有 `bigmodel` | 一致 |
 | `audio` 字段 | `format=pcm, codec=raw, rate=16000, bits=16, channel=1` | `format` 必填（pcm/wav/ogg/mp3，pcm 内部须 pcm_s16le），`codec` 默认 raw，`rate` 仅支持 16000，`bits` 仅 16，`channel` 默认 1 | 一致 |
 | `request.end_window_size` | 由 `VOLC_ASR_END_WINDOW_MS` 配置，默认 550 | 强制判停静音阈值，单位 ms，默认 800，最小 200 | 一致（取值在允许范围） |
-| `request.enable_nonstream` | 默认 true | 仅双向流式优化版支持二遍识别；开启后默认 VAD 分句 | 一致 |
+| `request.enable_nonstream` | 默认 false；显式 true 可开启 | 仅双向流式优化版支持二遍识别；开启后默认 VAD 分句 | 一致 |
 | `request.show_utterances` | 默认 true | 输出分句/分词信息，供 `extract_transcript` 取 `utterances[].words` | 一致 |
 | 热词表 | 原先写在 `request.boosting_table_id` | 文档层级为 `request.corpus.boosting_table_id` | 不一致，已改 |
 | `request.result_type` | 未发送（服务端默认 `full`） | 默认 `full`，即 `result.text` 为整段文本 | 一致（依赖默认值，已在代码注释说明） |
@@ -1254,10 +1255,10 @@ uv run --frozen --extra dev pytest --no-cov services/agent/tests/unit/test_liste
 | `audio_info.duration` | 未使用 | 已处理音频时长（ms） | 不影响判定，未使用 |
 | 文本帧 | 忽略 | 协议只有二进制帧 | 一致（防御性忽略） |
 
-### 仍未验证的部分
+### 实连验证与边界
 
-- **没有对真实端点打过合成音**。仓库与运行环境都没有 `VOLC_ASR_APP_ID` / `VOLC_ASR_ACCESS_TOKEN`，本次只做了文档与官方 Demo 的静态核对加本地假服务端单测。打开 `ASR_FAILOVER_ENABLED` 前必须用合成音对 `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async` 实连一次，确认：拿到首包结果、负包后收到 `is_last` 响应、错误帧能被识别。
-- `end_window_ms=550` 与 `enable_nonstream=true` 的组合会触发服务端 VAD 分句，中间结果里可能出现 `definite: true` 的分句。当前实现把 `definite` 分句当作句末结果转发，同时继续等负包边界；这一行为与 FunASR 路径的 `sentence_end` 语义一致，但没有在真实端点上观察过中间 `definite` 的时序。
+- 2026-11-15 已在真实 `bigmodel_async` 端点重放受控合成音及目标设备上行停止词，凭据由既有生产配置内部读取，未导出。17 份不同 PCM 的 34 次模式配对请求全部返回 final；另已验证 false 模式的原生 final 在客户端 finish 前到达。此前的静态协议审计不再代表当前实连覆盖。供应商错误帧的实连触发、一般识别准确率、弱网恢复及真实停播仍未由这些重放验证。
+- `enable_nonstream` 控制供应商二遍识别。2026-11-15 已部署版本的默认值为 false；`VOLC_ASR_ENABLE_NONSTREAM=true` 仍可显式开启。相同受控上行停止词 PCM 在 true 模式下三次由 partial“停”改为 final“行”，false 模式三次返回 final“停”。false 模式也已在客户端 finish 前观察到供应商原生 final。适配器仍仅接受服务端末包或 `definite` 作为 final，不把 partial 提升为命令，也不把“行”加入停止词。关闭二遍同时放弃其纠错收益，必须重跑同候选真机 Precheck、Safety、Soak 后再执行 R02；17 份不同 PCM 的 34 次配对请求不能代表整体准确率或声学验收。线上已于 2026-11-15 09:39（北京时间）切换至 `memoria-agent:20261115-asr-streaming-default`，revision `f4f38dd942858c2fbf78cdeba75a6d63538a5f14`；现场读取配置为 false、服务 healthy、restart=0。回滚镜像为 `memoria-agent:rollback-20261115-asr-streaming-default-pre`。部署与回滚走现有 Agent 组件版本流程，不改共享生产 env；该版本尚未完成同候选真机验收，R02 未执行。
 - 文档未给出“一条连接能否承载第二个任务”的明确禁止。即使允许，当前实现选择一段一连接，成本是多一次 WebSocket 建连，收益是任务边界与连接生命周期一致，不依赖未写明的服务端行为。
 
 ### finalize 预算：从负包到 final
