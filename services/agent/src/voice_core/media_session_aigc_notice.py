@@ -205,9 +205,7 @@ class MediaSessionAigcNoticeMixin:
         self._start_aigc_round(context, reason=reason)
         self._reset_aigc_closing_marker(context)
         context.aigc_opening_marker_pending = False
-        closing_pcm = (
-            self.aigc_notice_config.marker_pcm("closing") if closing_enabled else None
-        )
+        closing_pcm = self.aigc_notice_config.marker_pcm("closing") if closing_enabled else None
         tail = closing_pcm if work is not None and closing_pcm is not None else b""
         if not opening_enabled:
             context.aigc_opening_marker_ready_at = time.monotonic()
@@ -289,6 +287,30 @@ class MediaSessionAigcNoticeMixin:
             # was scheduled. Give that audible turn its END marker too.
             await self._close_aigc_round(context, close_reason="superseded")
         return False
+
+    async def _wait_aigc_closing_marker_owner(self, context: _MediaVoiceSession) -> None:
+        """Await the round-close task while it owns the closing marker.
+
+        The farewell and owner-silence close paths can reach standby after the
+        round-close task admitted the cue but before it recorded ``done``.
+        Waiting for that task here keeps CLOSED ordered after the marker's
+        terminal state, bounded so a stalled downlink cannot hold the close
+        open forever.
+        """
+
+        task = context.aigc_closing_task
+        if task is None or task is asyncio.current_task():
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(task),
+                timeout=_AIGC_ROUND_CLOSE_WAIT_S,
+            )
+        except TimeoutError:
+            logger.warning(
+                "AIGC round close did not finish session=%s",
+                context.identity.session_id,
+            )
 
     async def _close_aigc_round(self, context: _MediaVoiceSession, *, close_reason: str) -> None:
         if getattr(context, "aigc_round_closing", False):
@@ -420,16 +442,7 @@ class MediaSessionAigcNoticeMixin:
             context.aigc_round.content_id if context.aigc_round is not None else "",
             request.fence,
         )
-        try:
-            await asyncio.wait_for(
-                self._finish_aigc_closing_marker(context, request),
-                timeout=request.duration_s + _MARKER_DRAIN_GRACE_S,
-            )
-        except TimeoutError:
-            logger.warning(
-                "AIGC closing marker did not confirm session=%s",
-                context.identity.session_id,
-            )
+        await self._finish_aigc_closing_marker(context, request)
         return True
 
     def _on_aigc_marker_playback(
@@ -688,6 +701,10 @@ class MediaSessionAigcNoticeMixin:
                 # dropped before a frame; only the ledger distinguishes them.
                 return -1.0
             await asyncio.sleep(_MARKER_POLL_S)
+        logger.warning(
+            "AIGC closing marker did not confirm session=%s",
+            context.identity.session_id,
+        )
         return -1.0
 
 

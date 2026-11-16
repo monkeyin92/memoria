@@ -49,6 +49,8 @@ class MediaSessionStandbyMixin:
 
         async def _play_aigc_closing_marker(self, context: _MediaVoiceSession) -> bool: ...
 
+        async def _wait_aigc_closing_marker_owner(self, context: _MediaVoiceSession) -> None: ...
+
         def _finish_aigc_round(self, context: _MediaVoiceSession, *, close_reason: str) -> None: ...
 
         def _event_versions(
@@ -576,6 +578,17 @@ class MediaSessionStandbyMixin:
         if not reason or len(reason) > 128:
             raise ValueError("conversation close reason must be 1-128 characters")
         async with context.standby_lock:
+            if (
+                context.closed
+                or context.standby_requested
+                or self._sessions.get(context.identity.session_id) is not context
+            ):
+                return False
+            if context.aigc_closing_marker_state == "playing":
+                # The round-close task admitted the cue on its own task and may
+                # not have recorded its terminal state yet; CLOSED must never
+                # outrun that state.  The wait keeps the round-close bound.
+                await self._wait_aigc_closing_marker_owner(context)
             if (
                 context.closed
                 or context.standby_requested
