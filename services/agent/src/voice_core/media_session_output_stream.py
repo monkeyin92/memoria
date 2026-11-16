@@ -1017,8 +1017,7 @@ class MediaOutputStreamMixin(MediaOutputChunksMixin):
                 context.runtime.orchestrator.delegation.start_output_intent_delivery(lease.intent)
                 self._note_downlink_audio(context, fence)
                 if not context.output.playback.register_audio(
-                    fence,
-                    frame.sequence,
+                    fence, frame.sequence,
                     frame.source_start_sample,
                     frame.frame_samples,
                 ):
