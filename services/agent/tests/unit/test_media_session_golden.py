@@ -841,7 +841,15 @@ async def test_farewell_plays_the_aigc_closing_marker_before_standby() -> None:
         # The END cue is admitted and played before standby.  The transport's
         # critical lane may still hand CLOSED to the client ahead of a queued
         # reliable audio frame, exactly as owner-silence close does, so the
-        # session state is the ordering signal here.
+        # session state is the ordering signal here.  That admission runs on
+        # its own task and only reaches "playing" once the cue is queued, so
+        # wait for every cue frame to land before reading its final state.
+        await harness.wait_for(
+            lambda: (
+                harness.count("audio") > farewell_audio
+                and context.aigc_closing_marker_state != "playing"
+            )
+        )
         assert context.aigc_closing_marker_state == "done"
         audio_positions = [
             index

@@ -85,15 +85,16 @@ test("test sources are explicitly excluded from the WeChat package", () => {
 });
 
 test("cold start, memory, home and device surfaces never create a RecorderManager", () => {
+  const subdirs = (dir) =>
+    fs
+      .readdirSync(path.join(root, dir), { withFileTypes: true })
+      .filter((dirent) => dirent.isDirectory())
+      .map((dirent) => path.join(root, dir, dirent.name));
   const scoped = [
     path.join(root, "app.js"),
     path.join(root, "pages", "home", "index.js"),
-    ...fs.readdirSync(path.join(root, "pages", "memory")).map((name) =>
-      path.join(root, "pages", "memory", name),
-    ),
-    ...fs.readdirSync(path.join(root, "pages", "device")).map((name) =>
-      path.join(root, "pages", "device", name),
-    ),
+    ...subdirs("pages/memory"),
+    ...subdirs("pages/device"),
   ];
   matches(scoped, /getRecorderManager/, "冷启动/首页/回顾/设备页创建 RecorderManager");
 });

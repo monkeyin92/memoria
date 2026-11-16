@@ -8,11 +8,21 @@ ALLOWED_DOCUMENTS = {
     "README.md",
     "HANDOFF.md",
     "TODOLIST.md",
+    "AGENTS.md",
 }
+# Agent guidance files sit beside the code they describe, at any depth.
+AGENT_GUIDE_NAME = "AGENTS.md"
+
+
+def _is_agent_guide(path: str) -> bool:
+    return Path(path).name == AGENT_GUIDE_NAME
+
+
 # Each document type has one canonical aggregate. Evidence files stay beside
 # the aggregates and are covered by the data pattern below.
 ALLOWED_DOCS_PREFIXES = ()
 ALLOWED_DOCS_FILES = {
+    "docs/AGENTS.md",
     "docs/acceptance.md",
     "docs/compliance.md",
     "docs/design.md",
@@ -42,11 +52,7 @@ def test_repository_has_exactly_three_long_lived_documents() -> None:
         check=True,
         capture_output=True,
     )
-    repository_files = {
-        item.decode("utf-8")
-        for item in completed.stdout.split(b"\0")
-        if item
-    }
+    repository_files = {item.decode("utf-8") for item in completed.stdout.split(b"\0") if item}
     documents = {
         path
         for path in repository_files
@@ -60,8 +66,11 @@ def test_repository_has_exactly_three_long_lived_documents() -> None:
         for path in documents
         if not path.startswith(("docs/", ALLOWED_TOOLING_PREFIX))
         and path not in ALLOWED_TOOLING_FILES
+        and not _is_agent_guide(path)
     }
-    assert top_level == ALLOWED_DOCUMENTS
+    # AGENTS.md guides sit beside the code they describe at any depth and are
+    # not counted; the name stays allowed so a root guide is permitted.
+    assert top_level == ALLOWED_DOCUMENTS - {AGENT_GUIDE_NAME}
     stray = sorted(
         path
         for path in repository_files

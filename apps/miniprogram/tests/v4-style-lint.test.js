@@ -6,11 +6,18 @@ const test = require("node:test");
 const { TILE_ICONS } = require("../components/mp-icon/tile-icons");
 
 const root = path.join(__dirname, "..");
-const pageDirs = fs.readdirSync(path.join(root, "pages"));
+const pageDirs = fs
+  .readdirSync(path.join(root, "pages"), { withFileTypes: true })
+  .filter((dirent) => dirent.isDirectory())
+  .map((dirent) => dirent.name);
 const read = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
 const sources = [
   ...pageDirs.flatMap((dir) => [`pages/${dir}/index.wxml`, `pages/${dir}/index.js`]),
-  ...fs.readdirSync(path.join(root, "components")).flatMap((dir) => [`components/${dir}/index.wxml`, `components/${dir}/index.js`]),
+  ...fs
+    .readdirSync(path.join(root, "components"), { withFileTypes: true })
+    .filter((dirent) => dirent.isDirectory())
+    .map((dirent) => dirent.name)
+    .flatMap((dir) => [`components/${dir}/index.wxml`, `components/${dir}/index.js`]),
   "custom-tab-bar/index.js",
   "custom-tab-bar/index.wxml",
 ].filter((rel) => fs.existsSync(path.join(root, rel)));
