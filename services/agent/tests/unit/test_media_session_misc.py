@@ -306,19 +306,18 @@ async def test_missed_hearing_nudge_cooldown_blocks_back_to_back_prompts() -> No
 @pytest.mark.parametrize(
     ("evidence", "expected_nudges"),
     [
-        (ASREmptySegmentEvidence(had_speech=True, provider_failed=False, retried=True), 1),
+        (ASREmptySegmentEvidence(had_speech=True, provider_failed=False, retried=True), 0),
         (ASREmptySegmentEvidence(had_speech=False, provider_failed=False, retried=True), 0),
         (ASREmptySegmentEvidence(had_speech=True, provider_failed=True, retried=True), 0),
     ],
 )
-async def test_empty_tail_discard_with_speech_gets_audible_fallback(
+async def test_empty_tail_discard_without_owner_stays_silent(
     evidence: ASREmptySegmentEvidence,
     expected_nudges: int,
 ) -> None:
-    """Speech the vendor dropped must not become a silent turn.
+    """Unverified empty input must remain silent.
 
-    Owner authority is deliberately left unverified: the retry already ran on
-    the same PCM, so the fallback rests on audio evidence, not speaker identity.
+    Energy and a successful empty retry do not establish speaker identity.
     """
 
     provider = _AckCapturingProvider()
@@ -339,6 +338,87 @@ async def test_empty_tail_discard_with_speech_gets_audible_fallback(
         provider.completed.clear()
         provider.texts.clear()
 
+        provider.last_empty_segment_evidence = evidence
+        context.pending.turn_start_sample = 0
+        context.pending.turn_endpoint_sample = 16_000
+        context.pending.turn_retire_sample = 16_640
+        context.pending.turn_endpoint_tail_deadline = None
+
+        await registry._expire_endpoint_tail(
+            identity.session_id,
+            context.stream_epoch,
+            16_000,
+        )
+
+        assert context.missed_hearing_nudge_count == expected_nudges
+        if expected_nudges:
+            await _wait_until(lambda: bool(provider.texts))
+            assert BRIDGE_PHRASES[2] in provider.texts
+        else:
+            await asyncio.sleep(0.05)
+            assert provider.texts == []
+    finally:
+        await registry.finalize_session(identity.session_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("signal", ["sine", "noise"])
+@pytest.mark.parametrize("verified", [False, True])
+async def test_synthetic_energy_empty_asr_requires_owner(signal: str, verified: bool) -> None:
+    import math
+    import random
+    import struct
+    from types import SimpleNamespace
+
+    from services.agent.src.providers.asr_failover import FailoverASRSession
+    from services.agent.src.voice_core.provider_adapter import ExistingVoiceProviderAdapter
+    from services.agent.tests.unit.test_asr_failover import FakeSenseVoice, FakeSession, _config
+
+    rng = random.Random(73)
+    samples = [int(2000 * math.sin(2 * math.pi * 440 * i / 16000))
+               if signal == "sine" else rng.randint(-2000, 2000) for i in range(16000)]
+    asr = FailoverASRSession(config=_config(), primary_factory=FakeSession,
+                             sensevoice=FakeSenseVoice(None))
+    await asr.connect()
+    try:
+        await asr.send_pcm(struct.pack("<16000h", *samples))
+        await asr.rotate_task(require_consumed=False)
+        evidence = ExistingVoiceProviderAdapter.last_empty_segment_evidence.fget(SimpleNamespace(_asr=asr))
+        assert evidence is not None and evidence.had_speech and not evidence.provider_failed
+        assert not any(event.sentence and event.sentence.text for event in list(asr.events._queue))
+    finally:
+        await asr.aclose()
+    expected_nudges = int(verified)
+    provider = _AckCapturingProvider()
+    bridge = _CapturingGenerationBridge()
+    registry = MediaVoiceCoreRegistry(
+        bridge=bridge,
+        provider_factory=lambda _identity: provider,
+    )
+    registry.install()
+    identity = _device_identity(f"device-empty-tail-{evidence.had_speech}-{evidence.provider_failed}")
+    session = bridge.bridge.open(identity)
+    try:
+        context = await registry.open_session(identity)
+        await asyncio.wait_for(provider.started.wait(), timeout=1)
+        await asyncio.wait_for(provider.completed.wait(), timeout=1)
+        await _finish_output_owner_playback(registry, identity, bridge, session)
+        provider.started.clear()
+        provider.completed.clear()
+        provider.texts.clear()
+
+        if verified:
+            # Stub only the external classifier; exercise the real epoch lifecycle.
+            async def classify(pcm: bytes, sample_rate: int) -> Any:
+                assert pcm and sample_rate == 16_000
+                return _verified_owner_decision()
+
+            context.runtime.set_speaker_classifier(classify, sample_rate=16_000)
+            context.runtime.on_user_voice_started()
+            context.runtime.feed_speaker_pcm(struct.pack("<16000h", *samples))
+            context.runtime.on_user_voice_stopped()
+            await context.runtime.await_speaker_classification()
+            assert context.runtime.current_speaker_authority_verified
         provider.last_empty_segment_evidence = evidence
         context.pending.turn_start_sample = 0
         context.pending.turn_endpoint_sample = 16_000

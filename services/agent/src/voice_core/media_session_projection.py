@@ -55,7 +55,6 @@ from services.agent.src.voice_core.media_session_state import (
     MediaVoiceSessionState as _MediaVoiceSession,
 )
 from services.agent.src.voice_core.media_session_types import (
-    ASREmptySegmentEvidence,
     DelegationOutputClaim,
     DelegationOutputState,
     owned_delegation_holds_turn,
@@ -480,43 +479,17 @@ class MediaSessionProjectionMixin:
             return False
         return await self._wait_for_output_idle(context, wait_for_start=True)
 
-    @staticmethod
-    def _empty_segment_needs_audible_fallback(context: _MediaVoiceSession) -> bool:
-        """True when ASR heard real audio but still finished the segment empty.
-
-        The provider has already retried the backup chain by the time the tail
-        expires. A provider fault or a truly silent segment keeps the old
-        silent-discard behaviour; speech the vendor dropped must not.
-        """
-
-        evidence = getattr(context.provider, "last_empty_segment_evidence", None)
-        if callable(evidence):
-            evidence = evidence()
-        return bool(
-            isinstance(evidence, ASREmptySegmentEvidence)
-            and evidence.had_speech
-            and not evidence.provider_failed
-        )
-
     def _nudge_empty_turn(self, context: _MediaVoiceSession, *, endpoint_sample: int) -> None:
-        """Prompt after an empty turn, bypassing owner authority only for unheard speech."""
-
-        self._nudge_missed_hearing(
-            context,
-            endpoint_sample=endpoint_sample,
-            require_owner_evidence=not self._empty_segment_needs_audible_fallback(context),
-        )
+        """Empty ASR energy is not evidence of speaker identity."""
+        self._nudge_missed_hearing(context, endpoint_sample=endpoint_sample)
 
     def _owner_speech_is_established(self, context: _MediaVoiceSession) -> bool:
         """True only when this turn carries verified owner authority.
 
-        An empty ASR result proves nothing about who produced the audio. On the
-        current single-mic board there is no playback AEC reference, so the
-        assistant's own TTS tail and ambient room noise both reach the mic and
-        both endpoint as turns with no text. Speaker classification runs on the
-        captured PCM independently of ASR text, so it is the only evidence that
-        separates "the owner spoke and ASR failed" from "something else made
-        noise". Without it the device would answer the room.
+        Empty text and PCM energy do not identify the speaker. Classification
+        can run independently of ASR when configured; an unavailable, pending,
+        or timed-out classifier leaves this gate closed. Device binding alone
+        is not voice authority.
         """
 
         runtime = context.runtime
