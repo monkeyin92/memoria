@@ -62,3 +62,112 @@ async def test_delivery_ttl(monkeypatch, boundary, started, gate):
         coordinator.complete_output_intent(competitor, **args)
     assert coordinator.current_output_intent(fence.session_id, **args) is None
     assert not coordinator._delivering_by_session
+
+
+@pytest.mark.asyncio
+async def test_deep_result_stream_completes_after_queue_ttl(monkeypatch):
+    import asyncio
+    import time
+
+    from services.agent.src.orchestration.state_machine import ConversationState
+    from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2
+    from services.agent.src.voice_core.grpc_bridge import MediaBridgeGrpcServer
+    from services.agent.src.voice_core.media_protocol import (
+        PlaybackEventType,
+        PlaybackProgress,
+        SessionIdentity,
+    )
+    from services.agent.src.voice_core.media_session import MediaReplyChunk, MediaVoiceCoreRegistry
+    from services.agent.tests.unit.media_session_support import FakeMediaProvider
+
+    accepted = asyncio.Event()
+    release = asyncio.Event()
+    clock = [time.time()]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+
+    class Provider(FakeMediaProvider):
+        def generate_output(self, identity, intent, fence, **kwargs):
+            async def chunks():
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x02\x00" * 480, source_start_sample=0, first=True
+                )
+                await release.wait()
+                yield MediaReplyChunk(
+                    pcm_s16le=b"\x03\x00" * 480, source_start_sample=480, final=True
+                )
+
+            return chunks()
+
+    class Bridge(MediaBridgeGrpcServer):
+        def __init__(self):
+            super().__init__()
+            self.frames = []
+
+        async def emit_pcm(self, session_id, frame):
+            self.frames.append(frame)
+            accepted.set()
+            return True
+
+        async def emit_generation(self, *args, **kwargs):
+            return True
+
+    provider = Provider()
+    bridge = Bridge()
+    registry = MediaVoiceCoreRegistry(bridge=bridge, provider_factory=lambda _: provider)
+    registry.install()
+    identity = SessionIdentity("deep-result-ttl-stream")
+    session = bridge.bridge.open(identity)
+    context = await registry.open_session(identity)
+    try:
+        fence = await context.runtime.on_turn_committed("故事")
+        context.output.playback.start(fence)
+        coordinator = context.runtime.orchestrator.delegation
+        now = int(clock[0] * 1000)
+        intent = media_pb2.OutputIntent(
+            intent_id="deep-ttl",
+            tts_source="故事",
+            session_id=identity.session_id,
+            turn_id=fence.turn_id,
+            generation_id=fence.generation_id,
+            tool_epoch=fence.tool_epoch,
+            kind=media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT,
+            priority=1,
+            created_at_ms=now,
+            expires_at_ms=now + 120000,
+            context_version=coordinator.current_context_version(identity.session_id),
+            floor_requirement=media_pb2.FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
+        )
+        coordinator.admit_output_intent(
+            intent,
+            current_fence=fence,
+            current_context_version=intent.context_version,
+            floor_allows_output=True,
+        )
+        task = asyncio.create_task(registry._run_output_work(context, OutputWork(intent, fence)))
+        await asyncio.wait_for(accepted.wait(), 1)
+        clock[0] += 121
+        release.set()
+        result = await asyncio.wait_for(task, 1)
+        assert result.status.value == "completed"
+        assert len(bridge.frames) == 2
+        assert context.output.provider_complete
+        assert provider.cancelled == []
+        await registry.on_playback_progress(
+            session,
+            PlaybackProgress(
+                identity=identity,
+                generation_id=fence.generation_id,
+                received_sequence=1,
+                rendered_sample_end=960,
+                client_monotonic_ms=121000,
+                turn_id=fence.turn_id,
+                tool_epoch=fence.tool_epoch,
+                event_type=PlaybackEventType.ENDED,
+            ),
+        )
+        assert context.output.output_owner is None
+        assert context.runtime.orchestrator.state is ConversationState.LISTENING
+        assert not coordinator._delivering_by_session
+    finally:
+        release.set()
+        await registry.finalize_session(identity.session_id)
