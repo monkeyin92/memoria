@@ -23,6 +23,11 @@ Decodable bit corruption cannot be detected without an end-to-end checksum.
 
 This tool trusts the audited Edge's 101 as signature-verification evidence; it
 is not a JWT verifier. Run only in the separately authorized synthetic window.
+
+Every run emits one machine-readable JSON report after the human message:
+"extractor_rejection" on stderr for failures, "extractor_summary" on stdout for
+success. It carries a stable reason code, its class and content-free counters
+only, never headers, tokens, text, session or device identifiers.
 """
 
 import argparse
@@ -44,6 +49,93 @@ LIMIT = 131072
 MAX_INPUT = 32 * 1024 * 1024
 MAX_SECONDS = 120
 
+REASONS = {
+    "pcap_header_invalid": "capture_integrity",
+    "pcap_link_unsupported": "protocol_mismatch",
+    "pcap_record_truncated": "capture_integrity",
+    "pcap_record_invalid": "capture_integrity",
+    "pcap_packet_snapped": "capture_integrity",
+    "pcap_timestamp_regressed": "capture_integrity",
+    "pcap_span_exceeded": "bounds",
+    "pcap_input_limit": "bounds",
+    "wall_time_exceeded": "bounds",
+    "packet_truncated": "capture_integrity",
+    "packet_not_ipv4": "protocol_mismatch",
+    "ip_header_invalid": "capture_integrity",
+    "ip_fragment": "protocol_mismatch",
+    "packet_not_loopback_tcp": "protocol_mismatch",
+    "tcp_header_invalid": "capture_integrity",
+    "tcp_port_mismatch": "protocol_mismatch",
+    "flow_limit_exceeded": "bounds",
+    "tcp_syn_invalid": "protocol_mismatch",
+    "tcp_handshake_incomplete": "capture_boundary",
+    "tcp_reset": "session_lifecycle",
+    "tcp_sequence_wrap": "bounds",
+    "tcp_retransmission_conflict": "capture_integrity",
+    "tcp_reassembly_queue_limit": "bounds",
+    "tcp_data_after_fin": "capture_integrity",
+    "tcp_reassembly_gap": "capture_integrity",
+    "tcp_ack_beyond_capture": "capture_integrity",
+    "http_header_too_large": "bounds",
+    "http_header_malformed": "protocol_mismatch",
+    "target_upgrade_request_invalid": "protocol_mismatch",
+    "target_jwt_invalid": "protocol_mismatch",
+    "target_jwt_claims_mismatch": "protocol_mismatch",
+    "target_upgrade_response_invalid": "protocol_mismatch",
+    "websocket_extension_negotiated": "protocol_mismatch",
+    "second_target_session": "session_lifecycle",
+    "target_handshake_not_found": "capture_boundary",
+    "target_session_not_accepted": "capture_boundary",
+    "uplink_audio_absent": "capture_boundary",
+    "parser_buffer_limit": "bounds",
+    "websocket_frame_invalid": "protocol_mismatch",
+    "websocket_mask_invalid": "protocol_mismatch",
+    "websocket_opcode_invalid": "protocol_mismatch",
+    "websocket_frame_too_large": "bounds",
+    "websocket_control_frame_invalid": "protocol_mismatch",
+    "websocket_fragment_invalid": "protocol_mismatch",
+    "websocket_data_after_close": "session_lifecycle",
+    "websocket_frame_incomplete": "capture_boundary",
+    "json_invalid": "protocol_mismatch",
+    "json_duplicate_key": "protocol_mismatch",
+    "json_not_object": "protocol_mismatch",
+    "device_hello_invalid": "protocol_mismatch",
+    "device_hello_audio_unsupported": "protocol_mismatch",
+    "device_hello_capabilities_unsupported": "protocol_mismatch",
+    "session_accepted_invalid": "protocol_mismatch",
+    "session_accepted_downlink_rate_unsupported": "protocol_mismatch",
+    "session_accepted_reconnect_snapshot": "session_lifecycle",
+    "uplink_audio_before_accept": "protocol_mismatch",
+    "uplink_audio_header_invalid": "protocol_mismatch",
+    "uplink_audio_first_frame_discontinuous": "protocol_mismatch",
+    "uplink_audio_discontinuous": "protocol_mismatch",
+    "uplink_pcm_limit": "bounds",
+    "opus_decode_failed": "protocol_mismatch",
+    "opus_decoder_unavailable": "environment",
+    "downlink_audio_before_accept": "protocol_mismatch",
+    "downlink_control_invalid": "protocol_mismatch",
+    "downlink_after_close": "session_lifecycle",
+    "downlink_control_limit": "bounds",
+    "downlink_fence_invalid": "protocol_mismatch",
+    "downlink_generation_reused": "protocol_mismatch",
+    "downlink_fence_regressed": "protocol_mismatch",
+    "downlink_generation_limit": "bounds",
+    "downlink_generation_start_missing": "protocol_mismatch",
+    "downlink_cancel_fence_mismatch": "protocol_mismatch",
+    "downlink_flush_fence_invalid": "protocol_mismatch",
+    "downlink_fence_mismatch": "protocol_mismatch",
+    "downlink_audio_header_invalid": "protocol_mismatch",
+    "downlink_audio_generation_mismatch": "protocol_mismatch",
+    "downlink_audio_first_frame_discontinuous": "protocol_mismatch",
+    "downlink_audio_discontinuous": "protocol_mismatch",
+    "downlink_pcm_limit": "bounds",
+    "unsupported_platform": "environment",
+    "runtime_interrupted": "environment",
+    "output_exists": "environment",
+    "output_write_failed": "environment",
+    "internal_error": "environment",
+}
+
 
 def find_libopus():
     found = ctypes.util.find_library("opus")
@@ -56,24 +148,31 @@ def find_libopus():
 
 
 class Invalid(Exception):
-    pass
+    def __init__(self, reason):
+        super().__init__("capture rejected")
+        self.reason = reason if reason in REASONS else "internal_error"
 
 
-def require(ok):
+def require(ok, reason):
     if not ok:
-        raise Invalid("capture rejected")
+        raise Invalid(reason)
 
 
 def object_json(raw):
     def pairs(items):
         result = {}
         for key, value in items:
-            require(key not in result)
+            require(key not in result, "json_duplicate_key")
             result[key] = value
         return result
 
-    value = json.loads(raw, object_pairs_hook=pairs)
-    require(isinstance(value, dict))
+    try:
+        value = json.loads(raw, object_pairs_hook=pairs)
+    except Invalid:
+        raise
+    except Exception:
+        raise Invalid("json_invalid") from None
+    require(isinstance(value, dict), "json_not_object")
     return value
 
 
@@ -83,7 +182,7 @@ class Buffer:
         self.times = []
 
     def add(self, data, stamp):
-        require(len(self.data) + len(data) <= LIMIT)
+        require(len(self.data) + len(data) <= LIMIT, "parser_buffer_limit")
         self.data.extend(data)
         self.times.extend([stamp] * len(data))
 
@@ -97,16 +196,16 @@ class Buffer:
 
 class TCP:
     def __init__(self, seq, consume):
-        require(0 <= seq < 2**32 - 1)
+        require(0 <= seq < 2**32 - 1, "tcp_sequence_wrap")
         self.next = seq + 1
         self.pending = []
         self.consume = consume
 
     def feed(self, seq, data, stamp):
-        require(0 <= seq and seq + len(data) < 2**32)
+        require(0 <= seq and seq + len(data) < 2**32, "tcp_sequence_wrap")
         # Sequence wrap and ambiguous overlap fail closed; duplicates already
         # delivered are ignored. Retransmission timestamps never replace originals.
-        require(abs(seq - self.next) < 2**31)
+        require(abs(seq - self.next) < 2**31, "tcp_sequence_wrap")
         if seq < self.next:
             data = data[self.next - seq :]
             seq = self.next
@@ -115,9 +214,15 @@ class TCP:
         for start, old, _ in self.pending:
             lo, hi = max(start, seq), min(start + len(old), seq + len(data))
             if lo < hi:
-                require(old[lo - start : hi - start] == data[lo - seq : hi - seq])
+                require(
+                    old[lo - start : hi - start] == data[lo - seq : hi - seq],
+                    "tcp_retransmission_conflict",
+                )
         self.pending.append((seq, data, stamp))
-        require(len(self.pending) <= 256 and sum(len(x[1]) for x in self.pending) <= LIMIT)
+        require(
+            len(self.pending) <= 256 and sum(len(x[1]) for x in self.pending) <= LIMIT,
+            "tcp_reassembly_queue_limit",
+        )
         self.pending.sort(key=lambda x: x[0])
         while self.pending and self.pending[0][0] <= self.next:
             start, chunk, timestamp = self.pending.pop(0)
@@ -130,26 +235,30 @@ class TCP:
 def headers(buffer):
     end = buffer.data.find(b"\r\n\r\n")
     if end < 0:
-        require(len(buffer.data) <= 16384)
+        require(len(buffer.data) <= 16384, "http_header_too_large")
         return None
-    require(end <= 16384)
+    require(end <= 16384, "http_header_too_large")
     raw, _ = buffer.take(end + 4)
-    lines = raw[:-4].decode("ascii").split("\r\n")
+    try:
+        lines = raw[:-4].decode("ascii").split("\r\n")
+    except UnicodeDecodeError:
+        raise Invalid("http_header_malformed") from None
     result = {}
     for line in lines[1:]:
-        require(":" in line and not line.startswith((" ", "\t")))
+        require(":" in line and not line.startswith((" ", "\t")), "http_header_malformed")
         name, value = line.split(":", 1)
         name = name.lower()
-        require(name not in result)
+        require(name not in result, "http_header_malformed")
         result[name] = value.strip()
     return lines[0], result
 
 
 class WS:
-    def __init__(self, masked, callback):
+    def __init__(self, masked, callback, counts=None):
         self.buffer = Buffer()
         self.masked = masked
         self.callback = callback
+        self.counts = counts
         self.fragment = bytearray()
         self.opcode = None
         self.stamps = []
@@ -161,18 +270,24 @@ class WS:
         while len(b.data) >= 2:
             first, second = b.data[:2]
             fin, op = bool(first & 128), first & 15
-            require(not self.closed and not first & 112 and bool(second & 128) == self.masked)
+            require(not self.closed, "websocket_data_after_close")
+            require(not first & 112, "websocket_frame_invalid")
+            require(bool(second & 128) == self.masked, "websocket_mask_invalid")
             size, offset = second & 127, 2
             if size in (126, 127):
                 width = 2 if size == 126 else 8
                 if len(b.data) < 2 + width:
                     return
                 size = int.from_bytes(b.data[2 : 2 + width], "big")
-                require(size >= (126 if width == 2 else 65536))
+                require(size >= (126 if width == 2 else 65536), "websocket_frame_invalid")
                 offset += width
-            require(size <= 16384 and op in (0, 1, 2, 8, 9, 10))
+            require(size <= 16384, "websocket_frame_too_large")
+            require(op in (0, 1, 2, 8, 9, 10), "websocket_opcode_invalid")
             if op >= 8:
-                require(fin and size <= 125 and not (op == 8 and size == 1))
+                require(
+                    fin and size <= 125 and not (op == 8 and size == 1),
+                    "websocket_control_frame_invalid",
+                )
             if self.masked:
                 offset += 4
             if len(b.data) < offset + size:
@@ -183,19 +298,27 @@ class WS:
                 key = raw[offset - 4 : offset]
                 payload = bytes(x ^ key[i % 4] for i, x in enumerate(payload))
             if op >= 8:
+                if self.counts is not None:
+                    self.counts["ws_control_frames"] += 1
                 if op == 8:
-                    require(self.opcode is None)
+                    require(self.opcode is None, "websocket_fragment_invalid")
                     self.closed = True
                 continue
             if op:
-                require(self.opcode is None)
+                require(self.opcode is None, "websocket_fragment_invalid")
                 self.opcode = op
             else:
-                require(self.opcode is not None)
+                require(self.opcode is not None, "websocket_fragment_invalid")
             self.fragment.extend(payload)
             self.stamps.extend(stamps)
-            require(len(self.fragment) <= 16384 and len(self.stamps) <= 32768)
+            require(
+                len(self.fragment) <= 16384 and len(self.stamps) <= 32768,
+                "websocket_frame_too_large",
+            )
             if fin:
+                if self.counts is not None:
+                    key = "ws_text_messages" if self.opcode == 1 else "ws_binary_messages"
+                    self.counts[key] += 1
                 self.callback(
                     self.opcode, bytes(self.fragment), (min(self.stamps), max(self.stamps))
                 )
@@ -206,7 +329,10 @@ class WS:
 
 class Opus:
     def __init__(self, path):
-        self.lib = ctypes.CDLL(path)
+        try:
+            self.lib = ctypes.CDLL(path)
+        except OSError:
+            raise Invalid("opus_decoder_unavailable") from None
         self.lib.opus_decoder_create.argtypes = [
             ctypes.c_int,
             ctypes.c_int,
@@ -224,11 +350,14 @@ class Opus:
         self.lib.opus_decoder_destroy.argtypes = [ctypes.c_void_p]
         code = ctypes.c_int()
         self.state = self.lib.opus_decoder_create(16000, 1, ctypes.byref(code))
-        require(self.state and code.value == 0)
+        require(self.state and code.value == 0, "opus_decoder_unavailable")
 
     def decode(self, data):
         out = (ctypes.c_int16 * 320)()
-        require(self.lib.opus_decode(self.state, data, len(data), out, 320, 0) == 320)
+        require(
+            self.lib.opus_decode(self.state, data, len(data), out, 320, 0) == 320,
+            "opus_decode_failed",
+        )
         return struct.pack("<320h", *out)
 
     def close(self):
@@ -243,14 +372,16 @@ MAX_CONTROLS = 4096
 FENCE_KEYS = ("session_epoch", "turn_id", "generation_id", "tool_epoch")
 
 
-def uint(value, bits=32, positive=False):
-    require(type(value) is int and int(positive) <= value < 2**bits)
+def uint(value, bits=32, positive=False, reason="internal_error"):
+    if not (type(value) is int and int(positive) <= value < 2**bits):
+        raise Invalid(reason)
     return value
 
 
-def fence_of(value):
-    require(isinstance(value, dict))
-    return tuple(uint(value.get(k), positive=k != "tool_epoch") for k in FENCE_KEYS)
+def fence_of(value, reason="downlink_fence_invalid"):
+    if not isinstance(value, dict):
+        raise Invalid(reason)
+    return tuple(uint(value.get(k), positive=k != "tool_epoch", reason=reason) for k in FENCE_KEYS)
 
 
 class Downlink:
@@ -282,6 +413,7 @@ class Downlink:
             self.decoder = None
 
     def control(self, msg, stamp):
+        counts = self.flow.owner.counts
         kind = msg.get("type")
         kinds = (
             "generation.started",
@@ -294,34 +426,44 @@ class Downlink:
             "session.error",
         )
         if kind not in kinds:
+            counts["downlink_controls_skipped"] += 1
             return
+        require(not self.closed, "downlink_after_close")
         require(
-            not self.closed
-            and msg.get("version") == 2
+            msg.get("version") == 2
             and msg.get("session_id") == self.flow.session
-            and msg.get("stream_epoch") == self.flow.epoch
+            and msg.get("stream_epoch") == self.flow.epoch,
+            "downlink_control_invalid",
         )
-        require(len(self.controls) < MAX_CONTROLS)
+        require(len(self.controls) < MAX_CONTROLS, "downlink_control_limit")
         record = {
             "type": kind,
-            "control_sequence": uint(msg.get("control_sequence")),
-            "server_monotonic_ms": uint(msg.get("server_monotonic_ms"), 64),
+            "control_sequence": uint(
+                msg.get("control_sequence"), reason="downlink_control_invalid"
+            ),
+            "server_monotonic_ms": uint(
+                msg.get("server_monotonic_ms"), 64, reason="downlink_control_invalid"
+            ),
             "full_message_available_ns": stamp,
         }
         if kind in ("session.close", "session.error"):
             self.closed = True
             self.end_decoder()
             self.controls.append(record)
+            counts["downlink_controls"] += 1
             return
-        fence = fence_of(msg.get("fence"))
+        fence = fence_of(msg.get("fence"), "downlink_fence_invalid")
         record["fence"] = dict(zip(FENCE_KEYS, fence, strict=True))
         g = self.current
         if kind == "generation.started":
             # Audio carries only the generation ID, so fence reuse is ambiguous.
-            require(fence[2] not in self.seen_generation_ids)
+            require(fence[2] not in self.seen_generation_ids, "downlink_generation_reused")
             self.seen_generation_ids.add(fence[2])
-            require(self.last_fence is None or fence > self.last_fence or fence == self.flush_fence)
-            require(len(self.generations) < MAX_GENERATIONS)
+            require(
+                self.last_fence is None or fence > self.last_fence or fence == self.flush_fence,
+                "downlink_fence_regressed",
+            )
+            require(len(self.generations) < MAX_GENERATIONS, "downlink_generation_limit")
             self.end_decoder()
             g = {
                 "fence": record["fence"],
@@ -331,6 +473,7 @@ class Downlink:
                 "sample_end": 0,
             }
             self.generations.append(g)
+            counts["downlink_generations"] += 1
             self.current = g
             self.last_fence = fence
             self.cancel_fence = None
@@ -339,45 +482,66 @@ class Downlink:
             # CANCEL announces the successor; FLUSH carries an explicit replacement.
             # Neither is a start or permission to decode replacement audio.
             if fence != self.cancel_fence:
-                require(g is not None and g["status"] == "prefix_only")
+                require(g is not None, "downlink_generation_start_missing")
+                require(g["status"] == "prefix_only", "downlink_fence_mismatch")
                 old = fence_of(g["fence"])
                 if kind == "generation.cancelled":
-                    require(fence == (old[0], old[1], old[2] + 1, old[3]))
+                    require(
+                        fence == (old[0], old[1], old[2] + 1, old[3]),
+                        "downlink_cancel_fence_mismatch",
+                    )
                 else:
-                    require(fence > old)
+                    require(fence > old, "downlink_flush_fence_invalid")
                 g["status"] = "cancelled_prefix"
                 self.cancel_fence = fence
                 self.last_fence = fence
                 self.end_decoder()
             if kind == "playback.flush":
-                replacement = uint(msg.get("replacement_generation_id"), positive=True)
-                require(replacement == fence[2])
+                replacement = uint(
+                    msg.get("replacement_generation_id"),
+                    positive=True,
+                    reason="downlink_flush_fence_invalid",
+                )
+                require(replacement == fence[2], "downlink_flush_fence_invalid")
                 record["replacement_generation_id"] = replacement
                 self.flush_fence = fence
         else:
-            require(
-                g is not None and fence == fence_of(g["fence"]) and g["status"] == "prefix_only"
-            )
+            require(g is not None, "downlink_generation_start_missing")
+            require(fence == fence_of(g["fence"]), "downlink_fence_mismatch")
+            require(g["status"] == "prefix_only", "downlink_fence_mismatch")
             if kind == "generation.completed":
                 g["status"] = "completion_observed"
                 self.end_decoder()
         self.controls.append(record)
+        counts["downlink_controls"] += 1
 
     def audio(self, payload, stamp):
-        require(not self.closed and len(payload) >= 31)
+        counts = self.flow.owner.counts
+        require(not self.closed, "downlink_after_close")
+        require(len(payload) >= 31, "downlink_audio_header_invalid")
         version, direct, flags, epoch, seq, sample, count, generation, size = struct.unpack(
             "!BBHIIQIIH", payload[:30]
         )
-        require((version, direct, flags, epoch, count) == (1, 2, 0, self.flow.epoch, 320))
-        require(0 < size <= 2048 and len(payload) == 30 + size)
-        g = self.current
         require(
-            g is not None
-            and g["status"] == "prefix_only"
-            and generation == g["fence"]["generation_id"]
+            (version, direct, flags, epoch, count) == (1, 2, 0, self.flow.epoch, 320),
+            "downlink_audio_header_invalid",
         )
-        require(seq == len(g["frames"]) and sample == g["sample_end"])
-        require(self.total_pcm + 640 <= MAX_DOWNLINK_PCM)
+        require(
+            0 < size <= 2048 and len(payload) == 30 + size,
+            "downlink_audio_header_invalid",
+        )
+        g = self.current
+        require(g is not None, "downlink_generation_start_missing")
+        require(g["status"] == "prefix_only", "downlink_audio_generation_mismatch")
+        require(generation == g["fence"]["generation_id"], "downlink_audio_generation_mismatch")
+        if g["frames"]:
+            require(
+                seq == len(g["frames"]) and sample == g["sample_end"],
+                "downlink_audio_discontinuous",
+            )
+        else:
+            require(seq == 0 and sample == 0, "downlink_audio_first_frame_discontinuous")
+        require(self.total_pcm + 640 <= MAX_DOWNLINK_PCM, "downlink_pcm_limit")
         if self.decoder is None:
             self.decoder = Opus(self.flow.owner.libopus)
         g["pcm"].extend(self.decoder.decode(payload[30:]))
@@ -392,6 +556,7 @@ class Downlink:
                 "full_message_available_ns": stamp,
             }
         )
+        counts["downlink_frames"] += 1
 
 
 class Flow:
@@ -400,8 +565,8 @@ class Flow:
         self.tcp = [None, None]
         self.buffers = [Buffer(), Buffer()]
         self.ws = [
-            WS(True, lambda *args: self.message(0, *args)),
-            WS(False, lambda *args: self.message(1, *args)),
+            WS(True, lambda *args: self.message(0, *args), owner.counts),
+            WS(False, lambda *args: self.message(1, *args), owner.counts),
         ]
         self.request = False
         self.upgraded = False
@@ -435,34 +600,47 @@ class Flow:
                 return
             line, h = request
             if line != "GET /v1/device/media HTTP/1.1" or h.get("device-id") != TARGET:
+                self.owner.counts["flows_ignored_non_target"] += 1
                 self.ignore()
                 return
             require(
                 h.get("upgrade", "").lower() == "websocket"
                 and "upgrade" in [v.strip() for v in h.get("connection", "").lower().split(",")]
                 and h.get("protocol-version") == "2"
-                and h.get("sec-websocket-version") == "13"
+                and h.get("sec-websocket-version") == "13",
+                "target_upgrade_request_invalid",
             )
             auth = h.get("authorization", "")
-            require(auth.startswith("Bearer "))
+            require(auth.startswith("Bearer "), "target_jwt_invalid")
             parts = auth[7:].split(".")
-            require(len(parts) == 3)
-            claims = object_json(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+            require(len(parts) == 3, "target_jwt_invalid")
+            try:
+                claims = object_json(
+                    base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4))
+                )
+            except Exception:
+                raise Invalid("target_jwt_invalid") from None
             require(
                 claims.get("device_id") == TARGET
                 and claims.get("client_type") == "device"
                 and claims.get("typ") == "memoria_device_media"
-                and claims.get("client_id") == h.get("x-client-id")
+                and claims.get("client_id") == h.get("x-client-id"),
+                "target_jwt_claims_mismatch",
             )
             self.session, self.epoch = claims.get("session_id"), claims.get("stream_epoch")
             require(
                 isinstance(self.session, str)
                 and self.session
                 and type(self.epoch) is int
-                and 0 < self.epoch < 2**32
+                and 0 < self.epoch < 2**32,
+                "target_jwt_claims_mismatch",
             )
             key = h.get("sec-websocket-key", "")
-            require(len(base64.b64decode(key, validate=True)) == 16)
+            try:
+                decoded_key = base64.b64decode(key, validate=True)
+            except Exception:
+                raise Invalid("target_upgrade_request_invalid") from None
+            require(len(decoded_key) == 16, "target_upgrade_request_invalid")
             self.accept_key = base64.b64encode(
                 hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()
             ).decode()
@@ -474,17 +652,21 @@ class Flow:
             return
         line, h = response
         if not line.startswith("HTTP/1.1 101 "):
+            self.owner.counts["target_upgrade_refused"] += 1
             self.ignore()
             return
         require(
             h.get("sec-websocket-accept") == self.accept_key
             and h.get("upgrade", "").lower() == "websocket"
-            and "upgrade" in h.get("connection", "").lower()
+            and "upgrade" in h.get("connection", "").lower(),
+            "target_upgrade_response_invalid",
         )
-        require("sec-websocket-extensions" not in h)
+        require("sec-websocket-extensions" not in h, "websocket_extension_negotiated")
         self.accept_key = None
-        require(self.owner.selected is None)
+        require(self.owner.selected is None, "second_target_session")
         self.owner.selected = self
+        self.owner.counts["target_handshakes"] += 1
+        self.owner.counts["stream_epoch"] = self.epoch
         self.upgraded = True
         # In the normal ordered handshake client hello precedes accepted.
         for d in (0, 1):
@@ -505,6 +687,7 @@ class Flow:
                 tcp.pending.clear()
 
     def message(self, direction, op, payload, stamps):
+        counts = self.owner.counts
         if op == 1:
             msg = object_json(payload)
             if direction == 0 and not self.hello:
@@ -512,11 +695,13 @@ class Flow:
                     msg.get("type") == "device.hello"
                     and msg.get("version") == 2
                     and msg.get("device_id") == TARGET
-                    and msg.get("stream_epoch") == self.epoch
+                    and msg.get("stream_epoch") == self.epoch,
+                    "device_hello_invalid",
                 )
-                audio = msg.get("audio", {})
+                audio = msg.get("audio")
                 require(
-                    all(
+                    isinstance(audio, dict)
+                    and all(
                         audio.get(k) == v
                         for k, v in {
                             "uplink_codec": "opus",
@@ -524,31 +709,37 @@ class Flow:
                             "channels": 1,
                             "frame_ms": 20,
                         }.items()
-                    )
+                    ),
+                    "device_hello_audio_unsupported",
                 )
                 require(
                     isinstance(msg.get("firmware_version"), str)
                     and 0 < len(msg["firmware_version"]) <= 128
                     and isinstance(msg.get("board_profile"), str)
-                    and msg["board_profile"]
+                    and msg["board_profile"],
+                    "device_hello_invalid",
                 )
-                rates = audio.get("downlink_sample_rates", [])
+                rates = audio.get("downlink_sample_rates")
                 require(
                     isinstance(rates, list)
                     and 1 <= len(rates) <= 2
                     and 16000 in rates
-                    and all(r in (16000, 24000) for r in rates)
+                    and all(r in (16000, 24000) for r in rates),
+                    "device_hello_audio_unsupported",
                 )
-                cap = msg.get("capabilities", {})
+                cap = msg.get("capabilities")
                 require(
-                    cap.get("aec_mode") in ("none", "fd_low_cost", "fd_high_quality")
+                    isinstance(cap, dict)
+                    and cap.get("aec_mode") in ("none", "fd_low_cost", "fd_high_quality")
                     and cap.get("aec_reference")
                     in ("none", "software_post_gain_pre_i2s", "hardware_loopback")
-                    and cap.get("playback_watermark") in ("none", "approximate", "exact")
+                    and cap.get("playback_watermark") in ("none", "approximate", "exact"),
+                    "device_hello_capabilities_unsupported",
                 )
                 # Full capability/binding policy remains the production Edge's responsibility;
                 # session.accepted attests its validation, not physical AEC effectiveness.
                 self.hello = True
+                counts["target_hello"] = 1
             elif direction == 1 and not self.accepted:
                 require(
                     self.hello
@@ -556,33 +747,45 @@ class Flow:
                     and msg.get("version") == 2
                     and msg.get("session_id") == self.session
                     and msg.get("stream_epoch") == self.epoch
-                    and msg.get("interaction_authority") == "python_authoritative"
+                    and msg.get("interaction_authority") == "python_authoritative",
+                    "session_accepted_invalid",
                 )
                 self.accepted = True
+                rate = msg.get("downlink_sample_rate")
+                counts["accepted_downlink_sample_rate"] = rate if rate in (16000, 24000) else -1
                 if self.downlink:
+                    require(rate == 16000, "session_accepted_downlink_rate_unsupported")
                     require(
-                        msg.get("downlink_sample_rate") == 16000
-                        and msg.get("current_fence") is None
-                        and msg.get("current_generation_active") is False
+                        msg.get("current_fence") is None
+                        and msg.get("current_generation_active") is False,
+                        "session_accepted_reconnect_snapshot",
                     )
                 else:
                     self.session = None
+                counts["target_accepted"] = 1
             elif direction == 1 and self.downlink:
                 self.downlink.control(msg, max(stamps[1], self.available[1]))
             return
         if direction == 1:
             if self.downlink:
-                require(self.accepted)
+                require(self.accepted, "downlink_audio_before_accept")
                 self.downlink.audio(payload, max(stamps[1], self.available[1]))
             return
-        require(self.accepted and len(payload) >= 31)
+        require(self.accepted, "uplink_audio_before_accept")
+        require(len(payload) >= 31, "uplink_audio_header_invalid")
         version, direct, flags, epoch, seq, sample, count, generation, size = struct.unpack(
             "!BBHIIQIIH", payload[:30]
         )
-        require((version, direct, flags, epoch, count, generation) == (1, 1, 0, self.epoch, 320, 0))
-        require(0 < size <= 2048 and len(payload) == 30 + size)
-        require(seq == self.sequence and sample == self.sample)
-        require(len(self.pcm) + 640 <= 4 * 1024 * 1024)
+        require(
+            (version, direct, flags, epoch, count, generation) == (1, 1, 0, self.epoch, 320, 0),
+            "uplink_audio_header_invalid",
+        )
+        require(0 < size <= 2048 and len(payload) == 30 + size, "uplink_audio_header_invalid")
+        if self.frames:
+            require(seq == self.sequence and sample == self.sample, "uplink_audio_discontinuous")
+        else:
+            require(seq == 0 and sample == 0, "uplink_audio_first_frame_discontinuous")
+        require(len(self.pcm) + 640 <= 4 * 1024 * 1024, "uplink_pcm_limit")
         if self.decoder is None:
             self.decoder = Opus(self.owner.libopus)
         self.pcm.extend(self.decoder.decode(payload[30:]))
@@ -595,6 +798,7 @@ class Flow:
                 "packet_time_max_ns": stamps[1],
             }
         )
+        counts["uplink_frames"] += 1
         self.sequence += 1
         self.sample += count
 
@@ -605,90 +809,145 @@ class Capture:
         self.include_downlink = include_downlink
         self.flows = {}
         self.selected = None
+        self.counts = {
+            "pcap_records": 0,
+            "pcap_bytes": 0,
+            "capture_span_ms": 0,
+            "flows_opened": 0,
+            "flows_ignored_non_target": 0,
+            "target_upgrade_refused": 0,
+            "target_handshakes": 0,
+            "preexisting_flow_packets": 0,
+            "preexisting_flow_payload_bytes": 0,
+            "target_hello": 0,
+            "target_accepted": 0,
+            "accepted_downlink_sample_rate": 0,
+            "stream_epoch": None,
+            "uplink_frames": 0,
+            "ws_text_messages": 0,
+            "ws_binary_messages": 0,
+            "ws_control_frames": 0,
+            "downlink_controls": 0,
+            "downlink_controls_skipped": 0,
+            "downlink_generations": 0,
+            "downlink_frames": 0,
+            "tcp_pending_segments_up": 0,
+            "tcp_pending_segments_down": 0,
+            "ws_buffered_bytes_up": 0,
+            "ws_buffered_bytes_down": 0,
+        }
 
     def packet(self, raw, stamp):
-        require(len(raw) >= 14)
+        require(len(raw) >= 14, "packet_truncated")
         if raw[12:14] != b"\x08\x00":
-            raise Invalid("unsupported packet")
+            raise Invalid("packet_not_ipv4")
         ip = raw[14:]
-        require(len(ip) >= 20 and ip[0] >> 4 == 4)
+        require(len(ip) >= 20, "ip_header_invalid")
+        require(ip[0] >> 4 == 4, "packet_not_ipv4")
         ihl = (ip[0] & 15) * 4
         total = int.from_bytes(ip[2:4], "big")
-        require(20 <= ihl <= total <= len(ip) and not int.from_bytes(ip[6:8], "big") & 0x3FFF)
-        require(ip[9] == 6 and ip[12:16] == ip[16:20] == b"\x7f\0\0\1")
+        require(20 <= ihl <= total <= len(ip), "ip_header_invalid")
+        require(not int.from_bytes(ip[6:8], "big") & 0x3FFF, "ip_fragment")
+        require(
+            ip[9] == 6 and ip[12:16] == ip[16:20] == b"\x7f\0\0\1",
+            "packet_not_loopback_tcp",
+        )
         tcp = ip[ihl:total]
-        require(len(tcp) >= 20)
+        require(len(tcp) >= 20, "tcp_header_invalid")
         source, dest, seq = struct.unpack("!HHI", tcp[:8])
-        require((source == 8794) != (dest == 8794))
+        require((source == 8794) != (dest == 8794), "tcp_port_mismatch")
         direction = int(source == 8794)
         key = dest if direction else source
         offset = (tcp[12] >> 4) * 4
-        require(20 <= offset <= len(tcp))
+        require(20 <= offset <= len(tcp), "tcp_header_invalid")
         flags, data = tcp[13], tcp[offset:]
         flow = self.flows.get(key)
         if flow is None:
             if direction or flags & 0x12 != 2:
+                self.counts["preexisting_flow_packets"] += 1
+                self.counts["preexisting_flow_payload_bytes"] += len(data)
                 return  # pre-existing flows can never qualify
-            require(len(self.flows) < 16)
+            require(len(self.flows) < 16, "flow_limit_exceeded")
             flow = self.flows[key] = Flow(self)
+            self.counts["flows_opened"] += 1
         if flow.ignored:
             return
         if flags & 2:
-            require(not data)
+            require(not data, "tcp_syn_invalid")
             if flow.tcp[direction] is None:
                 flow.tcp[direction] = TCP(seq, lambda b, t: flow.consume(direction, b, t))
             else:
-                require(flow.tcp[direction].next == seq + 1)
-        require(flow.tcp[direction] is not None)
+                require(flow.tcp[direction].next == seq + 1, "tcp_syn_invalid")
+        require(flow.tcp[direction] is not None, "tcp_handshake_incomplete")
         if flags & 4:
-            raise Invalid("connection reset")
+            raise Invalid("tcp_reset")
         if flags & 16:
             flow.acks[1 - direction] = max(
                 flow.acks[1 - direction], int.from_bytes(tcp[8:12], "big")
             )
         if flags & 1:
-            require(seq + len(data) + 1 < 2**32)
+            require(seq + len(data) + 1 < 2**32, "tcp_sequence_wrap")
             flow.fins[direction] = seq + len(data)
         if data:
-            require(flow.fins[direction] is None or seq + len(data) <= flow.fins[direction])
+            require(
+                flow.fins[direction] is None or seq + len(data) <= flow.fins[direction],
+                "tcp_data_after_fin",
+            )
             flow.tcp[direction].feed(seq, data, stamp)
 
     def read(self, stream):
         header = stream.read(24)
-        require(len(header) == 24)
+        require(len(header) == 24, "pcap_header_invalid")
         formats = {
             b"\xd4\xc3\xb2\xa1": ("<", 1000),
             b"\xa1\xb2\xc3\xd4": (">", 1000),
             b"\x4d\x3c\xb2\xa1": ("<", 1),
             b"\xa1\xb2\x3c\x4d": (">", 1),
         }
-        require(header[:4] in formats)
+        require(header[:4] in formats, "pcap_header_invalid")
         endian, scale = formats[header[:4]]
         major, minor, _, _, snap, link = struct.unpack(endian + "HHIIII", header[4:])
-        require((major, minor, link) == (2, 4, 1) and 65535 <= snap <= MAX_INPUT)
+        require(major == 2 and minor == 4, "pcap_header_invalid")
+        require(link == 1, "pcap_link_unsupported")
+        require(65535 <= snap <= MAX_INPUT, "pcap_header_invalid")
         count, start, wall = 24, None, time.monotonic()
         while True:
             h = stream.read(16)
             if not h:
                 break
-            require(len(h) == 16)
+            require(len(h) == 16, "pcap_record_truncated")
             sec, frac, size, original = struct.unpack(endian + "IIII", h)
-            require(size == original and 0 < size <= 65549 and frac * scale < 10**9)
+            require(size == original, "pcap_packet_snapped")
+            require(0 < size <= 65549, "pcap_record_invalid")
+            require(frac * scale < 10**9, "pcap_record_invalid")
             count += size + 16
-            require(count <= MAX_INPUT and time.monotonic() - wall <= MAX_SECONDS)
+            self.counts["pcap_bytes"] = count
+            require(count <= MAX_INPUT, "pcap_input_limit")
+            require(time.monotonic() - wall <= MAX_SECONDS, "wall_time_exceeded")
             timestamp = sec * 10**9 + frac * scale
             start = timestamp if start is None else start
-            require(0 <= timestamp - start <= MAX_SECONDS * 10**9)
+            require(timestamp >= start, "pcap_timestamp_regressed")
+            require(timestamp - start <= MAX_SECONDS * 10**9, "pcap_span_exceeded")
+            self.counts["capture_span_ms"] = (timestamp - start) // 10**6
             raw = stream.read(size)
-            require(len(raw) == size)
+            require(len(raw) == size, "pcap_record_truncated")
+            self.counts["pcap_records"] += 1
             self.packet(raw, timestamp)
         f = self.selected
-        require(f is not None and f.accepted and f.frames)
-        require(all(not t.pending for t in f.tcp))
+        require(f is not None, "target_handshake_not_found")
+        require(f.accepted, "target_session_not_accepted")
+        require(f.frames, "uplink_audio_absent")
+        require(all(not t.pending for t in f.tcp), "tcp_reassembly_gap")
         for d in (0, 1):
-            require(f.fins[d] is None or f.fins[d] == f.tcp[d].next)
-            require(f.acks[d] <= f.tcp[d].next + int(f.fins[d] is not None))
-        require(all(not w.buffer.data and w.opcode is None for w in f.ws))
+            require(f.fins[d] is None or f.fins[d] == f.tcp[d].next, "tcp_reassembly_gap")
+            require(
+                f.acks[d] <= f.tcp[d].next + int(f.fins[d] is not None),
+                "tcp_ack_beyond_capture",
+            )
+        require(
+            all(not w.buffer.data and w.opcode is None for w in f.ws),
+            "websocket_frame_incomplete",
+        )
         return f
 
     def close(self):
@@ -762,6 +1021,25 @@ def save(flow, directory):
         raise
 
 
+def report(capture, reason, exception_type=None):
+    counts = dict(capture.counts)
+    flow = capture.selected
+    if flow is not None:
+        counts["tcp_pending_segments_up"] = len(flow.tcp[0].pending) if flow.tcp[0] else 0
+        counts["tcp_pending_segments_down"] = len(flow.tcp[1].pending) if flow.tcp[1] else 0
+        counts["ws_buffered_bytes_up"] = len(flow.ws[0].buffer.data)
+        counts["ws_buffered_bytes_down"] = len(flow.ws[1].buffer.data)
+    payload = {
+        "schema": 1,
+        "reason": reason,
+        "class": REASONS[reason] if reason is not None else None,
+        "counts": counts,
+    }
+    if reason == "internal_error" and exception_type is not None:
+        payload["exception_type"] = exception_type
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -777,27 +1055,43 @@ def main():
     capture = Capture(args.libopus, args.include_downlink)
 
     def timeout(*_):
-        raise Invalid("capture timeout")
+        raise Invalid("wall_time_exceeded")
+
+    def interrupted(*_):
+        raise Invalid("runtime_interrupted")
 
     signal.signal(signal.SIGALRM, timeout)
-    signal.signal(signal.SIGTERM, timeout)
-    signal.signal(signal.SIGINT, timeout)
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGINT, interrupted)
     signal.alarm(MAX_SECONDS + 5)
+    reason, exception_type = "internal_error", None
     try:
-        require(sys.platform == "darwin")
+        require(sys.platform == "darwin", "unsupported_platform")
         flow = capture.read(sys.stdin.buffer)
-        save(flow, args.output)
+        try:
+            save(flow, args.output)
+        except FileExistsError:
+            raise Invalid("output_exists") from None
+        except OSError:
+            raise Invalid("output_write_failed") from None
+    except Invalid as exc:
+        reason = exc.reason
+    except Exception as exc:
+        exception_type = type(exc).__name__
+    else:
         print("Saved target uplink; capture tail unknown.")
+        print("extractor_summary " + report(capture, None))
         return 0
-    except Exception:
-        # Never interpolate exception text: JSON/headers/paths can contain credentials.
-        print(
-            "Capture rejected; no successful evidence. Check bounds and handshake.", file=sys.stderr
-        )
-        return 1
     finally:
         signal.alarm(0)
         capture.close()
+    # Never interpolate exception text: JSON/headers/paths can contain credentials.
+    print(
+        "Capture rejected; no successful evidence. Check bounds and handshake.",
+        file=sys.stderr,
+    )
+    print("extractor_rejection " + report(capture, reason, exception_type), file=sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":
