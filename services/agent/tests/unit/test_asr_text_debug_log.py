@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from services.agent.src.asr_text_debug_log import (
@@ -23,20 +23,24 @@ from services.agent.src.asr_text_debug_log import (
     session_asr_text_debug_subjects,
     subject_tag,
 )
-from services.agent.src.providers.funasr_protocol import FunASRSentence
+from services.agent.src.providers.funasr_protocol import FunASRSentence, FunASRServerEvent
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
+from services.agent.src.voice_core.media_protocol import AudioFrame, SessionIdentity
 from services.agent.src.voice_core.media_session import MediaVoiceCoreRegistry
 from services.agent.src.voice_core.media_session_commit import MediaSessionCommitMixin
 from services.agent.src.voice_core.media_session_pending_turn import PendingTurn
 from services.agent.src.voice_core.media_session_playback_stop import MediaPlaybackStopMixin
+from services.agent.src.voice_core.media_session_state import MediaVoiceSessionState
 from services.agent.src.voice_core.provider_adapter import ExistingVoiceProviderAdapter
 from services.agent.src.voice_core.speech_timeline import ASRResult
+from services.agent.tests.unit.test_provider_adapter import FakeASR
 
 STOP_LOGGER = "services.agent.src.voice_core.media_session_playback_stop"
 FUNASR_LOGGER = "services.agent.src.providers.funasr_stt"
 ADAPTER_LOGGER = "services.agent.src.voice_core.provider_adapter"
 SUBJECT = "subject-test-1"
 UNLISTED = "subject-other-2"
+DEVICE = "dev_test_device_1"
 
 
 def _debug_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
@@ -97,6 +101,7 @@ class _StopSession(MediaPlaybackStopMixin):
 def _context(
     *,
     subject_id: str = SUBJECT,
+    device_id: str = "",
     registry_subjects: AsrTextDebugSubjects | None = None,
 ) -> Any:
     registry = (
@@ -109,7 +114,7 @@ def _context(
             client_type="device",
             session_id="s1",
             subject_id=subject_id,
-            device_id="",
+            device_id=device_id,
         ),
         registry=registry,
         closed=False,
@@ -332,3 +337,100 @@ def test_the_trace_values_match_the_uplink_probe() -> None:
         assert AsrTextDebugSubjects.from_env({ASR_TEXT_TRACE_ENV: value}).logs(UNLISTED)
     for value in ("", "0", "false", "off", " 0 "):
         assert not AsrTextDebugSubjects.from_env({ASR_TEXT_TRACE_ENV: value}).logs(UNLISTED)
+
+
+def test_the_playback_stop_final_reads_the_switch_from_the_owning_registry_without_a_session_back_reference(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Production shape: the session state never names its registry; the
+    # playback-stop mixin's own ``self`` is the MediaVoiceCoreRegistry.
+    assert "registry" not in MediaVoiceSessionState.__dataclass_fields__
+    session = _StopSession()
+    session.asr_text_debug_subjects = AsrTextDebugSubjects(frozenset({DEVICE}))  # type: ignore[attr-defined]
+    context = _context(subject_id="", device_id=DEVICE)
+    with caplog.at_level(logging.INFO, logger=STOP_LOGGER):
+        session._maybe_pin_playback_stop(context, _final("停"), source="final")
+
+    [line] = _debug_lines(caplog)
+    assert "source=final" in line and "text=1:停" in line
+    # The plain device id selects but is never printed.
+    assert DEVICE not in line and f"device_sha256_8={subject_tag(DEVICE)}" in line
+
+    unlisted = _context(subject_id="", device_id=UNLISTED)
+    with caplog.at_level(logging.INFO, logger=STOP_LOGGER):
+        session._maybe_pin_playback_stop(unlisted, _final("停"), source="final")
+    assert len(_debug_lines(caplog)) == 1
+
+
+class _StreamingASR(FakeASR):
+    """Queue one partial and one final revision of the same sentence per frame."""
+
+    async def send_pcm(self, pcm: bytes, *, capture_start_sample: int) -> None:
+        if not self.sent:
+            self.task_sample_origin = capture_start_sample
+        self.sent.append((pcm, capture_start_sample))
+        for sentence_end in (False, True):
+            await self.events.put(
+                FunASRServerEvent(
+                    event="result-generated",
+                    task_id=self.task_id,
+                    sentence=FunASRSentence(
+                        sentence_id=7,
+                        text="停",
+                        begin_ms=0,
+                        end_ms=20,
+                        sentence_end=sentence_end,
+                        heartbeat=False,
+                        words=(),
+                    ),
+                )
+            )
+
+
+def _ingest_adapter(
+    subjects: AsrTextDebugSubjects | None,
+) -> ExistingVoiceProviderAdapter:
+    return ExistingVoiceProviderAdapter(
+        asr_session_factory=cast(Any, _StreamingASR),
+        language_model=cast(Any, SimpleNamespace()),
+        speech_synthesis=cast(Any, SimpleNamespace()),
+        asr_text_debug_subjects=subjects,
+    )
+
+
+async def test_a_final_drained_during_streaming_ingest_is_logged_for_a_listed_device(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    adapter = _ingest_adapter(AsrTextDebugSubjects(frozenset({DEVICE})))
+    identity = SessionIdentity("s1", device_id=DEVICE, stream_epoch=1)
+    frame = AudioFrame(
+        identity=identity,
+        sequence=0,
+        capture_start_sample=0,
+        frame_samples=320,
+        payload=b"\x00\x00" * 320,
+    )
+    with caplog.at_level(logging.INFO, logger=ADAPTER_LOGGER):
+        results = await adapter.ingest_audio(identity, frame)
+
+    # The partial is drained too, but only the final earns a line.
+    assert len(results) == 2 and not results[0].is_final and results[1].is_final
+    [line] = _debug_lines(caplog)
+    assert "source=stream_final" in line and "final=True" in line
+    assert "empty=False" in line and "text=1:停" in line
+    assert DEVICE not in line and f"device_sha256_8={subject_tag(DEVICE)}" in line
+
+    unlisted = SessionIdentity("s2", device_id=UNLISTED, stream_epoch=1)
+    unlisted_frame = AudioFrame(
+        identity=unlisted,
+        sequence=0,
+        capture_start_sample=0,
+        frame_samples=320,
+        payload=b"\x00\x00" * 320,
+    )
+    with caplog.at_level(logging.INFO, logger=ADAPTER_LOGGER):
+        await _ingest_adapter(AsrTextDebugSubjects(frozenset({DEVICE}))).ingest_audio(
+            unlisted, unlisted_frame
+        )
+        await _ingest_adapter(AsrTextDebugSubjects()).ingest_audio(identity, frame)
+    assert len(_debug_lines(caplog)) == 1
