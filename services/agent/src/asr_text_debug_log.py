@@ -112,9 +112,12 @@ def configured_asr_text_debug_subjects(owner: object) -> AsrTextDebugSubjects:
 
 
 def session_asr_text_debug_subjects(
-    session: object, *, identity: object | None = None
+    session: object, *, identity: object | None = None, registry: object | None = None
 ) -> AsrTextDebugSubjects:
     """The registry config a media session inherits, filtered to the session's ids.
+
+    The owning registry (the playback-stop mixin's ``self``) is the production
+    source: a live session carries no registry back-reference.
 
     The bridge hands the provider a list already narrowed this way, so the
     provider's own final logging reads the same answer as this module's.
@@ -122,6 +125,7 @@ def session_asr_text_debug_subjects(
 
     configured = AsrTextDebugSubjects()
     for source in (
+        registry,
         getattr(session, "registry", None),
         getattr(getattr(session, "runtime", None), "registry", None),
         None if identity is None else getattr(identity, "registry", None),

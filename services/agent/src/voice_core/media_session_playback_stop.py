@@ -1010,7 +1010,7 @@ class MediaPlaybackStopMixin:
         its text and interval say whether the segment was heard at all.
         """
 
-        subjects = session_asr_text_debug_subjects(context)
+        subjects = session_asr_text_debug_subjects(context, registry=self)
         if not subjects.enabled:
             return
         identity = context.identity
