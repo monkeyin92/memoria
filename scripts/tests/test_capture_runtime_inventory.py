@@ -556,8 +556,8 @@ def test_seeded_repo_inventory_validates() -> None:
     assert doc["captured_at"] is not None
     assert validate_inventory(doc) == []
     bridge = next(c for c in doc["components"] if c["role"] == "voice-core-media-bridge")
-    assert bridge["image_ref"] == "memoria-agent:20261110-card5-echo-window-v1"
-    assert bridge["revision_commit"] == "ad40fe60c4ef904f1a5fce1467dfa7d579214d4f"
+    assert bridge["image_ref"] == "memoria-agent:20261117-asr-debug-wiring"
+    assert bridge["revision_commit"] == "abcaba353648af5b0008f9d8c53f2209ed6448cf"
     assert bridge["image_id"].startswith("sha256:")
     assert doc["stack"]["current_tag"] == "20261029-plan-head-start-v1"
     assert doc["stack"]["current_commit"] == "2c6ff2ccf3212e9d8b9b45f94ffad28dd8b0c82d"

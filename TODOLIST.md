@@ -31,7 +31,8 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
    - 线上与运维：固件 OTA 指针留 21 还是指回 8（「2026-09-28 收尾待办」）；夜间 `pg_dump` 已装，异地副本 provider/凭据与每月恢复演练仍待安排（P1-08）；是否轮换数据库角色口令；危机/日限 4 条本地音频男声已合并发布，女声三段素材待产品/合规签批；P1-09 readiness 逾期的告警渠道；P1-02 两项线上调整；`MEMORIA_GUARDIAN_PUSH_ENABLED` 与话术专业审核、未成年人人格学习口径（P0-04）。
    - 产品口径：N-1 关键字唤醒的代码与开关随不随一起删；N-4 监护人看不看孩子原文、周小结的数据从哪来；N-6 听感、危机话术、天气城市；N-9 孩子闭集词表、置信度余量、规划器；N-10 `FUNASR_VOCABULARY_ID`；N-8 尚未归因的识别/endpoint、重叠拒绝与安静房间假回合阈值；N-13 / N-14 的 2.2 s 阈值、0.8–0.9 s 宽限中间值、影子模式的数据去向、「前半句先提交、后半句被丢」要不要单独立项；P2-03 已知缺口接不接受；P2-07 第 2 / 3 项；P2-08 里的 `self_model` 版本保护、PCM tap 留存、控制词与静默计时。
    - 设计取舍：M-5 预读（pre-roll）做不做；M-8 角色包存放选 A 还是 B；stash 存档的「本会话说过的地点也行」要不要作为产品改动重新评估。
-5. 边界：生产切流、组件发布、回滚演练和制品清理须另获授权（2026-10-01 已获授权打开设备信任开关并清理旧制品，那次授权不外延）；`MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 的开 / 关仍属改变安全口径的动作，变更须用户授权；本机夜间备份 timer 已装机，其变更、异地副本以及删除或重启主机的动作不在当前授权内；设备功能通过不等于学生安全或全双工通过。
+5. **线上谱系并入 main（2026-11-17 记）**：线上 bridge 源码 `abcaba35` 建在 `22129336` 上，其中 `61e75ec8`（TTL 只豁免 DEEP_RESULT）与 `22129336`（空 ASR 提示需 owner 权限）不在 main；main 已有 #597 的另一套 TTL 实现，试合并有 7 处冲突。发布 tag 已推到 origin 保留源码。并入时一并处理 main 现有红灯：`test_output_delivery_ttl.py` 的 ruff I001、`media_session_output_stream.py` 1439 行超出预算 1438、`test_expired_emitted_output_restores_listen_and_flushes_device`。并入之前不要从 main 重建 bridge，否则会丢掉这两项线上修复。
+6. 边界：生产切流、组件发布、回滚演练和制品清理须另获授权（2026-10-01 已获授权打开设备信任开关并清理旧制品，那次授权不外延）；`MEMORIA_BOUND_DEVICE_TRUST_ENABLED` 的开 / 关仍属改变安全口径的动作，变更须用户授权；本机夜间备份 timer 已装机，其变更、异地副本以及删除或重启主机的动作不在当前授权内；设备功能通过不等于学生安全或全双工通过。
 
 ## 域名切换与新机收尾（2026-10-05 迁移与换域名之后还开着的）
 
@@ -125,6 +126,7 @@ conversation_archive: code=#151（成人）、#152（孩子的 Policy 口径与�
 
 ### [ ] N-10 机器人说话时喊「别说了」不一定停
 
+- [ ] **2026-11-17 取证链与 asr_text_debug（R02 当晚待跑）**：提取器拒绝原因（PR #598）、logger 接线修复（`abcaba35` 已上线，main 同修 PR #599）与真机复核见 [验收记录](docs/acceptance.md#2026-11-17-取证链修复与-asr_text_debug-接线)。R02 当晚在 `memoria-agent:20261117-asr-debug-wiring` 上跑：音量 40、单串口 owner、常醒 build 36，全程开设备白名单（4 h 恢复定时器兜底），每个套件筛查 `vad.idle rms=0.0000 peak=0.0000` 段，出现即记环境无效。仍开放：diagnostic-005 上行全零的成因；下行 `downlink_audio_generation_mismatch`（edge 先发 `generation.completed`）；`stream_final` 真机未见。
 - **2026-10-31 进展**：生产 ASR 已是火山（`ASR_PROVIDER=volc`），热词表 `stop_world`（停/停停/停停停）经 `VOLC_ASR_BOOSTING_TABLE_ID` 生效。音量 30 下「停」被识别成「嗯」（`asr_text=1:嗯`）；音量 50 专测（`devicetest/scenarios/stop_focus.json`，run-20261031-212333）「停」5/6 停下，从开口到停 1.9–2.3 s，1 次识别成「行」；「别说了」2/2；「嗯」2/2 正确继续。此前 t016 失败多半是 #468 把插入推到 8 s（#496 改回 4 s）。可选下一步：热词表加「停一下」「停下来」「别说了」。
 
 空 VAD 占住终点时停止词接管（PR #169，第九轮真机通过）与停止后迟到收据不再关连接（PR #174）已上线。未关：

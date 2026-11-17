@@ -9,10 +9,17 @@
 
 ## 当前生产快照
 
-**权威当前运行清单**（整栈 + overlay 混合、回滚锚点、未知项）：[`docs/ops/current-runtime-inventory.json`](docs/ops/current-runtime-inventory.json)。用法与比对见 [`docs/ops/runtime-inventory.md`](docs/ops/runtime-inventory.md)。本文件下面的日期节是历史收据，不再当作「当前线上」第二真相源。2026-11-04 入库的清单是 `handoff_reconstruction`；2026-11-10 15:49 CST 与 2026-11-11 08:08 CST 两次按授权在主机上做只读 `live_capture`，control-api、bridge、media-edge 的镜像、镜像 ID、revision、health、restarts、override 与回滚锚点以该文件为准。固件与小程序段不是主机可见项，仍沿用 2026-11-04 的交接记录，文件的 `unknowns` 已注明。本地捕获命令与 Mac 同步步骤见该 how-to。
+**权威当前运行清单**（整栈 + overlay 混合、回滚锚点、未知项）：[`docs/ops/current-runtime-inventory.json`](docs/ops/current-runtime-inventory.json)。用法与比对见 [`docs/ops/runtime-inventory.md`](docs/ops/runtime-inventory.md)。本文件下面的日期节是历史收据，不再当作「当前线上」第二真相源。2026-11-04 入库的清单是 `handoff_reconstruction`；2026-11-10 15:49 CST、2026-11-11 08:08 CST 与 2026-11-17 15:30 CST 三次按授权在主机上做只读 `live_capture`，control-api、bridge、media-edge 的镜像、镜像 ID、revision、health、restarts、override 与回滚锚点以该文件为准。固件与小程序段不是主机可见项，仍沿用 2026-11-04 的交接记录，文件的 `unknowns` 已注明。本地捕获命令与 Mac 同步步骤见该 how-to。
 
 - **生产主机（2026-10-05 起）**：整套服务 01:33–01:40（CST）从旧机 122.51.108.140 迁到 110.42.235.198（原 pocketSparks 生产机，与 hr-tracker、MySQL 等共用，40 GB 盘、3.7 GiB 内存）；ssh 别名 `memoria-prod` 指新机，旧机别名 `memoria-prod-old`（旧机 10-06 到期，到期后别名和 known_hosts 条目可删）。Control API 绑 `127.0.0.1:18791`（hr-tracker 占 8791），由 `MEMORIA_CONTROL_API_PORT` 参数化。对外域名是 `aginice.cn`（你 10-05 说「域名换成aginice.cn这个域名，之前那个不用了」；证书到 2027-01-02，**2026-12-19 前换证**；`aigcnice.com` 仍解析到旧机，旧机到期后失效，已定不做桥、不动 DNS）。客户端当时已切完（之后的版本见下面「设备固件」「小程序体验版」两条）：小程序体验版 `0.2.20261005.3`，固件 build 24，机器人只连 `aginice.cn:8443`。详见「2026-10-05 服务迁移到 110.42.235.198」「2026-10-05 域名切换到 aginice.cn」两节。
 - **产品定位（2026-10-04 起）**：聚焦儿童青少年（陪伴、关怀、教学导师）；老年人与年轻人方向先删去，不进工程队列、验收与对外叙事（README「产品定位」已改写）；代码里已有的长辈、成人服务模式暂留、不再投入，是否清理另行决定；更早各节里的老年相关记录是当时的历史收据，不改。
+
+## 2026-11-17 取证链修复与 asr_text_debug 接线上线（bridge overlay `20261117-asr-debug-wiring`）
+
+- **线上**：07:13:50Z（15:13 CST）用 `scripts/deploy_agent_component.sh --cutover` 把 bridge 从 `memoria-agent:20261116-empty-asr-owner`（`5eeb3b81…`，revision `22129336`）切到 `memoria-agent:20261117-asr-debug-wiring`（image `8723c7e0…`，revision `abcaba35`，基座 `memoria-agent:20261115-asr-streaming-default`）。没有用 `--skip-gates` 或 `--allow-*`，本机门禁重跑通过。回滚镜像 `memoria-agent:rollback-20261117-asr-debug-wiring-pre`（= `5eeb3b81…`）。容器 healthy、restarts 0，切后 3 分钟日志无 ERROR / Traceback；control-api、media-edge 未动。权威清单已在 15:30 CST 重新 `live_capture`。
+- **源码谱系**：`abcaba35` 建在线上谱系 `22129336` 上，含 `61e75ec8`（TTL 只豁免 DEEP_RESULT）与 `22129336`（空 ASR 提示需 owner 权限）；这两项仍不在 main。main 的同修是 PR #599。发布 tag `20261116-output-delivery-ttl`、`20261116-output-delivery-ttl-r2`、`20261116-deep-result-ttl-r3`、`20261116-empty-asr-owner`、`20261117-asr-debug-wiring` 已推到 origin，承载这些提交的本地分支随后删除；并入 main 列在 [TODOLIST](TODOLIST.md)。在并入之前，从 main 重建 bridge 会丢掉这两项线上修复。
+- **修复内容**：`asr_text_debug` 在生产里一直写不出来。停词路径从会话对象上找 `registry`，生产对象都没有这个属性，开关恒为关；provider 适配器只在 VAD 结束边界记录 final，逐帧收到的 final 不记。现在停词路径读所属 registry，逐帧 final 记 `source=stream_final`。提取器拒绝原因计数是 PR #598。
+- **验证**：smoke-007（15:15 CST）临时打开设备白名单，由恢复定时器兜底，结束后已恢复并核对基线。同一会话 `75d2566d…` / stream_epoch 3261 写出 `source=segment_final` 与 `source=final` 两行；`stream_final` 只有单测覆盖。这次故事刺激没有播（房间声音先触发了告别规则）。R02 当日未运行，安排在当晚。过程见 [验收记录](docs/acceptance.md#2026-11-17-取证链修复与-asr_text_debug-接线)，摘要与收据哈希在 `docs/acceptance/evidence-chain-20261117/`。
 
 ## 2026-11-12 深审软件修复（未部署）
 
