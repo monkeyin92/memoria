@@ -41,7 +41,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
         (
             SUPPORT_VICTIM_SCRIPT,
             "victim-support-v1",
-            "听起来你受委屈了，被这样对待一定很难受，这不是你的错。"
+            "听起来你受委屈了，这不是你的错。要是因为这样不想去学校，我能理解。"
             "我在这儿，你想说多少都可以。"
             "要是你愿意，我们一起想想，告诉哪个你信得过的大人，让他帮帮你。",
         ),
@@ -87,7 +87,8 @@ def test_crisis_script_soothes_and_accompanies() -> None:
 
 def test_victim_script_has_no_number_and_speaks_its_display_copy() -> None:
     assert [phrase.spoken for phrase in SUPPORT_VICTIM_SCRIPT.phrases] == [
-        "听起来你受委屈了，被这样对待一定很难受，这不是你的错。",
+        "听起来你受委屈了，这不是你的错。",
+        "要是因为这样不想去学校，我能理解。",
         "我在这儿，你想说多少都可以。",
         "要是你愿意，我们一起想想，告诉哪个你信得过的大人，让他帮帮你。",
     ]

@@ -70,7 +70,7 @@ _APPROVED_PCM_SHA256 = {
         "916191cb1e18a3b89ed508ef994669c834642e08f797be6ab15bc8eef941ef1e"
     ),
     "victim-support-v1": (
-        "fd2e68f0559569c51124673bf13697723b848be89055c4cfc2a2aff5eff93454"
+        "45cc8d3635f229476e55a5c346b00d290323d448256810aa9420865422da7e86"
     ),
     "support-other-v1": (
         "29f966cac1df98366ad2d09f715de0ebf46f5a0e29119db61baa7e6732621da7"
