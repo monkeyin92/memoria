@@ -27,11 +27,11 @@
       "voice": "zh_female_shaoergushi_uranus_bigtts"
     },
     {
-      "audio_sha256": "65f33a79956629b70718715436730491c5f5646d1a83f7e715b8f391f6470fed",
+      "audio_sha256": "469bcb6d2d892bf0b57fd9acbf302ff7a295f35d6f06487dc1d1b627eb6c938a",
       "content_id": "memoria-fixed-safety-victim-support-v1-v1",
       "file": "victim-support-v1.wav",
-      "pcm_sha256": "fd2e68f0559569c51124673bf13697723b848be89055c4cfc2a2aff5eff93454",
-      "spoken_sha256": "3404e8c84b5395309c0e7add19bfe4ae638ad1f8211975b8bfee586d80fc9ab1",
+      "pcm_sha256": "45cc8d3635f229476e55a5c346b00d290323d448256810aa9420865422da7e86",
+      "spoken_sha256": "ba8bfdbb3d6d4e2cf352cc87ad72da44bff8421d7d44a07543608c2b9bf1d4c4",
       "synthesized_on": "2026-10-31",
       "template_id": "victim-support-v1",
       "voice": "zh_female_shaoergushi_uranus_bigtts"

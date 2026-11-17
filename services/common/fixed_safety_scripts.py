@@ -88,7 +88,8 @@ CRISIS_SELF_ESCALATION_SCRIPT: Final = _approved(
 )
 SUPPORT_VICTIM_SCRIPT: Final = _approved(
     "victim-support-v1",
-    "听起来你受委屈了，被这样对待一定很难受，这不是你的错。"
+    "听起来你受委屈了，这不是你的错。"
+    "要是因为这样不想去学校，我能理解。"
     "我在这儿，你想说多少都可以。"
     "要是你愿意，我们一起想想，告诉哪个你信得过的大人，让他帮帮你。",
 )
