@@ -12,11 +12,14 @@
 
 #include "board.h"
 #include "esp_app_desc.h"
+#include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_random.h"
 #include "sdkconfig.h"
 #include "esp_system.h"
 #include "esp_timer.h"
+#include "esp_tls.h"
 #include "display/lcd_display.h"
 #include "http.h"
 #include "memoria_activation_error_page.h"
@@ -34,9 +37,17 @@
 #include "memoria_vad_start.h"
 #include "memoria_wake_mode.h"
 #include "memoria_wake_word.h"
+#include "memoria_ws_tls_guard.h"
+#include "network_interface.h"
 #include "settings.h"
 #include "sodium.h"
 #include "web_socket.h"
+
+#include <cerrno>
+#include <new>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 namespace memoria {
 namespace {
@@ -445,6 +456,10 @@ MemoriaProtocol::~MemoriaProtocol() {
         display_profile_task_ = nullptr;
     }
     CloseAudioChannel(false);
+    // Application must retain the whole protocol until PrepareForDestruction succeeds.
+    // A timeout is never permission to destroy callback owners.
+    ReapRetiredWebSockets();
+    configASSERT(retired_websockets_.empty());
     if (event_group_ != nullptr) {
         vEventGroupDelete(event_group_);
     }
@@ -854,7 +869,525 @@ bool MemoriaProtocol::CreateMediaSession(MediaSession* session) {
     return websocket_scheme;
 }
 
+class MemoriaSslTransport final : public Tcp {
+public:
+    using PingHandler = std::function<void(const char*, size_t)>;
+
+    explicit MemoriaSslTransport(PingHandler on_ping)
+        : on_ping_(std::move(on_ping)) {}
+
+    ~MemoriaSslTransport() override {
+        Disconnect();
+    }
+
+    void OnStream(std::function<void(const std::string& data)> callback) override {
+        stream_callback_ = callback;
+        if (state_ != nullptr) {
+            std::lock_guard<std::mutex> lock(state_->callback_mutex);
+            if (!state_->stopping.load(std::memory_order_acquire)) {
+                state_->stream_callback = std::move(callback);
+            }
+        }
+    }
+
+    void OnDisconnected(std::function<void()> callback) override {
+        disconnect_callback_ = callback;
+        if (state_ != nullptr) {
+            std::lock_guard<std::mutex> lock(state_->callback_mutex);
+            if (!state_->stopping.load(std::memory_order_acquire)) {
+                state_->disconnect_callback = std::move(callback);
+            }
+        }
+    }
+
+    void SetDisconnectWaitTimeoutMs(uint32_t timeout_ms) {
+        disconnect_wait_timeout_ms_ = timeout_ms;
+    }
+
+    // True only after Disconnect() has cleared SharedState's callbacks, no
+    // previously copied stream/disconnect callback is in flight on any task,
+    // and ssl_receive has exited (or the transport was never started).
+    // Because upstream WebSocket::~WebSocket only calls tcp_->Disconnect() when
+    // WebSocket::connected_ is true and destroys WebSocket members before tcp_,
+    // MemoriaProtocol uses this predicate before resetting WebSocket so a raw
+    // `this` captured by WebSocket::OnTcpData / OnDisconnected cannot be used
+    // after free even if Disconnect() timed out or was called from ssl_receive.
+    bool CanDestroyCallbackOwner() const {
+        if (state_ == nullptr) {
+            return true;
+        }
+        return state_->stopping.load(std::memory_order_acquire) &&
+               state_->in_flight_callbacks.load(std::memory_order_acquire) == 0 &&
+               state_->receive_task_exited.load(std::memory_order_acquire);
+    }
+
+    bool Connect(const std::string& host, int port) override {
+        if (state_ != nullptr) {
+            ESP_LOGE(kTag, "MemoriaSslTransport already initialized");
+            return false;
+        }
+        auto state = std::make_shared<SharedState>(on_ping_);
+        state->event_group = xEventGroupCreate();
+        if (state->event_group == nullptr) {
+            last_error_ = ESP_ERR_NO_MEM;
+            ESP_LOGE(kTag, "Failed to create SSL event group");
+            return false;
+        }
+        state->stream_callback = stream_callback_;
+        state->disconnect_callback = disconnect_callback_;
+
+        esp_tls_t* tls_client = esp_tls_init();
+        if (tls_client == nullptr) {
+            last_error_ = ESP_ERR_NO_MEM;
+            ESP_LOGE(kTag, "Failed to initialize TLS");
+            return false;
+        }
+
+        esp_tls_cfg_t cfg = {};
+        cfg.crt_bundle_attach = esp_crt_bundle_attach;
+
+        const int ret = esp_tls_conn_new_sync(host.c_str(), host.length(), port, &cfg, tls_client);
+        if (ret != 1) {
+            esp_tls_error_handle_t last_error;
+            if (esp_tls_get_error_handle(tls_client, &last_error) == ESP_OK) {
+                int error_code = 0;
+                int error_flags = 0;
+                const esp_err_t err =
+                    esp_tls_get_and_clear_last_error(last_error, &error_code, &error_flags);
+                last_error_ = err;
+                ESP_LOGE(kTag, "Failed to connect to %s:%d, code=0x%x", host.c_str(), port, err);
+            } else {
+                last_error_ = -1;
+            }
+            esp_tls_conn_destroy(tls_client);
+            return false;
+        }
+
+        state->tls_client = tls_client;
+        int sockfd = -1;
+        if (esp_tls_get_conn_sockfd(tls_client, &sockfd) == ESP_OK && sockfd >= 0) {
+            // lwIP without LWIP_NETCONN_FULLDUPLEX does not wake an in-flight
+            // blocking read() on shutdown() until SO_RCVTIMEO expires. A short
+            // 200 ms receive timeout surfaces as ESP_TLS_ERR_SSL_WANT_READ and
+            // lets ssl_receive observe Disconnect() promptly.
+            struct timeval tv = {};
+            tv.tv_sec = 0;
+            tv.tv_usec = 200 * 1000;
+            setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        }
+
+        state->connected.store(true, std::memory_order_release);
+        connected_ = true;
+        xEventGroupClearBits(state->event_group, kReceiveTaskExitBit);
+
+        auto* state_arg = new (std::nothrow) std::shared_ptr<SharedState>(state);
+        if (state_arg == nullptr) {
+            connected_ = false;
+            last_error_ = ESP_ERR_NO_MEM;
+            ESP_LOGE(kTag, "Failed to allocate ssl_receive task state");
+            return false;
+        }
+
+        TaskHandle_t task_handle = nullptr;
+        const BaseType_t task_ok = xTaskCreate(
+            [](void* arg) {
+                auto* holder = static_cast<std::shared_ptr<SharedState>*>(arg);
+                std::shared_ptr<SharedState> task_state = std::move(*holder);
+                delete holder;
+                task_state->receive_task.store(
+                    xTaskGetCurrentTaskHandle(), std::memory_order_release);
+                ReceiveLoop(task_state);
+                task_state->receive_task_exited.store(true, std::memory_order_release);
+                xEventGroupSetBits(task_state->event_group, kReceiveTaskExitBit);
+                task_state.reset();
+                vTaskDelete(nullptr);
+            },
+            "ssl_receive", 4096, state_arg, 1, &task_handle);
+        if (task_ok != pdPASS) {
+            delete state_arg;
+            connected_ = false;
+            last_error_ = ESP_ERR_NO_MEM;
+            ESP_LOGE(kTag, "Failed to create ssl_receive task");
+            return false;
+        }
+        state->receive_task.store(task_handle, std::memory_order_release);
+        state_ = std::move(state);
+        return true;
+    }
+
+    void Disconnect() override {
+        connected_ = false;
+        stream_callback_ = nullptr;
+        disconnect_callback_ = nullptr;
+        std::shared_ptr<SharedState> state = state_;
+        if (state == nullptr) {
+            return;
+        }
+        state->stopping.store(true, std::memory_order_release);
+        state->connected.store(false, std::memory_order_release);
+        state->disconnect_notified.store(true, std::memory_order_release);
+
+        std::function<void(const std::string&)> old_stream_cb;
+        std::function<void()> old_disconnect_cb;
+        {
+            std::lock_guard<std::mutex> lock(state->callback_mutex);
+            old_stream_cb = std::move(state->stream_callback);
+            old_disconnect_cb = std::move(state->disconnect_callback);
+        }
+
+        ShutdownSocket(state->tls_client);
+
+        const TaskHandle_t current_task = xTaskGetCurrentTaskHandle();
+        const TaskHandle_t rx_task = state->receive_task.load(std::memory_order_acquire);
+        if (rx_task != nullptr && current_task != rx_task) {
+            const EventBits_t bits = xEventGroupWaitBits(
+                state->event_group, kReceiveTaskExitBit, pdFALSE, pdFALSE,
+                pdMS_TO_TICKS(disconnect_wait_timeout_ms_));
+            if ((bits & kReceiveTaskExitBit) != 0) {
+                std::lock_guard<std::mutex> write_lock(state->write_mutex);
+                if (state->tls_client != nullptr) {
+                    esp_tls_conn_destroy(state->tls_client);
+                    state->tls_client = nullptr;
+                }
+            } else {
+                ESP_LOGE(kTag,
+                         "Failed to wait for ssl_receive task exit; deferring TLS cleanup");
+            }
+        }
+        last_error_ = state->last_error.load(std::memory_order_relaxed);
+        if (CanDestroyCallbackOwner()) {
+            state_.reset();
+        }
+    }
+
+    int Send(const std::string& data) override {
+        std::shared_ptr<SharedState> state = state_;
+        if (state == nullptr || !state->connected.load(std::memory_order_acquire)) {
+            return -1;
+        }
+        int written = -1;
+        {
+            std::lock_guard<std::mutex> write_lock(state->write_mutex);
+            if (!state->connected.load(std::memory_order_acquire) ||
+                state->tls_client == nullptr) {
+                return -1;
+            }
+            written = WriteBoundedTls(
+                data.data(), data.size(),
+                [&state](const char* ptr, size_t len) {
+                    return esp_tls_conn_write(state->tls_client, ptr, len);
+                },
+                []() { return esp_timer_get_time(); },
+                ESP_TLS_ERR_SSL_WANT_WRITE);
+            if (written < 0) {
+                state->last_error.store(written, std::memory_order_relaxed);
+                last_error_ = written;
+                ESP_LOGE(kTag, "Bounded TLS write failed: ret=%d errno=%d bytes=%u",
+                         written, errno, static_cast<unsigned int>(data.size()));
+                state->connected.store(false, std::memory_order_release);
+                connected_ = false;
+                ShutdownSocket(state->tls_client);
+            }
+        }
+        if (written < 0) {
+            NotifyDisconnectOnce(state);
+        }
+        return written;
+    }
+
+    bool SendRawFrame(const std::string& frame) {
+        return Send(frame) >= 0;
+    }
+
+    int GetLastError() override {
+        if (state_ != nullptr) {
+            return state_->last_error.load(std::memory_order_relaxed);
+        }
+        return last_error_;
+    }
+
+private:
+    static constexpr EventBits_t kReceiveTaskExitBit = BIT0;
+
+    struct SharedState {
+        explicit SharedState(PingHandler ping_handler)
+            : on_ping(std::move(ping_handler)) {}
+
+        ~SharedState() {
+            if (tls_client != nullptr) {
+                esp_tls_conn_destroy(tls_client);
+                tls_client = nullptr;
+            }
+            if (event_group != nullptr) {
+                vEventGroupDelete(event_group);
+                event_group = nullptr;
+            }
+        }
+
+        PingHandler on_ping;
+        WebSocketPingInterceptor ping_interceptor;
+        std::mutex write_mutex;
+        std::mutex callback_mutex;
+        std::function<void(const std::string&)> stream_callback;
+        std::function<void()> disconnect_callback;
+        esp_tls_t* tls_client = nullptr;
+        EventGroupHandle_t event_group = nullptr;
+        std::atomic<TaskHandle_t> receive_task{nullptr};
+        std::atomic<uint32_t> in_flight_callbacks{0};
+        std::atomic<bool> receive_task_exited{false};
+        std::atomic<bool> connected{false};
+        std::atomic<bool> stopping{false};
+        std::atomic<bool> disconnect_notified{false};
+        std::atomic<int> last_error{0};
+    };
+
+    struct CallbackFlightGuard {
+        SharedState* state = nullptr;
+        explicit CallbackFlightGuard(SharedState* s) : state(s) {}
+        ~CallbackFlightGuard() {
+            if (state != nullptr) {
+                state->in_flight_callbacks.fetch_sub(1, std::memory_order_acq_rel);
+            }
+        }
+    };
+
+    static void ShutdownSocket(esp_tls_t* tls_client) {
+        if (tls_client == nullptr) {
+            return;
+        }
+        int sockfd = -1;
+        if (esp_tls_get_conn_sockfd(tls_client, &sockfd) == ESP_OK && sockfd >= 0) {
+            // Never close(sockfd) directly here: esp_tls_conn_destroy() owns
+            // closing tls->sockfd, and closing early risks double-close / FD reuse.
+            shutdown(sockfd, SHUT_RDWR);
+        }
+    }
+
+    static void NotifyDisconnectOnce(const std::shared_ptr<SharedState>& state) {
+        if (state == nullptr || state->stopping.load(std::memory_order_acquire)) {
+            return;
+        }
+        if (state->disconnect_notified.exchange(true, std::memory_order_acq_rel)) {
+            return;
+        }
+        std::function<void()> cb;
+        {
+            std::lock_guard<std::mutex> lock(state->callback_mutex);
+            if (state->stopping.load(std::memory_order_acquire) || !state->disconnect_callback) {
+                return;
+            }
+            cb = state->disconnect_callback;
+            state->in_flight_callbacks.fetch_add(1, std::memory_order_acq_rel);
+        }
+        CallbackFlightGuard flight_guard(state.get());
+        if (!state->stopping.load(std::memory_order_acquire)) {
+            cb();
+        }
+    }
+
+    static void ReceiveLoop(const std::shared_ptr<SharedState>& state) {
+        std::string chunk;
+        while (!state->stopping.load(std::memory_order_acquire) &&
+               state->connected.load(std::memory_order_acquire)) {
+            chunk.resize(1500);
+            const int ret = esp_tls_conn_read(state->tls_client, chunk.data(), chunk.size());
+            if (ret == ESP_TLS_ERR_SSL_WANT_READ) {
+                continue;
+            }
+            if (ret <= 0) {
+                if (ret < 0 && !state->stopping.load(std::memory_order_acquire)) {
+                    state->last_error.store(ret, std::memory_order_relaxed);
+                    ESP_LOGE(kTag, "SSL receive failed: %d", ret);
+                }
+                state->connected.store(false, std::memory_order_release);
+                NotifyDisconnectOnce(state);
+                break;
+            }
+            chunk.resize(static_cast<size_t>(ret));
+            const bool ok = state->ping_interceptor.OnStreamChunk(
+                chunk,
+                [&state](const std::string& forwarded) {
+                    std::function<void(const std::string&)> cb;
+                    {
+                        std::lock_guard<std::mutex> lock(state->callback_mutex);
+                        if (state->stopping.load(std::memory_order_acquire) ||
+                            !state->stream_callback) {
+                            return;
+                        }
+                        cb = state->stream_callback;
+                        state->in_flight_callbacks.fetch_add(1, std::memory_order_acq_rel);
+                    }
+                    CallbackFlightGuard flight_guard(state.get());
+                    if (!state->stopping.load(std::memory_order_acquire)) {
+                        cb(forwarded);
+                    }
+                },
+                [&state](const char* payload, size_t len) {
+                    if (state->on_ping && !state->stopping.load(std::memory_order_acquire)) {
+                        state->on_ping(payload, len);
+                    }
+                });
+            if (!ok) {
+                ESP_LOGE(kTag, "WebSocket stream/frame validation failed in TLS guard");
+                state->last_error.store(-1, std::memory_order_relaxed);
+                state->connected.store(false, std::memory_order_release);
+                ShutdownSocket(state->tls_client);
+                NotifyDisconnectOnce(state);
+                break;
+            }
+        }
+    }
+
+    PingHandler on_ping_;
+    std::shared_ptr<SharedState> state_;
+    uint32_t disconnect_wait_timeout_ms_ = 10000;
+    int last_error_ = 0;
+};
+
+namespace {
+
+class MemoriaMediaNetwork final : public NetworkInterface {
+public:
+    using SslFactory = std::function<std::unique_ptr<Tcp>()>;
+
+    void Configure(NetworkInterface* delegate, SslFactory ssl_factory) {
+        delegate_ = delegate;
+        ssl_factory_ = std::move(ssl_factory);
+    }
+
+    std::unique_ptr<Http> CreateHttp(int connect_id) override {
+        return delegate_ != nullptr ? delegate_->CreateHttp(connect_id) : nullptr;
+    }
+
+    std::unique_ptr<Tcp> CreateTcp(int connect_id) override {
+        return delegate_ != nullptr ? delegate_->CreateTcp(connect_id) : nullptr;
+    }
+
+    std::unique_ptr<Tcp> CreateSsl(int connect_id) override {
+        if (ssl_factory_) {
+            return ssl_factory_();
+        }
+        return delegate_ != nullptr ? delegate_->CreateSsl(connect_id) : nullptr;
+    }
+
+    std::unique_ptr<Udp> CreateUdp(int connect_id) override {
+        return delegate_ != nullptr ? delegate_->CreateUdp(connect_id) : nullptr;
+    }
+
+    std::unique_ptr<Mqtt> CreateMqtt(int connect_id) override {
+        return delegate_ != nullptr ? delegate_->CreateMqtt(connect_id) : nullptr;
+    }
+
+    std::unique_ptr<WebSocket> CreateWebSocket(int connect_id) override {
+        return std::make_unique<WebSocket>(this, connect_id);
+    }
+
+private:
+    NetworkInterface* delegate_ = nullptr;
+    SslFactory ssl_factory_;
+};
+
+MemoriaMediaNetwork g_media_network;
+
+}  // namespace
+
+bool MemoriaProtocol::PrepareForDestruction() {
+    if (!shutting_down_.exchange(true, std::memory_order_acq_rel)) {
+        ++websocket_attempt_id_;
+    }
+    std::unique_lock<std::recursive_mutex> lock(playback_state_mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        return false;
+    }
+    if (websocket_ != nullptr) {
+        retired_websockets_.emplace_back(std::move(websocket_), media_ssl_transport_);
+        media_ssl_transport_ = nullptr;
+    }
+    for (auto& retired : retired_websockets_) {
+        if (retired.second != nullptr) {
+            // Poll shutdown without waiting on the receiver, which may be inside
+            // a callback that needs this lock. Keep the entire protocol alive.
+            retired.second->SetDisconnectWaitTimeoutMs(0);
+            retired.second->Disconnect();
+        }
+    }
+    ReapRetiredWebSockets();
+    return retired_websockets_.empty();
+}
+
+void MemoriaProtocol::ReapRetiredWebSockets() {
+    std::deque<std::unique_ptr<WebSocket>> ready_to_destroy;
+    {
+        std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+        auto it = retired_websockets_.begin();
+        while (it != retired_websockets_.end()) {
+            MemoriaSslTransport* const ssl = it->second;
+            if (ssl == nullptr || ssl->CanDestroyCallbackOwner()) {
+                ready_to_destroy.push_back(std::move(it->first));
+                it = retired_websockets_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    ready_to_destroy.clear();
+}
+
+void MemoriaProtocol::RetireOrDestroyWebSocket(std::unique_ptr<WebSocket> retiring_websocket,
+                                               MemoriaSslTransport* retiring_ssl,
+                                               bool send_ws_close) {
+    ReapRetiredWebSockets();
+    if (retiring_websocket == nullptr) {
+        return;
+    }
+    if (send_ws_close) {
+        retiring_websocket->Close();
+    }
+    // Upstream WebSocket::~WebSocket only calls tcp_->Disconnect() when
+    // WebSocket::connected_ is true, and declares tcp_ as its first member so
+    // WebSocket's own members are destroyed before tcp_. Explicitly disconnect
+    // the dedicated SSL transport before destroying WebSocket, and if an
+    // in-flight callback or ssl_receive task is still unwinding after a
+    // bounded Disconnect() timeout, defer WebSocket destruction until
+    // CanDestroyCallbackOwner() reports quiescence.
+    if (retiring_ssl != nullptr) {
+        retiring_ssl->Disconnect();
+        if (!retiring_ssl->CanDestroyCallbackOwner()) {
+            std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+            retired_websockets_.emplace_back(std::move(retiring_websocket), retiring_ssl);
+            return;
+        }
+    }
+    retiring_websocket.reset();
+}
+
+std::unique_ptr<WebSocket> MemoriaProtocol::CreateMediaWebSocket(uint32_t websocket_attempt,
+                                                                 bool dedicated_wifi_wss) {
+    media_ssl_transport_ = nullptr;
+    NetworkInterface* const network = Board::GetInstance().GetNetwork();
+    if (network == nullptr) {
+        return nullptr;
+    }
+    if (!dedicated_wifi_wss) {
+        return network->CreateWebSocket(1);
+    }
+    g_media_network.Configure(network, [this, websocket_attempt]() -> std::unique_ptr<Tcp> {
+        auto ssl = std::make_unique<MemoriaSslTransport>(
+            [this, websocket_attempt](const char* payload, size_t len) {
+                if (shutting_down_.load(std::memory_order_acquire)) { return; }
+                QueueTransportPong(websocket_attempt,
+                                   std::string(payload != nullptr ? payload : "", len));
+            });
+        media_ssl_transport_ = ssl.get();
+        return ssl;
+    });
+    return g_media_network.CreateWebSocket(1);
+}
+
 bool MemoriaProtocol::OpenAudioChannel() {
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return false;
+    }
     if (IsAudioChannelOpened()) {
         return true;
     }
@@ -881,7 +1414,17 @@ bool MemoriaProtocol::OpenAudioChannel() {
         transport_close_notified_ = false;
     }
 
-    websocket_ = Board::GetInstance().GetNetwork()->CreateWebSocket(1);
+    // WifiBoard -> EspNetwork -> a new TLS client per WSS socket. It owns a
+    // dedicated ssl_receive task; WebSocket::OnTcpData calls OnData inline on
+    // that task. AT/network callbacks can be shared and must never be boosted.
+    const bool dedicated_wifi_wss =
+#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+        Board::GetInstance().GetBoardType() == "wifi" &&
+        session.websocket_url.rfind("wss://", 0) == 0;
+#else
+        false;
+#endif
+    websocket_ = CreateMediaWebSocket(websocket_attempt, dedicated_wifi_wss);
     if (websocket_ == nullptr) {
         SetError("设备媒体连接不可用");
         return false;
@@ -901,18 +1444,9 @@ bool MemoriaProtocol::OpenAudioChannel() {
     } else {
         websocket->SetHeader("X-Client-ID", identity_.client_id().c_str());
     }
-    // WifiBoard -> EspNetwork -> a new EspSsl per WSS socket. EspSsl owns a
-    // dedicated ssl_receive task; WebSocket::OnTcpData calls OnData inline on
-    // that task. AT/network callbacks can be shared and must never be boosted.
-    const bool dedicated_wifi_wss =
-#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
-        Board::GetInstance().GetBoardType() == "wifi" &&
-        session.websocket_url.rfind("wss://", 0) == 0;
-#else
-        false;
-#endif
     websocket->OnData([this, websocket, websocket_attempt, dedicated_wifi_wss](
                           const char* data, size_t size, bool binary) {
+        if (shutting_down_.load(std::memory_order_acquire)) { return; }
         ObserveMediaReceiveTask(websocket_attempt, dedicated_wifi_wss);
         std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
         if (websocket_attempt != websocket_attempt_id_.load()) {
@@ -939,25 +1473,41 @@ bool MemoriaProtocol::OpenAudioChannel() {
         last_incoming_time_ = std::chrono::steady_clock::now();
     });
     websocket->OnPong([this, websocket_attempt](const char*, size_t) {
+        if (shutting_down_.load(std::memory_order_acquire)) { return; }
         MarkTransportAlive(websocket_attempt);
     });
     websocket->OnDisconnected([this, websocket, websocket_attempt]() {
+        if (shutting_down_.load(std::memory_order_acquire)) { return; }
         ESP_LOGW(kTag, "Device WebSocket disconnected attempt=%u tcp_error=%d",
                  static_cast<unsigned int>(websocket_attempt), websocket->GetLastError());
         RetireTransportAttempt(websocket_attempt);
     });
     websocket->OnError([this, websocket_attempt](int error) {
+        if (shutting_down_.load(std::memory_order_acquire)) { return; }
         std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
         if (websocket_attempt != websocket_attempt_id_.load()) return;
         ESP_LOGE(kTag, "Device WebSocket error=%d", error);
         error_occurred_ = true;
         RetireTransportAttempt(websocket_attempt);
     });
-    if (!websocket->Connect(session.websocket_url.c_str())) {
+    const bool ws_connected = websocket->Connect(session.websocket_url.c_str());
+    g_media_network.Configure(Board::GetInstance().GetNetwork(), nullptr);
+    if (!ws_connected) {
         ESP_LOGE(kTag, "Device WebSocket connect failed, code=%d", websocket->GetLastError());
-        // A handshake error can be reported from the TCP receive task. Keep
-        // the object alive until the next user open or delayed recovery tick;
-        // destroying its callback storage on that task's return edge is racy.
+        // WebSocket::~WebSocket only calls tcp_->Disconnect() when connected_ is
+        // true. If the HTTP upgrade failed or timed out after TCP/TLS connected,
+        // stop the dedicated SSL transport immediately while keeping websocket_
+        // allocated until the next open/close cycle (or deferring it if an
+        // in-flight callback is still unwinding).
+        std::unique_ptr<WebSocket> failed_websocket;
+        MemoriaSslTransport* failed_ssl = nullptr;
+        {
+            std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+            failed_ssl = media_ssl_transport_;
+            media_ssl_transport_ = nullptr;
+            failed_websocket = std::move(websocket_);
+        }
+        RetireOrDestroyWebSocket(std::move(failed_websocket), failed_ssl, false);
         SetError("设备媒体连接失败");
         return false;
     }
@@ -974,13 +1524,27 @@ bool MemoriaProtocol::OpenAudioChannel() {
                                                   pdMS_TO_TICKS(kSessionReadyTimeoutMs));
     if ((bits & kSessionClosedBit) != 0) {
         ESP_LOGE(kTag, "Device media channel closed before session.ready/accepted");
-        // WebSocket delivers OnDisconnected from its TCP receive task.  The
-        // event above wakes Application's higher-priority main task before
-        // WebSocket::OnTcpData has returned; destroying websocket_ here would
-        // race that callback and corrupt the heap.  Keep the already-closed
-        // object alive.  The next explicit open starts by collecting it after
-        // the receive callback/task has unwound.
-        ResetSessionState();
+        // WebSocket delivers OnData/OnDisconnected from its TCP receive task.
+        // Setting kSessionClosedBit inside RetireTransportAttempt wakes
+        // Application's higher-priority main task before WebSocket::OnTcpData
+        // has returned. Stop the dedicated SSL transport now (which shuts down
+        // the socket, clears callbacks, and waits up to the bounded timeout for
+        // ssl_receive to exit) and only destroy WebSocket once
+        // CanDestroyCallbackOwner() confirms no callback is in flight.
+        std::unique_ptr<WebSocket> closed_websocket;
+        MemoriaSslTransport* closed_ssl = nullptr;
+        {
+            std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+            closed_ssl = media_ssl_transport_;
+            media_ssl_transport_ = nullptr;
+            if (closed_ssl != nullptr) {
+                closed_websocket = std::move(websocket_);
+            }
+            ResetSessionState();
+        }
+        if (closed_ssl != nullptr) {
+            RetireOrDestroyWebSocket(std::move(closed_websocket), closed_ssl, false);
+        }
         SetError("设备媒体服务不可用");
         return false;
     }
@@ -998,12 +1562,16 @@ bool MemoriaProtocol::OpenAudioChannel() {
 }
 
 void MemoriaProtocol::CloseAudioChannel(bool send_goodbye) {
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return;
+    }
     bool drain_v2_goodbye = false;
     bool send_v1_goodbye = false;
     bool notify_closed = false;
     uint32_t closing_attempt = 0;
     uint32_t legacy_stream_epoch = 0;
     std::unique_ptr<WebSocket> retiring_websocket;
+    MemoriaSslTransport* retiring_ssl = nullptr;
     {
         std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
         closing_attempt = websocket_attempt_id_.load();
@@ -1085,12 +1653,15 @@ void MemoriaProtocol::CloseAudioChannel(bool send_goodbye) {
         // fence. WebSocket close/destruction happens only after unlocking: its
         // TCP receive task can synchronously run the stale disconnect callback
         // and must be able to acquire playback_state_mutex_.
+        retiring_ssl = media_ssl_transport_;
+        media_ssl_transport_ = nullptr;
         retiring_websocket = std::move(websocket_);
         ResetSessionState();
     }
+    ReapRetiredWebSockets();
     if (retiring_websocket != nullptr) {
         retiring_websocket->Close();
-        retiring_websocket.reset();
+        RetireOrDestroyWebSocket(std::move(retiring_websocket), retiring_ssl, false);
     }
     if (notify_closed) {
         if (on_disconnected_ != nullptr) {
@@ -1103,6 +1674,9 @@ void MemoriaProtocol::CloseAudioChannel(bool send_goodbye) {
 }
 
 bool MemoriaProtocol::IsAudioChannelOpened() const {
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return false;
+    }
     // A device session may be intentionally uplink-only for longer than the
     // upstream protocol's 120-second application-message timer. Transport
     // callbacks and WebSocket connectivity own liveness here; treating server
@@ -1140,10 +1714,14 @@ void MemoriaProtocol::ObserveMediaReceiveTask(uint32_t attempt, bool dedicated_w
 }
 
 void MemoriaProtocol::PollTransportLiveness() {
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return;
+    }
     if (transport_owner_task_ == nullptr) {
         transport_owner_task_ = xTaskGetCurrentTaskHandle();
     }
     configASSERT(transport_owner_task_ == xTaskGetCurrentTaskHandle());
+    ReapRetiredWebSockets();
     uint32_t receive_attempt = 0;
     unsigned receive_before = 0;
     unsigned receive_actual = 0;
@@ -1211,6 +1789,9 @@ void MemoriaProtocol::PollTransportLiveness() {
 }
 
 bool MemoriaProtocol::CanResumeSession() {
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return false;
+    }
     std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
     const bool active_v2_session =
         protocol_version_ == kProtocolVersionV2 && !session_id_.empty();
@@ -1220,28 +1801,43 @@ bool MemoriaProtocol::CanResumeSession() {
 }
 
 bool MemoriaProtocol::HasActivePlaybackGeneration() {
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return false;
+    }
     std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
     return protocol_version_ == kProtocolVersionV2 && stream_epoch_ != 0 &&
            fence_.valid() && playback_active_ && playback_audio_ready_ && !playback_paused_;
 }
 
 bool MemoriaProtocol::AllowsPlaybackBargeIn() const {
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return false;
+    }
     std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
     return audio_mode_ == "interrupt_assist" || audio_mode_ == "full_duplex_verified";
 }
 
 bool MemoriaProtocol::VoiceBargeInAllowed() const {
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return false;
+    }
     std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
     return voice_barge_in_allowed_;
 }
 
 bool MemoriaProtocol::KeywordBargeInAllowed() const {
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return false;
+    }
     std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
     return protocol_version_ == kProtocolVersionV2 && stream_epoch_ != 0 &&
            keyword_barge_in_allowed_;
 }
 
 bool MemoriaProtocol::LocalStopKeywordArmed() {
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return false;
+    }
     std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
     // Edge ignores keyword.detected without the signed keyword source, and a
     // stop outside real playback would flush nothing but still report one.
@@ -1249,6 +1845,9 @@ bool MemoriaProtocol::LocalStopKeywordArmed() {
 }
 
 bool MemoriaProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return false;
+    }
     // Drain already-encoded packets while standby capture is closed.
     if (g_listening_closed.load(std::memory_order_relaxed)) {
         return true;
@@ -2526,6 +3125,9 @@ std::string MemoriaProtocol::DeviceHelloV2() const {
 }
 
 bool MemoriaProtocol::SendText(const std::string& text) {
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return false;
+    }
     return websocket_ != nullptr && websocket_->IsConnected() && websocket_->Send(text);
 }
 
@@ -2570,6 +3172,19 @@ bool MemoriaProtocol::QueueTransportText(std::string text) {
     return QueueTransportAction(TransportActionKind::kSendText, std::move(text));
 }
 
+bool MemoriaProtocol::QueueTransportPong(uint32_t websocket_attempt, std::string payload) {
+    std::string frame;
+    if (!WebSocketPingInterceptor::BuildMaskedPongFrame(
+            payload.data(), payload.size(), esp_random(), &frame)) {
+        return false;
+    }
+    std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+    if (websocket_attempt != websocket_attempt_id_.load()) {
+        return false;
+    }
+    return QueueTransportAction(TransportActionKind::kSendPong, std::move(frame));
+}
+
 void MemoriaProtocol::QueueTransportRetire() {
     QueueTransportAction(TransportActionKind::kRetire);
 }
@@ -2589,6 +3204,9 @@ void MemoriaProtocol::SetTransportActionWakeCallback(std::function<void()> callb
 }
 
 void MemoriaProtocol::DrainTransportActions() {
+    if (shutting_down_.load(std::memory_order_acquire)) {
+        return;
+    }
     if (transport_owner_task_ == nullptr) {
         transport_owner_task_ = xTaskGetCurrentTaskHandle();
     }
@@ -2596,6 +3214,7 @@ void MemoriaProtocol::DrainTransportActions() {
     while (true) {
         TransportAction action;
         WebSocket* action_websocket = nullptr;
+        MemoriaSslTransport* action_ssl = nullptr;
         {
             std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
             if (transport_actions_.empty()) {
@@ -2606,16 +3225,33 @@ void MemoriaProtocol::DrainTransportActions() {
             if (action.websocket_attempt != websocket_attempt_id_.load()) {
                 continue;
             }
-            if (action.kind == TransportActionKind::kSendText) {
+            if (action.kind == TransportActionKind::kSendText ||
+                action.kind == TransportActionKind::kSendPong) {
                 if (websocket_ == nullptr || stream_epoch_ == 0 || error_occurred_) {
                     continue;
                 }
                 action_websocket = websocket_.get();
+                action_ssl = media_ssl_transport_;
             }
         }
 
         if (action.kind == TransportActionKind::kRetire) {
             RetireTransportAttempt(action.websocket_attempt);
+            continue;
+        }
+
+        if (action.kind == TransportActionKind::kSendPong) {
+            if (action_ssl == nullptr || !action_websocket->IsConnected() ||
+                !action_ssl->SendRawFrame(action.text)) {
+                {
+                    std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+                    if (action.websocket_attempt == websocket_attempt_id_.load()) {
+                        error_occurred_ = true;
+                    }
+                }
+                RetireTransportAttempt(action.websocket_attempt);
+                return;
+            }
             continue;
         }
 

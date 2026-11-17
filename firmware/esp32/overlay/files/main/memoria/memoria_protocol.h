@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 
 #include <cJSON.h>
 
@@ -25,11 +26,15 @@ class WebSocket;
 
 namespace memoria {
 
+class MemoriaSslTransport;
+
 class MemoriaProtocol final : public Protocol {
 public:
     MemoriaProtocol();
     ~MemoriaProtocol() override;
 
+    // Main-task reset retains this owner until every receive callback has returned.
+    bool PrepareForDestruction();
     bool Start() override;
     bool OpenAudioChannel() override;
     void CloseAudioChannel(bool send_goodbye = true) override;
@@ -131,6 +136,7 @@ protected:
     bool SendText(const std::string& text) override;
 
 private:
+    std::atomic<bool> shutting_down_{false};
     static constexpr EventBits_t kSessionReadyBit = BIT0;
     static constexpr EventBits_t kSessionClosedBit = BIT1;
     static constexpr uint32_t kProtocolVersionV1 = 1;
@@ -141,6 +147,7 @@ private:
 
     enum class TransportActionKind {
         kSendText,
+        kSendPong,
         kRetire,
     };
 
@@ -191,6 +198,12 @@ private:
     DeviceIdentity identity_;
     ActivationProfile activation_;
     std::unique_ptr<WebSocket> websocket_;
+    MemoriaSslTransport* media_ssl_transport_ = nullptr;
+    // If a dedicated SSL transport's Disconnect() times out while an in-flight
+    // callback or ssl_receive task is still unwinding, its WebSocket owner is
+    // moved here until CanDestroyCallbackOwner() is true so `this` captured by
+    // WebSocket::OnTcpData / OnDisconnected is never destroyed while in use.
+    std::deque<std::pair<std::unique_ptr<WebSocket>, MemoriaSslTransport*>> retired_websockets_;
     // Device-lifetime transport attempt. A delayed callback from an old WSS
     // must not close or mutate a newer same-Session epoch.
     std::atomic<uint32_t> websocket_attempt_id_{0};
@@ -288,6 +301,12 @@ private:
     void StartDisplayProfilePoll();
     static void DisplayProfileTask(void* context);
     bool CreateMediaSession(MediaSession* session);
+    std::unique_ptr<WebSocket> CreateMediaWebSocket(uint32_t websocket_attempt,
+                                                    bool dedicated_wifi_wss);
+    void RetireOrDestroyWebSocket(std::unique_ptr<WebSocket> retiring_websocket,
+                                  MemoriaSslTransport* retiring_ssl,
+                                  bool send_ws_close);
+    void ReapRetiredWebSockets();
     bool HandleServerText(const char* data, size_t size);
     bool HandleDownlink(const uint8_t* data, size_t size);
     // Advances the per-generation downlink transport expected clock for one
@@ -310,6 +329,7 @@ private:
     void SendRuntimeProfileApplied(uint32_t profile_version, uint32_t settings_version);
     bool QueueSessionClose(const char* reason);
     bool QueueTransportText(std::string text);
+    bool QueueTransportPong(uint32_t websocket_attempt, std::string payload);
     void QueueTransportRetire();
     bool QueueTransportAction(TransportActionKind kind, std::string text = {});
     void SendButtonStop(const GenerationFence& fence, uint64_t local_flush_sample_end);

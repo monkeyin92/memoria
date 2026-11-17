@@ -66,6 +66,7 @@ def build_stop() -> list[dict[str, object]]:
                 {
                     "tag": f"stop{word_index:02d}-{slug}-{trial:02d}",
                     "say": prompt,
+                    "quiet_after_s": 6,
                     "rate": 165,
                     "gap": 2,
                     "interrupt": {

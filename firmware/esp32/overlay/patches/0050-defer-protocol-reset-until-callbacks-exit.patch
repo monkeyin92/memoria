@@ -1,0 +1,58 @@
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -404,6 +404,7 @@
+         if (bits & MAIN_EVENT_CLOCK_TICK) {
+             clock_ticks_++;
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++            if (protocol_reset_pending_) { ContinueProtocolReset(); }
+             auto* memoria_protocol =
+                 static_cast<memoria::MemoriaProtocol*>(protocol_.get());
+             if (!media_recovery_pending_ && memoria_protocol != nullptr) {
+@@ -1681,6 +1682,10 @@
+ 
+ void Application::Reboot() {
+     ESP_LOGI(TAG, "Rebooting...");
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++    esp_restart();
++    return;
++#endif
+     // Disconnect the audio channel
+     if (protocol_ && protocol_->IsAudioChannelOpened()) {
+         protocol_->CloseAudioChannel();
+@@ -1847,6 +1852,9 @@
+         media_recovery_pending_ = false;
+         media_reconnect_attempt_ = 0;
+         media_reconnect_due_us_ = 0;
++        protocol_reset_pending_ = true;
++        ContinueProtocolReset();
++        return;
+ #endif
+         // Close audio channel if opened (or always for Memoria, where a
+         // transport can be closed while its resumable Session is still live).
+@@ -1863,3 +1871,13 @@
+         protocol_.reset();
+     });
+ }
++
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++void Application::ContinueProtocolReset() {
++    auto* protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
++    if (protocol == nullptr || protocol->PrepareForDestruction()) {
++        protocol_.reset();
++        protocol_reset_pending_ = false;
++    }
++}
++#endif
+--- a/main/application.h
++++ b/main/application.h
+@@ -135,6 +135,10 @@
+     std::mutex mutex_;
+     std::deque<std::function<void()>> main_tasks_;
+     std::unique_ptr<Protocol> protocol_;
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++    bool protocol_reset_pending_ = false;
++    void ContinueProtocolReset();
++#endif
+     EventGroupHandle_t event_group_ = nullptr;
+     esp_timer_handle_t clock_timer_handle_ = nullptr;
+     DeviceStateMachine state_machine_;

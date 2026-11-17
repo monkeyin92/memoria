@@ -4604,3 +4604,216 @@ $PY devicetest/keepawake_verdict.py "$RUN" --serial "$RUN/serial.log" --gate-sil
 Agent `memoria-agent:20261115-asr-streaming-default`, revision `f4f38dd942858c2fbf78cdeba75a6d63538a5f14`, was deployed at 01:39:44 UTC. Runtime verification found healthy status, zero restarts, and `VolcASRConfig.from_env().enable_nonstream=False`. The rollback image is `memoria-agent:rollback-20261115-asr-streaming-default-pre`. Firmware remains build36.
 
 [CI run 43623965980](https://github.com/monkeyin92/memoria/actions/runs/43623965980) passed all 16 jobs. The Agent image job built and verified artifacts but did not run Trivy; no Agent vulnerability scan is claimed. Edge image scanning passed. This is deployment evidence, not hardware acceptance. Precheck, Safety, Soak and R02 must be completed on this candidate; R02 remains 0/155. Room capture tooling passed independent review and actual 5-second, 240-second, SIGINT and SIGTERM checks, which establish recording integrity only.
+
+
+## 2026-11-16 speaking stall 续查与本地修复（未完成硬件验收）
+
+实时SSH核实Bridge为`memoria-agent:20261115-asr-streaming-default`，revision `f4f38dd942858c2fbf78cdeba75a6d63538a5f14`，healthy、restart=0。Mac读回output=40、muted=false。正式R02与真机外放已按指令暂停，**R02仍为0/155（未执行、不计通过）**。
+
+### 现场日志与根因证明边界
+
+1. 单一logger记录在`outputs/acceptance/speaking-20261116/serial.log`。USB唤醒后00:07:42开麦、00:07:44 listening→speaking、00:07:46 speaking→listening；00:10:46真实listening→idle。`outputs/acceptance/speaking-20261116`下`run-diag-repro1..3`的`diag-boot.log`、`diag-serial.log`、`diag-serial2.log`仅在启动打印`MEMORIA_STALL_DIAG=1`，**3轮复现均未触发stall（`STALLDIAG` dump为0条）**。
+2. **ESP-IDF `net_would_block`源码核实与此前结论更正**：核对`/Users/monkeyin/esp/esp-idf-v6.0.2/components/mbedtls/port/net_sockets.c:194-210`，虽然函数注释写“Never return 'WOULD BLOCK' on a non-blocking socket”，实际实现并**未检查`O_NONBLOCK`**，只要`errno`为`EAGAIN`/`EWOULDBLOCK`即无条件返回`1`。因此当`esp_tls_set_socket_options`设置的默认10秒`SO_SNDTIMEO`在阻塞socket上超时返回`EAGAIN`时，`mbedtls_net_send`会返回`MBEDTLS_ERR_SSL_WANT_WRITE`（`ESP_TLS_ERR_SSL_WANT_WRITE`）。
+3. **跨线程互锁机制（源码与宿主并发测试已证实，历史`gen25`无现场栈回溯）**：
+   - `78__esp-ml307`（3.6.6）的`EspSsl::Send`对`ESP_TLS_ERR_SSL_WANT_WRITE`执行无上限`continue`重试，且外层`WebSocket::Send`/`SendControlFrame`全程持有`WebSocket::send_mutex_`；当上行TCP发送窗口停滞时，`main_task`会在`WebSocket::send_mutex_`内无限循环，无法返回主事件循环。
+   - 服务端发送WebSocket Ping（`0x89`）时，`ssl_receive`任务在`WebSocket::OnTcpData`（`web_socket.cc:391-394`）中同步调用`SendControlFrame(0xA, ...)`回Pong，同样尝试获取`WebSocket::send_mutex_`，导致`ssl_receive`被`main_task`阻塞，不再从TLS/TCP接收缓冲区排空下行音频与`generation.completed`，设备停留在`speaking`而独立任务`imu_pat`继续运行。
+   - **证据边界**：上述机制在ESP-IDF v6.0.2 + `78__esp-ml307`源码及宿主并发单测中完全复现并吻合历史`gen25`现象，但历史`gen25`缺少当时线程栈/锁持有者快照，且`diag36`三轮未重现，故记为“源码机制已证实、宿主已复现、待后续真机长跑回归确认”。
+
+### 本地Overlay修复与独立Review加固
+
+因`firmware/esp32/scripts/apply-overlay.sh`在全新upstream clone上先于`idf.py`下载`managed_components/78__esp-ml307`执行`git apply`，且IDF校验`managed_components/78__esp-ml307/CHECKSUMS.json`，无法通过`overlay/patches/*.patch`直接打补丁到`78__esp-ml307`。修复落在overlay自有代码`firmware/esp32/overlay/files/main/memoria/memoria_ws_tls_guard.h`与`memoria_protocol.cc`：
+
+- **`WriteBoundedTls`（有界TLS写）**：限制连续`WANT_WRITE`重试次数（默认2次）与累计等待时间`max_wait_us`（默认10秒）。在每次`WANT_WRITE`及未写完的部分正写入（`ret > 0`且`total_sent < size`）后均检查`now_us - start_us >= max_wait_us`，校验`ret <= size - total_sent`，确保首次10秒`SO_SNDTIMEO`触发`WANT_WRITE`即立即fail-closed返回`-1`，慢速部分写总耗时严格有界（`< max_wait_us + T_call`）。
+- **`WebSocketPingInterceptor`（接收侧Ping改写与主任务排队回Pong + 有界帧校验）**：在`ssl_receive`进入`WebSocket::OnTcpData`前将合法未分片Ping控制帧（`0x89`，payload≤125B）原地改写为Pong（`0x8A`），保留原`MarkTransportAlive`活性更新，并通过`QueueTransportPong`将带掩码Pong帧（`0x8A`）排入`main_task`的`transport_actions_`队列由`DrainTransportActions()`发送（RFC 6455 §5.4允许控制帧穿插在分片数据消息之间，且单帧在`write_mutex`下原子写出）。同时切片处理输入（≤4096B）、限制握手缓冲≤4096B、非`101`响应转发一次头部后立即清空`pending_`并进入`failed_`闭锁、在2/4/10字节头部处立即拒绝分片或`>125B`控制帧、保留RSV/opcode及`>64 KiB`或64位溢出的异常帧长。
+- **`MemoriaSslTransport`（生命周期与并发安全）**：
+  - 以引用计数`std::shared_ptr<SharedState>`托管`tls_client`、`event_group`、互斥锁、回调与原子状态；`ssl_receive`任务仅持有`std::shared_ptr<SharedState>`运行静态`ReceiveLoop`，不访问`MemoriaSslTransport* this`。若`Disconnect()`等待超时或发生回调内自断开，`MemoriaSslTransport`安全释放自身而不提前销毁`tls_client`/`event_group`，待`ssl_receive`退出时由`~SharedState()`统一调用`esp_tls_conn_destroy`与`vEventGroupDelete`，消除UAF。
+  - `Disconnect()`与读写失败统一使用`shutdown(sockfd, SHUT_RDWR)`而非`close(sockfd)`（`esp_tls.c:180-187`中`esp_tls_conn_destroy`负责`close(tls->sockfd)`，避免double-close与FD复用）；`Connect()`成功后为`sockfd`设置200ms `SO_RCVTIMEO`（转化为`ESP_TLS_ERR_SSL_WANT_READ`），使未开启`LWIP_NETCONN_FULLDUPLEX`的lwIP阻塞读在`Disconnect()`时200ms内唤醒退出。
+  - 检查`xEventGroupCreate`与`xTaskCreate`返回值；通过`callback_mutex`同步`OnStream`/`OnDisconnected`注册与调用，并用`disconnect_notified.exchange(true)`保证并发读写失败最多触发一次断开回调、主动`Disconnect()`不误触发回调；`OpenAudioChannel()`在`websocket->Connect()`失败或握手超时时立即调用`media_ssl_transport_->Disconnect()`回收传输线程。
+- **最终Review回调Owner（`WebSocket`）生命周期闭合（`RetireOrDestroyWebSocket` + `CanDestroyCallbackOwner`）**：
+  - **上游析构顺序缺陷核实**：`78__esp-ml307`的`WebSocket::~WebSocket()`（`web_socket.cc:48-55`）仅在`WebSocket::connected_`为`true`时才调用`tcp_->Disconnect()`，且`WebSocket`将`std::unique_ptr<Tcp> tcp_`声明为首个成员（`web_socket.h:49`），C++逆序析构会先销毁`receive_buffer_`、`current_message_`、`on_data_`、`on_disconnected_`等全部`WebSocket`成员，最后才析构`tcp_`（`~MemoriaSslTransport()`）。一旦收到对端Close帧（`0x8`）、发送失败或EOF触发`OnDisconnected`将`WebSocket::connected_`置为`false`，或`OpenAudioChannel()`命中`kSessionClosedBit`分支提前返回，或`Disconnect()`有界等待超时/在接收回调内自断开而`ssl_receive`仍在执行已复制到栈上的`WebSocket::OnTcpData`/`OnDisconnected`回调，立即`reset()` `WebSocket`会导致`ssl_receive`对已析构的`WebSocket* this`发生UAF。
+  - **修复机制**：
+    1. `MemoriaSslTransport::SharedState`新增`in_flight_callbacks`（在`callback_mutex`内校验`!state->stopping`后递增，由栈上`CallbackFlightGuard`在`WebSocket::OnTcpData`/`WebSocket::OnDisconnected`完整返回后递减）与`receive_task_exited`（`ssl_receive`置位`kReceiveTaskExitBit`前原子写入`true`）。
+    2. `MemoriaSslTransport::CanDestroyCallbackOwner()`仅在`state_ == nullptr`或`state_->stopping && state_->in_flight_callbacks == 0 && state_->receive_task_exited`时返回`true`；若`Disconnect()`返回时仍未满足（例如有界等待超时或接收回调自断开），`MemoriaSslTransport`保留`state_`指针以便继续查询静止状态。
+    3. `MemoriaProtocol`在`CloseAudioChannel()`以及`OpenAudioChannel()`的`!ws_connected`和`kSessionClosedBit`分支中均在`playback_state_mutex_`内取出`(retiring_websocket, retiring_ssl)`并清空`media_ssl_transport_`，锁外先执行必要的`retiring_websocket->Close()`，再通过`RetireOrDestroyWebSocket()`显式调用`retiring_ssl->Disconnect()`；若`!retiring_ssl->CanDestroyCallbackOwner()`，则将`(std::move(retiring_websocket), retiring_ssl)`转入受`playback_state_mutex_`保护的`retired_websockets_`队列延迟析构，由后续`PollTransportLiveness()`、`OpenAudioChannel()`、`CloseAudioChannel()`及`~MemoriaProtocol()`调用`ReapRetiredWebSockets()`在确认回调与接收线程完全静止后锁外安全销毁`WebSocket`。
+
+### 刷机与构建收据核实（未刷机、未真机验证、R02暂停）
+
+- **历史刷机收据（11:24旧候选，未完成真机验证）**：`firmware/esp32/.cache/upstream/build/log/idf_py_stdout_output_29937`（11-16 11:24:54）记录曾将review前的旧候选product `memoria.bin`（`3,395,952`字节，`0x33d170`，SHA-256 `50b9bcb5df71fbeb07fbf58ba5a436fa24f2624cf9dfbeaf8e19a4a84f03fe04`）刷入`/dev/cu.usbmodem101` `0x20000`。但`outputs/acceptance/speaking-fix-20261116/boot.log`为0字节（0字节日志不能推断设备进入deep sleep，亦无刷后运行验证收据）。随后12:01:52（`idf_py_stdout_output_55498`）一次本地keep-awake构建（`3,387,936`字节，SHA-256 `062b48e58f9618b15fc9991b54408c81c48b48c7fbb22fb89657c58d73e75001`）输出了`artifacts/memoria-esp-vocat-keep-awake-app.bin`并覆盖了当时`.cache/upstream/build/memoria.bin`与`memoria.elf`。
+- **上一轮Product构建收据（已归档保留，未刷机）**：
+  - 归档目录：`outputs/acceptance/speaking-fix-20261116/product-e2ba62de/`（含`memoria.bin`、`memoria.elf`、`manifest.json`，未覆盖）。
+  - `memoria.bin`：大小`3,399,136`字节（`0x33dde0`），SHA-256 `e2ba62dec1b18d7e72296a81a45b812cf1727c1100b3ad52642305b59c1aff26`。
+  - `memoria.elf`：SHA-256 `f325885fe20b7e86f5f3fb65afcde78f7b204c4734e9eda47f951d2e368a3056`。
+- **本轮最终Review生命周期闭合后的本地Keep-Awake构建收据（仅本地构建与宿主验证，未刷机、未触碰串口）**：
+  - 执行`./firmware/esp32/scripts/build.sh --keep-awake --no-idf-install`与`./firmware/esp32/scripts/check-overlay.sh`通过。
+  - 归档目录：`outputs/acceptance/speaking-fix-20261116/keep-awake-0f890b03/`（含配对`memoria.bin`、`memoria.elf`、`manifest.json`）。
+  - `firmware/esp32/artifacts/memoria-esp-vocat-keep-awake-app.bin`与`firmware/esp32/.cache/upstream/build/memoria.bin`一致：大小`3,394,720`字节（`0x33cca0`），SHA-256 `0f890b03f0e8e1758c15667042b42f4e6cb5594172bbabb5131bfca70c9ba99a`。
+  - 配对`firmware/esp32/.cache/upstream/build/memoria.elf`：大小`46,342,344`字节，SHA-256 `59462f482cb45c49f3fcee182db864132e3db1ce8bb387a5ec9e6bb38089653b`。
+  - Overlay指纹：`e01a5a5e00b8813484399858379a308b229fa31ab64c05b019a18693f6f77aa7`。
+  - 宿主单测：`uv run --no-project --with pytest --with jsonschema pytest -q firmware/esp32/tests/ tests/test_r02_gates.py`共`872 passed, 1 skipped`（含`test_memoria_ws_tls_guard.py::test_real_websocket_and_protocol_retirement_lifecycle_across_all_disconnect_paths`覆盖正常关闭正控、对端Close控制帧`0x8`、写失败、EOF/读错且`OnDisconnected`跨超时in-flight、握手后`kSessionClosedBit`拒绝且`OnData`跨超时in-flight、`CloseAudioChannel`跨超时in-flight、以及接收回调内自断开7条真实类与调用路径）。
+  - **边界声明**：本轮仅完成本地代码修复、宿主回归与keep-awake镜像构建，**尚未刷入设备、尚未执行真机验证，不提前宣称真机speaking stall已治愈；正式R02仍暂停为0/155**。
+
+### 2026-11-16 Codex：协议整体 owner 延迟销毁，常醒待刷（R02 暂停）
+
+- 用户最新范围：修复后刷常醒，暂不跑 R02。Gemini 额度耗尽后用户明确切换 Codex。本轮未播放验收音频；Mac 输出已读回 40%、未静音。
+- 补齐上一候选的真实可达缺口：`Application::ResetProtocol()` 不再在回调未退出时直接释放 `protocol_`。新增 overlay 0050，通过主循环每秒调用 `PrepareForDestruction()`，保留整个协议对象直到所有退休 WebSocket 回调与接收任务退出。状态锁采用 try-lock，接收退出采用零等待轮询；关闭中拒绝重新打开、发送、关闭及活动状态查询。首次关闭立即推进 attempt fence，旧的排队 UI 回调失效。明确的 `Reboot()` 路径直接执行硬件重启，无须先析构仍在回调栈上的 C++ 对象。
+- 删除协议析构中 500ms 后继续销毁的错误宽限语义；析构要求退休 owner 已清空。主循环等待期间若某个回调永远不退出，最多保留当前协议对象，不能把超时当成安全释放依据，也不宣称该情况已恢复业务。
+- 宿主回归：`872 passed, 1 skipped`；最终生命周期专项 `6 passed`。新增场景提取生产 `PrepareForDestruction()`、`Application::ContinueProtocolReset()` 和协议析构，复用真实传输类及带成员 canary 的 WebSocket 宿主模型；分别覆盖回调持锁与不持锁超过 550ms、主线程快速返回、仍能使用协议 event group、最终回收所有 owner/TLS/event group。其余应用和硬件依赖仍为宿主替身，不替代真机验收。证据：`outputs/acceptance/speaking-fix-20261116/codex-owner-reset/{host-tests,lifecycle-tests,build}.log`。
+- `build.sh --keep-awake --no-idf-install` 成功；构建结束后单独运行 `check-overlay.sh` 通过（收据 `codex-owner-reset/overlay-check.log`）。配对归档：`outputs/acceptance/speaking-fix-20261116/keep-awake-5b7fa5e1/manifest.json`。BIN SHA-256 `5b7fa5e18c839e04ce18ccae50e326480c7a7a24ccf5e0b699361d2549c3575a`，ELF `5359ce3c5357db9eb29c4fdbfc402c3f866cc736536824f6fdc43099dde77b2a`，overlay `41a1c19cd1f7dbea038966b31ee1a702738ce2e3dd370983d9557c0f436d3a40`；归档 BIN 与 keep-awake artifact 字节一致。
+- **未刷机，未真机验证**：刷前只读备份连接失败，esptool 明确返回 `No serial data received`，未读取到 flash、未写入任何固件。USB 端口存在、无其他 owner，不足以证明深睡或设备在线。已请求用户重启/拔插 USB；恢复后才能执行受身份区保护的刷机、启动收据与常醒 USB 唤醒验证。失败证据：`outputs/acceptance/speaking-fix-20261116/codex-owner-reset/preflash-connect.log`。
+- 历史 gen25 故障仍没有现场线程栈；本轮源代码与宿主回归证明的是已发现的阻塞/生命周期机制得到修正，不宣称原始故障已真机治愈。R02 维持暂停，未新增通过计数。
+
+- 2026-11-16 15:00 用户报告已重启后的复核：USB 枚举仍为 Espressif USB JTAG_serial debug unit，端口 `/dev/cu.usbmodem101` 无其他占用；备份连接再次 `No serial data received`。唯一 logger 使用不复位方式打开并发送 `wake`，仅有发送收据，无设备回复或正常日志；停止 logger 后，115200 baud、`--before no-reset` 的 ROM `read-mac` 同样失败。未运行任何 write-flash，端口已释放。追加证据：`codex-owner-reset/preflash-backup-retry.log`、`preflash-live.log`、`rom-connect-no-reset.log`。仅凭这些证据不能认定深睡；需要物理 USB 重连/手动下载模式后再刷。
+
+### 2026-11-16 15:12 常醒已刷入并完成 USB 唤醒验证（替代上述待刷状态）
+
+- 用户拔插 USB 并确认屏幕亮起后，成功连接 ESP32-S3。刷前完整备份当前 ota_0、引导/分区表、NVS/otadata/phy、身份区；每个文件的本地 MD5 与芯片 MD5 相符，`BACKUP_OK`。备份目录 `outputs/acceptance/speaking-fix-20261116/pre-codex-flash/` 为 0700，备份文件 0600，未打印身份内容。
+- 按回写保护路径仅烧录 app 至 `0x20000`（3,395,168 字节）和 otadata 至 `0xd000`（本地断言精确 8,192 字节、全 0xff）；两项均 `Hash of data verified.`。写前/写后芯片 MD5 对比确认 boot/分区表、NVS、phy、身份及 assets 完全不变。应用 SHA-256 `5b7fa5e18c839e04ce18ccae50e326480c7a7a24ccf5e0b699361d2549c3575a`，收据 `codex-owner-reset/flash-receipt.json`、`flash.log`、`before-regions.json`、`after-regions.json`。
+- 15:06:12 激活成功，运行 `ota_0`，输出 `MEMORIA_KEEP_AWAKE_BUILD=1;`，进入 idle；15:06:27 熄屏。连续熄屏 **330 秒**，记录到 **33 次**主循环心跳，最大间隔 **10.17 秒**，无重启或进入深睡日志。USB logger 为唯一串口 owner。
+- 15:11:58 `usb wake accepted wake_mode=button`，随后 `screen on`；15:12:00 `connecting -> listening`、`Set input enable to true`。短欢迎语 15:12:03 进入 speaking、15:12:04 回到 listening。证据 `codex-owner-reset/keepawake-receipt.json` 和 `serial.log`。本次只验证常醒待机、USB 唤醒与短答通路；不替代实体触屏验证、原始长答 speaking 故障回归或 R02。
+- **R02 未运行、仍暂停**；电脑输出保持 40%、未静音。配对镜像 manifest 已更新 flashed/boot/keep-awake/USB 验证状态，旧候选与原机备份保留。
+
+### 2026-11-16 18:44–18:49 speaking 定向长答复验：阻塞，R02 未运行
+
+候选沿用已刷入 BIN 5b7fa5e18c839e04ce18ccae50e326480c7a7a24ccf5e0b699361d2549c3575a，无刷机或部署。Mac 40%、未静音。独占不复位 logger；18:44:46 USB wake accepted、screen on，18:44:49 listening/input true，欢迎语 gen1 正常结束。现有 voice_soak 驱动启动后未读到此前状态边沿，误 assume_idle，反复 wake/not_idle；未播放刺激，已中止并保留 turn1 日志。随后复用 voice_soak.speak 的 Tingting 播放函数，仅播放一次“请给我讲一个完整的孙悟空冒险故事，讲详细一点，至少讲两分钟，要有开头经过和结尾。”，刺激时间 18:46:17.962–18:46:28.238；播放前已有 resume_listening、closed=false、持续 VAD，且无 screen off。
+
+session 5a0e1f1a-3e02-4863-932e-0e06e215d966 / epoch1 / turn2：gen2 为短过渡语，有 provider_completed/playback_ended；正文 gen3 18:46:34.223 开始 speaking，18:48:32.998 返回 listening。Bridge 发出5920帧/118400ms，但终止为 generation_reset、preempted/superseded、status=aborted，provider_completed=False、playback_ended=False；设备 gen3 close=generation_switch、output_frames=5915、supply_waits=1/max4ms，不能当自然完成或逐帧守恒通过。主循环心跳及上行/VAD持续，未复现历史约34秒主循环消失；没有原gen25现场线程栈，不能声称原始根因绝对锁定或修复治愈。
+
+有效自然结束长答0次。发现异常立即停止后续刺激，未继续第2/3次；superseded 的触发原因待查，不推断为同一固件故障。下一步只读沿该session/turn追查服务端取消来源，解决后再定向复验。R02及整套Safety/Soak均未运行，门槛和停止词未改。服务端仅docker logs读取；本次logger及驱动/SSH已停止，串口释放。无声学录音/人工听感验收，亮屏仅固件日志证据。
+
+原始证据：outputs/acceptance/speaking-fix-20261116/run-long-targeted/（serial.log、bridge.log、edge.log、control.log、stimulus1.aiff/json、turn1/、result.json）。
+
+
+### 2026-11-16 长答 superseded 只读定位
+
+线上关键源文件哈希与本地一致；DEEP_RESULT 在结果接收时设置120秒 delivery TTL，generation提升保留过期时间，播放期间逐帧选择会淘汰过期intent并以superseded取消。此次取消距结果入队120.013554秒，精确吻合该路径；现场缺少intent淘汰字段，具体分支仍需离线边界复现或最小诊断闭环，不声称已直接观测。线上镜像revision=f4f38dd942858c2fbf78cdeba75a6d63538a5f14，output stall timeout=45秒且逐帧续期。不是speaking固件自行结束的证据；自然完成长答仍0，R02/Safety/Soak暂停，无播放/串口/部署。详见 outputs/acceptance/speaking-fix-20261116/run-long-targeted/cancellation-investigation.md。
+
+
+## 2026-11-16 TTL 部署前置核查（route: delegate）
+
+线上 bridge healthy、restart=0，仍为 f4f38dd942858c2fbf78cdeba75a6d63538a5f14；两源码 hash 与原调查相同。部署尚未开始：发布器要求整个 checkout 干净，当前 HEAD 相对线上在运行归档相关范围存在140文件差异，不能将原 dirty 或无关已提交改动上线。按用户指令未自行创建 worktree，已准备三文件 ttl-only.patch，需父代理提供以线上 revision 为基线的独立 checkout 后继续完整门禁、回滚准备及切流。证据：outputs/acceptance/speaking-fix-20261116/server-long-answer-ttl/deploy-preflight/{handoff.md,receipt.json,live.txt,base-to-head.txt}。本轮未部署、未打开串口、未播放音频，自然完成新增0；R02/Safety/Soak暂停、不刷固件。音量读回40%未静音，无本轮后台进程需释放。
+
+
+### 2026-11-16 TTL scoped Agent release; targeted hardware incomplete
+
+ 61e75ec82686cbfdaae9515b5800df6e667d0a19, tag 20261116-deep-result-ttl-r3. Compared with live f4f38dd942858c2fbf78cdeba75a6d63538a5f14: only two source files and test_output_delivery_ttl.py. Exemption only for DEEP_RESULT after transport acceptance. Original conversation expiry/flush regression unchanged and passing. Added real stream fake-clock crossing TTL with provider completion and playback acknowledgement. Full deploy gates passed twice; existing unraisable coroutine cleanup warnings remain recorded. No skip-gates or deployment tool changes. Live baseline audit: 1312 tracked overlay files, zero discrepancies.
+
+Deployed: Agent-only cutover at 2026-11-16T11:32:16Z, candidate image ac31613c76e9c4df30d6d9efe2a7a04d7b297ea414b0e0aa7ab5b3c458c4d773. Active sessions were zero during build immediately before cutover. Runtime revision and both source hashes match candidate; final healthy/restart0. Rollback image memoria-agent:rollback-20261116-deep-result-ttl-r3-pre retains original sha256:63b1808cbc4ce2a2260a019e30aa417716aa744a76ad7d8b7d926df84ce6e920. Exact remote deployment directory /opt/memoria/component-releases/20261116-deep-result-ttl-r3 includes rollback compose override and ROLLBACK_POINT. No rollback executed: deployment passed and no evidence ties the later acoustic/ASR anomaly to TTL changes.
+
+Hardware: one stimulus, gen3 emitted 5241 frames /104820ms, provider_completed + playback_ended + speaking->listening. Device speaking 105.221 seconds, therefore DOES NOT meet >120s. Main-loop SystemInfo heartbeat continued. No qualifying >120s completion; interruption not run. No new firmware flashing. Prior firmware SHA is inherited from supplied receipt, not re-read from flash. Fresh wake/screen/listening/mic and continuous VAD recorded before stimulus; brightness evidence is serial, not physical photo.
+
+Anomaly: at 11:35:19.364Z (1.886s after reply returned to listening), unsolicited VAD start; 900ms segment, ASR both providers failed; 11:35:27.923Z empty+vendor_silent tail timeout; gen4 auxiliary empty-input fallback then naturally ended. No second stimulus was played. This is distinct from gen3 TTL cancellation; acoustic source remains unproven. Stopped further stimuli under requested anomaly rule. Raw microphone recording retained but not calibrated for absolute silence timing; no silence verdict claimed. USB status command was ignored by this firmware; no second serial connection was opened.
+
+Serial logger and bridge/edge followers and microphone recorder stopped; lsof empty and logger socket absent. R02/Safety/Soak remain paused. Hardware acceptance remains incomplete.
+
+Evidence: outputs/acceptance/speaking-fix-20261116/ttl-release-isolated/receipt.json and receipt.md.
+
+
+### 2026-11-16 TTL发布后无刺激VAD只读取证
+
+route: self；保留全部既有dirty，未操作串口/播放/刷机/部署/源码。详见 `outputs/acceptance/speaking-fix-20261116/ttl-release-isolated/anomaly-investigation.md` 及 `anomaly-source-hashes.json`。运行61e75ec8/image ac31613c，healthy/restart0，五处源码hash核对一致。listening实际为11:35:17.478Z，VAD为19.364Z；设备sample匹配900ms。ASR为无可接受文本，未证明网络或供应商故障；gen4符合现行能量门控空输入兜底策略，声源未知。未发现TTL因果证据，不建议据此回滚。可在重新确认安静环境/fresh listening且无刺激观察稳定后恢复原授权单次>120s及打断；复现则停止并先调查输入链。本轮未执行复验，原104820ms仍不满足>120s，打断未验收。R02/Safety/Soak继续暂停。
+
+
+### 2026-11-16 19:42 定向复验：安静窗口重复无刺激VAD，未通过
+
+route: self，无子代理。线上核验 revision 61e75ec82686cbfdaae9515b5800df6e667d0a19，r3 镜像匹配，healthy/restart0。未部署、改源码、刷机或回滚；旧 dirty 保留。
+
+一次 USB wake，经独占 logger（RTS false / DTR true before open）发送。19:42:08 fresh listening/mic true，screen 证据见 serial.log；无物理屏幕照片。欢迎语于19:42:12.469设备回 listening，之后19:42:13.505开始无测试刺激 VAD，安静窗口未通过。采集尾部仅作被动取证，没有任何长答提示或停止词播放，没有循环重试。
+
+完整 fence 共用 session=c827c1ac-ad6d-4608-b305-bf93081aa0ff / session_epoch=1 / stream_epoch=3246 / turn_id=1 / tool_epoch=0：gen1欢迎语70帧/1.400秒；gen2空输入兜底171帧/3.420秒。两者都有 provider_completed、playback_ended；设备 speaking→listening 见serial。均不是长答验收。主循环SystemInfo心跳 2 次，设备tick最大间隔 22.0 秒，仅说明本捕获窗口。
+
+设备五段VAD样本64960..80640、98240..118720、140160..155520、174080..193920、213440..228160，对应0.980、1.280、0.960、1.240、0.920秒。ASR未获得可接受文本，SenseVoice HTTP200及FunASR task boundary均存在；11:42:31.740Z empty+vendor_silent tail timeout并请求兜底，随后gen2自然完成。原始供应商返回未保留，不能判为供应商故障；非零PCM统计不能证明人声，不能判为硬件回声。另有唤醒初始化 i2s_channel_disable channel has not been enabled yet 日志，其因果关系未知。
+
+>120秒自然完成与主动打断本次均未运行，历史未通过项不计通过。stop判定/cancel/stopped及实际静音均未测试。房间录音acoustic.wav保留，未做UTC逐样本校准或声源鉴定，不给silence通过。固件身份继承用户keepawake5b7fa5e1，未读取flash。
+
+结束串口释放=True，socket不存在=True，残留自启动进程=''。音量读回output volume:40, input volume:94, alert volume:100, output muted:false。R02/Safety/Soak暂停。没有新证据支持回滚TTL。
+
+证据目录：outputs/acceptance/speaking-fix-20261116/targeted-resume-20261116-1942（receipt.json、serial/bridge/edge日志、acoustic.wav）。
+
+
+### 2026-11-16 输入异常只读调查
+
+route: self，无子代理，无设备操作或源码改动。详见 `outputs/acceptance/speaking-fix-20261116/targeted-resume-20261116-1942/input-investigation.md` 与 `audio-analysis.json`。SystemInfo计数在状态切换清零，22秒间隔不是连续阻塞证据；纯能量owner bypass可触发空识别主动回复，输入声源仍未知。WAV实际37.5583125秒与录制媒体时间45.19秒不一致，缺PTS映射，不能精确对齐或声源定性。原有恢复刺激建议被本次失败取代；R02/Safety/Soak保持暂停，>120秒与主动打断仍未验收。
+
+
+## 2026-11-16 空识别静默上线与一次安静窗口
+
+22129336 / 20261116-empty-asr-owner于13:21:52Z完成Agent-only部署，完整门禁通过（2协程警告），运行1313覆盖文件与Git零差异，healthy/restart0；r3独立rollback保留。一次45秒无刺激窗口仅欢迎语，0次VAD start，无空ASR提交，故现场quiet分支未命中、物理声源未知。未再试、未刷机；>120秒/主动打断未验收，R02/Safety/Soak暂停。收据：outputs/acceptance/speaking-fix-20261116/empty-asr-release-live/receipt.md及receipt.json。串口/自有后台释放，音量40%未静音。
+
+
+### 2026-11-16 单次50秒无刺激上行取证
+
+route: self；[报告](../outputs/acceptance/speaking-fix-20261116/uplink-live-50s/report.md)、[机器收据](../outputs/acceptance/speaking-fix-20261116/uplink-live-50s/receipt.json)。远端50秒timeout退出124；0 captured/received/dropped，无自然连接和handshake，audit拒绝导出PCM，无VAD/空识别可验。未取得fresh idle证据，未wake，未追加窗口。自有进程已退出、串口释放。声源未知；R02/Safety/Soak/长答/主动打断暂停。下一最小动作是补齐明确设备idle状态观测，再安排先抓包后正常USBwake的完整握手窗口；未实施固件或生产修改。
+
+
+## 2026-11-16 单次wake上行取证
+
+详见 `outputs/acceptance/speaking-fix-20261116/uplink-wake-once/report.md`。一次正常wake accepted，握手成功，1699帧/543680 samples/33.98秒连续上传基线，内核drop=0。无VAD；30秒无语音待机关闭，空识别静默未命中，物理声源未知。不追加窗口；自有捕获/logger/SSH退出、串口释放。未部署刷机或改配置，原dirty保留。
+
+
+### 2026-11-16 upstream-gap 离线核查
+
+route: self，无子代理，无设备/串口/SSH/采集/播放/部署/源码修改。按线上22129336的git show确认欢迎语正常完成也同步调用reset_for_gap；15.644543 reset之后0.246ms记录playback_ended，符合正常轮换。1699帧sample gap全0，pcap相邻最大59.795ms，无3秒传输空窗；pcap不是应用monotonic，不推断无应用排队。未发现新的输入处理缺陷证据，无需据此修复。两次无VAD窗口及最新连续低能量音频足以有条件恢复原授权>120秒长答/主动打断定向复验，本轮未执行；声源未知、空识别静默现场分支未验收，R02/Safety/Soak继续暂停。详见 outputs/acceptance/speaking-fix-20261116/uplink-wake-once/gap-investigation.md 及 gap-frame-analysis.csv。
+
+## 2026-11-16 21:45 定向长答与主动打断复验（未通过，非计划停止后终止）
+
+route: self，无子代理。只读核对线上 `221293366e16ab0bb1585b912e79276445a0905f`，bridge/edge前后healthy/restart0；唯一logger正常USB wake一次。欢迎结束后直接提示，fresh listening/mic/screen来自持续串口状态。session `b73e8e14-6645-4153-8478-b0445c58c591` / stream3249 / session_epoch1：首个正文turn2/gen3自然完成5529帧=110.580秒，provider_completed、playback_ended、设备speaking→listening齐全，但短于>120秒门槛；仅调整一次提示后turn3/gen5发送17.400秒、设备输出17.160秒，未播放测试停止词却出现ASR final text_len2 / stop_word=True / echo=False，server cancel→generation6，设备切代回listening。因此停止后续刺激，独立“停一下”未执行，两项目标均未通过，不拼代凑时长。
+
+原ASR文本和上传PCM缺失，不能判断声源或认定回声/误识别；空ASR静默分支未命中，不宣称输入治愈。20条SystemInfo按State切换分段，同状态最大间隔10.040秒，DTLN100→10600、decode dropped0，无证据将状态重置间隔判为阻塞。本轮房间录音有逐块ADC/UTC映射且没有拉伸；CoreAudio约0.1秒抖动，停止前后RMS无清晰下降，silence_verdict=unverified。正常stop/cancel回执不替代听觉静音，也不算计划主动打断通过。
+
+收据：[targeted-long-stop-20261116-2144/receipt.md](../outputs/acceptance/speaking-fix-20261116/targeted-long-stop-20261116-2144/receipt.md)，同目录含receipt.json、fence-evidence.log、main-loop.json、acoustic-analysis.json、room-blocks.jsonl及原始日志。未部署、改源码/配置、刷固件；既有dirty保留；R02/Safety/Soak未运行。自有串口/socket及本地/远端日志进程已释放，电脑40%未静音。
+
+### 2026-11-16 未播放停止词却触发 media_voice_stop：只读离线调查
+
+route: self，无子代理；无SSH/新采集/播放/trace/部署/刷机/源码规则修改。按线上revision `221293366e16ab0bb1585b912e79276445a0905f` 的git show核实：目标session b73e8e14-6645-4153-8478-b0445c58c591的final经词法控制路径取消turn3/gen5并gen6 flush；owner仅输出对象存在，echo仅文本启发式，均不证明声源/声纹。存在正常ASR reset和区间保护，没有足以认定本次确定逻辑缺陷或旧窗口残留的证据；缺原文及同session uplink PCM，根因未闭合。本地历史检索未取得原文，未声称远端历史已穷尽。
+
+gen3的110.580秒发送/设备帧及自然完成回执成立，内容完整性未闭合：首提示有ASR backup 12秒截断日志，live-search返回487字符，同时间窗TTS部分失败日志缺session/fence归属，不能据此断言完整或截断。房间录音按逐块映射导出55.1秒/20.1秒原样宽窗，未听辨，约±100ms抖动，不以能量推断仍播或静音。已有文本白名单仅subject/device、启动读取、无session-only/TTL；PCAP提取器120秒硬限，不能覆盖原三分钟序列。报告给出先查目标历史、再另行授权短时有界诊断的配置hash/权限/截止/独立恢复/收据步骤；本轮未启用。R02/Safety/Soak、长答/主动打断继续暂停，不盲跑。
+
+详见 [stop-investigation.md](../outputs/acceptance/speaking-fix-20261116/targeted-long-stop-20261116-2144/stop-investigation.md)。原有dirty及原始证据保留，校验见同目录investigation-validation.json。
+
+
+### 2026-11-16 远端历史只读取证：非计划停止 session b73e8e14
+
+route: self，无子代理。实际SSH memoria-prod检索现存syslog/轮转、docker历史窗、先schema后只读SQL、容器内只读spool。目标归档2条无文本用户事件、0转写版本/音频blob；spool仅2条目标播放元数据；delivery表18条。未恢复stop两字/task/provider时间或原PCM。live-search线上源码存在160/320 token限制且不保留finish_reason，但实际截断未知；TTS失败request仍未绑定session；backup截断日志在是否调用/采用backup之前产生，不能证明采用。详见 `outputs/acceptance/speaking-fix-20261116/remote-history-20261116-2206/report.md`。
+
+Compose真实service/profile/3文件、env_file、hash及有效环境已核对，独立恢复的systemd能力存在，未创建/测试恢复timer。现有白名单只能单设备，不能session硬隔离；下一诊断尚不具备已验证自动恢复。此为本任务只读边界，不是撤回父任务既有授权。未改设备/源码/生产配置，原dirty保留；R02/Safety/Soak、新长答/打断继续暂停。
+### 2026-11-16 目标设备短时 speaking 诊断：已恢复，根因仍未闭合
+
+按用户授权，对 `dev_atk_a4cb8fd6095c` 执行一次设备级短诊断。恢复前无最近10分钟活动session；临时白名单只通过独立Compose override注入，同镜像 bridge 重建后健康。真实 `systemd-run --wait` verify-only 收据为 `verify_only_pass`，180秒 transient timer 曾处于 `active/waiting`；提前结束后恢复单元实际重建原三Compose配置并写出 `restore_verified`，原5个配置hash、image/revision、healthy/restart0和诊断变量unset均复核一致。transient timer不声明覆盖宿主重启。
+
+唯一串口logger正常wake一次，fresh listening/mic/screen证据后只播放一条短故事；新session为 `f168e05e-c202-46a3-a28e-f8308e181e1e` / stream 3251。目标绑定日志记录了DTLN processed计数、provider/playback fence和设备 speaking→listening；未见 `media_voice_stop`。没有播放停止词或循环重试。tcpdump先达到lo/EN10MB listening，原始PCAP全程内存管道，但 `scripts/extract_device_uplink_pcap.py --include-downlink` 因完整握手/证据条件拒绝，未取得可用PCM。
+
+本次白名单未产生可用 `asr_text_debug` 行，因此真实ASR文本、task/sentence/provider区间、mapped sample及PCM仍缺失；不能声称声源定位或根因修复。串口、抓包、follower和socket已释放，电脑音量40%且未静音。R02、Safety、Soak、>120秒和主动打断验收继续暂停。机器收据：`outputs/acceptance/speaking-fix-20261116/targeted-diagnostic-20261116-2216/receipt.md`。
+
+### 2026-11-16 取证链自身失败修复：仅离线验证
+
+本轮不再真机重试。对 `221293366e16ab0bb1585b912e79276445a0905f` 的白名单传递、字段名、INFO/stdout 日志路径做了源码核对，并只读查询目标 session `f168e05e-c202-46a3-a28e-f8308e181e1e` 在 `14:31:15Z..14:33:08Z` 的 bridge/edge/control-api 日志；目标窗口仍无 `asr_text_debug`，没有原始 ASR 文本或 PCAP，不能把现场拒绝归因为缺握手，也不能把环境变量存在当作 logging 生效。详见 `outputs/diagnostic-chain-repair/report.md` 和私有目标窗口收据 `outputs/diagnostic-chain-repair/remote-target-window.log`。
+
+新增 `outputs/diagnostic-chain-repair/capture_chain.py` 仅修复本地新 runner：保留 32 MiB/4 MiB/120 秒/125 秒及 include-downlink 完整性条件，固定 tcpdump SIGINT 最终统计→stdout EOF→extractor 完成→restore 顺序，使用自有进程组、幂等的新输出目录和阶段化 reason；不落盘 PCAP、token、HTTP header 或原文。离线 fixture 已通过正常完成、提前截断和缺统计三条路径；R02、Safety、Soak、>120 秒及主动打断继续暂停。没有原始 PCAP，现场根因仍为证据缺失。
+
+
+### 2026-11-17 speaking 诊断只读阻塞：清理前历史快照
+
+本轮先只读核对线上：bridge 仍为 `221293366e16ab0bb1585b912e79276445a0905f` / `sha256:5eeb3b81f1f91a62bf3b003f2f37cbde571357bbbc9cfac7d5065edf48067ee8`，healthy、restart=0，`media_active_sessions 0.0`，诊断变量未设置；Compose 基线哈希也未变化。串口 `/dev/cu.usbmodem101` 最终无 owner，音量40且未静音。
+
+远端根分区实际 `91%`、可用 `3.7GB`，超过 `memoria-disk-patrol.service` 的 `crit_pct=85`；该只读巡检自 `2026-11-16 22:23:01 CST` 失败并重复记录 `status=2/INVALIDARGUMENT`。服务栈仍健康，但临时 Compose 重建、独立180秒恢复 timer 和不落盘PCAP的受控执行不在该安全条件下继续。本次没有创建 timer、注入白名单、重建容器、wake、播放或抓包。
+
+
+离线 runner 已补充两个约束：只有收到明确 `tcpdump: listening on lo, link-type EN10MB` 才触发就绪回调；恢复截止可由实际变更前建立的绝对 Unix deadline 传入，不随较晚启动 runner 重算。新增回归后 `20` 项 capture-chain 测试通过。独立收据：[speaking-fix-20261117/receipt.md](../outputs/acceptance/speaking-fix-20261117/receipt.md)。R02、Safety、Soak、`>120s`、主动打断和 silence 结论继续暂停，声源与 speaking/非计划ASR停止根因仍 unknown。
+
+### 2026-11-17 单次 speaking 诊断续跑：抓包未完成，未刺激
+
+用户确认远端磁盘清理后继续。实时复核 `/` 为66%、可用13,565,080 KiB；Bridge `memoria-agent:20261116-empty-asr-owner`、image `sha256:5eeb3b81f1f91a62bf3b003f2f37cbde571357bbbc9cfac7d5065edf48067ee8`、revision `221293366e16ab0bb1585b912e79276445a0905f`，healthy/restart0，`media_active_sessions 0.0`。回滚镜像 `memoria-agent:20261116-deep-result-ttl-r3` 仍在，image id `sha256:ac31613c76e9c4df30d6d9efe2a7a04d7b297ea414b0e0aa7ab5b3c458c4d773`。
+
+五个生产 Compose/environment 文件的SHA-256基线全部复核一致。root-only恢复脚本的真实 systemd verify-only 经 Bash 调用两次通过；failsafe transient timer 在任何运行配置修改前建立并确认 active。runner 收到 `tcpdump: listening on lo, link-type EN10MB`，但本地监督进程未维持至120秒捕获结束，缺 `capture_finished`、tcpdump最终统计和完整字节数收据；未形成提取输入。timer随后停止并验证 inactive，临时远端目录已清理。此次没有应用设备白名单、重建容器或修改生产环境。
+
+证据不完整后立即停止：没有串口logger、USB wake、故事播放、目标session/stream、ASR日志或PCAP提取；提取器未运行，不宣称PCM或根因。`/dev/cu.usbmodem101`无owner，输出40%未静音；当前与回滚镜像均保留。分阶段收据在 `outputs/acceptance/speaking-fix-20261117/capture-chain-001/`。R02、Safety、Soak、`>120s`与主动打断继续暂停。
+
+### 2026-11-17 runner 生命周期修复与受控真机复测：源证据门禁失败，R02 未启动
+
+本轮修复 `outputs/diagnostic-chain-repair/supervise_capture.py`，让外层监督必须等待 runner 的最终 `receipt.json`，而不是在 `capture_ready` marker 后返回；并记录 `pipes_eof` 和 capture elapsed。22 项 runner 测试通过，另有真实 121 秒子进程回归：ready 后等待最终统计与 EOF 才结束，空输入按预期被 extractor 拒绝，未写入 PCAP。
+
+随后按授权在目标设备 `dev_atk_a4cb8fd6095c` 做一次受控窗口，串口 `/dev/cu.usbmodem101`，音量40未静音，未刷固件。独立恢复 verify-only 与 transient timer 在配置变更前通过并 active；仅注入 `ASR_TEXT_DEBUG_LOG_SUBJECTS=dev_atk_a4cb8fd6095c`，global trace 与 PCM tap 保持关闭。tcpdump ready 后启动唯一 logger，正常 USB wake 一次，fresh listening/mic/screen 串口证据成立，播放一次短故事；未播停止词、未做长答或主动打断。
+
+本次 capture 监督确实等待到最终 EOF：`5202 packets captured`、`10404 packets received by filter`、`0 packets dropped by kernel`，内存输入737283字节。但 extractor fail-closed：`Capture rejected; no successful evidence. Check bounds and handshake.` 因此没有有效 PCAP/PCM/metadata，未伪造或落盘 PCAP。白名单已显示 `configured=1 trace=False`，目标 session `b8de4525-a4f3-4754-a6ab-ed0d93d4f424` / stream3252 有非零 provider PCM 的 boundary 记录，却没有 `asr_text_debug` final；其中一段被记为 `empty+vendor_silent`，随后出现 `text_len=19` 的正常回复提交。该异常不足以区分声学、供应商、传输或日志路径根因，source gate FAIL。
+
+恢复已验证：bridge 回到同一 image `sha256:5eeb3b81...`、revision `221293366...`，healthy/restart0；五个配置 hash 匹配，诊断变量 unset，timer/service inactive，临时目录删除；logger/socket/串口均释放，音量读回40未静音。结论：code PASS，deployed unchanged，hardware 仅证明 wake/readiness/短刺激，source FAIL，silence UNKNOWN。按前置门禁停止，R02 未运行；不绕过 extractor 失败，也不把这次硬件窗口记为 R02 或 stop/silence 通过。完整收据：`outputs/acceptance/speaking-fix-20261117/receipt.md`。
