@@ -10,9 +10,11 @@ Hard bounds: 16 flows, 32 MiB input, 128 KiB per reassembly/parser buffer,
 125-second wall alarm. One target session, starting at audio sequence/sample 0.
 Unsupported link types, IP fragments, sequence wrap and reconnects fail closed.
 
---include-downlink additionally saves fresh 16 kHz mono generations observed
-on Edge->Nginx loopback, not internet transmission, device receipt or audible
-proof. It requires accepted 16 kHz with no reconnect snapshot. Downlink PCM is
+--include-downlink additionally saves fresh mono generations at the 16 kHz or
+24 kHz rate negotiated in session.accepted, observed on Edge->Nginx loopback,
+not internet transmission, device receipt or audible proof. It requires an
+accepted downlink_sample_rate of 16000 or 24000 with no reconnect snapshot.
+Downlink PCM is
 limited to 4 MiB TOTAL, with at most 256 generations and 4096 allowlisted control
 records; audio metadata is bounded by the PCM limit. No text/reasons are saved.
 Each generation begins at seq/sample 0 with a new decoder. Completed means an
@@ -328,7 +330,7 @@ class WS:
 
 
 class Opus:
-    def __init__(self, path):
+    def __init__(self, path, rate=16000, frame_samples=320):
         try:
             self.lib = ctypes.CDLL(path)
         except OSError:
@@ -349,16 +351,18 @@ class Opus:
         ]
         self.lib.opus_decoder_destroy.argtypes = [ctypes.c_void_p]
         code = ctypes.c_int()
-        self.state = self.lib.opus_decoder_create(16000, 1, ctypes.byref(code))
+        self.state = self.lib.opus_decoder_create(rate, 1, ctypes.byref(code))
         require(self.state and code.value == 0, "opus_decoder_unavailable")
+        self.frame_samples = frame_samples
 
     def decode(self, data):
-        out = (ctypes.c_int16 * 320)()
+        out = (ctypes.c_int16 * self.frame_samples)()
         require(
-            self.lib.opus_decode(self.state, data, len(data), out, 320, 0) == 320,
+            self.lib.opus_decode(self.state, data, len(data), out, self.frame_samples, 0)
+            == self.frame_samples,
             "opus_decode_failed",
         )
-        return struct.pack("<320h", *out)
+        return struct.pack(f"<{self.frame_samples}h", *out)
 
     def close(self):
         if self.state:
@@ -406,6 +410,9 @@ class Downlink:
         self.total_pcm = 0
         self.decoder = None
         self.closed = False
+        self.rate = 16000
+        self.frame_samples = 320
+        self.frame_bytes = 640
 
     def end_decoder(self):
         if self.decoder:
@@ -523,7 +530,8 @@ class Downlink:
             "!BBHIIQIIH", payload[:30]
         )
         require(
-            (version, direct, flags, epoch, count) == (1, 2, 0, self.flow.epoch, 320),
+            (version, direct, flags, epoch, count)
+            == (1, 2, 0, self.flow.epoch, self.frame_samples),
             "downlink_audio_header_invalid",
         )
         require(
@@ -541,11 +549,11 @@ class Downlink:
             )
         else:
             require(seq == 0 and sample == 0, "downlink_audio_first_frame_discontinuous")
-        require(self.total_pcm + 640 <= MAX_DOWNLINK_PCM, "downlink_pcm_limit")
+        require(self.total_pcm + self.frame_bytes <= MAX_DOWNLINK_PCM, "downlink_pcm_limit")
         if self.decoder is None:
-            self.decoder = Opus(self.flow.owner.libopus)
+            self.decoder = Opus(self.flow.owner.libopus, self.rate, self.frame_samples)
         g["pcm"].extend(self.decoder.decode(payload[30:]))
-        self.total_pcm += 640
+        self.total_pcm += self.frame_bytes
         g["sample_end"] += count
         g["frames"].append(
             {
@@ -752,14 +760,22 @@ class Flow:
                 )
                 self.accepted = True
                 rate = msg.get("downlink_sample_rate")
-                counts["accepted_downlink_sample_rate"] = rate if rate in (16000, 24000) else -1
+                counts["accepted_downlink_sample_rate"] = (
+                    rate if type(rate) is int and rate in (16000, 24000) else -1
+                )
                 if self.downlink:
-                    require(rate == 16000, "session_accepted_downlink_rate_unsupported")
+                    require(
+                        type(rate) is int and rate in (16000, 24000),
+                        "session_accepted_downlink_rate_unsupported",
+                    )
                     require(
                         msg.get("current_fence") is None
                         and msg.get("current_generation_active") is False,
                         "session_accepted_reconnect_snapshot",
                     )
+                    self.downlink.rate = rate
+                    self.downlink.frame_samples = rate // 50
+                    self.downlink.frame_bytes = 2 * self.downlink.frame_samples
                 else:
                     self.session = None
                 counts["target_accepted"] = 1
@@ -934,9 +950,10 @@ class Capture:
             self.counts["pcap_records"] += 1
             self.packet(raw, timestamp)
         f = self.selected
+        # Order only chooses which reason is reported when several end
+        # conditions fail: transport/integrity gaps outrank session-content
+        # shortfalls.
         require(f is not None, "target_handshake_not_found")
-        require(f.accepted, "target_session_not_accepted")
-        require(f.frames, "uplink_audio_absent")
         require(all(not t.pending for t in f.tcp), "tcp_reassembly_gap")
         for d in (0, 1):
             require(f.fins[d] is None or f.fins[d] == f.tcp[d].next, "tcp_reassembly_gap")
@@ -948,6 +965,8 @@ class Capture:
             all(not w.buffer.data and w.opcode is None for w in f.ws),
             "websocket_frame_incomplete",
         )
+        require(f.accepted, "target_session_not_accepted")
+        require(f.frames, "uplink_audio_absent")
         return f
 
     def close(self):
@@ -979,13 +998,13 @@ def save(flow, directory):
         "aec_effectiveness": "unknown",
         "frames": flow.frames,
     }
-    files = [("uplink.wav", flow.pcm)]
+    files = [("uplink.wav", flow.pcm, 16000)]
     if flow.downlink:
         dl = flow.downlink
         generations = []
         for index, g in enumerate(dl.generations):
             name = f"downlink-{index:03d}.wav"
-            files.append((name, g["pcm"]))
+            files.append((name, g["pcm"], dl.rate))
             generations.append(
                 {k: v for k, v in g.items() if k != "pcm"}
                 | {"wav": name, "pcm_sha256": hashlib.sha256(g["pcm"]).hexdigest()}
@@ -994,23 +1013,23 @@ def save(flow, directory):
             "observation_point": "edge_to_nginx_loopback",
             "internet_send_device_receive_audible": "unverified",
             "capture_tail": "unknown",
-            "sample_rate": 16000,
+            "sample_rate": dl.rate,
             "integrity": "server_emitted_contiguous_prefixes",
             "completion_scope": "observed_edge_barrier_only_no_final_sample_count",
             "decoder_equivalence_to_production": "unverified",
             "generations": generations,
             "controls": dl.controls,
         }
-    files.append(("metadata.json", metadata))
+    files.append(("metadata.json", metadata, None))
     created = []
     try:
-        for name, data in files:
+        for name, data, rate in files:
             fd = os.open(directory / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             created.append(name)
             with os.fdopen(fd, "wb") as out:
                 if name.endswith(".wav"):
                     with wave.open(out, "wb") as wav:
-                        wav.setparams((1, 2, 16000, 0, "NONE", "not compressed"))
+                        wav.setparams((1, 2, rate, 0, "NONE", "not compressed"))
                         wav.writeframes(data)
                 else:
                     out.write(json.dumps(data, separators=(",", ":")).encode())
@@ -1047,7 +1066,7 @@ def main():
     parser.add_argument(
         "--include-downlink",
         action="store_true",
-        help="save bounded 16k Edge-to-Nginx reference prefixes; not audible proof",
+        help="save bounded Edge-to-Nginx reference prefixes at the negotiated 16k/24k rate; not audible proof",
     )
     args = parser.parse_args()
     if not args.libopus:
