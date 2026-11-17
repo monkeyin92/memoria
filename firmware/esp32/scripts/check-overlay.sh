@@ -80,6 +80,8 @@ MEMORIA_ESP32_UPSTREAM_DIR="$MEMORIA_UPSTREAM_DIR" "$python_bin" \
     "$MEMORIA_FIRMWARE_ROOT/tests/test_memoria_speaking_first_frame.py"
 MEMORIA_ESP32_UPSTREAM_DIR="$MEMORIA_UPSTREAM_DIR" "$python_bin" \
     "$MEMORIA_FIRMWARE_ROOT/tests/test_memoria_playout_prefill.py"
+MEMORIA_ESP32_UPSTREAM_DIR="$MEMORIA_UPSTREAM_DIR" "$python_bin" \
+    "$MEMORIA_FIRMWARE_ROOT/tests/test_memoria_ws_tls_guard.py"
 rg -q 'server_decode_queue_drops_\.fetch_add' "$MEMORIA_UPSTREAM_DIR/main/audio/audio_service.cc" || \
     die "media decode drops must be counted without receive-path serial I/O"
 rg -q 'ServerDecodeQueueDrops\(\)' "$MEMORIA_UPSTREAM_DIR/main/application.cc" || \

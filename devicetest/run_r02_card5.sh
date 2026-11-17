@@ -13,6 +13,7 @@ RUN="devicetest/r02-${STAMP}"
 SUITE=all
 VOLUME=30
 PORT=""
+BANK="outputs/voice-bank"
 CANDIDATE="memoria-agent:20261106-card5-committed-boundary-v1"
 REM=memoria-prod
 while (($#)); do
@@ -21,6 +22,7 @@ while (($#)); do
     --suite) SUITE="${2:-}"; shift 2 ;;
     --candidate) CANDIDATE="${2:-}"; shift 2 ;;
     --port) PORT="${2:-}"; shift 2 ;;
+    --bank) BANK="${2:-}"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -30,6 +32,7 @@ case "$SUITE" in
   *) echo "suite must be a, b, c, d or all" >&2; exit 2 ;;
 esac
 [[ "$VOLUME" =~ ^[0-9]+$ ]] || { echo "volume must be an integer" >&2; exit 2; }
+[[ -n "$BANK" ]] || { echo "FAIL: bank directory must not be empty" >&2; exit 2; }
 [[ -n "$PORT" ]] || PORT=$(ls /dev/cu.usbmodem* 2>/dev/null | head -1)
 [[ -n "$PORT" ]] || { echo "FAIL: no serial port" >&2; exit 2; }
 mkdir -p "$RUN/scenarios" outputs/acceptance
@@ -76,6 +79,24 @@ for suite in $SUITES; do
 
   [[ -f "$scen" ]] || { echo "FAIL: missing scenario $scen" >&2; FAILED+=" $suite(scenario)"; continue; }
 
+  if ! uv run --no-project python - "$scen" "$BANK" <<'PYBANK'
+import json, sys
+from pathlib import Path
+raw = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+steps = raw if isinstance(raw, list) else raw["steps"]
+bank = Path(sys.argv[2])
+missing = [str(bank / (step["tag"] + suffix + ".wav"))
+           for step in steps
+           for suffix in (("", "-stop") if step.get("interrupt") else ("",))
+           if not (bank / (step["tag"] + suffix + ".wav")).is_file()]
+if missing:
+    raise SystemExit("Missing bank clips: " + ", ".join(missing))
+PYBANK
+  then
+    FAILED+=" $suite(bank)"
+    continue
+  fi
+
   uv run --no-project python - "$scen" "$manifest" "$suite" <<'PYMANIFEST'
 import hashlib, json, sys
 from pathlib import Path
@@ -117,7 +138,7 @@ PYRESET
   echo "--- suite $suite ($name) start $(date -Iseconds)" | tee -a "$RUN/meta.txt"
   uv run --no-project --with pyserial python -u devicetest/voice_soak_tapwake.py \
     --scenario "$scen" \
-    --bank outputs/voice-bank \
+    --bank "$BANK" \
     --port "$PORT" \
     --serial-log "$serial_raw" \
     --out "$out" \

@@ -4,6 +4,14 @@ import json
 from pathlib import Path
 
 from devicetest import r02_gates
+from devicetest.build_r02_scenarios import build_stop
+from scripts.voice_soak_evidence import MIN_SILENCE_WINDOW_S
+
+
+def test_stop_scenarios_observe_required_silence_before_next_prompt() -> None:
+    steps = build_stop()
+    assert len(steps) == 80
+    assert all(step.get("quiet_after_s", 0) >= MIN_SILENCE_WINDOW_S for step in steps)
 
 
 def _write(tmp_path: Path, rows: list[dict]) -> Path:

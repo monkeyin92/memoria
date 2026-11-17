@@ -1014,6 +1014,7 @@ class MediaOutputStreamMixin(MediaOutputChunksMixin):
                     )
                 if context.closed or context.standby_requested:
                     return await abort_for_session_close()
+                context.runtime.orchestrator.delegation.start_output_intent_delivery(lease.intent)
                 self._note_downlink_audio(context, fence)
                 if not context.output.playback.register_audio(
                     fence,

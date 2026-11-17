@@ -201,6 +201,7 @@ struct AudioStreamPacket {
 };
 struct Socket {int sends=0; bool Send(const uint8_t*,size_t,bool) {++sends;return true;}};
 struct MemoriaProtocol {
+ std::atomic<bool> shutting_down_{false};
  Socket socket; Socket* websocket_=&socket;
  unsigned stream_epoch_=1,uplink_sequence_=0;
  uint64_t uplink_sample_start_=0,vad_started_sample_=0;bool vad_active_=false;

@@ -112,6 +112,15 @@ class DelegationCoordinator:
     _output_intent_observer: Callable[[OutputIntentAdmission], None] | None = None
     _shadow_output_by_session: dict[str, dict[str, Any]] = field(default_factory=dict)
 
+    _delivering_by_session: dict[str, set[str]] = field(default_factory=dict)
+
+    def start_output_intent_delivery(self, intent: Any) -> None:
+        """Record transport acceptance only while the admitted candidate exists."""
+        session_id = str(intent.session_id)
+        intent_id = str(intent.intent_id)
+        if intent_id in self._shadow_output_by_session.get(session_id, {}):
+            self._delivering_by_session.setdefault(session_id, set()).add(intent_id)
+
     def set_output_intent_observer(
         self,
         observer: Callable[[OutputIntentAdmission], None] | None,
@@ -163,6 +172,7 @@ class DelegationCoordinator:
         if not session_id:
             return None, ()
         candidates = self._shadow_output_by_session.setdefault(session_id, {})
+        delivering = self._delivering_by_session.get(session_id, set())
         for intent_id, candidate in list(candidates.items()):
             candidate_fence = GenerationFence(
                 session_id=str(candidate.session_id),
@@ -174,7 +184,7 @@ class DelegationCoordinator:
                 session_epoch=current_fence.session_epoch,
             )
             if (
-                int(candidate.expires_at_ms) <= now_ms
+                (int(candidate.expires_at_ms) <= now_ms and intent_id not in delivering)
                 or int(candidate.context_version) != current_context_version
                 or not candidate_fence.matches(current_fence)
             ):
@@ -202,6 +212,9 @@ class DelegationCoordinator:
                     _MAX_SHADOW_OUTPUT_CANDIDATES_PER_DOMAIN:
                 ]:
                     candidates.pop(str(superseded.intent_id), None)
+        delivering.intersection_update(candidates)
+        if not delivering:
+            self._delivering_by_session.pop(session_id, None)
         if not candidates:
             self._shadow_output_by_session.pop(session_id, None)
             return None, ()
@@ -228,6 +241,7 @@ class DelegationCoordinator:
             raise ValueError("delegation context version moved backwards")
         if context_version > current:
             self._shadow_output_by_session.pop(session_id, None)
+            self._delivering_by_session.pop(session_id, None)
         self._context_version_by_session[session_id] = context_version
 
     def current_context_version(self, session_id: str) -> int:
@@ -238,6 +252,7 @@ class DelegationCoordinator:
 
         if session_id:
             self._shadow_output_by_session.pop(session_id, None)
+            self._delivering_by_session.pop(session_id, None)
 
     @staticmethod
     def _event(
@@ -379,8 +394,8 @@ class DelegationCoordinator:
             priority=request.priority,
             created_at_ms=now,
             # The request TTL bounds task resolution; a spoken deep result
-            # needs its own delivery TTL so a long answer cannot expire while
-            # it is still being streamed to the device.
+            # needs its own queue TTL. Once transport accepts audio, delivery
+            # lasts until completion or revocation by the ownership gates.
             expires_at_ms=now + _DEEP_RESULT_DELIVERY_TTL_MS,
             floor_requirement=media_pb2.FLOOR_REQUIREMENT_ASSISTANT_MAY_SPEAK,
             context_version=request.context_version,
