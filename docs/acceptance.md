@@ -4606,6 +4606,34 @@ Agent `memoria-agent:20261115-asr-streaming-default`, revision `f4f38dd942858c2f
 [CI run 43623965980](https://github.com/monkeyin92/memoria/actions/runs/43623965980) passed all 16 jobs. The Agent image job built and verified artifacts but did not run Trivy; no Agent vulnerability scan is claimed. Edge image scanning passed. This is deployment evidence, not hardware acceptance. Precheck, Safety, Soak and R02 must be completed on this candidate; R02 remains 0/155. Room capture tooling passed independent review and actual 5-second, 240-second, SIGINT and SIGTERM checks, which establish recording integrity only.
 
 
+## 2026-11-15 USB 真机验证与 R02 首次尝试
+
+本节原为未入库的 `docs/acceptance/usb-validation-20261115.md`，2026-11-17 按文档预算并入本文件；正文不改，只补了证据转存位置与后续去向。
+
+21:47–21:55，线上 `memoria-agent:20261115-asr-streaming-default`，设备 build 36 / ota_0。USB 唤醒获 `wake_mode=button` 确认，监听、亮屏、麦克风启用有串口证据。首次驱动因缺少 idle 转换空跑退出，未播放；随后串口复位获取真实启动记录，未刷机、未改生产。
+
+三句普通问答全部有回复，两段回复 19.73 秒、28.50 秒，播放供给等待与解码丢帧均为 0，45 秒尾窗 verified_idle。仅证明本轮软件播放链路未复现卡顿，未采集声学录音。
+
+停止词短测使用已有 bank 中的“停”“别说了”“等一下”。三个打断发生时各有 12.500、12.836、17.285 秒剩余播放。完整回执离线复核均为 playback_completed / not_stopped，确认停止 0/3。实时 missing_delivery_terminal 是回执尚未到齐，不能当作最终结果。没有 stop receipt，因此 silence_verdict 为 not_applicable；45 秒尾窗 timeout。素材本轮未独立转录，不据此断言 ASR 具体识别内容或失败根因。
+
+后续定位确认三个音量 30 打断时窗无设备 vad.start，也没有桥侧停止词判定。源 clip 直接送入现有 SenseVoice，分别正确识别为“停”“别说了”“等一下”，记录见 `source-clip-transcription.json`。
+
+22:01–22:02 同样素材、同一线上候选，Mac 输出 50 的对照得到三个匹配的 spoken-stop 和设备播放中断回执。说完到停分别为 0.191、0.289、0.077 秒。完整离线审计结果为三次 stopped，但首条 silence_window_too_short，其余两条 silent；45 秒尾窗仍 timeout。声量条件影响本次复现，但没有实际设备 PCM，不能区分 AEC、设备 VAD 与服务端降噪的贡献，也不能宣称低声量产品缺陷已经修复。
+
+已修复验收脚本两个问题：停止场景增加 6 秒 quiet_after_s，覆盖归约器要求的至少 5 秒静默；R02 runner 支持 --bank 并在出声前检查素材存在，避免目录缺失时隐式改用 Tingting。12 项 R02 测试与 shell 语法检查通过。音量保持为每轮显式参数，没有更改产品或验收阈值。
+
+22:04 补齐观察窗的复测在出声前因串口无启动/状态数据 ABORT_PRE_WAIT，未计入有效试次。22:06:38 串口监控三次重连各等待 30 秒仍无数据后退出，要求人工重新插拔 USB；端口和 socket 已释放。R02 仍未运行。Mac 音量恢复 19，静音 false。原有未提交文案和音频改动保留。
+
+23:07–23:10 重新插拔 USB 后复测。串口复位得到 build 36 / ota_0 的真实 activating -> idle，线上 bridge 仍为 `memoria-agent:20261115-asr-streaming-default`，healthy。使用同一校准素材、Mac 输出 50，停止场景带 6 秒 quiet_after_s。“停”“别说了”“等一下”三次均为 stopped / spoken_stop_and_device_playout，说完到停 0.158、0.642、0.641 秒；三段静默窗均为 silent，约 11.5 秒，满足至少 5 秒。告别后 45 秒尾窗 verified_idle。复测通过；结束后 Mac 音量恢复为运行前的 6，静音 false。
+
+23:11 起在同一候选上运行 R02 全套（`devicetest/r02-20261115-231107/`），Mac 输出 50。本 worktree 无 `outputs/voice-bank`，经出声前素材检查改用 `outputs/acceptance/r02-20261115/bank`：310 段齐全，四组场景与当前构建只差新增的 quiet_after_s。a 组只跑到 13/80 步，23:23:38 因连续 3 次 turn gate 超时 ABORT_WAIT_3。其中“停”10 次里 9 次 stopped 且静默窗 silent，t004 playback_completed 未停。“停一下”t011 已停但随后 reply_resumed；t012、t013 的 ASR 终稿为“一下。”，桥判 not_stop_word，回复未停，与 11-07 的误听同类。
+
+t013 之后设备卡在 speaking。该回复服务端 23:18:34 发完最后一帧，共 47.32 秒；设备上行 23:18:21 起中断，media-edge 23:18:50 以 speaking_stalled 关闭会话，23:19:32 设备 WSS 读超时。此后到 23:23:38，串口仍停在 speaking，只有周期统计，没有状态转换。疑为 build 36 在会话关闭和连接中断后不能回到 idle，根因未查。
+
+b、c、d 组在各自第一句前后都是 ABORT_OUTPUT_MUTED。运行中 Mac 输出被外部从 50 调到 25，脚本自身没有改音量，这三组都没有有效试次。四组门禁均判 FAIL，本轮不能作为 R02 结论。结束后音量恢复为 6，静音 false，无残留进程，串口已释放；没有刷机或修改生产。
+
+原始证据（2026-11-17 从 T3 工作树 `t3/device-lag-stopword-r02` 转存到主仓，路径不变）位于 `outputs/acceptance/usb-validation-current/`：`summary.json`、`boot.log`、`serial-retest.log`、`stutter-retest/`、`stop/`、带源文件哈希的 `stop-evidence.json`，以及复测的 `calibrated-retest/`（含 `evidence.json`）。R02 证据在 `devicetest/r02-20261115-231107/` 与 `outputs/acceptance/run-20261115-231107-r02-{stop,backchannel,content,crisis}/`。这些本机原始产物不随文档自动入库。当时同一工作树里未提交的验收脚本改动（停止场景 `quiet_after_s`、R02 `--bank` 与出声前素材检查）已由 #597 以改进后的形式进入 main，未提交的 diff 存为 `outputs/acceptance/usb-validation-current/t3-device-lag-stopword-r02-uncommitted.patch`；被欺负话术改写草稿见分支 `wip/victim-support-v1-rewrite`（待合规试听，未合并）。
+
 ## 2026-11-16 speaking stall 续查与本地修复（未完成硬件验收）
 
 实时SSH核实Bridge为`memoria-agent:20261115-asr-streaming-default`，revision `f4f38dd942858c2fbf78cdeba75a6d63538a5f14`，healthy、restart=0。Mac读回output=40、muted=false。正式R02与真机外放已按指令暂停，**R02仍为0/155（未执行、不计通过）**。

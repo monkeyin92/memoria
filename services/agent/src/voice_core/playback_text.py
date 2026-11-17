@@ -12,6 +12,7 @@ import os
 from difflib import SequenceMatcher
 
 from services.agent.src.orchestration.interruption_guard import count_cjk_chars
+from services.agent.src.voice_core.semantic_completeness import is_semantically_complete
 
 # UtteranceRouter rule 4 (pure stop / completion acknowledgement) reports this
 # reason when ``accept_user_turn`` suppresses the control turn.
@@ -265,7 +266,7 @@ def followup_utterance_looks_complete(text: str) -> bool:
         return True
     if any(compact.endswith(suffix) for suffix in _FOLLOWUP_INCOMPLETE_SUFFIXES):
         return False
-    return len(compact) >= 6
+    return len(compact) >= 6 or is_semantically_complete(text)
 
 
 def _compact(text: str) -> str:
