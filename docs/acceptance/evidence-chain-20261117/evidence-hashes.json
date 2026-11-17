@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "root": "/Users/monkeyin/projects/memoria (git-ignored outputs, local only)",
+  "files": [
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/step3-deployed-layers/receipt.md",
+      "sha256": "c72cce7d5b45d9633296438331489e7fa1bec16777faca912d57896f7f55a91f",
+      "bytes": 3470
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/step3-deployed-layers/compare-device-vs-983afca0.json",
+      "sha256": "de8a673ef1c964bb15165bedd2a80e267e522e85c63f79c668db33d283a018b4",
+      "bytes": 1016
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/step3-deployed-layers/boot-markers.txt",
+      "sha256": "b1f0f61bfab03223af5bdfe47019e96173a525a83bce23b143afe9453bcaea10",
+      "bytes": 252
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/diagnostic-005/receipt.md",
+      "sha256": "7061029e332a15bbc706be6fff0fba68be6ed2cfa3faa495158f67c686a02f98",
+      "bytes": 3629
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/diagnostic-005/live.json",
+      "sha256": "06f769bbe89eec1ba0722ad3bff4a447ec8d52b516de6d7e952aa58fe52d5ff2",
+      "bytes": 1553
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/diagnostic-005/binding.json",
+      "sha256": "d8289153d5c1f3d26ee907130e31df096534f5d167d4ede13c96d57bcc8694e5",
+      "bytes": 339
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/diagnostic-005/stimulus.json",
+      "sha256": "2004bd91f2a67cf5a1bbd9abc75e32b6ac5d0e22aea80a1dd85667cf0ae21089",
+      "bytes": 227
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/diagnostic-005/capture/receipt.json",
+      "sha256": "38772a4178381e983ace4b980deb27d10726d7a95061311458a0b844c042f302",
+      "bytes": 5838
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/mic-check-001/receipt.md",
+      "sha256": "8204427906061026e75ecb177c29e5219b140b3a3390626419c4a2e858a8b705",
+      "bytes": 1773
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/mic-check-001/mic-check.json",
+      "sha256": "fea4c8d291b02d4609dbb2c6d758d863ecf8bd092c92e1a2cae0eb51fddfa8c9",
+      "bytes": 418
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/diagnostic-006/receipt.md",
+      "sha256": "bb38bd60af7b41959f061d358e171da968f9dab08527c4b924e0eb193b97fb55",
+      "bytes": 4779
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/diagnostic-006/live.json",
+      "sha256": "bf26d869fbe6945019e1186f097acd519b79544aee2bd00fe9439d43ac52560a",
+      "bytes": 1609
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/diagnostic-006/binding.json",
+      "sha256": "7e58e619e6997a8972cca1faefec46d9e4e74f24c4b259e7791a936661057cb4",
+      "bytes": 339
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/diagnostic-006/stimulus.json",
+      "sha256": "2004bd91f2a67cf5a1bbd9abc75e32b6ac5d0e22aea80a1dd85667cf0ae21089",
+      "bytes": 227
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/diagnostic-006/capture/receipt.json",
+      "sha256": "213bc5d3a3c16082dbda6529025a9cc4167c4b0a7eb9bc51f01e5de9cb0eee83",
+      "bytes": 5838
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/reset-mic-check-001/receipt.md",
+      "sha256": "b6fd50c1b37df6fc7831e94957aa31e713aecac591bff111e0f1ea33253b9004",
+      "bytes": 1171
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/reset-mic-check-001/reset-mic-check.json",
+      "sha256": "4d425e69551357bb21553a5e3be8a34c15f37e94a04c5ff027b1c3ccb6eab182",
+      "bytes": 738
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/smoke-007/receipt.md",
+      "sha256": "c5097bd2c0530b8934d8deb13f20b2c90369275a718b55c6f10d7e818af672ec",
+      "bytes": 2309
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/smoke-007/live.json",
+      "sha256": "a71e42b9f6b80d2f9fff39da050def2b9a74dd9e8103f882e7e16723eca5f000",
+      "bytes": 2368
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/smoke-007/binding.json",
+      "sha256": "35a92c38e360a689d3d0427bd2b32619aae3e97002054cdfbf2850ce7d14e619",
+      "bytes": 514
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/smoke-007/stimulus.json",
+      "sha256": "35faef519aa077459902a2b3575f565b77779a4b05c4258e0991dadc80285f40",
+      "bytes": 251
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/build-20261117-asr-debug-wiring.log",
+      "sha256": "fcd0532bd34f15375a6c9a2c594c474c31b0ce7440594e33668afb663ca4e6d0",
+      "bytes": 14282
+    },
+    {
+      "path": "outputs/acceptance/evidence-chain-20261117/cutover-20261117-asr-debug-wiring.log",
+      "sha256": "af177a8cf0f1cff55b314a29bdebcdbf0d4d7443a7e5442df3308ee1b4cb0016",
+      "bytes": 14810
+    }
+  ]
+}

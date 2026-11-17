@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-17",
+  "device_id": "dev_atk_a4cb8fd6095c",
+  "firmware": {
+    "build": 36,
+    "slot": "ota_0",
+    "keep_awake": true,
+    "app_sha256": "5b7fa5e18c839e04ce18ccae50e326480c7a7a24ccf5e0b699361d2549c3575a",
+    "flashed_during_runs": false
+  },
+  "extractor": {
+    "pr": 598,
+    "commit": "62e86f18118d5cb4b8015668923e4d523da33360",
+    "sha256": "56091fa33abecc846ff79a7e558f8259762b41efb3bfbf7d2522a2494795e927",
+    "status": "pass",
+    "scope": "content-free rejection reasons; strict negotiated 16/24 kHz downlink"
+  },
+  "deployed_layers": {
+    "status": "pass",
+    "server_contains_983afca0": false,
+    "main_missing_live_fixes": [
+      "61e75ec8",
+      "22129336"
+    ],
+    "device_fw_masked_equal_983afca0_build": true,
+    "differing_bytes_after_mask": 0
+  },
+  "runs": [
+    {
+      "id": "diagnostic-005",
+      "bridge_revision": "221293366e16ab0bb1585b912e79276445a0905f",
+      "session_id": "3a6981a2-a7df-4eda-b618-9a6b4c75c729",
+      "stream_epoch": 3255,
+      "capture_bytes": 317762,
+      "uplink_extract": "pass",
+      "uplink_frames": 1692,
+      "uplink_pcm_all_zero": true,
+      "downlink_extract": "fail",
+      "downlink_reason": "downlink_audio_generation_mismatch",
+      "asr_text_debug_lines": 0,
+      "source_gate": "fail",
+      "cause_of_zero_pcm": "unknown"
+    },
+    {
+      "id": "mic-check-001",
+      "after": "physical power cycle",
+      "vad_idle_nonzero": true,
+      "vad_idle_rms_range": [
+        0.0003,
+        0.0022
+      ]
+    },
+    {
+      "id": "reset-mic-check-001",
+      "after": "R02-style DTR/RTS chip reset (rst:0x15)",
+      "vad_idle_lines": 8,
+      "vad_idle_nonzero": 8,
+      "max_peak": 0.0117
+    },
+    {
+      "id": "diagnostic-006",
+      "bridge_revision": "221293366e16ab0bb1585b912e79276445a0905f",
+      "session_id": "27fbac4b-ee38-4fa5-ab67-ec03a7d5a6a6",
+      "stream_epoch": 3258,
+      "capture_bytes": 717846,
+      "uplink_extract": "pass",
+      "uplink_frames": 2856,
+      "stimulus_window_rms_range": [
+        0.0044,
+        0.0117
+      ],
+      "asr_boundary": "success",
+      "turn_committed": true,
+      "reply_actual_heard": true,
+      "downlink_extract": "fail",
+      "downlink_reason": "downlink_audio_generation_mismatch",
+      "asr_text_debug_configured": 1,
+      "asr_text_debug_lines": 0,
+      "source_gate": "pass",
+      "asr_text_debug_record": "fail",
+      "root_cause": "logger wiring: registry lookup always empty in production; per-frame finals unlogged"
+    },
+    {
+      "id": "smoke-007",
+      "bridge_image": "memoria-agent:20261117-asr-debug-wiring",
+      "bridge_image_id": "sha256:8723c7e0c7cbbaf2cdd1a7c1035413b6cf9cfa61afb20173539fd367523b7ee6",
+      "bridge_revision": "abcaba353648af5b0008f9d8c53f2209ed6448cf",
+      "session_id": "75d2566d-47a3-4ef7-8724-ea8b453948df",
+      "stream_epoch": 3261,
+      "packet_capture": false,
+      "story_stimulus_played": false,
+      "turn_result": "conversation_end_explicit",
+      "asr_text_debug_lines": 2,
+      "asr_text_debug_sources": [
+        "final",
+        "segment_final"
+      ],
+      "stream_final_observed": false,
+      "asr_text_debug_record": "pass"
+    }
+  ],
+  "cutover": {
+    "status": "pass",
+    "at": "2026-11-17T07:13:50Z",
+    "from": "memoria-agent:20261116-empty-asr-owner",
+    "to": "memoria-agent:20261117-asr-debug-wiring",
+    "rollback_image": "memoria-agent:rollback-20261117-asr-debug-wiring-pre",
+    "rollback_image_id": "sha256:5eeb3b81f1f91a62bf3b003f2f37cbde571357bbbc9cfac7d5065edf48067ee8",
+    "fix_commit_live": "abcaba353648af5b0008f9d8c53f2209ed6448cf",
+    "fix_pr_main": 599
+  },
+  "restore": {
+    "diagnostics_unset": true,
+    "baseline_verified": true,
+    "serial_released": true
+  },
+  "r02": {
+    "status": "not_run_blocked",
+    "reason": "scheduled for the evening of 2026-11-17 on memoria-agent:20261117-asr-debug-wiring"
+  },
+  "open": [
+    "cause of diagnostic-005 digital-zero uplink",
+    "downlink generation.completed precedes last audio frame (extractor fence rejects)",
+    "source=stream_final not observed on device",
+    "live fixes 61e75ec8 and 22129336 not on main"
+  ],
+  "evidence_hashes": "evidence-hashes.json"
+}

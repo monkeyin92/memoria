@@ -1,8 +1,8 @@
 {
-  "captured_at": "2026-11-11T00:08:40+00:00",
+  "captured_at": "2026-11-17T07:30:39+00:00",
   "components": [
     {
-      "compose_chain": "/opt/memoria/releases/20261029-plan-head-start-v1/docker-compose.production.yml",
+      "compose_chain": "/opt/memoria/releases/20261029-plan-head-start-v1/docker-compose.production.yml,/opt/memoria/component-releases/20261112-firmware-ota-v1/pre-cutover-control.override.yml,/opt/memoria/component-releases/20261112-firmware-ota-v1/control-component.override.yml",
       "container": "memoria-control-api-1",
       "effective_flags": {
         "MEMORIA_RELEASE_COMMIT": "2c6ff2ccf3212e9d8b9b45f94ffad28dd8b0c82d",
@@ -13,16 +13,16 @@
         "TTS_PROVIDER": "doubao"
       },
       "health": "healthy",
-      "image_id": "sha256:7fdeff6af9a1870dc1320098ff43b001572bcef55917b8fbb16e449ac17e2ec1",
+      "image_id": "sha256:746896772dfb9703413f3dbbaa35b26198ddf35d522cf912af164cb225148812",
       "image_id_complete": true,
-      "image_ref": "memoria-control-api:20261029-plan-head-start-v1",
-      "override_path": "unknown",
-      "override_sha256": "unknown",
+      "image_ref": "memoria-control-api:20261112-firmware-ota-v1",
+      "override_path": "/opt/memoria/component-releases/20261112-firmware-ota-v1/control-component.override.yml",
+      "override_sha256": "cdff2e221078ed3970ad4069d3b439e4ea2b22fa9324dfe02f61b29a90a6f64b",
       "registry_digest": "unknown",
       "restarts": 0,
-      "revision_commit": "2c6ff2ccf3212e9d8b9b45f94ffad28dd8b0c82d",
+      "revision_commit": "e265f3e18aa983f2d0ee45c3c8343a6ef091eb82",
       "role": "control-api",
-      "started_at": "2026-10-29T06:29:28.824869385Z",
+      "started_at": "2026-11-12T10:16:33.824677594Z",
       "status": {
         "code": "2026-10-29",
         "enabled": "unknown",
@@ -35,7 +35,7 @@
       }
     },
     {
-      "compose_chain": "/opt/memoria/releases/20261004-first-warm-v1/docker-compose.production.yml,/opt/memoria/component-releases/20261023-edge-fix-v1-media-edge/media-edge-component.override.yml",
+      "compose_chain": "/opt/memoria/releases/20261004-first-warm-v1/docker-compose.production.yml,/opt/memoria/component-releases/20261115-endpoint-v2-media-edge/media-edge-component.override.yml",
       "container": "memoria-media-edge-1",
       "effective_flags": {
         "MEMORIA_RELEASE_COMMIT": "unknown",
@@ -46,16 +46,16 @@
         "TTS_PROVIDER": "unknown"
       },
       "health": "healthy",
-      "image_id": "sha256:2e7ef2642c6e2a2853eb7cc80874576f9c606118171d4392390099137039ed5b",
+      "image_id": "sha256:33512ba8d968ce19ebf3de8e1502fe5e6175b5c19b096704f7c5e6f025445b00",
       "image_id_complete": true,
-      "image_ref": "memoria-media-edge:20261023-edge-fix-v1",
-      "override_path": "/opt/memoria/component-releases/20261023-edge-fix-v1-media-edge/media-edge-component.override.yml",
-      "override_sha256": "69843aa0f81220fa4fe280831ba94e1dcfd698a03eeb8e60c98dedd3358a0a35",
+      "image_ref": "memoria-media-edge:20261115-endpoint-v2",
+      "override_path": "/opt/memoria/component-releases/20261115-endpoint-v2-media-edge/media-edge-component.override.yml",
+      "override_sha256": "52e24282cb80db24b05b99ccd37edf46506a839a1376098f8816469bb48dfe87",
       "registry_digest": "unknown",
       "restarts": 0,
-      "revision_commit": "c44267c9221f904dd1eebddad920eb81da4bb53a",
+      "revision_commit": "ea201c3e8a525d1fe0e3b43d2116fe5efa09ad06",
       "role": "media-edge",
-      "started_at": "2026-10-23T15:31:43.935833592Z",
+      "started_at": "2026-11-14T16:30:32.065247322Z",
       "status": {
         "code": "2026-10-23",
         "enabled": "unknown",
@@ -68,7 +68,7 @@
       }
     },
     {
-      "compose_chain": "/opt/memoria/releases/20261029-plan-head-start-v1/docker-compose.production.yml,/opt/memoria/component-releases/20261110-card5-echo-window-v1/pre-cutover-live.override.yml,/opt/memoria/component-releases/20261110-card5-echo-window-v1/agent-component.override.yml",
+      "compose_chain": "/opt/memoria/releases/20261029-plan-head-start-v1/docker-compose.production.yml,/opt/memoria/component-releases/20261117-asr-debug-wiring/pre-cutover-live.override.yml,/opt/memoria/component-releases/20261117-asr-debug-wiring/agent-component.override.yml",
       "container": "memoria-voice-core-media-bridge-1",
       "effective_flags": {
         "MEMORIA_RELEASE_COMMIT": "unknown",
@@ -79,16 +79,16 @@
         "TTS_PROVIDER": "doubao"
       },
       "health": "healthy",
-      "image_id": "sha256:14a9d4a6ca4b9298b12526867fe1c4a69e426316a2cb7cba95a99e4d5f39b522",
+      "image_id": "sha256:8723c7e0c7cbbaf2cdd1a7c1035413b6cf9cfa61afb20173539fd367523b7ee6",
       "image_id_complete": true,
-      "image_ref": "memoria-agent:20261110-card5-echo-window-v1",
-      "override_path": "/opt/memoria/component-releases/20261110-card5-echo-window-v1/agent-component.override.yml",
-      "override_sha256": "4667f40ee7ae0c84d8321945497566f5bff8436ad9f57223dd40c418254e83ec",
+      "image_ref": "memoria-agent:20261117-asr-debug-wiring",
+      "override_path": "/opt/memoria/component-releases/20261117-asr-debug-wiring/agent-component.override.yml",
+      "override_sha256": "2e0c52e6e121e867607c5683d7da9f3248c9d92a333ee09d7eb8c59a0aed27a6",
       "registry_digest": "unknown",
       "restarts": 0,
-      "revision_commit": "ad40fe60c4ef904f1a5fce1467dfa7d579214d4f",
+      "revision_commit": "abcaba353648af5b0008f9d8c53f2209ed6448cf",
       "role": "voice-core-media-bridge",
-      "started_at": "2026-11-10T16:11:08.990989296Z",
+      "started_at": "2026-11-17T07:15:40.826460751Z",
       "status": {
         "code": "unknown",
         "enabled": "unknown",
@@ -178,14 +178,19 @@
   "rollback": {
     "per_component": [
       {
+        "method": "control-component.rollback.override.yml",
+        "role": "control-api",
+        "target": "memoria-control-api:rollback-20261112-firmware-ota-v1-pre-control"
+      },
+      {
         "method": "media-edge-rollback.override.yml",
         "role": "media-edge",
-        "target": "memoria-media-edge:20261023-protected-crisis-v1"
+        "target": "memoria-media-edge:20261023-edge-fix-v1"
       },
       {
         "method": "agent-component.rollback.override.yml",
         "role": "voice-core-media-bridge",
-        "target": "memoria-agent:rollback-20261110-card5-echo-window-v1-pre"
+        "target": "memoria-agent:rollback-20261117-asr-debug-wiring-pre"
       },
       {
         "method": "release_ops.rollback",

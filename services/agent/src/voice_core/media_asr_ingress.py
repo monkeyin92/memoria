@@ -161,6 +161,8 @@ class MediaAsrIngressMixin:
                 continue
             result = self._map_asr_event(asr, event, identity.stream_epoch)
             if result is not None:
+                if result.is_final:
+                    self._log_asr_text_debug_decision(identity, result, source="stream_final")
                 results.append(result)
         return tuple(results)
 
