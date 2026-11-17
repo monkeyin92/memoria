@@ -1,5 +1,6 @@
 """Synthetic PCAP only: no sockets, SSH, device audio, or credentials."""
 
+import ast
 import base64
 import ctypes
 import importlib.util
@@ -96,16 +97,25 @@ class Fixture:
             self.packet(d, self.seq[d], data)
         self.seq[d] += len(data)
 
-    def handshake(self, target=m.TARGET, status=101, claim=None, split=False):
+    def handshake(
+        self,
+        target=m.TARGET,
+        status=101,
+        claim=None,
+        split=False,
+        epoch=7,
+        hello=None,
+        accepted=None,
+    ):
         claims = {
             "device_id": claim or target,
             "client_type": "device",
             "typ": "memoria_device_media",
             "client_id": "synthetic",
             "session_id": "synthetic-session",
-            "stream_epoch": 7,
+            "stream_epoch": epoch,
         }
-        token = (
+        self.token = (
             "synthetic."
             + base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
             + ".synthetic"
@@ -115,7 +125,7 @@ class Fixture:
             0,
             (
                 f"GET /v1/device/media HTTP/1.1\r\nDevice-Id: {target}\r\n"
-                f"Authorization: Bearer {token}\r\nX-Client-ID: synthetic\r\n"
+                f"Authorization: Bearer {self.token}\r\nX-Client-ID: synthetic\r\n"
                 "Protocol-Version: 2\r\nSec-WebSocket-Version: 13\r\n"
                 f"Sec-WebSocket-Key: {key}\r\nUpgrade: websocket\r\nConnection: upgrade\r\n\r\n"
             ).encode(),
@@ -135,11 +145,12 @@ class Fixture:
         self.send(
             0,
             ws(
-                {
+                hello
+                or {
                     "type": "device.hello",
                     "version": 2,
                     "device_id": target,
-                    "stream_epoch": 7,
+                    "stream_epoch": epoch,
                     "firmware_version": "0.2.0",
                     "board_profile": "memoria-atk-dnesp32s3-v1",
                     "capabilities": {
@@ -161,11 +172,12 @@ class Fixture:
         self.send(
             1,
             ws(
-                {
+                accepted
+                or {
                     "type": "session.accepted",
                     "version": 2,
                     "session_id": "synthetic-session",
-                    "stream_epoch": 7,
+                    "stream_epoch": epoch,
                     "interaction_authority": "python_authoritative",
                     "downlink_sample_rate": 16000,
                     "current_fence": None,
@@ -189,11 +201,85 @@ class Fixture:
         return result
 
 
+COUNT_KEYS = {
+    "pcap_records",
+    "pcap_bytes",
+    "capture_span_ms",
+    "flows_opened",
+    "flows_ignored_non_target",
+    "target_upgrade_refused",
+    "target_handshakes",
+    "preexisting_flow_packets",
+    "preexisting_flow_payload_bytes",
+    "target_hello",
+    "target_accepted",
+    "accepted_downlink_sample_rate",
+    "stream_epoch",
+    "uplink_frames",
+    "ws_text_messages",
+    "ws_binary_messages",
+    "ws_control_frames",
+    "downlink_controls",
+    "downlink_controls_skipped",
+    "downlink_generations",
+    "downlink_frames",
+    "tcp_pending_segments_up",
+    "tcp_pending_segments_down",
+    "ws_buffered_bytes_up",
+    "ws_buffered_bytes_down",
+}
+
+REASON_CLASSES = {
+    "capture_boundary",
+    "capture_integrity",
+    "protocol_mismatch",
+    "session_lifecycle",
+    "bounds",
+    "environment",
+}
+
+
+def cli_report(result, marker):
+    for stream in (result.stdout, result.stderr):
+        for line in stream.decode().splitlines():
+            if line.startswith(marker + " "):
+                return json.loads(line.split(" ", 1)[1])
+    return None
+
+
 class ExtractTest(unittest.TestCase):
     def parse(self, fixture, raw=None, downlink=False):
-        capture = m.Capture(LIB, downlink)
+        capture = self.capture = m.Capture(LIB, downlink)
         self.addCleanup(capture.close)
         return capture.read(io.BytesIO(raw if raw is not None else fixture.pcap()))
+
+    def reject(self, fixture, reason, raw=None, downlink=False):
+        with self.assertRaises(m.Invalid) as cm:
+            self.parse(fixture, raw, downlink)
+        self.assertEqual(cm.exception.reason, reason)
+
+    def report_counts(self):
+        return json.loads(m.report(self.capture, "internal_error"))["counts"]
+
+    def assert_report_shape(self, payload):
+        self.assertLessEqual(
+            set(payload), {"schema", "reason", "class", "exception_type", "counts"}
+        )
+        self.assertEqual(set(payload["counts"]), COUNT_KEYS)
+        for value in payload["counts"].values():
+            self.assertTrue(value is None or type(value) is int)
+
+    def assert_streams_clean(self, result, token):
+        for blob in (result.stdout, result.stderr):
+            for forbidden in (
+                "synthetic-session",
+                "Bearer",
+                "synthetic",
+                "PRIVATE",
+                m.TARGET,
+                token,
+            ):
+                self.assertNotIn(forbidden.encode(), blob)
 
     def test_real_opus_split_retransmission_and_private_output(self):
         f = Fixture().handshake(split=True)
@@ -252,68 +338,89 @@ class ExtractTest(unittest.TestCase):
                     self.assertEqual(result.returncode, 1)
                     self.assertFalse(output.exists())
                     self.assertNotIn(b"synthetic", result.stderr)
+                    rejection = cli_report(result, "extractor_rejection")
+                    self.assertEqual(rejection["reason"], "tcp_sequence_wrap")
 
     def test_rejects_syn_at_sequence_wrap_boundary(self):
-        with self.assertRaises(m.Invalid):
+        with self.assertRaises(m.Invalid) as cm:
             m.TCP(2**32 - 1, lambda *_: None)
+        self.assertEqual(cm.exception.reason, "tcp_sequence_wrap")
 
     def test_reject_invalid_evidence(self):
         cases = []
-        for opts in ({"target": "other"}, {"status": 401}, {"claim": "other"}):
+        for opts, reason in (
+            ({"target": "other"}, "target_handshake_not_found"),
+            ({"status": 401}, "target_handshake_not_found"),
+            ({"claim": "other"}, "target_jwt_claims_mismatch"),
+        ):
             f = Fixture().handshake(**opts)
             f.send(0, ws(audio(), 2))
-            cases.append(f)
-        for payload in (
-            audio(1),
-            audio(sample=320),
-            audio(direction=2),
-            audio(epoch=8),
-            audio()[:-1],
+            cases.append((f, reason))
+        for payload, reason in (
+            (audio(1), "uplink_audio_first_frame_discontinuous"),
+            (audio(sample=320), "uplink_audio_first_frame_discontinuous"),
+            (audio(direction=2), "uplink_audio_header_invalid"),
+            (audio(epoch=8), "uplink_audio_header_invalid"),
+            (audio()[:-1], "uplink_audio_header_invalid"),
         ):
             f = Fixture().handshake()
             f.send(0, ws(payload, 2))
-            cases.append(f)
+            cases.append((f, reason))
         f = Fixture().handshake()
         f.send(0, ws(audio(), 2, masked=False))
-        cases.append(f)
+        cases.append((f, "websocket_mask_invalid"))
+        # The gap-starved audio leaves a queued segment at EOF; transport gaps
+        # are checked before session-content shortfalls at EOF.
         f = Fixture().handshake()
         f.packet(0, f.seq[0] + 5, ws(audio(), 2))
-        cases.append(f)
+        cases.append((f, "tcp_reassembly_gap"))
         f = Fixture().handshake()
         f.send(0, ws(audio(), 2))
         f.packet(1, f.seq[1], b"", flags=16, ack=f.seq[0] + 100)
-        cases.append(f)
-        for i, f in enumerate(cases):
-            with self.subTest(case=i), self.assertRaises(m.Invalid):
-                self.parse(f)
+        cases.append((f, "tcp_ack_beyond_capture"))
+        # Handshake and accept complete but EOF lands inside a WebSocket frame;
+        # the incomplete-frame check outranks the absent-uplink check.
+        f = Fixture().handshake()
+        f.send(0, ws(audio(), 2)[:-1])
+        cases.append((f, "websocket_frame_incomplete"))
+        for i, (f, reason) in enumerate(cases):
+            with self.subTest(case=i):
+                self.reject(f, reason)
 
     def test_truncated_unsupported_no_handshake(self):
         f = Fixture().handshake()
         f.send(0, ws(audio(), 2))
-        for raw in (f.pcap()[:-1], f.pcap(link=113), f.pcap()[:40], b""):
-            with self.subTest(size=len(raw)), self.assertRaises(m.Invalid):
-                self.parse(f, raw)
+        for raw, reason in (
+            (f.pcap()[:-1], "pcap_record_truncated"),
+            (f.pcap(link=113), "pcap_link_unsupported"),
+            (f.pcap()[:40], "pcap_record_truncated"),
+            (b"", "pcap_header_invalid"),
+        ):
+            with self.subTest(size=len(raw)):
+                self.reject(f, reason, raw)
         g = Fixture()
         g.send(0, ws(audio(), 2))
-        with self.assertRaises(m.Invalid):
-            self.parse(g)
+        self.reject(g, "target_handshake_not_found")
 
     def test_bounds_and_conflicting_reassembly(self):
         delivered = []
         tcp = m.TCP(100, lambda data, stamp: delivered.append(data))
         tcp.feed(110, b"abc", 1)
-        with self.assertRaises(m.Invalid):
+        with self.assertRaises(m.Invalid) as cm:
             tcp.feed(111, b"ZZ", 2)
-        with self.assertRaises(m.Invalid):
+        self.assertEqual(cm.exception.reason, "tcp_retransmission_conflict")
+        with self.assertRaises(m.Invalid) as cm:
             m.Buffer().add(b"x" * (m.LIMIT + 1), 1)
+        self.assertEqual(cm.exception.reason, "parser_buffer_limit")
         capture = m.Capture(LIB)
         for port in range(40000, 40016):
             f = Fixture()
             f.packet(0, 1000, b"", flags=2, port=port)
             capture.packet(f.packets[-1], 1)
         f.packet(0, 1000, b"", flags=2, port=40016)
-        with self.assertRaises(m.Invalid):
+        with self.assertRaises(m.Invalid) as cm:
             capture.packet(f.packets[-1], 1)
+        self.assertEqual(cm.exception.reason, "flow_limit_exceeded")
 
     def test_ws_lengths_control_and_incomplete(self):
         messages = []
@@ -322,19 +429,20 @@ class ExtractTest(unittest.TestCase):
         for byte in wire:
             socket.feed(bytes([byte]), 1)
         self.assertEqual(messages[0][1], b"a" * 126)
-        for wire in (
-            ws(b"x", 9, fin=False),
-            ws(b"x" * 126, 9),
-            ws(b"x", 0),
-            b"\x82\xff" + struct.pack("!Q", 65536),
+        for wire, reason in (
+            (ws(b"x", 9, fin=False), "websocket_control_frame_invalid"),
+            (ws(b"x" * 126, 9), "websocket_control_frame_invalid"),
+            (ws(b"x", 0), "websocket_fragment_invalid"),
+            (b"\x82\xff" + struct.pack("!Q", 65536), "websocket_frame_too_large"),
         ):
-            with self.assertRaises(m.Invalid):
+            with self.subTest(reason=reason), self.assertRaises(m.Invalid) as cm:
                 m.WS(True, lambda *args: None).feed(wire, 1)
+            self.assertEqual(cm.exception.reason, reason)
         f = Fixture().handshake()
         f.send(0, ws(audio(), 2))
         f.send(0, ws(audio(1, 320), 2)[:-1])
-        with self.assertRaises(m.Invalid):
-            self.parse(f)
+        self.reject(f, "websocket_frame_incomplete")
+        self.assertGreater(self.report_counts()["ws_buffered_bytes_up"], 0)
 
     def test_non_target_flow_dropped_and_success_cli(self):
         other = Fixture().handshake(target="other")
@@ -358,6 +466,10 @@ class ExtractTest(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(set(p.name for p in output.iterdir()), {"uplink.wav", "metadata.json"})
+            summary = cli_report(result, "extractor_summary")
+            self.assert_report_shape(summary)
+            self.assertIsNone(summary["reason"])
+            self.assert_streams_clean(result, target.token)
 
     def test_cli_no_secret_errors_or_partial_files(self):
         f = Fixture().handshake(claim="secret-must-not-leak")
@@ -373,17 +485,26 @@ class ExtractTest(unittest.TestCase):
             self.assertFalse(out.exists())
             self.assertNotIn(b"secret", result.stderr)
             self.assertNotIn(b"Bearer", result.stderr)
+            rejection = cli_report(result, "extractor_rejection")
+            self.assertEqual(rejection["reason"], "target_jwt_claims_mismatch")
+            self.assert_report_shape(rejection)
+            self.assert_streams_clean(result, f.token)
 
 
-def control(kind, generation=1, **extra):
+def control(kind, generation=1, epoch=7, **extra):
     return {
         "type": kind,
         "version": 2,
         "session_id": "synthetic-session",
-        "stream_epoch": 7,
+        "stream_epoch": epoch,
         "control_sequence": 1,
         "server_monotonic_ms": 123,
-        "fence": {"session_epoch": 7, "turn_id": 1, "generation_id": generation, "tool_epoch": 0},
+        "fence": {
+            "session_epoch": epoch,
+            "turn_id": 1,
+            "generation_id": generation,
+            "tool_epoch": 0,
+        },
         "reason": "PRIVATE TEXT",
         **extra,
     }
@@ -405,7 +526,7 @@ def down_audio(packet, seq=0, generation=1, **changes):
     return struct.pack("!BBHIIQIIH", *values.values()) + packet
 
 
-def encoded_fixture(count=4):
+def encoded_fixture(count=4, rate=16000):
     lib = ctypes.CDLL(LIB)
     lib.opus_encoder_create.argtypes = [
         ctypes.c_int,
@@ -423,16 +544,20 @@ def encoded_fixture(count=4):
     ]
     lib.opus_encoder_destroy.argtypes = [ctypes.c_void_p]
     error = ctypes.c_int()
-    encoder = lib.opus_encoder_create(16000, 1, 2049, ctypes.byref(error))
+    encoder = lib.opus_encoder_create(rate, 1, 2049, ctypes.byref(error))
     assert encoder and error.value == 0
+    frame_samples = rate // 50  # production 20 ms frames
     packets = []
     try:
         for frame in range(count):
-            pcm = (ctypes.c_int16 * 320)(
-                *(int(9000 * math.sin((frame * 320 + i) * 0.071)) for i in range(320))
+            pcm = (ctypes.c_int16 * frame_samples)(
+                *(
+                    int(9000 * math.sin((frame * frame_samples + i) * 0.071))
+                    for i in range(frame_samples)
+                )
             )
             out = ctypes.create_string_buffer(2048)
-            size = lib.opus_encode(encoder, pcm, 320, out, len(out))
+            size = lib.opus_encode(encoder, pcm, frame_samples, out, len(out))
             assert size > 0
             packets.append(out.raw[:size])
     finally:
@@ -440,7 +565,7 @@ def encoded_fixture(count=4):
     return packets
 
 
-def reference_decode(packets):
+def reference_decode(packets, rate=16000, frame=320):
     # Independent direct sequential libopus calls, without extractor wrappers.
     lib = ctypes.CDLL(LIB)
     lib.opus_decoder_create.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
@@ -455,14 +580,14 @@ def reference_decode(packets):
     ]
     lib.opus_decoder_destroy.argtypes = [ctypes.c_void_p]
     error = ctypes.c_int()
-    decoder = lib.opus_decoder_create(16000, 1, ctypes.byref(error))
+    decoder = lib.opus_decoder_create(rate, 1, ctypes.byref(error))
     assert decoder and not error.value
     result = []
     try:
         for packet in packets:
-            pcm = (ctypes.c_int16 * 1920)()
-            n = lib.opus_decode(decoder, packet, len(packet), pcm, 1920, 0)
-            assert n == 320
+            pcm = (ctypes.c_int16 * (frame * 6))()
+            n = lib.opus_decode(decoder, packet, len(packet), pcm, frame * 6, 0)
+            assert n == frame
             result.extend(pcm[:n])
     finally:
         lib.opus_decoder_destroy(decoder)
@@ -471,6 +596,10 @@ def reference_decode(packets):
 
 class DownlinkTest(unittest.TestCase):
     parse = ExtractTest.parse
+    reject = ExtractTest.reject
+    report_counts = ExtractTest.report_counts
+    assert_report_shape = ExtractTest.assert_report_shape
+    assert_streams_clean = ExtractTest.assert_streams_clean
 
     def fixture(self):
         f = Fixture().handshake(split=True)
@@ -525,14 +654,17 @@ class DownlinkTest(unittest.TestCase):
 
     def test_cross_turn_generation_id_must_be_unique(self):
         packet = encoded_fixture(1)[0]
-        for generation in (1, 2):
+        for generation, reason in (
+            (1, "downlink_generation_reused"),
+            (2, "downlink_audio_generation_mismatch"),
+        ):
             f = self.fixture()
             self.send_control(f, "generation.started", 1)
             fence = {"session_epoch": 7, "turn_id": 2, "generation_id": generation, "tool_epoch": 0}
             self.send_control(f, "generation.started", generation, fence=fence)
             f.send(1, ws(down_audio(packet, generation=1), 2, masked=False))
-            with self.subTest(replacement=generation), self.assertRaises(m.Invalid):
-                self.parse(f, downlink=True)
+            with self.subTest(replacement=generation):
+                self.reject(f, reason, downlink=True)
         f = self.fixture()
         self.send_control(f, "generation.started", 1)
         self.send_control(
@@ -556,28 +688,29 @@ class DownlinkTest(unittest.TestCase):
 
     def test_reject_downlink_wire_and_boundary_errors(self):
         packet = encoded_fixture(1)[0]
-        for changes in (
-            {"seq": 1},
-            {"sample": 320},
-            {"generation": 2},
-            {"flags": 1},
-            {"flags": 2},
-            {"epoch": 8},
-            {"count": 480},
-            {"size": 2049},
-            {"direction": 1},
-            {"version": 2},
+        for changes, reason in (
+            ({"seq": 1}, "downlink_audio_first_frame_discontinuous"),
+            ({"sample": 320}, "downlink_audio_first_frame_discontinuous"),
+            ({"generation": 2}, "downlink_audio_generation_mismatch"),
+            ({"flags": 1}, "downlink_audio_header_invalid"),
+            ({"flags": 2}, "downlink_audio_header_invalid"),
+            ({"epoch": 8}, "downlink_audio_header_invalid"),
+            ({"count": 480}, "downlink_audio_header_invalid"),
+            ({"size": 2049}, "downlink_audio_header_invalid"),
+            ({"direction": 1}, "downlink_audio_header_invalid"),
+            ({"version": 2}, "downlink_audio_header_invalid"),
         ):
             with self.subTest(changes=changes):
                 f = self.fixture()
                 self.send_control(f, "generation.started")
                 f.send(1, ws(down_audio(packet, **changes), 2, False))
-                with self.assertRaises(m.Invalid):
-                    self.parse(f, downlink=True)
-        for start, terminal, payload in (
-            (False, None, packet),
-            (True, "generation.completed", packet),
-            (True, None, b"\x03"),
+                self.reject(f, reason, downlink=True)
+        for start, terminal, payload, reason in (
+            (False, None, packet, "downlink_generation_start_missing"),
+            (True, "generation.completed", packet, "downlink_audio_generation_mismatch"),
+            # down_audio() wraps the 1-byte payload in a valid 31-byte header,
+            # so this reaches the codec and fails as opus_decode_failed.
+            (True, None, b"\x03", "opus_decode_failed"),
         ):
             f = self.fixture()
             if start:
@@ -585,17 +718,15 @@ class DownlinkTest(unittest.TestCase):
             if terminal:
                 self.send_control(f, terminal)
             f.send(1, ws(down_audio(payload), 2, False))
-            with self.assertRaises(m.Invalid):
-                self.parse(f, downlink=True)
-        for extra in (
-            {"session_id": "other"},
-            {"stream_epoch": 8},
-            {"fence": {"generation_id": True}},
+            self.reject(f, reason, downlink=True)
+        for extra, reason in (
+            ({"session_id": "other"}, "downlink_control_invalid"),
+            ({"stream_epoch": 8}, "downlink_control_invalid"),
+            ({"fence": {"generation_id": True}}, "downlink_fence_invalid"),
         ):
             f = self.fixture()
             self.send_control(f, "generation.started", **extra)
-            with self.assertRaises(m.Invalid):
-                self.parse(f, downlink=True)
+            self.reject(f, reason, downlink=True)
 
     def test_aggregate_pcm_and_metadata_limits(self):
         packet = encoded_fixture(1)[0]
@@ -604,12 +735,15 @@ class DownlinkTest(unittest.TestCase):
             self.send_control(f, "generation.started", generation)
             f.send(1, ws(down_audio(packet, generation=generation), 2, False))
             self.send_control(f, "generation.completed", generation)
-        with patch.object(m, "MAX_DOWNLINK_PCM", 640), self.assertRaises(m.Invalid):
-            self.parse(f, downlink=True)
+        with patch.object(m, "MAX_DOWNLINK_PCM", 640):
+            self.reject(f, "downlink_pcm_limit", downlink=True)
         self.assertEqual(self.parse(f, downlink=True).downlink.total_pcm, 1280)
-        for limit in ("MAX_CONTROLS", "MAX_GENERATIONS"):
-            with patch.object(m, limit, 1), self.assertRaises(m.Invalid):
-                self.parse(f, downlink=True)
+        for limit, reason in (
+            ("MAX_CONTROLS", "downlink_control_limit"),
+            ("MAX_GENERATIONS", "downlink_generation_limit"),
+        ):
+            with patch.object(m, limit, 1):
+                self.reject(f, reason, downlink=True)
 
     def test_full_message_availability_waits_for_tcp_prefix(self):
         f = self.fixture()
@@ -637,8 +771,7 @@ class DownlinkTest(unittest.TestCase):
             f.send(1, ws(down_audio(packet, seq, 2), 2, False))
         self.assertEqual(self.parse(f, downlink=True).downlink.total_pcm, (4000 + remaining) * 640)
         f.send(1, ws(down_audio(packet, remaining, 2), 2, False))
-        with self.assertRaises(m.Invalid):
-            self.parse(f, downlink=True)
+        self.reject(f, "downlink_pcm_limit", downlink=True)
 
     def test_flush_replacement_is_authoritative_and_requires_start(self):
         f = self.fixture()
@@ -675,9 +808,15 @@ class DownlinkTest(unittest.TestCase):
             meta = json.loads((out / "metadata.json").read_text())
             self.assertEqual(len(meta["downlink"]["generations"]), 1)
             self.assertNotIn("PRIVATE", json.dumps(meta))
+            summary = cli_report(result, "extractor_summary")
+            self.assert_report_shape(summary)
+            self.assert_streams_clean(result, f.token)
 
     def test_downlink_gap_and_incomplete_eof(self):
-        for tcp_gap in (True, False):
+        for tcp_gap, reason in (
+            (True, "tcp_reassembly_gap"),
+            (False, "websocket_frame_incomplete"),
+        ):
             f = self.fixture()
             self.send_control(f, "generation.started")
             wire = ws(down_audio(encoded_fixture(1)[0]), 2, False)
@@ -685,8 +824,7 @@ class DownlinkTest(unittest.TestCase):
                 f.packet(1, f.seq[1] + 1, wire)
             else:
                 f.send(1, wire[:-1])
-            with self.assertRaises(m.Invalid):
-                self.parse(f, downlink=True)
+            self.reject(f, reason, downlink=True)
 
 
 if __name__ == "__main__":
@@ -716,3 +854,325 @@ def test_non_mac_cli_still_rejects_audio_output():
         )
         assert result.returncode == 1
         assert not out.exists()
+        assert cli_report(result, "extractor_rejection")["reason"] == "unsupported_platform"
+
+
+def test_reason_catalog_is_statically_complete():
+    tree = ast.parse(SCRIPT.read_text(), filename=str(SCRIPT))
+    # require/uint/fence_of forward the reason argument their callers already
+    # validated as a REASONS literal, so their bodies are exempt from the
+    # literal-arg check; the REASONS table itself is excluded from the
+    # "referenced in source" literal scan.
+    helper_lines = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "REASONS" for t in node.targets)
+        ) or (isinstance(node, ast.FunctionDef) and node.name in {"require", "uint", "fence_of"}):
+            helper_lines.update(range(node.lineno, node.end_lineno + 1))
+    literals = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and node.lineno not in helper_lines
+        ):
+            literals.add(node.value)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = (
+            func.id
+            if isinstance(func, ast.Name)
+            else func.attr
+            if isinstance(func, ast.Attribute)
+            else None
+        )
+        if name == "require":
+            assert len(node.args) == 2 and not node.keywords
+            arg = node.args[1]
+            assert isinstance(arg, ast.Constant) and arg.value in m.REASONS
+        elif name == "Invalid" and node.lineno not in helper_lines:
+            assert len(node.args) == 1
+            arg = node.args[0]
+            assert isinstance(arg, ast.Constant) and arg.value in m.REASONS
+    assert set(m.REASONS) <= literals
+    assert set(m.REASONS.values()) == REASON_CLASSES
+
+
+def real_hello(epoch=3252):
+    # Exact key set emitted by MemoriaProtocol::DeviceHelloV2:
+    # firmware/esp32/overlay/files/main/memoria/memoria_protocol.cc (~line 3080).
+    return {
+        "type": "device.hello",
+        "version": 2,
+        "device_id": m.TARGET,
+        "firmware_version": "0.2.0",
+        "board_profile": "memoria-atk-dnesp32s3-v1",
+        "stream_epoch": epoch,
+        "capabilities": {
+            "display": True,
+            "microphone": True,
+            "speaker": True,
+            "simultaneous_capture_playback": True,
+            "aec_mode": "fd_low_cost",
+            "aec_reference": "software_post_gain_pre_i2s",
+            "aec_reference_verified": False,
+            "local_vad": True,
+            "local_stop_keyword": True,
+            "physical_stop_button": True,
+            "playback_watermark": "exact",
+            "local_duck": False,
+            "barge_in_level": 1,
+        },
+        "audio": {
+            "uplink_codec": "opus",
+            "uplink_sample_rate": 16000,
+            "downlink_sample_rates": [16000, 24000],
+            "channels": 1,
+            "frame_ms": 20,
+        },
+    }
+
+
+def real_accepted(epoch=3252, rate=24000):
+    # Exact deviceSessionAccepted key set (services/media_edge/
+    # device_ws_protocol.go:443) with a DeviceSettingsClaim snapshot
+    # (device_ws_auth.go:106); wake_word_* keys are omitempty and absent here.
+    return {
+        "type": "session.accepted",
+        "version": 2,
+        "session_id": "synthetic-session",
+        "stream_epoch": epoch,
+        "interaction_authority": "python_authoritative",
+        "audio_mode": "interrupt_assist",
+        "downlink_sample_rate": rate,
+        "runtime_profile_version": 3,
+        "device_settings": {
+            "settings_version": 1,
+            "volume_limit": 70,
+            "screen_brightness": 60,
+            "night_mode": False,
+            "do_not_disturb": False,
+            "learning_mode": "off",
+            "audio_mode": "interrupt_assist",
+            "wake_mode": "button",
+            "allowed_barge_in": ["button"],
+        },
+        "current_fence": None,
+        "current_generation_active": False,
+        "acoustic_attestation": None,
+    }
+
+
+def uplink_frame(seq, sample, packet, epoch=3252):
+    return struct.pack("!BBHIIQIIH", 1, 1, 0, epoch, seq, sample, 320, 0, len(packet)) + packet
+
+
+class RealShapeTest(unittest.TestCase):
+    parse = ExtractTest.parse
+    reject = ExtractTest.reject
+    report_counts = ExtractTest.report_counts
+    assert_report_shape = ExtractTest.assert_report_shape
+    assert_streams_clean = ExtractTest.assert_streams_clean
+
+    def real_fixture(self, epoch=3252):
+        # device.hello advertises [16000, 24000] and the Edge resolves 24000
+        # (TestResolveDownlinkRatePrefersNative24kForV2), so a production
+        # session.accepted carries downlink_sample_rate 24000.
+        f = Fixture().handshake(
+            epoch=epoch, hello=real_hello(epoch), accepted=real_accepted(epoch, 24000)
+        )
+        for seq, packet in enumerate(encoded_fixture(50)):
+            f.send(0, ws(uplink_frame(seq, seq * 320, packet, epoch), 2))
+        fence = {"session_epoch": epoch, "turn_id": 1, "generation_id": 1, "tool_epoch": 0}
+        f.send(1, ws(control("generation.started", epoch=epoch, fence=fence), masked=False))
+        for seq, packet in enumerate(encoded_fixture(3, 24000)):
+            f.send(
+                1,
+                ws(
+                    down_audio(packet, seq, 1, epoch=epoch, count=480, sample=seq * 480),
+                    2,
+                    masked=False,
+                ),
+            )
+        f.send(1, ws(control("generation.completed", epoch=epoch, fence=fence), masked=False))
+        f.send(1, ws({"type": "screen.subtitle", "text": "PRIVATE TEXT"}, masked=False))
+        return f
+
+    def test_real_shape_uplink_only_succeeds_and_reports_24k(self):
+        f = self.real_fixture()
+        with tempfile.TemporaryDirectory() as root:
+            out = Path(root) / "evidence"
+            result = subprocess.run(
+                cli_command("--output", str(out)), input=f.pcap(), capture_output=True
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            meta = json.loads((out / "metadata.json").read_text())
+            self.assertEqual(meta["stream_epoch"], 3252)
+            self.assertEqual(len(meta["frames"]), 50)
+            summary = cli_report(result, "extractor_summary")
+            self.assert_report_shape(summary)
+            self.assertIsNone(summary["reason"])
+            self.assertIsNone(summary["class"])
+            self.assertEqual(summary["counts"]["accepted_downlink_sample_rate"], 24000)
+            self.assertEqual(summary["counts"]["uplink_frames"], 50)
+            self.assertEqual(summary["counts"]["stream_epoch"], 3252)
+            self.assert_streams_clean(result, f.token)
+
+    def test_real_shape_24k_downlink_parsed_at_negotiated_rate(self):
+        f = self.real_fixture()
+        downlink_packets = encoded_fixture(3, 24000)
+        with tempfile.TemporaryDirectory() as root:
+            out = Path(root) / "evidence"
+            result = subprocess.run(
+                cli_command("--output", str(out), "--include-downlink"),
+                input=f.pcap(),
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            meta = json.loads((out / "metadata.json").read_text())
+            self.assertEqual(meta["downlink"]["sample_rate"], 24000)
+            generations = meta["downlink"]["generations"]
+            self.assertEqual(len(generations), 1)
+            self.assertEqual(generations[0]["status"], "completion_observed")
+            frames = generations[0]["frames"]
+            self.assertEqual(len(frames), len(downlink_packets))
+            for i, frame in enumerate(frames):
+                self.assertEqual(frame["frame_samples"], 480)
+                self.assertEqual(frame["sample_start"], i * 480)
+            with wave.open(str(out / "downlink-000.wav")) as wav:
+                self.assertEqual(wav.getframerate(), 24000)
+                self.assertEqual(wav.getnchannels(), 1)
+                self.assertEqual(wav.getnframes(), 480 * len(downlink_packets))
+                pcm = wav.readframes(480 * len(downlink_packets))
+            width = 480 * len(downlink_packets)
+            self.assertEqual(
+                list(struct.unpack(f"<{width}h", pcm)),
+                reference_decode(downlink_packets, 24000, 480),
+            )
+            out_only = Path(root) / "evidence-uplink-only"
+            result_uplink = subprocess.run(
+                cli_command("--output", str(out_only)),
+                input=f.pcap(),
+                capture_output=True,
+            )
+            self.assertEqual(result_uplink.returncode, 0, result_uplink.stderr)
+            self.assertEqual(
+                (out / "uplink.wav").read_bytes(), (out_only / "uplink.wav").read_bytes()
+            )
+            summary = cli_report(result, "extractor_summary")
+            self.assert_report_shape(summary)
+            self.assertEqual(summary["counts"]["downlink_frames"], len(downlink_packets))
+            self.assertEqual(summary["counts"]["downlink_generations"], 1)
+            self.assertEqual(summary["counts"]["accepted_downlink_sample_rate"], 24000)
+            self.assert_streams_clean(result, f.token)
+
+    def test_negotiated_rate_must_be_exact_int_16k_or_24k(self):
+        for rate in (48000, None, 16000.0, True):
+            accepted = real_accepted(7, rate)
+            if rate is None:
+                del accepted["downlink_sample_rate"]
+            f = Fixture().handshake(accepted=accepted)
+            f.send(0, ws(audio(), 2))
+            with self.subTest(rate=rate):
+                self.reject(f, "session_accepted_downlink_rate_unsupported", downlink=True)
+                self.assertEqual(self.report_counts()["accepted_downlink_sample_rate"], -1)
+
+    def test_24k_session_rejects_16k_frame_count(self):
+        f = Fixture().handshake(epoch=3252, hello=real_hello(), accepted=real_accepted(3252, 24000))
+        f.send(0, ws(uplink_frame(0, 0, encoded_fixture(1)[0]), 2))
+        fence = {"session_epoch": 3252, "turn_id": 1, "generation_id": 1, "tool_epoch": 0}
+        f.send(1, ws(control("generation.started", epoch=3252, fence=fence), masked=False))
+        f.send(
+            1,
+            ws(
+                down_audio(encoded_fixture(1)[0], 0, 1, epoch=3252, count=320),
+                2,
+                masked=False,
+            ),
+        )
+        self.reject(f, "downlink_audio_header_invalid", downlink=True)
+
+    def test_24k_downlink_pcm_limit_counts_negotiated_frame_bytes(self):
+        packets = encoded_fixture(2, 24000)
+        f = Fixture().handshake(epoch=3252, hello=real_hello(), accepted=real_accepted(3252, 24000))
+        f.send(0, ws(uplink_frame(0, 0, encoded_fixture(1)[0]), 2))
+        fence = {"session_epoch": 3252, "turn_id": 1, "generation_id": 1, "tool_epoch": 0}
+        f.send(1, ws(control("generation.started", epoch=3252, fence=fence), masked=False))
+        for seq, packet in enumerate(packets):
+            f.send(
+                1,
+                ws(
+                    down_audio(packet, seq, 1, epoch=3252, count=480, sample=seq * 480),
+                    2,
+                    masked=False,
+                ),
+            )
+        # First 960-byte frame fits exactly; the second exceeds the total bound.
+        with patch.object(m, "MAX_DOWNLINK_PCM", 960):
+            self.reject(f, "downlink_pcm_limit", downlink=True)
+
+    def test_capture_starting_after_connect_is_capture_boundary(self):
+        f = Fixture().handshake()
+        f.send(0, ws(audio(), 2))
+        f.packets = f.packets[2:]  # capture window opens after the TCP handshake
+        self.reject(f, "target_handshake_not_found")
+        self.assertEqual(m.REASONS["target_handshake_not_found"], "capture_boundary")
+        self.assertEqual(self.report_counts()["flows_opened"], 0)
+        self.assertGreater(self.report_counts()["preexisting_flow_packets"], 0)
+        self.assertGreater(self.report_counts()["preexisting_flow_payload_bytes"], 0)
+
+    def test_target_upgrade_refusal_is_counted(self):
+        f = Fixture().handshake(status=401)
+        f.send(0, ws(audio(), 2))
+        self.reject(f, "target_handshake_not_found")
+        self.assertEqual(self.report_counts()["target_upgrade_refused"], 1)
+        self.assertEqual(self.report_counts()["target_handshakes"], 0)
+
+    def test_missing_middle_tcp_segment_is_reassembly_gap(self):
+        f = Fixture().handshake()
+        f.send(0, ws(audio(), 2))
+        f.packet(0, f.seq[0] + 5, ws(audio(1, 320), 2))
+        self.reject(f, "tcp_reassembly_gap")
+        self.assertEqual(m.REASONS["tcp_reassembly_gap"], "capture_integrity")
+        self.assertGreater(self.report_counts()["tcp_pending_segments_up"], 0)
+
+    def test_uplink_first_frame_and_later_discontinuity(self):
+        f = Fixture().handshake()
+        f.send(0, ws(audio(1), 2))
+        self.reject(f, "uplink_audio_first_frame_discontinuous")
+        f = Fixture().handshake()
+        f.send(0, ws(audio(), 2))
+        f.send(0, ws(audio(2, 640), 2))
+        self.reject(f, "uplink_audio_discontinuous")
+
+    def test_downlink_audio_before_any_generation_started(self):
+        f = Fixture().handshake()  # session.accepted at 16000
+        f.send(0, ws(audio(), 2))
+        f.send(1, ws(down_audio(encoded_fixture(1)[0]), 2, masked=False))
+        self.reject(f, "downlink_generation_start_missing", downlink=True)
+        self.assertEqual(self.report_counts()["downlink_generations"], 0)
+
+    def test_second_target_handshake_is_session_lifecycle(self):
+        f = Fixture().handshake()
+        f.send(0, ws(audio(), 2))
+        second = Fixture().handshake()
+        remapped = []
+        for raw in second.packets:
+            raw = bytearray(raw)
+            offset = 34 if int.from_bytes(raw[34:36], "big") == 40000 else 36
+            raw[offset : offset + 2] = struct.pack("!H", 40001)
+            remapped.append(bytes(raw))
+        f.packets += remapped
+        self.reject(f, "second_target_session")
+        self.assertEqual(m.REASONS["second_target_session"], "session_lifecycle")
+        self.assertEqual(self.report_counts()["target_handshakes"], 1)
+
+    def test_peer_ack_beyond_captured_bytes(self):
+        f = Fixture().handshake()
+        f.send(0, ws(audio(), 2))
+        f.packet(1, f.seq[1], b"", flags=16, ack=f.seq[0] + 100)
+        self.reject(f, "tcp_ack_beyond_capture")
+        self.assertEqual(m.REASONS["tcp_ack_beyond_capture"], "capture_integrity")
