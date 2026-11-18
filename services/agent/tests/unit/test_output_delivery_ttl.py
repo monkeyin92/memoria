@@ -3,7 +3,6 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
-
 from services.agent.src.voice_core.media_session_output_owner import MediaOutputOwnerMixin as Owner
 from services.agent.src.voice_core.media_session_types import OutputWork
 from services.agent.tests.unit.test_delegation_coordinator import _coordinator_with_result, _request
