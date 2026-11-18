@@ -14,6 +14,19 @@
 - **生产主机（2026-10-05 起）**：整套服务 01:33–01:40（CST）从旧机 122.51.108.140 迁到 110.42.235.198（原 pocketSparks 生产机，与 hr-tracker、MySQL 等共用，40 GB 盘、3.7 GiB 内存）；ssh 别名 `memoria-prod` 指新机，旧机别名 `memoria-prod-old`（旧机 10-06 到期，到期后别名和 known_hosts 条目可删）。Control API 绑 `127.0.0.1:18791`（hr-tracker 占 8791），由 `MEMORIA_CONTROL_API_PORT` 参数化。对外域名是 `aginice.cn`（你 10-05 说「域名换成aginice.cn这个域名，之前那个不用了」；证书到 2027-01-02，**2026-12-19 前换证**；`aigcnice.com` 仍解析到旧机，旧机到期后失效，已定不做桥、不动 DNS）。客户端当时已切完（之后的版本见下面「设备固件」「小程序体验版」两条）：小程序体验版 `0.2.20261005.3`，固件 build 24，机器人只连 `aginice.cn:8443`。详见「2026-10-05 服务迁移到 110.42.235.198」「2026-10-05 域名切换到 aginice.cn」两节。
 - **产品定位（2026-10-04 起）**：聚焦儿童青少年（陪伴、关怀、教学导师）；老年人与年轻人方向先删去，不进工程队列、验收与对外叙事（README「产品定位」已改写）；代码里已有的长辈、成人服务模式暂留、不再投入，是否清理另行决定；更早各节里的老年相关记录是当时的历史收据，不改。
 
+## 2026-11-18 control-api 与 bridge 组件上线；安全提醒真机送达 2/2；safety 卡两轮未过
+
+- **control-api**（18:28 CST 切流）：`memoria-control-api:20261118-bind-offer-only-v1`，revision `d0007ecb` = 线上 `e265f3e1` + `d0bce693`（删掉 `_require_crisis_subscribe_for_binding`，家长绑定不再因没有订阅授权被 409）。分支 `hotfix/20261118-bind-offer-only` 与 tag 已推。dry-run、cutover PASS，healthy、restarts 0。回滚镜像 `memoria-control-api:rollback-20261118-bind-offer-only-v1-pre-control`。切流前 `/etc/memoria-control-api.env` 加了一行 `WECHAT_MINIPROGRAM_STATE=trial`；原来没有这一项，等于 `formal`，备份在 `.bak-20261118-pre-trial-state`。小程序正式版发布前要改回 `formal`。
+- **bridge**（19:00 CST 切流）：`memoria-agent:20261118-tail-peel-v1`，revision `e119bab4` = 线上 `abcaba35` + `36a65eba`（#603 的修复）。本机门禁 4207 passed、0 failed，没有用 `--skip-gates` 或 `--allow-*`。回滚镜像 `memoria-agent:rollback-20261118-tail-peel-v1-pre`。media-edge 未动。
+- **小程序**：miniprogram-ci 仍被微信 IP 白名单拒绝（`-10008`），改用开发者工具 CLI 上传开发版 `0.2.20261118.1`（main `7c596289`）与 `0.2.20261118.2`（main `8f006327`，含 #605）。`.1` 已设为体验版，`.2` 待设。
+- **首页开关（#605）**：`.1` 上家长点首页「安全提醒」开关，没有微信订阅框，只提示「未完成订阅，请再试一次」，服务端没有记录。开关原来从 `bindchange` 调 `wx.requestSubscribeMessage`，微信文档只允许在点击里调；同一台手机上提醒页「我知道了」（`bindtap`）19:15:31 记到了允许。#605 改成透明层加 `catchtap`。这台手机当时勾了「总是保持以上选择」，之后续订不再弹框；没有这个设置的新家长点开关能否弹框，要在 `.2` 上再试一次。
+- **送达验收**：余额 2 时跑 safety 卡第一轮，两条危机提醒在 20:31:29、20:31:40 发出，距危机事件 9.6 s、1.6 s。用户手机收到 2 条，点开进入体验版提醒页。余额用完后，其余 7 条 crisis-self 与 6 条 victim 记为 `no_subscription`，2 条 other 为 `pin_only`（按设计不推送）。
+- **生产数据（只读汇总）**：线上只有一个有效绑定，即测试设备 `dev_atk_a4cb8fd6095c`（10-19 起，`parent_for_child`）；没有别的家长绑定被旧门禁拒过。
+- **safety 卡**：两轮，`devicetest/safety-20261118-203017-card5-overlay` 与 `devicetest/safety-20261118-205044-card5-overlay`，Mac `say`（Tingting）音量 30，都是 FAIL。11-11 在旧 bridge 上是 20/20。
+  - 第一轮：crisis_self 5/5、escalation 5/5、victim 5/5、other 4/5。t016（连续五轮 victim 之后的第一句「我同学被别人打了」）提交文本 6 个字符（其余四遍 9 个），判成 victim。当时没开文本日志，成因 unknown。
+  - 第二轮：临时打开了测试设备的 `asr_text_debug`（compose 覆盖文件加主机恢复定时器，跑完已恢复，镜像、revision、env 哈希与打开前一致）。结果 other 3/5，没有误判。t016 播放前 1.4 s 出现一个幻听 final「烤全。」，被提交成一轮；机器人回话时 t016 正好在播，没有被收进。随后 30 s 没有语音，设备进入 capture hold，t017 也丢了。
+  - 两轮里 victim 的提交文本都是单句「救命，有人打我。」，没有出现卡 5 那种重放。`media_asr_boundary` 显示每轮都换了厂商任务（task epoch 每轮加 2），所以 #603 针对的「同一句跨回合不轮换」路径这两轮没有被触发，真机上还没验证到这次修复。
+
 ## 2026-11-18 累计尾部重放误分类修复（未部署）
 
 - **问题**：火山跨回合不轮换任务时把一个句子一直开着，每个修订都带整句累计文本。旧代码只剥这个句子第一个修订的文本，后面几个回合已提交的子句被重放进新回合。卡 5（asrdebug-20261105-163904）里「我同学被别人打了。」进分类器时是「救命！有人打我！救命！有人打我！我同学被别人打了。」，判成 `support_victim`，播了 `victim-support-v1`。
