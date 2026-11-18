@@ -1,4 +1,6 @@
 const api = require("../../utils/api");
+const guardianPush = require("../../utils/guardian-push");
+const { SUBSCRIPTION_PUSH_ENABLED } = require("../../config");
 const { statusBarStyle } = require("../../utils/nav-inset");
 const { leavePage } = require("../../utils/nav-back");
 const { openLogin } = require("../../utils/auth-gate");
@@ -21,6 +23,12 @@ Page({
       this._notificationId = decodeURIComponent(query?.id || "");
     } catch {
       this._notificationId = "";
+    }
+    this._safety = null;
+    if (SUBSCRIPTION_PUSH_ENABLED) {
+      guardianPush.loadSafetySubscribeState(api).then((safety) => {
+        this._safety = safety;
+      });
     }
     return this.loadAlert();
   },
@@ -66,8 +74,15 @@ Page({
     }
     if (this._acknowledging) return;
     this._acknowledging = true;
+    // 续订要在这次点击里同步调起；它的结果不影响已读。
+    const safety = this._safety;
+    const topUp =
+      safety?.config?.enabled && safety.subscription?.known && safety.subscription.lastResult === "accept"
+        ? guardianPush.subscribeCrisisAlerts({ config: safety.config, api }).catch(() => null)
+        : Promise.resolve(null);
     this.setData({ acknowledging: true, ackError: "" });
     const result = await acknowledgeSafetyAlert(api, alert.notificationId);
+    await topUp;
     if (result === "saved" || result === "gone") {
       this.goBack();
       return;
