@@ -225,6 +225,45 @@ test("settings toggle loads remaining > 0 as on and opt_out clears the ledger", 
   assert.doesNotMatch(guardianPush.SAFETY_SUBSCRIBE_OFF_CAPTION, /无法再推送|永久关闭|危机|推送/);
 });
 
+test("a spent subscribe reads as used up only when the parent's last answer was 允许", async () => {
+  const enabledConfig = { enabled: true, template_ids: { crisis: "tmpl-crisis" } };
+  const usedUp = async (overrides) =>
+    (await guardianPush.loadSafetySubscribeState(fakeApi(overrides))).safetySubscribeUsedUp;
+
+  assert.equal(
+    await usedUp({
+      config: enabledConfig,
+      subscription: { template_id: "tmpl-crisis", remaining: 0, subscribed: false, last_result: "accept" },
+    }),
+    true,
+  );
+  for (const subscription of [
+    { template_id: "tmpl-crisis", remaining: 0, subscribed: false, last_result: "reject" },
+    { template_id: "tmpl-crisis", remaining: 0, subscribed: false, last_result: "opt_out" },
+    { template_id: "tmpl-crisis", remaining: 0, subscribed: false },
+    { template_id: "tmpl-crisis", remaining: 1, subscribed: true, last_result: "accept" },
+  ]) {
+    assert.equal(await usedUp({ config: enabledConfig, subscription }), false, JSON.stringify(subscription));
+  }
+  assert.equal(
+    await usedUp({
+      config: { enabled: false, template_ids: {} },
+      subscription: { template_id: "tmpl-crisis", remaining: 0, subscribed: false, last_result: "accept" },
+    }),
+    false,
+  );
+  assert.equal(
+    await usedUp({ config: enabledConfig, subscription: new Error("network down") }),
+    false,
+  );
+
+  assert.equal(
+    guardianPush.SAFETY_SUBSCRIBE_USED_UP_CAPTION,
+    "上一次提醒已经发出。再开启一次，下次才能继续提醒你。",
+  );
+  assert.doesNotMatch(guardianPush.SAFETY_SUBSCRIBE_USED_UP_CAPTION, /危机|推送|通知/);
+});
+
 test("subscription-state query failure is unknown, not pretended off", async () => {
   const api = fakeApi({
     config: { enabled: true, template_ids: { crisis: "tmpl-crisis" } },

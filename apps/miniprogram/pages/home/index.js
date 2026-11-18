@@ -120,6 +120,8 @@ function emptyDashboard() {
     safetySubscribeKnown: false,
     safetySubscribeBusy: false,
     safetySubscribeHelper: SAFETY_SUBSCRIBE_HELPER,
+    safetySubscribeUsedUp: false,
+    safetySubscribeUsedUpCaption: guardianPush.SAFETY_SUBSCRIBE_USED_UP_CAPTION,
   };
 }
 
@@ -317,7 +319,7 @@ Page({
         });
       });
       if (keepOn) {
-        this.setData({ safetySubscribeOn: true });
+        this.setData({ safetySubscribeOn: true, safetySubscribeUsedUp: false });
         return;
       }
       this.setData({ safetySubscribeBusy: true });
@@ -334,7 +336,7 @@ Page({
         }
         const outcome = await guardianPush.optOutCrisisPushAlerts({ config, api });
         if (!outcome.ok) {
-          this.setData({ safetySubscribeOn: true });
+          this.setData({ safetySubscribeOn: true, safetySubscribeUsedUp: false });
           wx.showToast({ title: "关闭失败，请稍后再试", icon: "none" });
           return;
         }
@@ -345,7 +347,7 @@ Page({
           }),
         );
       } catch (error) {
-        this.setData({ safetySubscribeOn: true });
+        this.setData({ safetySubscribeOn: true, safetySubscribeUsedUp: false });
         wx.showToast({ title: error?.message || "关闭失败，请稍后再试", icon: "none" });
       } finally {
         this.setData({ safetySubscribeBusy: false });
@@ -367,12 +369,13 @@ Page({
       }
       const outcome = await guardianPush.subscribeCrisisAlerts({ config, api });
       if (outcome.result === "accept" && outcome.recorded) {
-        this.setData(
-          guardianPush.safetySubscribeView({
+        this.setData({
+          ...guardianPush.safetySubscribeView({
             safetySubscribeKnown: true,
             safetySubscribeOn: true,
           }),
-        );
+          safetySubscribeUsedUp: false,
+        });
         wx.showToast({ title: "已订阅安全提醒", icon: "none" });
       } else {
         this.setData(
@@ -541,12 +544,16 @@ Page({
     let safetyView = {
       safetySubscribeKnown: false,
       safetySubscribeOn: false,
+      safetySubscribeUsedUp: false,
     };
     if (offerSafety) {
       const safety = await guardianPush.loadSafetySubscribeState(api);
       if (flowSeq !== this._flowSeq || !api.isAuthEpochCurrent(authEpoch)) return;
       this._safetyPushConfig = safety.config;
-      safetyView = guardianPush.safetySubscribeView(safety);
+      safetyView = {
+        ...guardianPush.safetySubscribeView(safety),
+        safetySubscribeUsedUp: safety.safetySubscribeUsedUp === true,
+      };
     } else {
       this._safetyPushConfig = null;
     }

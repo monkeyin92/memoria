@@ -191,6 +191,42 @@ test("home shows the safety subscribe card only while subscription push is enabl
   assert.match(onText, /安静时段 21:00 – 次日 07:00/);
 });
 
+test("home says the last safety alert used up the subscribe and keeps the switch off", async () => {
+  const spent = await loadHome({
+    api: {
+      getGuardianPushConfig: async () => ({ enabled: true, template_ids: { crisis: "tmpl-crisis" } }),
+      getGuardianPushSubscription: async () => ({
+        template_id: "tmpl-crisis",
+        remaining: 0,
+        subscribed: false,
+        last_result: "accept",
+      }),
+    },
+  });
+  assert.equal(spent.data.safetySubscribeUsedUp, true);
+  assert.equal(spent.data.safetySubscribeOn, false);
+  const spentText = visibleText(renderPage("pages/home/index", spent.data));
+  assert.match(spentText, /上一次提醒已经发出。再开启一次，下次才能继续提醒你。/);
+  assert.doesNotMatch(spentText, /家长打开小程序时首页会置顶显示/);
+
+  const remaining = await loadHome({
+    api: {
+      getGuardianPushConfig: async () => ({ enabled: true, template_ids: { crisis: "tmpl-crisis" } }),
+      getGuardianPushSubscription: async () => ({
+        template_id: "tmpl-crisis",
+        remaining: 1,
+        subscribed: true,
+        last_result: "accept",
+      }),
+    },
+  });
+  assert.equal(remaining.data.safetySubscribeUsedUp, false);
+  assert.equal(remaining.data.safetySubscribeOn, true);
+  const remainingText = visibleText(renderPage("pages/home/index", remaining.data));
+  assert.match(remainingText, /家长打开小程序时首页会置顶显示/);
+  assert.doesNotMatch(remainingText, /上一次提醒已经发出/);
+});
+
 test("home links to child memory without repeating the review preview", async () => {
   const { data } = await loadHome();
   const text = visibleText(renderPage("pages/home/index", data));
