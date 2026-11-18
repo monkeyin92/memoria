@@ -293,7 +293,8 @@ test("home owns the ledger-backed safety toggle and device keeps hardware settin
   assert.match(home, /safetySubscribeHelper/);
   assert.match(home, /safetySubscribeKnown && safetySubscribeOn/);
   assert.match(home, /disabled="\{\{!safetySubscribeKnown \|\| safetySubscribeBusy\}\}"/);
-  assert.match(home, /bindchange="onSafetySubscribeChange"/);
+  assert.match(home, /catchtap="onSafetySubscribeTap"/);
+  assert.doesNotMatch(home, /bindchange="onSafetySubscribe/);
   assert.doesNotMatch(template, /bindchange="onSafetySubscribeChange"/);
   assert.match(template, /bindchange="onLimitsMinutesSlider"/);
   assert.match(template, /解除绑定/);

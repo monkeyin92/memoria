@@ -52,6 +52,8 @@
 .home-toggle-row { display: flex; align-items: center; gap: 14px; min-height: 48px; }
 .home-toggle-row + .home-toggle-row { margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--mp-line); }
 .home-toggle-copy { flex: 1; min-width: 0; }
+.home-safety-switch { position: relative; flex: none; }
+.home-safety-switch-cover { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
 .home-moon { background: var(--mp-paper); }
 .home-note { display: block; margin-top: 20px; color: var(--mp-ink-3); font-size: var(--mp-type-meta); line-height: 1.7; }
 .home-guest { padding-top: 42px; }

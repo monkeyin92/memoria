@@ -301,12 +301,9 @@ Page({
     openLogin({ reason: "view_attention" });
   },
 
-  async onSafetySubscribeChange(event) {
-    if (!this.data.safetySubscribeKnown || this.data.safetySubscribeBusy) {
-      this.setData({ safetySubscribeOn: this.data.safetySubscribeOn });
-      return;
-    }
-    const nextOn = Boolean(event.detail.value);
+  async onSafetySubscribeTap() {
+    if (!this.data.safetySubscribeKnown || this.data.safetySubscribeBusy) return;
+    const nextOn = !this.data.safetySubscribeOn;
     if (!nextOn) {
       const keepOn = await new Promise((resolve) => {
         wx.showModal({
