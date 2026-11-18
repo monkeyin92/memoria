@@ -114,6 +114,10 @@ class ASRStreamSupervisor:
         default_factory=dict,
         init=False,
     )
+    _sentence_spines: dict[tuple[int, int, int], list[tuple[int, str]]] = field(
+        default_factory=dict,
+        init=False,
+    )
     _committed_turn_texts: list[str] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
@@ -308,35 +312,59 @@ class ASRStreamSupervisor:
             timeline_segment_id=f"{result.sentence_id}:tail:{self.last_committed_sample}",
         )
 
+    def _remember_sentence_spine(self, raw: ASRResult) -> None:
+        """Record the provider's full text for an accepted revision of a sentence."""
+
+        key = (raw.stream_epoch, raw.task_epoch, raw.capture_start_sample)
+        revisions = self._sentence_spines.pop(key, [])
+        committed = self.last_committed_sample
+        kept = [item for item in revisions if item[0] <= committed][-1:]
+        kept.extend(item for item in revisions if item[0] > committed)
+        kept.append((raw.capture_end_sample, raw.text))
+        self._sentence_spines[key] = kept
+        while len(self._sentence_spines) > self.max_result_history:
+            self._sentence_spines.pop(next(iter(self._sentence_spines)))
+
     def _untimed_tail_after_committed_prefix(
         self,
         result: ASRResult,
         committed: int,
     ) -> ASRAcceptDecision:
-        """Keep what an untimed final says after the text already committed.
+        """Keep what an untimed final says after the sentence's committed text.
 
-        Volc can hold one utterance open across a committed turn and send a
-        final that repeats the committed revision before the new speech.
+        Volc can hold one sentence open across committed turns; every revision
+        then repeats the whole sentence. The tail is what follows the latest
+        revision of this sentence that is fully committed. A committed clause is
+        never matched by its text alone: the same words said again in a new turn
+        are that turn's speech (card5 t008-o1, revert e11f14fb).
         """
 
         rejected = ASRAcceptDecision(None, ASRDecisionReason.STRADDLES_COMMITTED_WITHOUT_TIMING)
-        prefix = self._accepted_text.get(
-            (result.stream_epoch, result.task_epoch, result.capture_start_sample)
-        )
-        if prefix is None or prefix[0] > committed:
-            return rejected
-        tail_text = self._tail_after_alnum_prefix(result.text, prefix[1])
-        if tail_text is None or not self._alnum_chars(tail_text):
-            return rejected
-        return ASRAcceptDecision(
-            replace(
-                result,
-                capture_start_sample=committed,
-                text=tail_text,
-                timeline_segment_id=f"{result.sentence_id}:tail:{committed}",
-            ),
-            ASRDecisionReason.ACCEPTED,
-        )
+        key = (result.stream_epoch, result.task_epoch, result.capture_start_sample)
+        prefixes: list[str] = []
+        for end_sample, text in reversed(self._sentence_spines.get(key, ())):
+            if end_sample <= committed:
+                prefixes.append(text)
+                break
+        first_revision = self._accepted_text.get(key)
+        if first_revision is not None and first_revision[0] <= committed:
+            prefixes.append(first_revision[1])
+        for prefix in prefixes:
+            tail_text = self._tail_after_alnum_prefix(result.text, prefix)
+            if tail_text is None:
+                continue
+            if not self._alnum_chars(tail_text):
+                return rejected
+            return ASRAcceptDecision(
+                replace(
+                    result,
+                    capture_start_sample=committed,
+                    text=tail_text,
+                    timeline_segment_id=f"{result.sentence_id}:tail:{committed}",
+                ),
+                ASRDecisionReason.ACCEPTED,
+            )
+        return rejected
 
     @staticmethod
     def _should_supersede_cross_sentence(
@@ -411,6 +439,7 @@ class ASRStreamSupervisor:
         return self._normalize_committed_result(result)
 
     def accept_result(self, result: ASRResult, *, session_id: str) -> ASRAcceptDecision:
+        raw = result
         normalized = self.preview_result(result)
         if normalized.accepted is None:
             return normalized
@@ -580,6 +609,7 @@ class ASRStreamSupervisor:
             self._accepted_text[text_key] = (result.capture_end_sample, result.text)
             while len(self._accepted_text) > self.max_result_history:
                 self._accepted_text.pop(next(iter(self._accepted_text)))
+            self._remember_sentence_spine(raw)
             if result.is_final:
                 replaced = set(superseded_intervals)
                 if final_interval in self._final_intervals:
@@ -632,6 +662,7 @@ class ASRStreamSupervisor:
         self._revision_order.clear()
         self._segment_order.clear()
         self._accepted_text.clear()
+        self._sentence_spines.clear()
         self._committed_turn_texts.clear()
         self.timeline.start_stream_epoch(stream_epoch)
         return True

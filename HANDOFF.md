@@ -14,6 +14,14 @@
 - **生产主机（2026-10-05 起）**：整套服务 01:33–01:40（CST）从旧机 122.51.108.140 迁到 110.42.235.198（原 pocketSparks 生产机，与 hr-tracker、MySQL 等共用，40 GB 盘、3.7 GiB 内存）；ssh 别名 `memoria-prod` 指新机，旧机别名 `memoria-prod-old`（旧机 10-06 到期，到期后别名和 known_hosts 条目可删）。Control API 绑 `127.0.0.1:18791`（hr-tracker 占 8791），由 `MEMORIA_CONTROL_API_PORT` 参数化。对外域名是 `aginice.cn`（你 10-05 说「域名换成aginice.cn这个域名，之前那个不用了」；证书到 2027-01-02，**2026-12-19 前换证**；`aigcnice.com` 仍解析到旧机，旧机到期后失效，已定不做桥、不动 DNS）。客户端当时已切完（之后的版本见下面「设备固件」「小程序体验版」两条）：小程序体验版 `0.2.20261005.3`，固件 build 24，机器人只连 `aginice.cn:8443`。详见「2026-10-05 服务迁移到 110.42.235.198」「2026-10-05 域名切换到 aginice.cn」两节。
 - **产品定位（2026-10-04 起）**：聚焦儿童青少年（陪伴、关怀、教学导师）；老年人与年轻人方向先删去，不进工程队列、验收与对外叙事（README「产品定位」已改写）；代码里已有的长辈、成人服务模式暂留、不再投入，是否清理另行决定；更早各节里的老年相关记录是当时的历史收据，不改。
 
+## 2026-11-18 累计尾部重放误分类修复（未部署）
+
+- **问题**：火山跨回合不轮换任务时把一个句子一直开着，每个修订都带整句累计文本。旧代码只剥这个句子第一个修订的文本，后面几个回合已提交的子句被重放进新回合。卡 5（asrdebug-20261105-163904）里「我同学被别人打了。」进分类器时是「救命！有人打我！救命！有人打我！我同学被别人打了。」，判成 `support_victim`，播了 `victim-support-v1`。
+- **修法**：`asr_stream_supervisor.py` 记下每个被接受修订的厂商全文（`_sentence_spines`），尾部取「本句最近一个已完全提交的修订」之后的部分；对不上时退回第一个修订（与修复前相同）；对上了但没有新字则拒绝。不按已提交子句的文本剥，所以 `f77c63b4`（已由 `e11f14fb` 撤回）删掉新说的重复求助的问题不会再出现。
+- **验证**：`test_card5_cumulative_asr_fix.py` 11 条通过，撤掉源码改动后其中 6 条失败；`services/agent/tests/unit` 4283 passed、0 failed；ruff、module budget、mypy strict、`tests/test_media_runtime_replay.py` 通过（本机）。没有部署、没有真机。
+- **没有覆盖**：水位之后的 final 走 `_strip_leading_committed_turn_texts`，仍按文本剥离，同类问题线上现在就有，见 [TODOLIST](TODOLIST.md)「下一步与执行边界」。
+- **上线后要确认**：safety 卡 `other` 5/5；`asr_text_debug` 里 other 回合的 `text_len` 等于该句自身长度。
+
 ## 2026-11-18 线上谱系两项修复并入 main（未部署）
 
 - **并入内容**：线上 bridge（tag `20261117-asr-debug-wiring`）有而 main 没有的三个提交用 `cherry-pick -x` 移到 main：`61e75ec8`（排队 TTL 只对 DEEP_RESULT 豁免）、`22129336`（空识别后的提示必须有 owner 证据）、`32b2a6ea`（`media_session_output_stream.py` 回到 1438 行预算）。三个都无冲突。此前记的「试合并有 7 处冲突」是整条谱系合并时的情况，逐个提交移植不需要。
