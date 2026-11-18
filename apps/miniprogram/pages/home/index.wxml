@@ -177,12 +177,14 @@
             <text class="home-card-title">安全提醒</text>
             <text class="trial-caption">{{safetySubscribeUsedUp ? safetySubscribeUsedUpCaption : safetySubscribeHelper}}</text>
           </view>
-          <switch
-            checked="{{safetySubscribeKnown && safetySubscribeOn}}"
-            color="#176B5B"
-            disabled="{{!safetySubscribeKnown || safetySubscribeBusy}}"
-            bindchange="onSafetySubscribeChange"
-          />
+          <view class="home-safety-switch" catchtap="onSafetySubscribeTap">
+            <switch
+              checked="{{safetySubscribeKnown && safetySubscribeOn}}"
+              color="#176B5B"
+              disabled="{{!safetySubscribeKnown || safetySubscribeBusy}}"
+            />
+            <view class="home-safety-switch-cover"></view>
+          </view>
         </view>
         <view class="home-toggle-row" bindtap="openNightSettings">
           <view class="mp-icon-tile home-moon"><image src="/assets/ui/v4/moon-ink.svg" /></view>

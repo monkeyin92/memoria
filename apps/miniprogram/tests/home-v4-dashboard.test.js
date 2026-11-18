@@ -227,6 +227,68 @@ test("home says the last safety alert used up the subscribe and keeps the switch
   assert.doesNotMatch(remainingText, /上一次提醒已经发出/);
 });
 
+function answeringSubscribeWx() {
+  const harnessWx = global.wx;
+  const counter = { prompts: 0 };
+  global.wx = new Proxy(harnessWx, {
+    get(target, name) {
+      if (name === "requestSubscribeMessage") {
+        return (options) => {
+          counter.prompts += 1;
+          const templateId = options.tmplIds?.[0];
+          options.success({ errMsg: "requestSubscribeMessage:ok", [templateId]: "accept" });
+        };
+      }
+      return target[name];
+    },
+  });
+  return {
+    counter,
+    restore() {
+      global.wx = harnessWx;
+    },
+  };
+}
+
+test("tapping the home safety switch opens the WeChat prompt inside the tap and records the answer", async () => {
+  const recorded = [];
+  const harness = loadPage("pages/home/index", {
+    api: fx.baseApi({
+      getGuardianPushConfig: async () => ({ enabled: true, template_ids: { crisis: "tmpl-crisis" } }),
+      getGuardianPushSubscription: async () => ({
+        template_id: "tmpl-crisis",
+        remaining: 0,
+        subscribed: false,
+        last_result: "accept",
+      }),
+      wechatLoginCode: async () => "login-code-home",
+      recordGuardianPushSubscription: async (body) => {
+        recorded.push(body);
+        return { template_id: body.templateId, result: body.result, remaining: 1 };
+      },
+    }),
+    now: fx.NOW,
+  });
+  const wx = answeringSubscribeWx();
+  try {
+    await harness.run();
+    const page = harness.page;
+    assert.equal(page.data.safetySubscribeKnown, true);
+    assert.equal(page.data.safetySubscribeUsedUp, true);
+    const pending = page.onSafetySubscribeTap();
+    assert.equal(wx.counter.prompts, 1);
+    await pending;
+    assert.deepEqual(recorded, [{ templateId: "tmpl-crisis", result: "accept", loginCode: "login-code-home" }]);
+    assert.equal(page.data.safetySubscribeOn, true);
+    assert.equal(page.data.safetySubscribeUsedUp, false);
+    const text = visibleText(renderPage("pages/home/index", page.data));
+    assert.doesNotMatch(text, /上一次提醒已经发出/);
+  } finally {
+    wx.restore();
+    harness.restore();
+  }
+});
+
 test("home links to child memory without repeating the review preview", async () => {
   const { data } = await loadHome();
   const text = visibleText(renderPage("pages/home/index", data));
