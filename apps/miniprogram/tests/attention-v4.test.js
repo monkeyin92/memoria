@@ -454,6 +454,52 @@ test("a failed top-up never keeps the alert unread or the page stuck", async () 
   }
 });
 
+test("after an expired login the page re-reads the safety subscribe, so 我知道了 can top it up", async () => {
+  let loggedIn = false;
+  const store = fx.safetyAlertApi([fx.SAFETY_ALERT]);
+  const recorded = [];
+  const h = loadPage("pages/attention/index", fx.authed({
+    hasAuthenticatedSession: () => loggedIn,
+    getGuardianNotification: async (id) => {
+      if (!loggedIn) throw Object.assign(new Error("expired"), { status: 401 });
+      return store.getGuardianNotification(id);
+    },
+    getGuardianPushConfig: async () => {
+      if (!loggedIn) throw Object.assign(new Error("expired"), { status: 401 });
+      return { enabled: true, template_ids: { crisis: "tmpl-crisis" } };
+    },
+    getGuardianPushSubscription: async () => {
+      if (!loggedIn) throw Object.assign(new Error("expired"), { status: 401 });
+      return { template_id: "tmpl-crisis", remaining: 0, last_result: "accept" };
+    },
+    markGuardianNotificationRead: store.markGuardianNotificationRead,
+    wechatLoginCode: async () => "login-code-3",
+    recordGuardianPushSubscription: async (body) => {
+      recorded.push(body);
+      return { template_id: body.templateId, result: body.result, remaining: 1 };
+    },
+  }));
+  let wx;
+  try {
+    await h.run({ id: "n1" });
+    await h.settle();
+    assert.equal(h.page.data.alertResult.errorKind, "auth");
+    loggedIn = true;
+    global.getCurrentPages = () => [{ route: "pages/home/index" }, { route: "pages/attention/index" }];
+    await h.page.onShow();
+    await h.settle();
+    assert.equal(h.page.data.alertResult.status, "ok");
+    wx = answeringSubscribeWx();
+    await h.page.acknowledge();
+    assert.equal(wx.counter.prompts, 1);
+    assert.deepEqual(recorded, [{ templateId: "tmpl-crisis", result: "accept", loginCode: "login-code-3" }]);
+    assert.deepEqual(navigations(h), [{ delta: 1 }]);
+  } finally {
+    wx?.restore();
+    h.restore();
+  }
+});
+
 test("the home attention card and the review banner both open the attention page", async () => {
   const home = loadPage("pages/home/index", fx.authed());
   try {

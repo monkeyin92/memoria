@@ -25,18 +25,24 @@ Page({
       this._notificationId = "";
     }
     this._safety = null;
-    if (SUBSCRIPTION_PUSH_ENABLED) {
-      guardianPush.loadSafetySubscribeState(api).then((safety) => {
-        this._safety = safety;
-      });
-    }
+    this._loadSafety();
     return this.loadAlert();
   },
 
   onShow() {
     if (this.data.alertResult.errorKind === "auth" && api.hasAuthenticatedSession()) {
+      this._loadSafety();
       return this.loadAlert();
     }
+  },
+
+  _loadSafety() {
+    if (!SUBSCRIPTION_PUSH_ENABLED) return;
+    const seq = (this._safetySeq || 0) + 1;
+    this._safetySeq = seq;
+    guardianPush.loadSafetySubscribeState(api).then((safety) => {
+      if (seq === this._safetySeq) this._safety = safety;
+    });
   },
 
   async loadAlert() {
