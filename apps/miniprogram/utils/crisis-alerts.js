@@ -7,13 +7,6 @@ const guardianPush = require("./guardian-push");
 const { SUBSCRIPTION_PUSH_ENABLED } = require("../config");
 const { UNREAD_SAFETY_COPY } = require("./trial-device-card");
 
-const BIND_SUBSCRIBE_UNAVAILABLE =
-  "安全提醒订阅尚未开通，暂时不能完成这类绑定。请稍后再试，或联系支持。";
-const BIND_SUBSCRIBE_REQUIRED =
-  "需要先完成安全提醒订阅，才能完成绑定。提醒不含对话内容。";
-const BIND_SUBSCRIBE_REJECTED =
-  "未完成安全提醒订阅，绑定未提交。请再次点击并选择允许。";
-
 const SAFETY_ALERT_READ_STATUS = Object.freeze({
   OK: "ok",
   NOT_FOUND: "not_found",
@@ -189,47 +182,36 @@ function shouldOfferCrisisSubscription(binding) {
   );
 }
 
-function requiresCrisisSubscribeBeforeBind(declaredMode) {
+function offersCrisisSubscribeAtBind(declaredMode) {
   return declaredMode === "parent_for_child" || declaredMode === "child_for_parent";
 }
 
 /*
- * 绑定硬门禁。调用方必须在 tap 处理函数里、在任何 await 之前已经持有 config，
+ * 绑定时询问一次安全提醒订阅（DECISIONS #030）。任何结果都不阻止绑定（#021）。
+ * 调用方必须在 tap 处理函数里、在任何 await 之前已经持有 config，
  * 并同步进入本函数，以便微信允许弹出订阅框。
  */
-async function requireCrisisSubscribeBeforeBind({
+async function offerCrisisSubscribeAtBind({
   declaredMode,
   config,
   api,
   wxApi = globalThis.wx,
   subscriptionPushEnabled = SUBSCRIPTION_PUSH_ENABLED,
 } = {}) {
-  if (!subscriptionPushEnabled) {
-    return { ok: true, kind: "paused" };
+  if (!subscriptionPushEnabled) return { kind: "paused" };
+  if (!offersCrisisSubscribeAtBind(declaredMode)) return { kind: "not_applicable" };
+  if (!config?.enabled || !config.templateId) return { kind: "unavailable" };
+  if (typeof wxApi?.requestSubscribeMessage !== "function") return { kind: "unavailable" };
+  try {
+    const outcome = await guardianPush.subscribeCrisisAlerts({ config, api, wxApi });
+    if (outcome.result === "accept" && outcome.recorded) return { kind: "accepted", outcome };
+    return { kind: "declined", outcome };
+  } catch (_error) {
+    return { kind: "failed" };
   }
-  if (!requiresCrisisSubscribeBeforeBind(declaredMode)) {
-    return { ok: true, kind: "not_required" };
-  }
-  if (!config?.enabled || !config.templateId) {
-    return { ok: false, kind: "unavailable", message: BIND_SUBSCRIBE_UNAVAILABLE };
-  }
-  if (typeof wxApi?.requestSubscribeMessage !== "function") {
-    return { ok: false, kind: "unavailable", message: BIND_SUBSCRIBE_UNAVAILABLE };
-  }
-  const outcome = await guardianPush.subscribeCrisisAlerts({ config, api, wxApi });
-  if (outcome.result === "accept" && outcome.recorded) {
-    return { ok: true, kind: "accepted", outcome };
-  }
-  if (!outcome.prompted) {
-    return { ok: false, kind: "unavailable", message: BIND_SUBSCRIBE_REQUIRED, outcome };
-  }
-  return { ok: false, kind: "not_accepted", message: BIND_SUBSCRIBE_REJECTED, outcome };
 }
 
 module.exports = {
-  BIND_SUBSCRIBE_REJECTED,
-  BIND_SUBSCRIBE_REQUIRED,
-  BIND_SUBSCRIBE_UNAVAILABLE,
   SAFETY_ALERT_READ_ERROR_KINDS,
   SAFETY_ALERT_READ_STATUS,
   acknowledgeSafetyAlert,
@@ -238,10 +220,10 @@ module.exports = {
   loadSafetyAlert,
   loadUnreadSafetyAlerts,
   moreUnreadLabel,
+  offerCrisisSubscribeAtBind,
+  offersCrisisSubscribeAtBind,
   parseDeliveryReceipt,
   parseSafetyAlert,
-  requireCrisisSubscribeBeforeBind,
-  requiresCrisisSubscribeBeforeBind,
   safetyAlertReadErrorKind,
   shouldOfferCrisisSubscription,
 };

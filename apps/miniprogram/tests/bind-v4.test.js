@@ -49,3 +49,28 @@ test("the review step labels itself as steps 3 and 4 and keeps 上一步 inside 
     harness.restore();
   }
 });
+
+test("the review step offers the safety subscribe as optional and never as a precondition", async () => {
+  const harness = loadPage(
+    "pages/bind/index",
+    fx.authed({
+      ...fx.bindApi,
+      getGuardianPushConfig: async () => ({ enabled: true, template_ids: { crisis: "tmpl-crisis" } }),
+    }),
+  );
+  await harness.run(fx.BIND_QUERY);
+  await harness.page.chooseMode({ currentTarget: { dataset: { mode: "parent_for_child" } } });
+  await harness.settle();
+  try {
+    harness.page.setData({ "form.childNickname": "乐乐" });
+    await harness.page.goToReview();
+    await harness.settle();
+    const { text } = view(harness);
+    assert.match(text, /提交时会询问是否开启安全提醒/);
+    assert.match(text, /不开启也能完成绑定/);
+    assert.doesNotMatch(text, /前提/);
+    assert.match(text, /上一步 提交绑定/);
+  } finally {
+    harness.restore();
+  }
+});

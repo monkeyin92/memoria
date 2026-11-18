@@ -253,104 +253,130 @@ test("moreUnreadLabel counts the alerts not shown and says nothing for none", ()
   assert.equal(crisisAlerts.moreUnreadLabel(2), "还有 2 条");
 });
 
-// The shipped config keeps push paused (#019), so the gate's paused branch is
-// the production default (DECISIONS #021): no subscribe outcome — not a tap
-// rejection, not a missing template — may block the binding. These cases omit
-// subscriptionPushEnabled to exercise the shipped default.
-test("requireCrisisSubscribeBeforeBind lets rejected subscribe still bind", async () => {
+test("offerCrisisSubscribeAtBind never blocks: a rejected prompt, a missing template, a missing WeChat API and a failed record all let the bind go on", async () => {
   const config = guardianPush.normalizeCrisisPushConfig({
     enabled: true,
     template_ids: { crisis: "tmpl-crisis" },
   });
-  const rejected = await crisisAlerts.requireCrisisSubscribeBeforeBind({
-    declaredMode: "parent_for_child",
-    config,
-    api: fakeApi(),
-    wxApi: fakeWx({ "tmpl-crisis": "reject" }),
-  });
-  assert.deepEqual(rejected, { ok: true, kind: "paused" });
-});
-
-test("requireCrisisSubscribeBeforeBind lets a missing template still bind", async () => {
-  const missing = await crisisAlerts.requireCrisisSubscribeBeforeBind({
-    declaredMode: "parent_for_child",
-    config: { enabled: false, templateId: "" },
-    api: fakeApi(),
-    wxApi: fakeWx({ "tmpl-crisis": "accept" }),
-  });
-  assert.deepEqual(missing, { ok: true, kind: "paused" });
-});
-
-test("requireCrisisSubscribeBeforeBind blocks parent bind only when push is re-enabled", async () => {
-  const config = guardianPush.normalizeCrisisPushConfig({
-    enabled: true,
-    template_ids: { crisis: "tmpl-crisis" },
-  });
-  const unavailable = await crisisAlerts.requireCrisisSubscribeBeforeBind({
-    declaredMode: "parent_for_child",
-    config: { enabled: false, templateId: "" },
-    api: fakeApi(),
-    wxApi: fakeWx({ "tmpl-crisis": "accept" }),
-    subscriptionPushEnabled: true,
-  });
-  assert.equal(unavailable.ok, false);
-  assert.equal(unavailable.kind, "unavailable");
-
-  const rejected = await crisisAlerts.requireCrisisSubscribeBeforeBind({
+  const rejected = await crisisAlerts.offerCrisisSubscribeAtBind({
     declaredMode: "parent_for_child",
     config,
     api: fakeApi(),
     wxApi: fakeWx({ "tmpl-crisis": "reject" }),
     subscriptionPushEnabled: true,
   });
-  assert.equal(rejected.ok, false);
-  assert.equal(rejected.kind, "not_accepted");
+  assert.equal(rejected.kind, "declined");
+  assert.equal(typeof rejected.outcome, "object");
+  assert.ok(!("ok" in rejected));
 
+  const missing = await crisisAlerts.offerCrisisSubscribeAtBind({
+    declaredMode: "parent_for_child",
+    config: { enabled: false, templateId: "" },
+    api: fakeApi(),
+    wxApi: fakeWx({ "tmpl-crisis": "accept" }),
+    subscriptionPushEnabled: true,
+  });
+  assert.equal(missing.kind, "unavailable");
+  assert.ok(!("ok" in missing));
+
+  const noWxApi = await crisisAlerts.offerCrisisSubscribeAtBind({
+    declaredMode: "parent_for_child",
+    config,
+    api: fakeApi(),
+    wxApi: {},
+    subscriptionPushEnabled: true,
+  });
+  assert.equal(noWxApi.kind, "unavailable");
+  assert.ok(!("ok" in noWxApi));
+
+  const failingApi = fakeApi();
+  failingApi.recordGuardianPushSubscription = async () => {
+    throw new Error("record failed");
+  };
+  const failed = await crisisAlerts.offerCrisisSubscribeAtBind({
+    declaredMode: "parent_for_child",
+    config,
+    api: failingApi,
+    wxApi: fakeWx({ "tmpl-crisis": "accept" }),
+    subscriptionPushEnabled: true,
+  });
+  assert.equal(failed.kind, "failed");
+  assert.ok(!("ok" in failed));
+});
+
+test("offerCrisisSubscribeAtBind records an accepted answer once", async () => {
+  const config = guardianPush.normalizeCrisisPushConfig({
+    enabled: true,
+    template_ids: { crisis: "tmpl-crisis" },
+  });
   const api = fakeApi();
-  const accepted = await crisisAlerts.requireCrisisSubscribeBeforeBind({
+  const accepted = await crisisAlerts.offerCrisisSubscribeAtBind({
     declaredMode: "parent_for_child",
     config,
     api,
     wxApi: fakeWx({ "tmpl-crisis": "accept" }),
     subscriptionPushEnabled: true,
   });
-  assert.equal(accepted.ok, true);
   assert.equal(accepted.kind, "accepted");
   assert.deepEqual(api.calls.recorded, [
     { templateId: "tmpl-crisis", result: "accept", loginCode: "login-code-1" },
   ]);
+});
 
-  const selfUse = await crisisAlerts.requireCrisisSubscribeBeforeBind({
+test("offerCrisisSubscribeAtBind does not prompt for self_use or while paused", async () => {
+  const config = guardianPush.normalizeCrisisPushConfig({
+    enabled: true,
+    template_ids: { crisis: "tmpl-crisis" },
+  });
+  let prompts = 0;
+  const countingWx = {
+    requestSubscribeMessage(options) {
+      prompts += 1;
+      options.success({ errMsg: "requestSubscribeMessage:ok", "tmpl-crisis": "accept" });
+    },
+  };
+  const selfUse = await crisisAlerts.offerCrisisSubscribeAtBind({
     declaredMode: "self_use",
     config,
     api: fakeApi(),
-    wxApi: fakeWx({ "tmpl-crisis": "reject" }),
+    wxApi: countingWx,
     subscriptionPushEnabled: true,
   });
-  assert.deepEqual(selfUse, { ok: true, kind: "not_required" });
+  assert.deepEqual(selfUse, { kind: "not_applicable" });
+  const paused = await crisisAlerts.offerCrisisSubscribeAtBind({
+    declaredMode: "parent_for_child",
+    config,
+    api: fakeApi(),
+    wxApi: countingWx,
+    subscriptionPushEnabled: false,
+  });
+  assert.deepEqual(paused, { kind: "paused" });
+  assert.equal(prompts, 0);
 });
 
-test("bind runs the subscribe gate before creating the binding; memory pins alerts", () => {
+test("bind offers the subscribe prompt before creating the binding and never gates on it; memory pins alerts", () => {
   const bindJs = fs.readFileSync(path.join(root, "pages/bind/index.js"), "utf8");
   const bindWxml = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
   const memoryWxml = fs.readFileSync(path.join(root, "pages/memory/index.wxml"), "utf8");
   const homeWxml = fs.readFileSync(path.join(root, "pages/home/index.wxml"), "utf8");
   const configJs = fs.readFileSync(path.join(root, "config.js"), "utf8");
 
-  // DECISIONS #021: subscribing stays out of the bind path; #019 keeps push paused.
-  assert.match(configJs, /SUBSCRIPTION_PUSH_ENABLED\s*=\s*false/);
-  assert.match(bindJs, /requireCrisisSubscribeBeforeBind/);
+  // DECISIONS #029: the prompt is back; #021/#030: it only offers, never gates.
+  assert.match(configJs, /SUBSCRIPTION_PUSH_ENABLED\s*=\s*true/);
+  assert.match(bindJs, /offerCrisisSubscribeAtBind/);
+  assert.doesNotMatch(bindJs, /requireCrisisSubscribeBeforeBind|gate\.ok|BIND_SUBSCRIBE/);
   assert.match(bindJs, /createDeviceBinding/);
   assert.match(bindJs, /SUBSCRIPTION_PUSH_ENABLED/);
   const submitAt = bindJs.indexOf("async submitBinding");
-  const gateAt = bindJs.indexOf("requireCrisisSubscribeBeforeBind", submitAt);
+  const offerAt = bindJs.indexOf("offerCrisisSubscribeAtBind", submitAt);
   const quietAt = bindJs.indexOf("confirmUnusualQuietHours", submitAt);
   const createAt = bindJs.indexOf("createDeviceBinding", submitAt);
-  assert.ok(gateAt > submitAt && createAt > gateAt);
+  assert.ok(offerAt > submitAt && createAt > offerAt);
   // WeChat subscribe must start before any other await in the submit tap stack.
-  assert.ok(quietAt > gateAt && quietAt < createAt);
+  assert.ok(quietAt > offerAt && quietAt < createAt);
   assert.match(bindWxml, /\{\{submitLabel\}\}/);
-  assert.match(bindWxml, /subscriptionPushEnabled && crisisSubscribeRequired/);
+  assert.match(bindWxml, /subscriptionPushEnabled && crisisSubscribeOffered/);
+  assert.doesNotMatch(bindWxml, /前提/);
   assert.doesNotMatch(bindJs, /offerCrisisSubscription/);
   assert.doesNotMatch(bindWxml, /危机提醒/);
   assert.doesNotMatch(memoryWxml, /危机提醒/);
