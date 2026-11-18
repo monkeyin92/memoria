@@ -22,6 +22,15 @@
 - **验证**：ruff、module budget、mypy strict 通过；`services/agent/tests/unit` 4272 passed、0 failed（本机）。没有部署、没有切流、没有真机。
 - **含义**：此后从 main 构建 bridge 候选不再丢线上修复。线上仍是 `abcaba35`。
 
+## 2026-11-18 安全提醒订阅重开，绑定只询问不强制（未发布）
+
+- **决定**：2026-11-18 你批准在内测和试用期重开微信订阅提醒（取代 10-19 的「暂停」），并定为绑定时询问一次、任何结果都照常绑定；10-19 的「拒绝订阅也能绑定」保留。
+- **小程序**：`SUBSCRIPTION_PUSH_ENABLED` 改为 true，同一个提交里去掉绑定页的硬门禁。提交绑定时弹一次订阅框，允许、拒绝、弹不出来或记账失败都照常提交；确认页不再出现「前提」。家长在提醒详情页点「我知道了」时，上一次回答是「允许」的自动续订一次。余额用完时首页卡片改显示「上一次提醒已经发出。再开启一次，下次才能继续提醒你。」
+- **服务端**：删掉 `POST /v1/device-bindings` 里的 `_require_crisis_subscribe_for_binding`。`MEMORIA_GUARDIAN_PUSH_ENABLED=true` 且模板非空时，它对没有未用授权的家长绑定返回 409 `guardian_crisis_subscribe_required`。它是 #315 硬门禁的另一半，此前没有测试覆盖，也没有客户端处理这个错误码。
+- **线上现状未核**：10-19 和 10-23 两次只读核对的记录都是线上推送开关为 true、模板 id 非空，之后没有再读过。如果现在仍为 true，那么在这次服务端改动上线之前，没有未用授权的家长绑定会被 409：小程序自 #394 起绑定时不再弹订阅，新家长拿不到授权。这是按代码和记录推出来的，没有在线上复现。
+- **验证**：小程序 `npm test` 852 条、851 通过、1 条原有跳过、0 失败，文案门与发布门通过。服务端新增 `test_child_binding_never_needs_a_safety_subscribe_while_push_is_enabled`；带 PostgreSQL 时它和相邻三份绑定、推送测试共 53 passed，本机不带 PostgreSQL 时该文件按约定跳过。没有上传体验版、没有部署、没有真机。
+- **发布顺序**：先上 control-api，再传小程序体验版；反过来的话，家长拒绝订阅后绑定会被旧服务端 409。体验版要求 `WECHAT_MINIPROGRAM_STATE=trial`，线上值未核。绑定确认页、完成页和首页卡片的四句新文案待你确认。
+
 ## 2026-11-17 取证链修复与 asr_text_debug 接线上线（bridge overlay `20261117-asr-debug-wiring`）
 
 - **线上**：07:13:50Z（15:13 CST）用 `scripts/deploy_agent_component.sh --cutover` 把 bridge 从 `memoria-agent:20261116-empty-asr-owner`（`5eeb3b81…`，revision `22129336`）切到 `memoria-agent:20261117-asr-debug-wiring`（image `8723c7e0…`，revision `abcaba35`，基座 `memoria-agent:20261115-asr-streaming-default`）。没有用 `--skip-gates` 或 `--allow-*`，本机门禁重跑通过。回滚镜像 `memoria-agent:rollback-20261117-asr-debug-wiring-pre`（= `5eeb3b81…`）。容器 healthy、restarts 0，切后 3 分钟日志无 ERROR / Traceback；control-api、media-edge 未动。权威清单已在 15:30 CST 重新 `live_capture`。
