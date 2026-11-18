@@ -115,7 +115,9 @@ class DelegationCoordinator:
     _delivering_by_session: dict[str, set[str]] = field(default_factory=dict)
 
     def start_output_intent_delivery(self, intent: Any) -> None:
-        """Record transport acceptance only while the admitted candidate exists."""
+        """End the deep-result queue TTL once transport accepts its first frame."""
+        if int(intent.kind) != media_pb2.OUTPUT_INTENT_KIND_DEEP_RESULT:
+            return
         session_id = str(intent.session_id)
         intent_id = str(intent.intent_id)
         if intent_id in self._shadow_output_by_session.get(session_id, {}):

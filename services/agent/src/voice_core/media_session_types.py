@@ -118,8 +118,8 @@ def fixed_safety_planned_for(context: Any, fence: GenerationFence) -> bool:
 class ASREmptySegmentEvidence:
     """What the ASR chain knows about the segment it just finished empty.
 
-    ``had_speech`` separates real audio the vendor failed to transcribe from
-    silence. ``provider_failed`` keeps provider faults out of the audible
+    ``had_speech`` records an RMS/peak threshold, not verified human speech
+    or speaker identity. ``provider_failed`` keeps provider faults out of the audible
     fallback path. ``retried`` records whether the backup chain already got a
     second look at the same PCM.
     """
