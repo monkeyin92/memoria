@@ -175,7 +175,7 @@
         <view class="home-toggle-row">
           <view class="home-toggle-copy">
             <text class="home-card-title">安全提醒</text>
-            <text class="trial-caption">{{safetySubscribeHelper}}</text>
+            <text class="trial-caption">{{safetySubscribeUsedUp ? safetySubscribeUsedUpCaption : safetySubscribeHelper}}</text>
           </view>
           <switch
             checked="{{safetySubscribeKnown && safetySubscribeOn}}"

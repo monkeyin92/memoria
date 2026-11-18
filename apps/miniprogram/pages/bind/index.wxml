@@ -193,9 +193,9 @@
       <text wx:elif="{{declaredMode === 'parent_for_child'}}" class="form-note">孩子的长期记忆默认不勾选；勾选后会记录学习与成长，并开通每周成长小结；未勾选也能完成绑定，只保留当次对话。</text>
       <text wx:elif="{{declaredMode === 'child_for_parent'}}" class="form-note">父母的长期记忆默认不勾选；勾选后由你代父母同意；未勾选也能完成绑定，只保留当次对话。</text>
       <text wx:else class="form-note">家庭空间与共享记忆用于共同使用；成员加入后再分别管理各自的私人记忆。</text>
-      <view wx:if="{{subscriptionPushEnabled && crisisSubscribeRequired}}" class="notice notice-warn">
-        <text class="l2-card-title">安全提醒是完成绑定的前提</text>
-        <text class="l2-card-sub">{{crisisPush.enabled ? crisisPush.explanation : '安全提醒尚未开通，暂时不能完成这类绑定。'}}</text>
+      <view wx:if="{{subscriptionPushEnabled && crisisSubscribeOffered && crisisPush.enabled}}" class="notice">
+        <text class="notice-title">提交时会询问是否开启安全提醒</text>
+        <text class="notice-copy">{{crisisPush.explanation}}不开启也能完成绑定，之后可以在首页开启。</text>
       </view>
 
       <view class="button-row bind-nav">
@@ -219,6 +219,7 @@
       <view class="summary-row"><text class="summary-key">声音</text><text class="summary-value">默认声音</text></view>
       <view wx:if="{{deviceTail}}" class="summary-row"><text class="summary-key">机器人</text><text class="summary-value">尾号 {{deviceTail}}</text></view>
       <text wx:if="{{subscriptionPushEnabled && crisisSubscribeAccepted}}" class="done-note">已完成安全提醒设置。家长打开小程序时首页会置顶显示。</text>
+      <text wx:elif="{{subscriptionPushEnabled && crisisSubscribeOffered && crisisPush.enabled}}" class="done-note">安全提醒还没有开启，可以在首页的「安全提醒」里开启。</text>
       <text class="done-note">设置已经提交，机器人收到后就能用了，一般一分钟内。等它准备好，唤醒它就能开始聊天；手机不会录音。</text>
       <view class="button-row">
         <button class="primary-button" bindtap="continueActivation">继续等待激活</button>

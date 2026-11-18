@@ -338,8 +338,165 @@ test("我知道了 on the empty card just leaves", async () => {
     await harness.page.acknowledge();
     assert.deepEqual(navigations(harness), [{ delta: 1 }]);
     assert.deepEqual(save.calls, []);
+    assert.equal(harness.wxCalls.filter((call) => call.name === "requestSubscribeMessage").length, 0);
   } finally {
     harness.restore();
+  }
+});
+
+function answeringSubscribeWx() {
+  const harnessWx = global.wx;
+  const counter = { prompts: 0 };
+  global.wx = new Proxy(harnessWx, {
+    get(target, name) {
+      if (name === "requestSubscribeMessage") {
+        return (options) => {
+          counter.prompts += 1;
+          const templateId = options.tmplIds?.[0];
+          options.success({ errMsg: "requestSubscribeMessage:ok", [templateId]: "accept" });
+        };
+      }
+      return target[name];
+    },
+  });
+  return {
+    counter,
+    restore() {
+      global.wx = harnessWx;
+    },
+  };
+}
+
+function subscribeStateApi(lastResult) {
+  return {
+    getGuardianPushConfig: async () => ({ enabled: true, template_ids: { crisis: "tmpl-crisis" } }),
+    getGuardianPushSubscription: async () => ({ template_id: "tmpl-crisis", remaining: 0, last_result: lastResult }),
+  };
+}
+
+test("我知道了 tops up the safety subscribe once when the parent's last answer was 允许", async () => {
+  const store = fx.safetyAlertApi([fx.SAFETY_ALERT]);
+  const recorded = [];
+  const harness = await openAttention({ id: "n1" }, {
+    ...store,
+    ...subscribeStateApi("accept"),
+    wechatLoginCode: async () => "login-code-2",
+    recordGuardianPushSubscription: async (body) => {
+      recorded.push(body);
+      return { template_id: body.templateId, result: body.result, remaining: 1 };
+    },
+  });
+  const wx = answeringSubscribeWx();
+  try {
+    await harness.page.acknowledge();
+    assert.equal(wx.counter.prompts, 1);
+    assert.deepEqual(recorded, [{ templateId: "tmpl-crisis", result: "accept", loginCode: "login-code-2" }]);
+    assert.equal((await store.getUnreadGuardianNotifications()).newest, null);
+    assert.deepEqual(navigations(harness), [{ delta: 1 }]);
+  } finally {
+    wx.restore();
+    harness.restore();
+  }
+});
+
+test("我知道了 does not prompt a parent who turned the safety subscribe off, declined it, or never answered", async () => {
+  for (const lastResult of ["opt_out", "reject", null]) {
+    const store = fx.safetyAlertApi([{ ...fx.SAFETY_ALERT }]);
+    const harness = await openAttention({ id: "n1" }, { ...store, ...subscribeStateApi(lastResult) });
+    try {
+      await harness.page.acknowledge();
+      assert.equal(harness.wxCalls.filter((call) => call.name === "requestSubscribeMessage").length, 0);
+      assert.equal((await store.getUnreadGuardianNotifications()).newest, null);
+      assert.deepEqual(navigations(harness), [{ delta: 1 }]);
+    } finally {
+      harness.restore();
+    }
+  }
+});
+
+test("我知道了 does not prompt while the safety subscribe is not available", async () => {
+  const store = fx.safetyAlertApi([fx.SAFETY_ALERT]);
+  const harness = await openAttention({ id: "n1" }, {
+    ...store,
+    getGuardianPushConfig: async () => ({ enabled: false, template_ids: {} }),
+    getGuardianPushSubscription: async () => ({ template_id: "tmpl-crisis", remaining: 0, last_result: "accept" }),
+  });
+  try {
+    await harness.page.acknowledge();
+    assert.equal(harness.wxCalls.filter((call) => call.name === "requestSubscribeMessage").length, 0);
+    assert.equal((await store.getUnreadGuardianNotifications()).newest, null);
+    assert.deepEqual(navigations(harness), [{ delta: 1 }]);
+  } finally {
+    harness.restore();
+  }
+});
+
+test("a failed top-up never keeps the alert unread or the page stuck", async () => {
+  const store = fx.safetyAlertApi([fx.SAFETY_ALERT]);
+  const harness = await openAttention({ id: "n1" }, {
+    ...store,
+    ...subscribeStateApi("accept"),
+    wechatLoginCode: async () => "login-code-2",
+    recordGuardianPushSubscription: async () => {
+      throw new Error("record failed");
+    },
+  });
+  const wx = answeringSubscribeWx();
+  try {
+    await harness.page.acknowledge();
+    assert.equal(wx.counter.prompts, 1);
+    assert.equal((await store.getUnreadGuardianNotifications()).newest, null);
+    assert.deepEqual(navigations(harness), [{ delta: 1 }]);
+    assert.equal(harness.page.data.ackError, "");
+  } finally {
+    wx.restore();
+    harness.restore();
+  }
+});
+
+test("after an expired login the page re-reads the safety subscribe, so 我知道了 can top it up", async () => {
+  let loggedIn = false;
+  const store = fx.safetyAlertApi([fx.SAFETY_ALERT]);
+  const recorded = [];
+  const h = loadPage("pages/attention/index", fx.authed({
+    hasAuthenticatedSession: () => loggedIn,
+    getGuardianNotification: async (id) => {
+      if (!loggedIn) throw Object.assign(new Error("expired"), { status: 401 });
+      return store.getGuardianNotification(id);
+    },
+    getGuardianPushConfig: async () => {
+      if (!loggedIn) throw Object.assign(new Error("expired"), { status: 401 });
+      return { enabled: true, template_ids: { crisis: "tmpl-crisis" } };
+    },
+    getGuardianPushSubscription: async () => {
+      if (!loggedIn) throw Object.assign(new Error("expired"), { status: 401 });
+      return { template_id: "tmpl-crisis", remaining: 0, last_result: "accept" };
+    },
+    markGuardianNotificationRead: store.markGuardianNotificationRead,
+    wechatLoginCode: async () => "login-code-3",
+    recordGuardianPushSubscription: async (body) => {
+      recorded.push(body);
+      return { template_id: body.templateId, result: body.result, remaining: 1 };
+    },
+  }));
+  let wx;
+  try {
+    await h.run({ id: "n1" });
+    await h.settle();
+    assert.equal(h.page.data.alertResult.errorKind, "auth");
+    loggedIn = true;
+    global.getCurrentPages = () => [{ route: "pages/home/index" }, { route: "pages/attention/index" }];
+    await h.page.onShow();
+    await h.settle();
+    assert.equal(h.page.data.alertResult.status, "ok");
+    wx = answeringSubscribeWx();
+    await h.page.acknowledge();
+    assert.equal(wx.counter.prompts, 1);
+    assert.deepEqual(recorded, [{ templateId: "tmpl-crisis", result: "accept", loginCode: "login-code-3" }]);
+    assert.deepEqual(navigations(h), [{ delta: 1 }]);
+  } finally {
+    wx?.restore();
+    h.restore();
   }
 });
 

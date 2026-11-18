@@ -386,8 +386,8 @@ test("parent_for_child flow validates minimal info and submits guardian relation
     page.data.quietHoursLabel,
     "夜间模式：21:00–07:00（这段时间点屏只会说晚安）",
   );
-  // DECISIONS #021: subscribing is not a bind gate, so the tap keeps the plain
-  // submit label and never prompts for subscribe messages.
+  // DECISIONS #021/#030: the subscribe offer happens on submit and never gates,
+  // so the tap keeps the plain submit label.
   assert.equal(page.data.submitLabel, "提交绑定");
   const bindTemplate = fs.readFileSync(path.join(root, "pages/bind/index.wxml"), "utf8");
   assert.match(bindTemplate, /点下方的开始、结束时间可以修改/);
@@ -425,8 +425,8 @@ test("parent_for_child flow validates minimal info and submits guardian relation
   assert.ok(!page.data.offers.some((offer) => offer.id === "offer_guardian_weekly_summary_v1"));
   assert.ok(!payload.consent_offer_ids.includes("offer_emergency_contact_v1"));
   assert.equal(readSubjectLabel(page.data.manifest), "小乐");
-  // Push stays paused (#019), so the submit never ran the subscribe prompt.
-  assert.equal(page.data.crisisSubscribeAccepted, false);
+  // The submit asked once about safety reminders and the parent allowed it.
+  assert.equal(page.data.crisisSubscribeAccepted, true);
 });
 
 test("parent_for_child cannot submit until the child rules are accepted", async () => {
@@ -458,16 +458,68 @@ test("parent_for_child bind still completes when WeChat subscribe is rejected", 
   subscribePrompts = 0;
   page.setData({ "form.childNickname": "小乐" });
   await page.goToReview();
-  assert.equal(page.data.crisisSubscribeRequired, false);
-  assert.equal(page.data.subscriptionPushEnabled, false);
+  assert.equal(page.data.crisisSubscribeOffered, true);
+  assert.equal(page.data.subscriptionPushEnabled, true);
   lastWxRequest = null;
   await page.submitBinding();
   assert.equal(page.data.step, "done");
   assert.equal(lastWxRequest.data.declared_mode, "parent_for_child");
-  // DECISIONS #021: no subscribe prompt at all, and no gate error on the way.
-  assert.equal(subscribePrompts, 0);
+  // DECISIONS #021/#030: the prompt ran once; a rejection never blocks the bind.
+  assert.equal(subscribePrompts, 1);
   assert.equal(page.data.error, "");
+  assert.equal(page.data.crisisSubscribeAccepted, false);
   subscribeAnswer = "accept";
+});
+
+test("parent_for_child bind still completes when the safety subscribe is not available yet", async () => {
+  nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
+  const page = await bootToMode("parent_for_child");
+  subscribePrompts = 0;
+  page.setData({ "form.childNickname": "小乐" });
+  const realGetGuardianPushConfig = api.getGuardianPushConfig;
+  api.getGuardianPushConfig = async () => ({ enabled: false, template_ids: {} });
+  try {
+    await page.goToReview();
+    assert.equal(page.data.crisisPush.enabled, false);
+    lastWxRequest = null;
+    await page.submitBinding();
+    assert.equal(page.data.step, "done");
+    assert.equal(subscribePrompts, 0);
+    assert.equal(page.data.error, "");
+  } finally {
+    api.getGuardianPushConfig = realGetGuardianPushConfig;
+  }
+});
+
+test("parent_for_child bind still completes when recording the subscribe answer fails", async () => {
+  nextResponse = successResponse(defaultManifestResponse("parent_for_child"));
+  const page = await bootToMode("parent_for_child");
+  page.setData({ "form.childNickname": "小乐" });
+  const realRecord = api.recordGuardianPushSubscription;
+  api.recordGuardianPushSubscription = async () => {
+    throw new Error("record failed");
+  };
+  try {
+    await page.goToReview();
+    lastWxRequest = null;
+    await page.submitBinding();
+    assert.equal(page.data.step, "done");
+    assert.equal(page.data.error, "");
+    assert.equal(page.data.crisisSubscribeAccepted, false);
+  } finally {
+    api.recordGuardianPushSubscription = realRecord;
+  }
+});
+
+test("self_use bind never shows the safety subscribe prompt", async () => {
+  nextResponse = successResponse(defaultManifestResponse("self_use"));
+  const page = await bootSelfUseReady("阿宁");
+  subscribePrompts = 0;
+  await page.goToReview();
+  assert.equal(page.data.crisisSubscribeOffered, false);
+  await page.submitBinding();
+  assert.equal(page.data.step, "done");
+  assert.equal(subscribePrompts, 0);
 });
 
 test("parent_for_child asks before submitting an unusually short quiet-hours window", async () => {

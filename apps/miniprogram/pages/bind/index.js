@@ -27,8 +27,8 @@ const {
 const guardianPush = require("../../utils/guardian-push");
 const { SUBSCRIPTION_PUSH_ENABLED } = require("../../config");
 const {
-  requireCrisisSubscribeBeforeBind,
-  requiresCrisisSubscribeBeforeBind,
+  offerCrisisSubscribeAtBind,
+  offersCrisisSubscribeAtBind,
 } = require("../../utils/crisis-alerts");
 const { SESSION_MINUTE_OPTIONS, SESSION_MINUTES_DEFAULT } = require("../../utils/session-length");
 const FAMILY_MEMBER_AGE_BANDS = ["under_14", "14_17", "adult"];
@@ -146,7 +146,7 @@ Page({
     reviewSubjectLabel: "",
     maxSubjectLabel: MAX_LABEL,
     crisisPush: { enabled: false, templateId: "", explanation: "" },
-    crisisSubscribeRequired: false,
+    crisisSubscribeOffered: false,
     crisisSubscribeAccepted: false,
     subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
   },
@@ -279,8 +279,7 @@ Page({
         mode === "parent_for_child"
           ? nightModeQuietHoursLabel(form.quietHoursStart, form.quietHoursEnd)
           : nightModeQuietHoursLabel(DEFAULT_QUIET_HOURS),
-      submitLabel:
-        SUBSCRIPTION_PUSH_ENABLED && requiresCrisisSubscribeBeforeBind(mode) ? "开启安全提醒" : "提交绑定",
+      submitLabel: "提交绑定",
       error: "",
     });
     if (mode === "parent_for_child") {
@@ -519,21 +518,21 @@ Page({
       });
       return;
     }
-    const crisisSubscribeRequired =
-      SUBSCRIPTION_PUSH_ENABLED && requiresCrisisSubscribeBeforeBind(this.data.declaredMode);
+    const crisisSubscribeOffered =
+      SUBSCRIPTION_PUSH_ENABLED && offersCrisisSubscribeAtBind(this.data.declaredMode);
     // Preload before the submit tap so requestSubscribeMessage can run in that gesture.
-    const crisisPush = crisisSubscribeRequired
+    const crisisPush = crisisSubscribeOffered
       ? await guardianPush.loadCrisisPushConfig(api)
       : { enabled: false, templateId: "", explanation: "" };
     this.setData({
       step: "review",
       error: "",
       reviewSubjectLabel: this._subjectLabel(),
-      crisisSubscribeRequired,
+      crisisSubscribeOffered,
       crisisPush,
       crisisSubscribeAccepted: false,
       subscriptionPushEnabled: SUBSCRIPTION_PUSH_ENABLED,
-      submitLabel: crisisSubscribeRequired ? "开启安全提醒" : "提交绑定",
+      submitLabel: "提交绑定",
     });
   },
 
@@ -614,29 +613,13 @@ Page({
       this.setData({ error: `请先勾选「${missing.label}」，绑定才能提交。` });
       return;
     }
-    // Hard gate: subscribe must start in this tap stack before any other await
-    // (including the quiet-hours confirm modal).
-    let gate;
-    try {
-      gate = await requireCrisisSubscribeBeforeBind({
-        declaredMode: this.data.declaredMode,
-        config: this.data.crisisPush,
-        api,
-      });
-    } catch (error) {
-      if (isAuthError(error)) {
-        this._enterAuthRequired();
-        return;
-      }
-      this.setData({
-        error: error?.message || "订阅安全提醒失败，绑定未提交。",
-      });
-      return;
-    }
-    if (!gate.ok) {
-      this.setData({ error: gate.message, crisisSubscribeAccepted: false });
-      return;
-    }
+    // The subscribe prompt must start in this tap stack before any other await
+    // (including the quiet-hours confirm modal). No answer blocks the binding.
+    const offer = await offerCrisisSubscribeAtBind({
+      declaredMode: this.data.declaredMode,
+      config: this.data.crisisPush,
+      api,
+    });
     if (this.data.declaredMode === "parent_for_child") {
       const confirmed = await confirmUnusualQuietHours({
         start: this.data.form.quietHoursStart,
@@ -659,7 +642,7 @@ Page({
         manifest,
         step: "done",
         reviewSubjectLabel: this._subjectLabel(),
-        crisisSubscribeAccepted: gate.kind === "accepted",
+        crisisSubscribeAccepted: offer.kind === "accepted",
       });
     } catch (error) {
       if (isAuthError(error)) {

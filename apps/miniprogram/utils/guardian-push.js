@@ -24,6 +24,8 @@ const SAFETY_SUBSCRIBE_OFF_KEEP = "保持开启";
 const SAFETY_SUBSCRIBE_OFF_PROCEED = "仍要关闭";
 const SAFETY_SUBSCRIBE_OFF_CAPTION =
   "安全提醒已关闭，打开小程序仍会看到置顶提醒。";
+const SAFETY_SUBSCRIBE_USED_UP_CAPTION =
+  "上一次提醒已经发出。再开启一次，下次才能继续提醒你。";
 const SAFETY_SUBSCRIBE_UNKNOWN_CAPTION = "状态获取失败，点击重试";
 
 const RECORDABLE_RESULTS = Object.freeze(["accept", "reject", "ban"]);
@@ -107,6 +109,7 @@ async function loadSafetySubscribeState(api) {
       subscription,
       safetySubscribeKnown: false,
       safetySubscribeOn: false,
+      safetySubscribeUsedUp: false,
     };
   }
   return {
@@ -114,6 +117,9 @@ async function loadSafetySubscribeState(api) {
     subscription,
     safetySubscribeKnown: true,
     safetySubscribeOn: Boolean(config.enabled && subscription.subscribed),
+    safetySubscribeUsedUp: Boolean(
+      config.enabled && !subscription.subscribed && subscription.lastResult === "accept",
+    ),
   };
 }
 
@@ -198,6 +204,7 @@ module.exports = {
   SAFETY_SUBSCRIBE_OFF_PROCEED,
   SAFETY_SUBSCRIBE_OFF_TITLE,
   SAFETY_SUBSCRIBE_UNKNOWN_CAPTION,
+  SAFETY_SUBSCRIBE_USED_UP_CAPTION,
   loadCrisisPushConfig,
   loadCrisisPushSubscription,
   loadSafetySubscribeState,

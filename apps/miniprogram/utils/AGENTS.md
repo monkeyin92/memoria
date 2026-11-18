@@ -10,7 +10,7 @@ Client domain layer: HTTP API, device binding contract, BLE onboarding, consent,
 | Binding contract | device-binding.js (1683 L) | fail-closed validators, capability matrix, runtime-profile cache |
 | Onboarding | device-onboarding/ (13 js + vendor nacl) | BLE + Protocomm + crypto; index.js is the barrel |
 | Child memory | child-memory.js | view-model builders; never normalizes transcripts |
-| Crisis alerts | crisis-alerts.js | BIND_SUBSCRIBE_* constants, parseSafetyAlert |
+| Crisis alerts | crisis-alerts.js | offerCrisisSubscribeAtBind (never blocks binding), parseSafetyAlert |
 | Consent | child-consent.js, legal-release.js | consentStamp; consent doc versions |
 | Nav/auth | nav-inset.js, auth-gate.js, nav-back.js, tab-routes.js | required by nearly every page |
 | Contracts seam | multi-subject-contracts.js | re-exports ../generated/ |

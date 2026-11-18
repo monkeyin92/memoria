@@ -26,7 +26,7 @@ Native WeChat Mini Program (CommonJS, no bundler, zero runtime npm deps): the pa
 - Design tokens only: --mp-* colors, --mp-type* sizes; lengths are design px at a 390pt frame (rpx banned); SVG only via `<image>` src — no inline `<svg>`; tone variants are separate files under assets/ui/v4/.
 - UI copy is Chinese and centralized in utils/*.js constants; WXML stays thin.
 - Tests: node:test + assert/strict; wx/Page/Component stubbed per test; V4 tests run real pages through scripts/mp-harness and assert rendered text (copy is contractual).
-- config.js hardcodes prod API https://aginice.cn:8443/memoria-api; SUBSCRIPTION_PUSH_ENABLED=false (DECISIONS #021/#019).
+- config.js hardcodes prod API https://aginice.cn:8443/memoria-api; SUBSCRIPTION_PUSH_ENABLED=true (DECISIONS #029; bind only offers the prompt, #021/#030).
 - project.config.json packOptions: ignore tests/, design-preview/; include legal md + assets/mascots.
 
 ## ANTI-PATTERNS
