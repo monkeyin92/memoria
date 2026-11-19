@@ -14,6 +14,16 @@
 - **生产主机（2026-10-05 起）**：整套服务 01:33–01:40（CST）从旧机 122.51.108.140 迁到 110.42.235.198（原 pocketSparks 生产机，与 hr-tracker、MySQL 等共用，40 GB 盘、3.7 GiB 内存）；ssh 别名 `memoria-prod` 指新机，旧机别名 `memoria-prod-old`（旧机 10-06 到期，到期后别名和 known_hosts 条目可删）。Control API 绑 `127.0.0.1:18791`（hr-tracker 占 8791），由 `MEMORIA_CONTROL_API_PORT` 参数化。对外域名是 `aginice.cn`（你 10-05 说「域名换成aginice.cn这个域名，之前那个不用了」；证书到 2027-01-02，**2026-12-19 前换证**；`aigcnice.com` 仍解析到旧机，旧机到期后失效，已定不做桥、不动 DNS）。客户端当时已切完（之后的版本见下面「设备固件」「小程序体验版」两条）：小程序体验版 `0.2.20261005.3`，固件 build 24，机器人只连 `aginice.cn:8443`。详见「2026-10-05 服务迁移到 110.42.235.198」「2026-10-05 域名切换到 aginice.cn」两节。
 - **产品定位（2026-10-04 起）**：聚焦儿童青少年（陪伴、关怀、教学导师）；老年人与年轻人方向先删去，不进工程队列、验收与对外叙事（README「产品定位」已改写）；代码里已有的长辈、成人服务模式暂留、不再投入，是否清理另行决定；更早各节里的老年相关记录是当时的历史收据，不改。
 
+## 2026-11-19 安全话术之后回复被整段拦下时改说「请再说一遍」（bridge `20261119-post-safety-repeat-v1`）
+
+- **问题**：11-18 第三轮 safety 卡 t010（22:58 CST）：识别错了字，判成非危机；模型回复切成 7 段，全被「安全话术之后」的过滤丢掉（`post_fixed_safety_follow_up_dropped` ×7），回合以 `provider_completed_without_audio` 结束，设备没出声。回复原文没有记录；7 正好是升级话术切出的段数，推断模型照抄了升级话术。30 s 后收音窗口关闭，t011 播放时麦克风已关，t011 的丢失是连带的。那一回合 response plan 0.3 s 超时，与此无关。本机复现：会话里播过安全话术之后，只要模型回复全是话术片段或安慰词（如「没关系，我陪着你。别担心。」），机器人都会沉默。
+- **修复**（PR #609，main `3b961ba3`）：过滤丢掉过至少一段、而本回合什么都没说时，改说现有的没听清提示 `BRIDGE_PHRASES[2]`「刚才没有听清，可以再说一遍吗？」，日志 `post_fixed_safety_repeat_request`（只记段数）。危机判断和过滤规则都没变。负责人 2026-11-19 选了这个方案；「模型照抄话术时直接播话术录音」没有做，因为那会让模型的判断单独触发危机话术。
+- **bridge**（10:45 CST 切流）：`memoria-agent:20261119-post-safety-repeat-v1`，revision `9fc0f8c8` = `bca747fc` + `422d3ede`（#609 移植到生产基线，不含 TODOLIST）+ `9fc0f8c8`（main 上 11-17 的 `291df82c`：关机的 CLOSED 排在 AIGC 结束提示之后）。
+  - 为什么带上 `291df82c`：生产基线缺这项修复，`test_farewell_plays_the_aigc_closing_marker_before_standby` 是真实的时序竞争，前三次 dry-run 的门禁都卡在它上面；只在基线 `bca747fc` 上跑也会失败（单跑 8 次挂 2 次）。带上后门禁通过。行为上的影响：告别或长时间不说话关机时，如果结束提示正在播，最多等 6 s 再关。
+  - `--allow-scope-drift` 只放行 fixed_safety 的 manifest 与 wav，和 11-18 相同，内容没变，容器内 wav 的 sha256 前缀仍是 `469bcb6d`。没有用 `--skip-gates`。
+  - 回滚镜像 `memoria-agent:rollback-20261119-post-safety-repeat-v1-pre`（= `20261118-victim-rewrite-v1`，`ec676e91…`）。healthy、restarts 0，切流后 2 分钟日志无 ERROR / Traceback，ASR 调试变量为 0。control-api、media-edge 没动。
+- **真机**：还没测，负责人安排晚些时候跑。要看 safety 卡上同类回合是否改说「刚才没有听清…」，日志里是否出现 `post_fixed_safety_repeat_request`。
+
 ## 2026-11-18 晚 被欺负话术改写上线（bridge `20261118-victim-rewrite-v1`）；第三轮 safety 卡未过
 
 - **改写**：负责人 2026-11-18 批准新文稿（DECISIONS #031，代替产品部、合规部签字），PR #607 合并（`78a869d6` 与冒烟断言 `b01fa286`）。新文稿：「听起来你受委屈了，这不是你的错。要是因为这样不想去学校，我能理解。我在这儿，你想说多少都可以。要是你愿意，我们一起想想，告诉哪个你信得过的大人，让他帮帮你。」音频 18.0 s（旧 16.6 s），与其他固定话术同一音色。
