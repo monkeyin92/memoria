@@ -46,6 +46,7 @@ from services.agent.src.prompts import LIVE_LOOKUP_FILLER
 from services.agent.src.providers.llm_failover import LlmUnavailableError
 from services.agent.src.reply_crisis import ReplyCrisisMixin, _LateCrisisPlan
 from services.agent.src.reply_delegation import ReplyDelegationMixin
+from services.agent.src.reply_follow_up_guard import PostSafetyFollowUpGuard
 from services.agent.src.reply_plan import ReplyPlanMixin
 from services.agent.src.reply_speculation import ReplySpeculationMixin, _plan_capsules
 from services.agent.src.reply_voice import ReplyVoiceMixin
@@ -65,10 +66,6 @@ from services.agent.src.voice_core.generated.memoria.media.v1 import media_pb2 a
 from services.agent.src.voice_profile_client import VoiceProfileClient
 from services.agent.src.weather_thread import AskCity, WeatherSearch
 from services.common.attachment_ban import AttachmentOutputGate
-from services.common.companion_response_safety import (
-    assistant_text_repeats_or_dilutes_safety,
-    strip_soothing_from_follow_up,
-)
 from services.common.crisis_policy import route_crisis
 from services.common.fixed_safety_scripts import FixedSafetyScript
 from services.common.llm_failover import LLM_UNAVAILABLE_TEXT
@@ -965,20 +962,12 @@ class ReplyPipeline(
                 _mark_first_phrase()
                 yield script_to_play
 
-        def _follow_up_blocked(text: str) -> tuple[str | None, bool]:
-            """Strip what the post-safety reply may not say; say when nothing is left."""
-
-            if script is not None or not self._runtime.fixed_safety_heard:
-                return text, False
-            allowed = strip_soothing_from_follow_up(text) if block_soothing else text
-            if not assistant_text_repeats_or_dilutes_safety(allowed):
-                return allowed, False
-            logger.info(
-                "post_fixed_safety_follow_up_dropped session_id=%s turn_id=%s",
-                self._runtime.session_id,
-                fence.turn_id,
-            )
-            return None, True
+        follow_up = PostSafetyFollowUpGuard(
+            is_active=lambda: script is None and self._runtime.fixed_safety_heard,
+            block_soothing=block_soothing,
+            session_id=self._runtime.session_id,
+            turn_id=fence.turn_id,
+        )
 
         stream: Any = None
         realtime_reply = ""
@@ -1230,8 +1219,8 @@ class ReplyPipeline(
                                 _apply_assistant_emotion()
                                 if _late_crisis_now() is not None:
                                     break
-                                segment_text, blocked = _follow_up_blocked(segment.text)
-                                if blocked or segment_text is None:
+                                segment_text = follow_up.admit(segment.text)
+                                if segment_text is None:
                                     continue
                                 ready = _ready_segments(segment_text)
                                 if ready is None:
@@ -1320,8 +1309,8 @@ class ReplyPipeline(
             ):
                 for segment in segmenter.flush(end_of_stream=True):
                     _apply_assistant_emotion()
-                    segment_text, blocked = _follow_up_blocked(segment.text)
-                    if blocked or segment_text is None:
+                    segment_text = follow_up.admit(segment.text)
+                    if segment_text is None:
                         continue
                     ready = _ready_segments(segment_text)
                     if ready is None:
@@ -1331,6 +1320,10 @@ class ReplyPipeline(
                 held = _flush_attachment_gate()
                 if held:
                     for accepted_segment in held:
+                        yield accepted_segment
+                repeat = follow_up.repeat_request(spoke=first_phrase_marked)
+                if repeat is not None:
+                    for accepted_segment in _ready_segments(repeat) or ():
                         yield accepted_segment
         except Exception:
             if realtime_request is None or not cancellation.is_current(self._runtime.fence):

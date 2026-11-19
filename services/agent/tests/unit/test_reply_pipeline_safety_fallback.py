@@ -14,6 +14,7 @@ from services.agent.src import response_plan_sidecar
 from services.agent.src.contracts.ids import CancellationContext
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.orchestration.handlers import LanguageModelRequest
+from services.agent.src.prompts import BRIDGE_PHRASES
 from services.agent.src.providers.fixed_safety_audio import (
     DEFAULT_FIXED_SAFETY_AUDIO_DIR,
     FixedSafetyAudioCatalog,
@@ -36,6 +37,7 @@ from services.common.companion_response_safety import (
     AFTER_FIXED_SAFETY_SESSION_INSTRUCTION,
     NAMELESS_IDENTITY_REPLY,
 )
+from services.common.crisis_policy import route_crisis
 from services.common.fixed_safety_scripts import (
     CRISIS_SELF_ESCALATION_SCRIPT,
     CRISIS_SELF_SCRIPT,
@@ -1046,4 +1048,215 @@ async def test_ordinary_follow_up_keeps_a_content_sentence_while_soothing_stays_
     assert heard == "我们玩点别的吧！你想玩什么呢？"
     assert "没关系" not in heard
     assert follow_up not in "\n".join(record.getMessage() for record in caplog.records)
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_follow_up_that_only_repeats_the_safety_script_asks_the_child_to_say_it_again(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Field 2026-11-18 run 225243 t010 (22:58 CST): every segment dropped, the child heard silence.
+
+    After nine fixed safety scripts, a misheard 「我想拿刀划自己。」 (ASR slip,
+    8 chars) routed ``none``; the post-safety filter dropped all seven segments
+    of the model's reply (most likely a copy of the escalation script; the text
+    was not logged) and the turn ended ``provider_completed_without_audio``.
+    The guard now says ``BRIDGE_PHRASES[2]`` instead of leaving quiet.
+    """
+
+    assert route_crisis("我想拿到划自己。", prior_self_crisis_hits=1).script is None
+    runtime = _runtime("post-safety-repeat-request")
+    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
+
+    async def model(_safe_ctx: Any, _tools: list[Any]) -> Any:
+        async def one() -> Any:
+            display = CRISIS_SELF_ESCALATION_SCRIPT.display
+            for index in range(0, len(display), 3):
+                yield display[index : index + 3]
+
+        return one()
+
+    pipeline.language_model = ScriptedChatModel(model)
+    first = await pipeline.prepare_committed_turn("我想拿刀划自己。")
+    spoken_safety = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我想拿刀划自己。",
+                cancellation=CancellationContext.capture(first),
+            )
+        )
+    ]
+    assert spoken_safety == [CRISIS_SELF_ESCALATION_SCRIPT]
+
+    follow_up = "我想拿到划自己。"
+    with caplog.at_level(logging.INFO):
+        second = await pipeline.prepare_committed_turn(follow_up)
+        spoken = [
+            token
+            async for token in pipeline.stream(
+                LanguageModelRequest(
+                    user_text=follow_up,
+                    cancellation=CancellationContext.capture(second),
+                )
+            )
+        ]
+    heard = _heard(spoken)
+    assert heard == BRIDGE_PHRASES[2]
+    assert CRISIS_SELF_ESCALATION_SCRIPT.display not in heard
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert messages.count("post_fixed_safety_follow_up_dropped") >= 1
+    assert messages.count("post_fixed_safety_repeat_request") == 1
+    assert "我想拿到划自己" not in messages
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_follow_up_of_only_soothing_words_asks_the_child_to_say_it_again(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The 2026-11-18 run 225243 t010 silence, reproduced offline with a soothing-only reply.
+
+    「没关系，我陪着你。别担心。」 is dropped by the dilution check word for
+    word, so nothing reached the speaker; the child now hears
+    ``BRIDGE_PHRASES[2]``.
+    """
+
+    runtime = _runtime("post-safety-soothing-repeat")
+    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
+
+    async def model(_safe_ctx: Any, _tools: list[Any]) -> Any:
+        async def one() -> Any:
+            reply = "没关系，我陪着你。别担心。"
+            for index in range(0, len(reply), 3):
+                yield reply[index : index + 3]
+
+        return one()
+
+    pipeline.language_model = ScriptedChatModel(model)
+    first = await pipeline.prepare_committed_turn("我不想活了")
+    spoken_safety = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我不想活了",
+                cancellation=CancellationContext.capture(first),
+            )
+        )
+    ]
+    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+
+    follow_up = "我们玩点别的吧。"
+    with caplog.at_level(logging.INFO):
+        second = await pipeline.prepare_committed_turn(follow_up)
+        spoken = [
+            token
+            async for token in pipeline.stream(
+                LanguageModelRequest(
+                    user_text=follow_up,
+                    cancellation=CancellationContext.capture(second),
+                )
+            )
+        ]
+    heard = _heard(spoken)
+    assert heard == BRIDGE_PHRASES[2]
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert messages.count("post_fixed_safety_follow_up_dropped") >= 1
+    assert messages.count("post_fixed_safety_repeat_request") == 1
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_follow_up_that_keeps_a_sentence_does_not_ask_to_repeat(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Field 2026-11-18 run 225243 t010: the repeat ask fires only when nothing at all was spoken.
+
+    A reply that survives the filter with one real sentence is heard as
+    before; ``post_fixed_safety_repeat_request`` must not fire on top of it.
+    """
+
+    runtime = _runtime("post-safety-partial-repeat")
+    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
+
+    async def model(_safe_ctx: Any, _tools: list[Any]) -> Any:
+        async def one() -> Any:
+            reply = "别担心。我们来画画吧！"
+            for index in range(0, len(reply), 3):
+                yield reply[index : index + 3]
+
+        return one()
+
+    pipeline.language_model = ScriptedChatModel(model)
+    first = await pipeline.prepare_committed_turn("我不想活了")
+    spoken_safety = [
+        token
+        async for token in pipeline.stream(
+            LanguageModelRequest(
+                user_text="我不想活了",
+                cancellation=CancellationContext.capture(first),
+            )
+        )
+    ]
+    assert spoken_safety == [CRISIS_SELF_SCRIPT]
+
+    follow_up = "我们玩点别的吧。"
+    with caplog.at_level(logging.INFO):
+        second = await pipeline.prepare_committed_turn(follow_up)
+        spoken = [
+            token
+            async for token in pipeline.stream(
+                LanguageModelRequest(
+                    user_text=follow_up,
+                    cancellation=CancellationContext.capture(second),
+                )
+            )
+        ]
+    heard = _heard(spoken)
+    assert heard == "我们来画画吧！"
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert messages.count("post_fixed_safety_follow_up_dropped") >= 1
+    assert messages.count("post_fixed_safety_repeat_request") == 0
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_reply_before_any_safety_script_never_asks_to_repeat(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Field 2026-11-18 run 225243 t010: the ask exists only behind a heard safety script.
+
+    Without ``fixed_safety_heard`` the guard is inactive, so soothing wording
+    in an ordinary reply still reaches the child and neither post-safety log
+    fires.
+    """
+
+    runtime = _runtime("no-safety-no-repeat")
+    pipeline = _pipeline(runtime, _InvalidPayloadPlanner())
+
+    async def model(_safe_ctx: Any, _tools: list[Any]) -> Any:
+        async def one() -> Any:
+            reply = "没关系，别担心。"
+            for index in range(0, len(reply), 3):
+                yield reply[index : index + 3]
+
+        return one()
+
+    pipeline.language_model = ScriptedChatModel(model)
+    query = "我们玩点别的吧。"
+    with caplog.at_level(logging.INFO):
+        fence = await pipeline.prepare_committed_turn(query)
+        spoken = [
+            token
+            async for token in pipeline.stream(
+                LanguageModelRequest(
+                    user_text=query,
+                    cancellation=CancellationContext.capture(fence),
+                )
+            )
+        ]
+    assert _heard(spoken) == "没关系，别担心。"
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert messages.count("post_fixed_safety_follow_up_dropped") == 0
+    assert messages.count("post_fixed_safety_repeat_request") == 0
     await runtime.close()
