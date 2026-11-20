@@ -1,0 +1,63 @@
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -118,3 +118,5 @@
++        const auto callback_state = GetDeviceState();
+-        const uint32_t afe_epoch = memoria::afe_vad_epoch.fetch_add(1, std::memory_order_relaxed) + 1;
+-        Schedule([this, speaking, afe_epoch, callback_state = GetDeviceState()]() {
++        const uint32_t afe_epoch = memoria::AdvanceAfeVadEpoch(
++            speaking && callback_state == kDeviceStateSpeaking);
++        Schedule([this, speaking, afe_epoch, callback_state]() {
+             auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
+@@ -133,2 +135,2 @@
+-                memoria_protocol->SendVadState(speaking, audio_service_.LastUplinkRms(), listening ? afe_epoch : 0);
++                memoria_protocol->SendVadState(speaking, audio_service_.LastUplinkRms(), !speaking || listening ? afe_epoch : 0);
+             }
+@@ -980,3 +984,9 @@
+                         } else {
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++                            if (SetDeviceState(kDeviceStateListening)) {
++                                memoria_protocol->NotifyPlaybackListening();
++                            }
++#else
+                             SetDeviceState(kDeviceStateListening);
++#endif
+                         }
+--- a/main/protocols/protocol.h
++++ b/main/protocols/protocol.h
+@@ -27,2 +27,3 @@
+     float near_end_rms = 0.0f;
++    uint64_t afe_output_ms = 0;
+ #endif
+--- a/main/audio/audio_service.h
++++ b/main/audio/audio_service.h
+@@ -123,3 +123,6 @@
+ struct AudioTask {
+     AudioTaskType type;
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++    uint64_t afe_output_ms = 0;
++#endif
+     std::vector<int16_t> pcm;
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -733,2 +733,3 @@
+             packet->near_end_rms = last_uplink_rms_.load(std::memory_order_relaxed);
++            packet->afe_output_ms = task->afe_output_ms;
+ #endif
+@@ -832,3 +833,6 @@
+ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t>&& pcm) {
+     auto task = std::make_unique<AudioTask>();
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++    task->afe_output_ms = static_cast<uint64_t>(esp_timer_get_time() / 1000);
++#endif
+     task->type = type;
+@@ -993,2 +997,5 @@
+ void AudioService::EnableVoiceProcessing(bool enable, bool reset_decoder) {
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++    if (!enable) memoria::AdvanceAfeVadEpoch(false);
++#endif
+     ESP_LOGD(TAG, "%s voice processing", enable ? "Enabling" : "Disabling");
+@@ -1055,3 +1062,4 @@
+ void AudioService::PlaySound(const std::string_view& ogg) {
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++    memoria::AdvanceAfeVadEpoch(false);
+     input_settle_.NoteLocalSound(static_cast<uint64_t>(esp_timer_get_time() / 1000));

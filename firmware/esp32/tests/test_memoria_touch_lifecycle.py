@@ -194,6 +194,7 @@ def test_protocol_reset_clears_closed_capture(tmp_path):
 #include <cassert>
 #include "memoria_vad_start.h"
 using memoria::VadStartGate;
+using memoria::PlaybackVadHandoff;
 struct GenerationFence {};
 struct DroppedFrameCounters {};
 struct TransportAction {};

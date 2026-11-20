@@ -1878,7 +1878,7 @@ bool MemoriaProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
     }
     uplink_sequence_ = (uplink_sequence_ + 1) & 0xffffffffU;
     uplink_sample_start_ += MemoriaAudioFrame::kUplinkFrameSamples;
-    TrackUplinkVadFrame();
+    TrackUplinkVadFrame(packet->near_end_rms, packet->afe_output_ms);
     if (vad_active_ && uplink_sample_start_ - vad_started_sample_ >= kMaxVadSpeechSamples) {
         ESP_LOGW(kTag, "Closing overlong device VAD epoch at sample=%llu",
                  static_cast<unsigned long long>(uplink_sample_start_));
@@ -2321,6 +2321,9 @@ bool MemoriaProtocol::HandleGenerationStarted(const cJSON* root, const Generatio
     // generation gate and clear its old work under one queue lock.
     fence_ = fence;
     playback_active_ = true;
+    vad_handoff_.Completed(false);
+    vad_gate_.Reset();
+    vad_onset_valid_ = false;
     playback_audio_ready_ = false;
     playback_paused_ = false;
     stopped_generation_id_ = 0;
@@ -2367,6 +2370,7 @@ bool MemoriaProtocol::HandleGenerationPauseResume(const cJSON* root,
         return false;
     }
     if (pause) {
+        vad_handoff_.Completed(false);
         // No local duck yet: pausing stops rendering until resume. P0 closes
         // the atomic queue gate on the receive path.
         playback_paused_ = true;
@@ -2403,6 +2407,7 @@ bool MemoriaProtocol::HandleGenerationTerminal(const cJSON* root,
         return true;
     }
     if (cancelled) {
+        vad_handoff_.Completed(false);
         // generation.cancelled is never a normal completion. Finalize the
         // receipt state first so the atomic queue flush below cannot emit a
         // second terminal receipt through its drain callback, then close the
@@ -2514,6 +2519,9 @@ bool MemoriaProtocol::HandlePlaybackFlushV2(const cJSON* root) {
     fence_.tool_epoch = flush_fence.tool_epoch;
     fence_.session_epoch = flush_fence.session_epoch;
     fence_.generation_id = replacement_generation_id;
+    vad_handoff_.Completed(false);
+    vad_gate_.Reset();
+    vad_onset_valid_ = false;
     playback_active_ = true;
     playback_audio_ready_ = false;
     playback_paused_ = false;
@@ -2926,6 +2934,11 @@ bool MemoriaProtocol::HandleServerText(const char* data, size_t size) {
             }
             if (assistant_state == "listening_closed" || assistant_state == "listening") {
                 const bool closed = assistant_state == "listening_closed";
+                if (closed) {
+                    vad_handoff_.Completed(false);
+                    vad_gate_.Reset();
+                    vad_onset_valid_ = false;
+                }
                 ESP_LOGI(kTag, "listening_closed closed=%s", closed ? "true" : "false");
                 NotifyListeningClosed(closed);
             }
@@ -3333,17 +3346,65 @@ void MemoriaProtocol::SendStopListening() {
     SendText(RenderJson(event.value));
 }
 
-void MemoriaProtocol::TrackUplinkVadFrame() {
+bool MemoriaProtocol::CanRecoverVad(uint32_t afe_epoch) const {
+    return afe_epoch != 0 && afe_epoch == afe_vad_epoch.load(std::memory_order_relaxed) &&
+           protocol_version_ == kProtocolVersionV2 && !playback_active_ &&
+           !g_listening_closed.load(std::memory_order_relaxed) &&
+           Application::GetInstance().GetDeviceState() == kDeviceStateListening &&
+           is_playback_idle_ && is_playback_idle_();
+}
+
+void MemoriaProtocol::NotifyPlaybackListening() {
+    std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+    const uint32_t epoch = afe_vad_epoch.load();
+    if (protocol_version_ != kProtocolVersionV2 || playback_active_ || g_listening_closed.load() ||
+        !is_playback_idle_ || !is_playback_idle_()) {
+        vad_handoff_.Completed(false);
+    } else if (vad_handoff_.Listening(epoch, DeviceMonotonicMs())) {
+        ESP_LOGI(kTag, "vad.handoff armed epoch=%lu", static_cast<unsigned long>(epoch));
+    }
+}
+
+void MemoriaProtocol::TrackUplinkVadFrame(float packet_rms, uint64_t produced_ms) {
     std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
     const uint64_t now_ms = DeviceMonotonicMs();
     const float floor = ConfiguredVadStartRmsFloor();
-    const float rms = uplink_frame_rms.load(std::memory_order_relaxed);
-    const VadEdgeAction edge = vad_gate_.Frame(rms, floor, now_ms);
+    if (vad_handoff_.pending()) {
+        const uint32_t epoch = afe_vad_epoch.load();
+        if (vad_handoff_.TryArm(epoch, now_ms)) {
+            ESP_LOGI(kTag, "vad.handoff armed epoch=%lu late=1", static_cast<unsigned long>(epoch));
+        }
+    }
+    const uint32_t handoff_epoch = vad_handoff_.epoch();
+    if (handoff_epoch && vad_handoff_.Frame(!vad_active_ && CanRecoverVad(handoff_epoch),
+                                             produced_ms, now_ms, packet_rms, floor)) {
+        constexpr uint64_t span = 2 * MemoriaAudioFrame::kUplinkFrameSamples;
+        vad_onset_sample_ = uplink_sample_start_ >= span ? uplink_sample_start_ - span : 0;
+        vad_onset_valid_ = true;
+        ESP_LOGI(kTag, "vad.start handoff sample=%llu epoch=%lu", static_cast<unsigned long long>(vad_onset_sample_),
+                 static_cast<unsigned long>(handoff_epoch));
+        SendVadState(true, packet_rms);
+    }
+    const bool recovering = vad_gate_.recovering();
+    if (!(recovering || vad_gate_.awaiting()) || !CanRecoverVad(vad_candidate_epoch_)) {
+        if (vad_candidate_epoch_ && vad_gate_.awaiting()) {
+            vad_gate_.Reset();
+            vad_onset_valid_ = false;
+        }
+        vad_candidate_epoch_ = 0;
+    }
+    const float rms = recovering ? packet_rms : uplink_frame_rms.load(std::memory_order_relaxed);
+    const VadEdgeAction edge = vad_gate_.Frame(rms, floor, now_ms, vad_candidate_epoch_ != 0);
     if (edge == VadEdgeAction::kReport) {
+        if (recovering) {
+            constexpr uint64_t span = 2 * MemoriaAudioFrame::kUplinkFrameSamples;
+            vad_onset_sample_ = uplink_sample_start_ >= span ? uplink_sample_start_ - span : 0;
+            vad_onset_valid_ = true;
+            ESP_LOGI(kTag, "vad.start recovered sample=%llu", static_cast<unsigned long long>(vad_onset_sample_));
+        }
         SendVadState(true, vad_gate_.peak());
     } else if (edge == VadEdgeAction::kSuppressStart) {
         LogVadStartSuppressed(rms, vad_gate_.peak(), floor);
-        vad_gate_.Reset();
         vad_onset_valid_ = false;
         vad_frames_since_log_ = 0;
         vad_quiet_peak_ = 0.0f;
@@ -3366,7 +3427,7 @@ void MemoriaProtocol::TrackUplinkVadFrame() {
     vad_quiet_peak_ = 0.0f;
 }
 
-void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms) {
+void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms, uint32_t afe_epoch) {
     // VAD is emitted from Application's main task while playback receipts and
     // profile acknowledgements can originate on audio/receive tasks. Allocate
     // the sequence and enqueue the control under the same state lock/FIFO so
@@ -3376,8 +3437,11 @@ void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms) {
     uint64_t legacy_sample_position = 0;
     {
         std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
-        if (stream_epoch_ == 0) {
+        if (stream_epoch_ == 0 || (speaking && g_listening_closed.load(std::memory_order_relaxed))) {
             return;
+        }
+        if (speaking || !afe_epoch || (vad_handoff_.epoch() && afe_epoch == afe_vad_epoch.load())) {
+            vad_handoff_.Completed(false);
         }
         const float floor = ConfiguredVadStartRmsFloor();
         const VadEdgeAction vad_edge =
@@ -3396,6 +3460,7 @@ void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms) {
             return;
         }
         if (vad_edge == VadEdgeAction::kAwaitPeak) {
+            vad_candidate_epoch_ = CanRecoverVad(afe_epoch) ? afe_epoch : 0;
             vad_onset_sample_ = uplink_sample_start_;
             vad_onset_valid_ = true;
             vad_frames_since_log_ = 0;
@@ -3517,6 +3582,7 @@ bool MemoriaProtocol::NotifyLocalKeywordStop(const LocalStopKeywordHit& hit) {
 
 void MemoriaProtocol::LocalHardStop(const LocalStopKeywordHit* keyword) {
     std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
+    vad_handoff_.Completed(false);
     if (protocol_version_ == kProtocolVersionV2) {
         // Capture the fence and the delivered watermark before clearing, so
         // the server can close the generation gate and compute actual-heard.
@@ -3659,6 +3725,8 @@ void MemoriaProtocol::FinalizePlaybackEnded() {
         playback_output_frames_ > 0 ? playback_output_sequence_ : 0;
     const bool ended_approximate =
         playback_output_frames_ > 0 && playback_output_approximate_;
+    vad_handoff_.Completed(send_ended && ended_end > 0 && ended_end == active_generation_received_end_ &&
+                           !ended_approximate && !vad_active_);
     if (send_ended) {
         // The ended watermark is the last full frame confirmed by the codec's
         // output-completion source. With no confirmed output the receipt
@@ -3698,6 +3766,7 @@ void MemoriaProtocol::NotifyPlaybackDecodeError() {
     }
     ESP_LOGW(kTag, "Playback decode error for generation=%u",
              static_cast<unsigned int>(receipt_generation_id_));
+    vad_handoff_.Completed(false);
     const uint32_t error_sequence =
         playback_output_frames_ > 0 ? playback_output_sequence_ : 0;
     const uint64_t error_end =
@@ -3814,6 +3883,7 @@ void MemoriaProtocol::ResetSessionState() {
     uplink_sample_start_ = 0;
     vad_active_ = false;
     vad_started_sample_ = 0;
+    vad_handoff_.Completed(false);
     vad_gate_.Reset();
     vad_onset_valid_ = false;
     vad_frames_since_log_ = 0;

@@ -19,6 +19,80 @@ inline float VadStartRmsFloorFromMilli(int milli) {
 // Latest uplink frame RMS, relative full scale, written by the Opus encode task
 // before the packet reaches the protocol. One writer, one reader.
 inline std::atomic<float> uplink_frame_rms{0.0f};
+inline std::atomic<uint32_t> afe_vad_epoch{0};
+
+inline uint32_t AdvanceAfeVadEpoch(bool playback_speech) {
+    uint32_t previous = afe_vad_epoch.load();
+    uint32_t next;
+    do {
+        next = ((previous & ~1U) + 2U) | static_cast<uint32_t>(playback_speech);
+    } while (!afe_vad_epoch.compare_exchange_weak(previous, next));
+    return next;
+}
+
+class PlaybackVadHandoff {
+public:
+    void Completed(bool exact) {
+        *this = {};
+        completed_ = exact;
+    }
+
+    bool Listening(uint32_t current, uint64_t now_ms) {
+        const bool exact = completed_;
+        Completed(false);
+        listen_pending_ = exact;
+        listening_ms_ = now_ms;
+        return TryArm(current, now_ms);
+    }
+
+    bool TryArm(uint32_t current, uint64_t now_ms) {
+        if (!listen_pending_) return false;
+        if (now_ms - listening_ms_ > 250) {
+            listen_pending_ = false;
+        } else if (current & 1U) {
+            listen_pending_ = false;
+            epoch_ = current;
+            return true;
+        }
+        return false;
+    }
+
+    bool Frame(bool eligible, uint64_t produced_ms, uint64_t now_ms, float rms, float floor) {
+        if (epoch_ == 0) return false;
+        if (!eligible || now_ms - listening_ms_ > 5000) {
+            Completed(false);
+            return false;
+        }
+        if (produced_ms < listening_ms_ + 250 || produced_ms > now_ms || now_ms - produced_ms > 250) {
+            first_loud_ = false;
+            return false;
+        }
+        if (rms < floor) {
+            quiet_ = true;
+            first_loud_ = false;
+        } else if (quiet_) {
+            if (first_loud_ && produced_ms - first_loud_ms_ <= 40) {
+                Completed(false);
+                return true;
+            }
+            first_loud_ms_ = produced_ms;
+            first_loud_ = true;
+        }
+        return false;
+    }
+
+    uint32_t epoch() const { return epoch_; }
+    bool pending() const { return listen_pending_; }
+
+private:
+    bool completed_ = false;
+    bool listen_pending_ = false;
+    bool quiet_ = false;
+    bool first_loud_ = false;
+    uint32_t epoch_ = 0;
+    uint64_t listening_ms_ = 0;
+    uint64_t first_loud_ms_ = 0;
+};
 
 // The AFE reports the start edge on its first speaking frame, and that frame is
 // much quieter than the rest of the utterance for weak speech (field log:
@@ -28,10 +102,14 @@ inline std::atomic<float> uplink_frame_rms{0.0f};
 class VadStartGate {
 public:
     static constexpr uint64_t kPeakWindowMs = 250;
+    static constexpr uint64_t kMaxRecoveryAgeMs = 5000;
 
     VadEdgeAction Edge(bool epoch_open, bool speaking, float rms, float floor, uint64_t now_ms) {
-        if (awaiting_ && !speaking) {
-            awaiting_ = false;
+        if (!speaking && recovering()) {
+            Reset();
+        }
+        if (awaiting() && !speaking) {
+            phase_ = Phase::kIdle;
             return VadEdgeAction::kSuppressStart;
         }
         if (speaking == epoch_open) {
@@ -41,12 +119,12 @@ public:
             return VadEdgeAction::kReport;
         }
         if (rms >= floor) {
-            awaiting_ = false;
+            phase_ = Phase::kIdle;
             peak_ = rms;
             return VadEdgeAction::kReport;
         }
-        if (!awaiting_) {
-            awaiting_ = true;
+        if (!awaiting()) {
+            phase_ = Phase::kPeakWindow;
             started_ms_ = now_ms;
             peak_ = rms;
         } else if (rms > peak_) {
@@ -55,36 +133,57 @@ public:
         return VadEdgeAction::kAwaitPeak;
     }
 
-    VadEdgeAction Frame(float rms, float floor, uint64_t now_ms) {
-        if (!awaiting_) {
+    VadEdgeAction Frame(float rms, float floor, uint64_t now_ms, bool may_recover) {
+        if (recovering()) {
+            if (!may_recover || now_ms - started_ms_ > kMaxRecoveryAgeMs) {
+                Reset();
+                return VadEdgeAction::kIgnore;
+            }
+            if (rms < floor) {
+                phase_ = Phase::kWaitForSpeech;
+            } else if (phase_ == Phase::kFirstLoudFrame) {
+                phase_ = Phase::kIdle;
+                peak_ = rms > peak_ ? rms : peak_;
+                return VadEdgeAction::kReport;
+            } else {
+                phase_ = Phase::kFirstLoudFrame;
+                peak_ = rms;
+            }
+            return VadEdgeAction::kIgnore;
+        }
+        if (!awaiting()) {
             return VadEdgeAction::kIgnore;
         }
         if (rms > peak_) {
             peak_ = rms;
         }
         if (peak_ >= floor) {
-            awaiting_ = false;
+            phase_ = Phase::kIdle;
             return VadEdgeAction::kReport;
         }
         if (now_ms - started_ms_ >= kPeakWindowMs) {
-            awaiting_ = false;
+            phase_ = may_recover ? Phase::kWaitForSpeech : Phase::kIdle;
             return VadEdgeAction::kSuppressStart;
         }
         return VadEdgeAction::kAwaitPeak;
     }
 
-    bool awaiting() const { return awaiting_; }
+    bool awaiting() const { return phase_ == Phase::kPeakWindow; }
+    bool recovering() const {
+        return phase_ == Phase::kWaitForSpeech || phase_ == Phase::kFirstLoudFrame;
+    }
 
     float peak() const { return peak_; }
 
     void Reset() {
-        awaiting_ = false;
+        phase_ = Phase::kIdle;
         started_ms_ = 0;
         peak_ = 0.0f;
     }
 
 private:
-    bool awaiting_ = false;
+    enum class Phase { kIdle, kPeakWindow, kWaitForSpeech, kFirstLoudFrame };
+    Phase phase_ = Phase::kIdle;
     uint64_t started_ms_ = 0;
     float peak_ = 0.0f;
 };

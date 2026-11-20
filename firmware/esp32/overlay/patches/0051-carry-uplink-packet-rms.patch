@@ -1,0 +1,45 @@
+--- a/main/audio/audio_service.cc
++++ b/main/audio/audio_service.cc
+@@ -728,6 +728,9 @@
+             auto packet = std::make_unique<AudioStreamPacket>();
+             packet->frame_duration = OPUS_FRAME_DURATION_MS;
+             packet->sample_rate = 16000;
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++            packet->near_end_rms = last_uplink_rms_.load(std::memory_order_relaxed);
++#endif
+             packet->timestamp = task->timestamp;
+ 
+             if (opus_encoder_ != nullptr && task->pcm.size() == encoder_frame_size_) {
+--- a/main/protocols/protocol.h
++++ b/main/protocols/protocol.h
+@@ -24,6 +24,9 @@
+     uint64_t sample_end = 0;
+     // Server-side downlink sequence of this frame; echoed by receipts.
+     uint32_t received_sequence = 0;
++#if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
++    float near_end_rms = 0.0f;
++#endif
+ };
+ 
+ struct BinaryProtocol2 {
+--- a/main/application.cc
++++ b/main/application.cc
+@@ -116,7 +116,8 @@
+     callbacks.on_vad_change = [this](bool speaking) {
+ #if CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT
+-        Schedule([this, speaking, callback_state = GetDeviceState()]() {
++        const uint32_t afe_epoch = memoria::afe_vad_epoch.fetch_add(1, std::memory_order_relaxed) + 1;
++        Schedule([this, speaking, afe_epoch, callback_state = GetDeviceState()]() {
+             auto* memoria_protocol = static_cast<memoria::MemoriaProtocol*>(protocol_.get());
+             const auto device_state = callback_state;
+             const bool listening = device_state == kDeviceStateListening;
+             const bool speaking_barge_in =
+@@ -129,7 +130,7 @@
+                 memoria_protocol->VoiceBargeInAllowed();
+             if (memoria_protocol != nullptr &&
+                 (!speaking || listening || speaking_barge_in)) {
+-                memoria_protocol->SendVadState(speaking, audio_service_.LastUplinkRms());
++                memoria_protocol->SendVadState(speaking, audio_service_.LastUplinkRms(), listening ? afe_epoch : 0);
+             }
+         });
+ #endif
