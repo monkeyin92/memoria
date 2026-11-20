@@ -71,7 +71,7 @@ public:
     void SendWakeWordDetected(const std::string& wake_word) override;
     void SendStartListening(ListeningMode mode) override;
     void SendStopListening() override;
-    void SendVadState(bool speaking, float near_end_rms = 0.0f);
+    void SendVadState(bool speaking, float near_end_rms = 0.0f, uint32_t afe_epoch = 0);
     void SendAbortSpeaking(AbortReason reason) override;
     void SendMcpMessage(const std::string& message) override;
 
@@ -101,6 +101,7 @@ public:
     // Called by Application after AudioService reports its real playback
     // pipeline drained. This is the authority for playback.ended receipts.
     void NotifyPlaybackDrained();
+    void NotifyPlaybackListening();
 
     // Called by Application when AudioService advances a playback boundary.
     // The VoCat I2S path reports a GDMA TX-EOF-confirmed boundary;
@@ -240,6 +241,8 @@ private:
     bool vad_active_ = false;
     uint64_t vad_started_sample_ = 0;
     VadStartGate vad_gate_;
+    PlaybackVadHandoff vad_handoff_;
+    uint32_t vad_candidate_epoch_ = 0;
     uint64_t vad_onset_sample_ = 0;
     bool vad_onset_valid_ = false;
     uint32_t vad_frames_since_log_ = 0;
@@ -354,7 +357,8 @@ private:
     bool RetireTransportAttempt(uint32_t websocket_attempt);
     // One uplink frame: resolves an armed vad.start peak window and reports
     // the idle heartbeat when no VAD edge was logged for a while.
-    void TrackUplinkVadFrame();
+    void TrackUplinkVadFrame(float packet_rms, uint64_t produced_ms);
+    bool CanRecoverVad(uint32_t afe_epoch) const;
     void ResetSessionState();
 };
 

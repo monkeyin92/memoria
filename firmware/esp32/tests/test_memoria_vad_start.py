@@ -56,13 +56,29 @@ float ParseRms(const char* text, float floor) {
 
 int main() {
     memoria::VadStartGate gate;
+    memoria::PlaybackVadHandoff handoff;
     char line[256];
     while (std::fgets(line, sizeof(line), stdin) != nullptr) {
         line[std::strcspn(line, "\r\n")] = '\0';
         if (line[0] == '\0' || line[0] == '#') {
             continue;
         }
-        if (std::strncmp(line, "floor ", 6) == 0) {
+        if (std::strncmp(line, "complete ", 9) == 0) {
+            handoff.Completed(std::atoi(line + 9) != 0);
+            std::puts("complete");
+        } else if (std::strncmp(line, "listen ", 7) == 0 || std::strncmp(line, "arming ", 7) == 0) {
+            unsigned epoch;
+            unsigned long long now;
+            if (std::sscanf(line + 7, "%u %llu", &epoch, &now) != 2) return 2;
+            const bool armed = line[0] == 'l' ? handoff.Listening(epoch, now) : handoff.TryArm(epoch, now);
+            std::puts(armed ? "armed" : "idle");
+        } else if (std::strncmp(line, "packet ", 7) == 0) {
+            int eligible;
+            unsigned long long produced, now;
+            float rms;
+            if (std::sscanf(line + 7, "%d %llu %llu %f", &eligible, &produced, &now, &rms) != 4) return 2;
+            std::puts(handoff.Frame(eligible != 0, produced, now, rms, .003f) ? "report" : "ignore");
+        } else if (std::strncmp(line, "floor ", 6) == 0) {
             const int milli = std::atoi(line + 6);
             std::printf("%.9f\n", static_cast<double>(memoria::VadStartRmsFloorFromMilli(milli)));
         } else if (std::strncmp(line, "edge ", 5) == 0) {
@@ -87,9 +103,13 @@ int main() {
                 return 2;
             }
             const float floor = memoria::VadStartRmsFloorFromMilli(milli);
-            std::printf("%s\n", Name(gate.Frame(ParseRms(rms_text, floor), floor, now)));
+            const bool eligible = std::strstr(line, " cancelled") == nullptr;
+            std::printf("%s\n", Name(gate.Frame(ParseRms(rms_text, floor), floor, now, eligible)));
         } else if (std::strcmp(line, "peak") == 0) {
             std::printf("%.4f\n", static_cast<double>(gate.peak()));
+        } else if (std::strcmp(line, "reset") == 0) {
+            gate.Reset();
+            std::puts("reset");
         } else {
             return 2;
         }
@@ -171,9 +191,67 @@ def test_an_end_edge_inside_the_window_suppresses_the_start(tool: pathlib.Path) 
     assert _run(tool, "edge 0 1 0.0007 3 0", "edge 0 0 0.0005 3 40") == ["await", "suppress"]
 
 
+def test_t008_continuous_speech_recovers_once_after_the_early_peak_window(tool: pathlib.Path) -> None:
+    assert _run(
+        tool,
+        "edge 0 1 0.00128 3 0", "frame 0.0019 3 200", "frame 0.0010 3 260",
+        "frame 0.0042 3 500", "frame 0.0011 3 520",
+        "frame 0.0031 3 3200", "frame 0.0055 3 3220", "frame 0.0055 3 3240",
+        "edge 1 0 0.0003 3 4000",
+    ) == ["await", "await", "suppress", "ignore", "ignore", "ignore", "report", "ignore", "report"]
+
+
+@pytest.mark.parametrize("cancel,expected", [("edge 0 0 0.0002 3 280", "ignore"), ("reset", "reset")])
+def test_ended_candidate_cannot_be_revived_by_later_energy(tool: pathlib.Path, cancel: str, expected: str) -> None:
+    assert _run(
+        tool, "edge 0 1 0.001 3 0", "frame 0.001 3 260", "frame 0.005 3 275",
+        cancel, "frame 0.006 3 300", "frame 0.006 3 320",
+    ) == ["await", "suppress", "ignore", expected, "ignore", "ignore"]
+
+
 def test_a_first_frame_at_the_floor_reports_without_waiting(tool: pathlib.Path) -> None:
     assert _run(tool, "edge 0 1 floor 3 0") == ["report"]
     assert _run(tool, "edge 0 1 0.0067 3 0") == ["report"]
+
+
+def test_t013_held_playback_edge_needs_fresh_quiet_then_two_loud_packets(tool: pathlib.Path) -> None:
+    assert _run(tool, "complete 1", "listen 13 1000", "packet 1 980 1300 0.001",
+                "packet 1 1250 1260 0.008", "packet 1 1270 1280 0.006",
+                "packet 1 1500 1510 0.001", "packet 1 1870 2200 0.008",
+                "packet 1 5790 5800 0.006", "packet 1 5810 5820 0.008",
+                "packet 1 5830 5840 0.008") == ["complete", "armed", *["ignore"] * 6, "report", "ignore"]
+
+
+@pytest.mark.parametrize("barrier", ["complete 0", "packet 0 1500 1500 0.006",
+                                      "packet 1 7000 7000 0.006"])
+def test_closed_changed_afe_or_expired_handoff_cannot_reopen(tool: pathlib.Path, barrier: str) -> None:
+    after = 7020 if "7000" in barrier else 1520
+    result = _run(tool, "complete 1", "listen 7 1000", "packet 1 1300 1300 0.001", barrier,
+                  f"packet 1 {after} {after} 0.008", f"packet 1 {after+20} {after+20} 0.008")
+    assert "report" not in result
+
+
+@pytest.mark.parametrize("complete,current", [(0, 3), (1, 4), (1, 0)])
+def test_only_normal_end_with_live_playback_speech_arms(tool: pathlib.Path, complete: int,
+                                                       current: int) -> None:
+    assert _run(tool, f"complete {complete}", f"listen {current} 900") == ["complete", "idle"]
+
+
+@pytest.mark.parametrize("published,expected", [(1020, "armed"), (1260, "idle")])
+def test_late_afe_publication_cannot_extend_playback_handoff(tool: pathlib.Path, published: int, expected: str) -> None:
+    assert _run(tool, "complete 1", "listen 4 1000", f"arming 7 {published}") == ["complete", "idle", expected]
+
+
+@pytest.mark.parametrize(
+    "frames",
+    [
+        ("frame 0.001 3 260 cancelled", "frame 0.004 3 280", "frame 0.005 3 300"),
+        ("frame 0.001 3 260", "frame 0.004 3 280 cancelled", "frame 0.005 3 300"),
+        ("frame 0.001 3 260", "frame 0.004 3 4990", "frame 0.005 3 5010"),
+    ],
+)
+def test_ineligible_or_expired_candidate_stays_suppressed(tool: pathlib.Path, frames: tuple[str, ...]) -> None:
+    assert _run(tool, "edge 0 1 0.001 3 0", *frames) == ["await", "suppress", "ignore", "ignore"]
 
 
 def test_a_second_start_while_the_epoch_is_open_is_ignored(tool: pathlib.Path) -> None:

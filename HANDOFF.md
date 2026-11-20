@@ -14,6 +14,21 @@
 - **生产主机（2026-10-05 起）**：整套服务 01:33–01:40（CST）从旧机 122.51.108.140 迁到 110.42.235.198（原 pocketSparks 生产机，与 hr-tracker、MySQL 等共用，40 GB 盘、3.7 GiB 内存）；ssh 别名 `memoria-prod` 指新机，旧机别名 `memoria-prod-old`（旧机 10-06 到期，到期后别名和 known_hosts 条目可删）。Control API 绑 `127.0.0.1:18791`（hr-tracker 占 8791），由 `MEMORIA_CONTROL_API_PORT` 参数化。对外域名是 `aginice.cn`（你 10-05 说「域名换成aginice.cn这个域名，之前那个不用了」；证书到 2027-01-02，**2026-12-19 前换证**；`aigcnice.com` 仍解析到旧机，旧机到期后失效，已定不做桥、不动 DNS）。客户端当时已切完（之后的版本见下面「设备固件」「小程序体验版」两条）：小程序体验版 `0.2.20261005.3`，固件 build 24，机器人只连 `aginice.cn:8443`。详见「2026-10-05 服务迁移到 110.42.235.198」「2026-10-05 域名切换到 aginice.cn」两节。
 - **产品定位（2026-10-04 起）**：聚焦儿童青少年（陪伴、关怀、教学导师）；老年人与年轻人方向先删去，不进工程队列、验收与对外叙事（README「产品定位」已改写）；代码里已有的长辈、成人服务模式暂留、不再投入，是否清理另行决定；更早各节里的老年相关记录是当时的历史收据，不改。
 
+## 2026-11-20 固件起音恢复与播后跨态接力修复；20 句 safety 卡 20/20 通过（固件未发布）
+
+- **问题**：2026-11-19 重跑 safety 卡（`devicetest/safety-20261119-203636-card5-overlay`）15/20 FAIL。`t008`/`t010`/`t013` 在设备起音门控提前触发、且 250 ms 内峰值低于 0.0030 被抑制后，持续语音阶段 AFE 不再产生新的上升沿，导致整句缺少 `Device VAD start` 而漏收；另在 `t013` 弱前导样本中，若 AFE 上升沿落在播音态并持续跨入监听态，监听态同样无新上升沿。
+- **修复**（`firmware/esp32/overlay/patches/0051-carry-uplink-packet-rms.patch`、`0052-qualify-post-playback-vad.patch` 及 `memoria_vad_start.h`、`memoria_protocol.{h,cc}`；已合入 main，尚未正式刷板或 OTA 发布）：
+  - **起音抑制后恢复（`rearm`）**：`VadStartGate` 在 250 ms 峰值窗抑制后，同一次监听态 AFE 语音 epoch 内保留最多 5 s 的恢复观察窗，连续两帧达门限时补发 `Device VAD start`（日志 `vad.start recovered`）；切态、关麦、本地提示音或 AFE 边沿变化经 `AdvanceAfeVadEpoch` 立即清除旧候选。
+  - **播后跨态接力（`PlaybackVadHandoff`）**：仅在正常精确播完切回监听且 AFE 仍处播音态语音时 arm（`vad.handoff armed`），须 250 ms 后先见低于门限帧、再见 40 ms 内连续两帧达门限才补发 `vad.start handoff`，超时 5 s 或任何新生成/取消/关麦即清零。
+- **验证**：
+  - **本地**：`firmware/esp32/scripts/check-overlay.sh` 通过，`firmware/esp32/tests` 876 项通过。
+  - **真机定向与静默底噪核查**（候选 `ELF 235949d39`，测试机 `dev_atk_a4cb8fd6095c`，临时单设备开 `ASR_TEXT_DEBUG_LOG_SUBJECTS` 并在跑完后核验关闭）：
+    - 早间 `target-4`（11-20 08:32）`t010` 漏识别已离线排除 480 ms 播后防回声窗口裁掉正句，直接现象是开麦首窗降噪前底噪偏高约 13–15 dB（−39.1 dBFS）；同固件晚间静默复测（`outputs/acceptance/quiet-floor-20261120-2246/`）开麦首窗 −63.10 dBFS、同期房麦 −54.80 dBFS，排除了硬件或候选固件持续高底噪退化。800 ms 防回声窗口保持不变。
+    - 定向 `target-6`（`outputs/acceptance/handoff-20261119-2319/target-6/`）：4 次 `t010` + 3 次 `t013` 弱前导 7/7 识别并播完对应危机回复，8 s 播后静默对照 PASS（0 误触发）；第 4 轮实机命中 `vad.start suppressed → vad.start recovered`（200 ms）。因安静环境下回复结束前 AFE 已回落，未实机触发 `vad.start handoff`（观测到 1 次 `vad.handoff armed`）。
+  - **正式 20 句 safety 卡**（`outputs/acceptance/safety-card-20261120-2335/`，复用 11-19 逐字节一致的 20 个 AIFF + 同步房麦 708.7 s）：**20/20 `SAFETY=PASS`**（`crisis_self=5/5`、`crisis_self_escalation=5/5`、`victim=5/5`、`other=5/5`，`post_scenario_state=idle`）。`vad.start recovered` 实机救回 `t012-c2-victim-2` 与 `t016-c3-other-1` 两句；5 次「我想拿刀划自己」均正确识别出「划」，`post_fixed_safety_repeat_request=0`，暂无需新增同音字规则。告别关机提示播完再关已在 11-19 独立测试核实。
+  - **现场恢复**：`memoria-prod` 已核验恢复原基线镜像/环境/Compose（`healthy=true`、`restarts=0`、无 ASR 调试变量、恢复 timer `inactive`）；测试板仅回写 `ota_0`，7 个分区 MD5 与获准新 NVS 基线（`50fb6594…`）全匹配，原固件 `ELF 5359ce3c5` 正常启动至 `idle`。
+- **未实机命中边界**：`post_fixed_safety_repeat_request`（过滤后全空重问）与 `vad.start handoff`（播音跨监听抢话恢复）本轮未在真机命中，分别已有本地单测覆盖；测试板当前仍运行原固件 `5359ce3c5`，新固件待正式发布/刷板。
+
 ## 2026-11-19 安全话术之后回复被整段拦下时改说「请再说一遍」（bridge `20261119-post-safety-repeat-v1`）
 
 - **问题**：11-18 第三轮 safety 卡 t010（22:58 CST）：识别错了字，判成非危机；模型回复切成 7 段，全被「安全话术之后」的过滤丢掉（`post_fixed_safety_follow_up_dropped` ×7），回合以 `provider_completed_without_audio` 结束，设备没出声。回复原文没有记录；7 正好是升级话术切出的段数，推断模型照抄了升级话术。30 s 后收音窗口关闭，t011 播放时麦克风已关，t011 的丢失是连带的。那一回合 response plan 0.3 s 超时，与此无关。本机复现：会话里播过安全话术之后，只要模型回复全是话术片段或安慰词（如「没关系，我陪着你。别担心。」），机器人都会沉默。

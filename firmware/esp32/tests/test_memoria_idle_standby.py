@@ -197,7 +197,8 @@ namespace memoria {
 std::atomic<bool> g_listening_closed{false};
 constexpr unsigned kUplinkSampleRate=16000, kFrameMs=20, kMaxVadSpeechSamples=1000000;
 struct AudioStreamPacket {
- std::vector<uint8_t> payload{1,2,3}; int sample_rate=16000,frame_duration=20;
+ std::vector<uint8_t> payload{1,2,3}; int sample_rate=16000,frame_duration=20; float near_end_rms=0.004f;
+ uint64_t afe_output_ms=1234;
 };
 struct Socket {int sends=0; bool Send(const uint8_t*,size_t,bool) {++sends;return true;}};
 struct MemoriaProtocol {
@@ -206,7 +207,7 @@ struct MemoriaProtocol {
  unsigned stream_epoch_=1,uplink_sequence_=0;
  uint64_t uplink_sample_start_=0,vad_started_sample_=0;bool vad_active_=false;
  bool IsAudioChannelOpened() {return true;}
- void TrackUplinkVadFrame() {} void SendVadState(bool) {}
+ void TrackUplinkVadFrame(float rms, uint64_t produced) {assert(rms==0.004f && produced==1234);} void SendVadState(bool) {}
  bool SendAudio(std::unique_ptr<AudioStreamPacket>);
 };
 """
@@ -346,6 +347,7 @@ def test_real_capture_resume(production, tmp_path, scenario):
                            "bool IsListeningClosed(")
     code = r'''
 #include "memoria_power_policy.h"
+#include "memoria_vad_start.h"
 #include <atomic>
 #include <cassert>
 #include <functional>
