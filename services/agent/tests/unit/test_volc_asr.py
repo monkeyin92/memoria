@@ -416,10 +416,9 @@ def test_config_hotwords_and_force_to_speech_env_overrides_and_opt_out(
     assert disabled.hotwords == ()
     assert disabled.force_to_speech_ms is None
 
+    assert VolcASRConfig(app_id="app", access_token="token", end_window_ms=200).end_window_ms == 200
     with pytest.raises(ValueError, match="end_window_ms"):
-        VolcASRConfig(app_id="app", access_token="token", end_window_ms=200)
-    with pytest.raises(ValueError, match="end_window_ms"):
-        VolcASRConfig(app_id="app", access_token="token", end_window_ms=5001)
+        VolcASRConfig(app_id="app", access_token="token", end_window_ms=199)
 
     with caplog.at_level("WARNING"):
         VolcASRConfig(

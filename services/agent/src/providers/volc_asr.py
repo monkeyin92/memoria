@@ -172,8 +172,8 @@ class VolcASRConfig:
             raise ValueError("Volc ASR only supports 16000 Hz input")
         if self.chunk_ms <= 0 or self.sample_rate * self.chunk_ms % 1000:
             raise ValueError("Volc ASR chunk_ms must produce whole samples")
-        if not 300 <= self.end_window_ms <= 5_000:
-            raise ValueError("Volc ASR end_window_ms must be within [300, 5000] ms")
+        if self.end_window_ms < 200:
+            raise ValueError("Volc ASR end_window_ms must be at least 200 ms")
         if self.force_to_speech_ms is not None and not 1 <= self.force_to_speech_ms <= 10_000:
             raise ValueError("Volc ASR force_to_speech_ms must be within [1, 10000] ms")
         if not self.enable_nonstream and (
