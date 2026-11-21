@@ -25,31 +25,41 @@ inline float VadStartRmsFloorFromMilli(int milli) {
 class VadNoiseFloor {
 public:
     static constexpr float kSampleCap = 0.0030f;
-    static constexpr uint32_t kWarmupFrames = 25;  // 0.5 s exact mean removes cold-start zero bias
-    static constexpr float kAlphaUp = 0.008f;      // ~2.5 s tau at 50 Hz: ignores brief transients
-    static constexpr float kAlphaDown = 0.050f;    // ~0.4 s tau at 50 Hz: recovers fast when quiet
+    static constexpr uint32_t kWarmupFrames = 25;     // 0.5 s median startup window
+    static constexpr uint64_t kStaleResetMs = 60000;  // expire estimate after >=60 s capture gap
+    static constexpr float kAlphaUp = 0.008f;         // ~2.5 s tau at 50 Hz: ignores brief transients
+    static constexpr float kAlphaDown = 0.050f;       // ~0.4 s tau at 50 Hz: recovers fast when quiet
     static constexpr float kNoiseMultiplier = 3.5f;
     static constexpr float kMaxAdaptiveFloor = 0.0100f;
 
-    void Observe(float rms) {
+    void Observe(float rms, uint64_t now_ms) {
         if (!std::isfinite(rms) || rms < 0.0f) {
             return;
         }
-        const float sample = rms > kSampleCap ? kSampleCap : rms;
-        float alpha = sample > ambient_ ? kAlphaUp : kAlphaDown;
-        if (samples_ < kWarmupFrames) {
-            ++samples_;
-            const float init_alpha = 1.0f / static_cast<float>(samples_);
-            if (init_alpha > alpha) {
-                alpha = init_alpha;
-            }
+        if (has_observed_ && now_ms >= last_observe_ms_ &&
+            now_ms - last_observe_ms_ >= kStaleResetMs) {
+            Reset();
         }
+        last_observe_ms_ = now_ms;
+        has_observed_ = true;
+        const float sample = rms > kSampleCap ? kSampleCap : rms;
+        if (samples_ < kWarmupFrames) {
+            warmup_[samples_++] = sample;
+            if (samples_ == kWarmupFrames) {
+                ambient_ = WarmupMedian();
+            }
+            return;
+        }
+        const float alpha = sample > ambient_ ? kAlphaUp : kAlphaDown;
         ambient_ += alpha * (sample - ambient_);
     }
 
-    float EffectiveFloor(float base_floor) const {
+    float EffectiveFloor(float base_floor, uint64_t now_ms) const {
         if (!std::isfinite(base_floor) || base_floor <= 0.0f) {
             return 0.0f;
+        }
+        if (samples_ < kWarmupFrames || IsStale(now_ms)) {
+            return base_floor;
         }
         const float adapted = ambient_ * kNoiseMultiplier;
         const float max_floor = base_floor > kMaxAdaptiveFloor ? base_floor : kMaxAdaptiveFloor;
@@ -64,11 +74,35 @@ public:
     void Reset() {
         ambient_ = 0.0f;
         samples_ = 0;
+        has_observed_ = false;
+        last_observe_ms_ = 0;
     }
 
 private:
+    bool IsStale(uint64_t now_ms) const {
+        return has_observed_ && now_ms >= last_observe_ms_ &&
+               now_ms - last_observe_ms_ >= kStaleResetMs;
+    }
+
+    float WarmupMedian() const {
+        float sorted[kWarmupFrames];
+        for (uint32_t i = 0; i < kWarmupFrames; ++i) {
+            const float value = warmup_[i];
+            uint32_t j = i;
+            while (j > 0 && sorted[j - 1] > value) {
+                sorted[j] = sorted[j - 1];
+                --j;
+            }
+            sorted[j] = value;
+        }
+        return sorted[kWarmupFrames / 2];
+    }
+
     float ambient_ = 0.0f;
+    float warmup_[kWarmupFrames] = {};
     uint32_t samples_ = 0;
+    bool has_observed_ = false;
+    uint64_t last_observe_ms_ = 0;
 };
 
 // Latest uplink frame RMS, relative full scale, written by the Opus encode task

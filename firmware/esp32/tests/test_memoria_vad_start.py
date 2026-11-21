@@ -58,6 +58,7 @@ int main() {
     memoria::VadStartGate gate;
     memoria::VadNoiseFloor noise_floor;
     memoria::PlaybackVadHandoff handoff;
+    uint64_t sim_now_ms = 0;
     char line[256];
     while (std::fgets(line, sizeof(line), stdin) != nullptr) {
         line[std::strcspn(line, "\r\n")] = '\0';
@@ -78,17 +79,17 @@ int main() {
             unsigned long long produced, now;
             float rms;
             if (std::sscanf(line + 7, "%d %llu %llu %f", &eligible, &produced, &now, &rms) != 4) return 2;
-            const float floor = noise_floor.EffectiveFloor(.003f);
+            const float floor = noise_floor.EffectiveFloor(.003f, now);
             std::puts(handoff.Frame(eligible != 0, produced, now, rms, floor) ? "report" : "ignore");
         } else if (std::strncmp(line, "sim_frame ", 10) == 0) {
             float rms = 0.0f;
             int milli = 0;
             unsigned long long now = 0;
             if (std::sscanf(line + 10, "%f %d %llu", &rms, &milli, &now) != 3) return 2;
-            const float floor = noise_floor.EffectiveFloor(memoria::VadStartRmsFloorFromMilli(milli));
+            const float floor = noise_floor.EffectiveFloor(memoria::VadStartRmsFloorFromMilli(milli), now);
             const memoria::VadEdgeAction action = gate.Frame(rms, floor, now, true);
             if (action != memoria::VadEdgeAction::kReport && !gate.awaiting() && !gate.recovering()) {
-                noise_floor.Observe(rms);
+                noise_floor.Observe(rms, now);
             }
             std::printf("%s\n", Name(action));
         } else if (std::strncmp(line, "floor ", 6) == 0) {
@@ -126,15 +127,22 @@ int main() {
             const int parsed = std::sscanf(line + 8, "%f %d", &rms, &count);
             if (parsed < 1) return 2;
             for (int i = 0; i < count; ++i) {
-                noise_floor.Observe(rms);
+                sim_now_ms += 20;
+                noise_floor.Observe(rms, sim_now_ms);
             }
             std::printf("%.4f\n", static_cast<double>(noise_floor.ambient()));
+        } else if (std::strncmp(line, "advance ", 8) == 0) {
+            unsigned long long delta = 0;
+            if (std::sscanf(line + 8, "%llu", &delta) != 1) return 2;
+            sim_now_ms += delta;
+            std::printf("%llu\n", static_cast<unsigned long long>(sim_now_ms));
         } else if (std::strncmp(line, "eff_floor ", 10) == 0) {
             const int milli = std::atoi(line + 10);
             const float base = memoria::VadStartRmsFloorFromMilli(milli);
-            std::printf("%.4f\n", static_cast<double>(noise_floor.EffectiveFloor(base)));
+            std::printf("%.4f\n", static_cast<double>(noise_floor.EffectiveFloor(base, sim_now_ms)));
         } else if (std::strcmp(line, "noise_reset") == 0) {
             noise_floor.Reset();
+            sim_now_ms = 0;
             std::puts("noise_reset");
         } else if (std::strcmp(line, "reset") == 0) {
             gate.Reset();
@@ -417,3 +425,42 @@ def test_first_handoff_after_short_noisy_warmup_suppresses_noise_and_allows_spee
     )
     assert float(out[2]) > 0.0053
     assert out[3:] == ["complete", "armed", "ignore", "ignore", "ignore", "ignore", "report"]
+
+
+def test_startup_transient_never_masks_soft_speech_before_or_after_warmup(
+    tool: pathlib.Path,
+) -> None:
+    """Brief loud startup sound must neither lift the floor early nor bias the warmup median."""
+
+    out = _run(
+        tool,
+        "noise_reset",
+        "observe 0.0030 5",   # 5 loud transient frames at boot
+        "observe 0.0002 10",  # still < 25 warmup frames -> floor stays at base 0.0030
+        "eff_floor 3",
+        "observe 0.0002 10",  # completes 25-frame median warmup -> median is 0.0002
+        "eff_floor 3",
+    )
+    assert out[3] == "0.0030"
+    assert out[5] == "0.0030"
+
+
+def test_stale_noise_floor_expires_after_long_standby_gap(tool: pathlib.Path) -> None:
+    """When room noise turns off during a long standby gap, resumed weak speech is not dropped."""
+
+    out = _run(
+        tool,
+        "noise_reset",
+        "observe 0.0018 25",  # steady -40 dBFS fan -> floor 0.0063
+        "eff_floor 3",
+        "advance 10000",      # brief 10 s reconnect keeps calibrated room floor
+        "eff_floor 3",
+        "advance 60000",      # long >=60 s standby gap expires stale floor
+        "eff_floor 3",
+        "observe 0.0002 3",   # 3 quiet frames after tap stay at base 0.0030
+        "eff_floor 3",
+    )
+    assert float(out[2]) > 0.0053
+    assert float(out[4]) > 0.0053
+    assert out[6] == "0.0030"
+    assert out[8] == "0.0030"

@@ -3368,7 +3368,7 @@ void MemoriaProtocol::NotifyPlaybackListening() {
 void MemoriaProtocol::TrackUplinkVadFrame(float packet_rms, uint64_t produced_ms) {
     std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
     const uint64_t now_ms = DeviceMonotonicMs();
-    const float floor = vad_noise_floor_.EffectiveFloor(ConfiguredVadStartRmsFloor());
+    const float floor = vad_noise_floor_.EffectiveFloor(ConfiguredVadStartRmsFloor(), now_ms);
     if (vad_handoff_.pending()) {
         const uint32_t epoch = afe_vad_epoch.load();
         if (vad_handoff_.TryArm(epoch, now_ms)) {
@@ -3416,7 +3416,7 @@ void MemoriaProtocol::TrackUplinkVadFrame(float packet_rms, uint64_t produced_ms
     }
     if (!vad_gate_.awaiting() && !vad_gate_.recovering() && !HasActivePlaybackGeneration() &&
         !g_listening_closed.load(std::memory_order_relaxed) && vad_handoff_.epoch() == 0) {
-        vad_noise_floor_.Observe(packet_rms);
+        vad_noise_floor_.Observe(packet_rms, now_ms);
     }
     if (rms > vad_quiet_peak_) {
         vad_quiet_peak_ = rms;
@@ -3424,7 +3424,8 @@ void MemoriaProtocol::TrackUplinkVadFrame(float packet_rms, uint64_t produced_ms
     if (++vad_frames_since_log_ < kVadQuietLogFrames) {
         return;
     }
-    const float effective_floor = vad_noise_floor_.EffectiveFloor(ConfiguredVadStartRmsFloor());
+    const float effective_floor =
+        vad_noise_floor_.EffectiveFloor(ConfiguredVadStartRmsFloor(), now_ms);
     ESP_LOGI(kTag, "vad.idle rms=%.4f peak=%.4f floor=%.4f ambient=%.4f frames=%u",
              static_cast<double>(rms), static_cast<double>(vad_quiet_peak_),
              static_cast<double>(effective_floor), static_cast<double>(vad_noise_floor_.ambient()),
@@ -3449,9 +3450,10 @@ void MemoriaProtocol::SendVadState(bool speaking, float near_end_rms, uint32_t a
         if (speaking || !afe_epoch || (vad_handoff_.epoch() && afe_epoch == afe_vad_epoch.load())) {
             vad_handoff_.Completed(false);
         }
-        const float floor = vad_noise_floor_.EffectiveFloor(ConfiguredVadStartRmsFloor());
+        const uint64_t now_ms = DeviceMonotonicMs();
+        const float floor = vad_noise_floor_.EffectiveFloor(ConfiguredVadStartRmsFloor(), now_ms);
         const VadEdgeAction vad_edge =
-            vad_gate_.Edge(vad_active_, speaking, near_end_rms, floor, DeviceMonotonicMs());
+            vad_gate_.Edge(vad_active_, speaking, near_end_rms, floor, now_ms);
         if (vad_edge == VadEdgeAction::kIgnore) {
             return;
         }
