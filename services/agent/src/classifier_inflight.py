@@ -81,6 +81,16 @@ class ClassifierCache(dict[str, bool]):
             self.turn_flights[turn_key] = flight
         return future
 
+    def record_turn_verdict(self, key: str, verdict: bool, turn_key: str | None) -> None:
+        """Record a turn-scoped fast-path verdict so later preparation skips the cloud call."""
+
+        if turn_key is not None:
+            self.turn_verdicts[turn_key] = verdict
+            if len(self.turn_verdicts) > self._TURN_LIMIT:
+                del self.turn_verdicts[next(iter(self.turn_verdicts))]
+        elif key:
+            self[key] = verdict
+
     def turn_flight(self, turn_key: str | None) -> _Flight | None:
         flight = None if turn_key is None else self.turn_flights.get(turn_key)
         return flight if flight is not None and flight.joinable() else None

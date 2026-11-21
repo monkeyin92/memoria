@@ -383,6 +383,7 @@ class FailoverASRSession:
         self._degraded = False
         self._degrade_reason: str | None = None
         self._primary_final_seen = False
+        self._primary_final_end_sample: int | None = None
         # Set when the negative packet goes out, cleared when the final lands,
         # so ``asr_finalize_ms`` measures the wait the budget actually bounds.
         self._finalize_at: float | None = None
@@ -671,7 +672,12 @@ class FailoverASRSession:
             self._rotation_pending = True
             return False
         vad_start = self._vad_start_sample if self._vad_start_sample is not None else start
-        replay_start = max(start, vad_start, self._last_committed_sample)
+        replay_start = max(
+            start,
+            vad_start,
+            self._last_committed_sample,
+            self._primary_final_end_sample or 0,
+        )
         if replay_start >= end:
             self._rotation_pending = True
             return False
@@ -695,6 +701,7 @@ class FailoverASRSession:
                 return False
             primary = self._primary
             assert primary is not None
+            self._primary_final_seen = False
             try:
                 await primary.send_pcm(replay_pcm, capture_start_sample=actual_replay_start)
             except asyncio.CancelledError:
@@ -738,6 +745,7 @@ class FailoverASRSession:
 
         self._rotation_pending = False
         self._primary_final_seen = False
+        self._primary_final_end_sample = None
         self._finalize_at = None
         self._task_epoch += 1
         self._segment_epoch += 1
@@ -814,6 +822,16 @@ class FailoverASRSession:
                 self._record_primary_success()
             if sentence.sentence_end and sentence.text.strip():
                 self._primary_final_seen = True
+                final_end = (
+                    self._task_sample_origin + round(sentence.end_ms * 16_000 / 1000)
+                    if sentence.end_ms is not None
+                    else self._segment_end
+                )
+                if final_end is not None and (
+                    self._primary_final_end_sample is None
+                    or final_end > self._primary_final_end_sample
+                ):
+                    self._primary_final_end_sample = final_end
                 if self.metrics is not None and self._finalize_at is not None:
                     self.metrics.observe_media_metric(
                         "asr_finalize_ms",
@@ -841,8 +859,14 @@ class FailoverASRSession:
         self._last_segment_backup_retried = False
         backup_task: asyncio.Task[str | None] | None = None
         primary_done = asyncio.Event()
+        final_end_before = self._primary_final_end_sample
+        degraded_unfinalized_tail = (
+            (self._degraded or primary is None)
+            and self._primary_final_end_sample is not None
+            and had_speech
+        )
         if (
-            not self._primary_final_seen
+            (not self._primary_final_seen or degraded_unfinalized_tail)
             and had_speech
             and (self._sensevoice is not None or self._tertiary_factory is not None)
         ):
@@ -887,6 +911,9 @@ class FailoverASRSession:
                 finally:
                     if not self._primary_final_seen:
                         primary_done.set()
+            if self._primary_final_end_sample != final_end_before:
+                pcm, begin_ms, end_ms = self._voiced_segment_pcm()
+                had_speech = bool(pcm) and self._has_speech_energy(pcm)
             self._last_segment_provider_failed = self._degraded
             self._last_segment_primary_final_seen = self._primary_final_seen
             self._last_segment_vendor_error = self._degrade_reason in {
@@ -896,10 +923,22 @@ class FailoverASRSession:
             }
             self._last_segment_degrade_reason = self._degrade_reason
             if self._degraded or self._primary is None:
-                if self._primary_final_seen:
+                unfinalized_tail = (
+                    self._primary_final_end_sample is not None and had_speech
+                )
+                if self._primary_final_seen and not unfinalized_tail:
                     await self._cancel_backup_task(backup_task)
                     self._emit_task_finished()
                 else:
+                    if (
+                        backup_task is None
+                        and had_speech
+                        and (self._sensevoice is not None or self._tertiary_factory is not None)
+                    ):
+                        backup_task = asyncio.create_task(
+                            self._transcribe_backup(pcm),
+                            name="asr-failover-backup",
+                        )
                     self._last_segment_backup_retried = True
                     await self._await_backup_and_emit(
                         backup_task,
@@ -1056,7 +1095,11 @@ class FailoverASRSession:
         voiced = self._vad_start_sample
         if voiced is None:
             voiced = self._segment_voiced_start
-        speech_start = max(start, self._last_committed_sample)
+        speech_start = max(
+            start,
+            self._last_committed_sample,
+            self._primary_final_end_sample or 0,
+        )
         if voiced is not None:
             speech_start = max(speech_start, voiced)
         max_samples = int(self.config.max_segment_s * 16_000)
@@ -1164,6 +1207,7 @@ class FailoverASRSession:
         self._segment_pcm_start = None
         self._segment_voiced_start = None
         self._vad_start_sample = None
+        self._primary_final_end_sample = None
 
     async def reset_for_gap(self) -> None:
         """Drop an idle primary task before the first frame after a capture gap.

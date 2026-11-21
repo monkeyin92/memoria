@@ -1442,3 +1442,64 @@ async def test_mid_segment_recovery_then_backup_avoids_double_sample_offset() ->
         sample_offset=session.task_sample_origin,
     )
     assert (mapped.capture_start_sample, mapped.capture_end_sample) == (33_600, 35_200)
+
+
+@pytest.mark.asyncio
+async def test_early_primary_final_before_gap_still_rescues_post_gap_speech_without_duplicating() -> (
+    None
+):
+    """An early primary final before a gap must not suppress backup for degraded post-gap speech."""
+
+    created: list[_OriginTrackingFakeSession] = []
+
+    def factory() -> _OriginTrackingFakeSession:
+        instance = _OriginTrackingFakeSession(task_id=f"volc-early-{len(created) + 1}")
+        created.append(instance)
+        return instance
+
+    sensevoice = FakeSenseVoice("空洞后的话")
+    session = FailoverASRSession(
+        config=_config(),
+        primary_factory=factory,
+        sensevoice=sensevoice,
+    )
+    await session.connect()
+    first = _pcm(samples=1600, amplitude=2000)
+    second = _pcm(samples=1600, amplitude=2600)
+    third = _pcm(samples=1600, amplitude=3000)
+
+    # Primary finalizes clause 1 [0, 1600) mid-segment.
+    created[0].interim = "前半句"
+    created[0].final_on_send = True
+    await session.send_pcm(first, capture_start_sample=0)
+
+    # Later in the same VAD segment, unfinalized speech spans an internal gap and primary dies.
+    created[0].interim = None
+    created[0].final_on_send = False
+    await session.send_pcm(second, capture_start_sample=33_600)
+    created[0].fail_event_on_send = True
+    await session.send_pcm(third, capture_start_sample=67_200)
+
+    assert len(created) == 1
+    assert session.degraded is True
+
+    await session.rotate_task(require_consumed=False)
+
+    # Backup sees only the unfinalized post-gap speech, never duplicating clause 1.
+    assert len(sensevoice.requests) == 1
+    assert sensevoice.requests[0][0] == second + third
+    finals = [
+        e.sentence
+        for e in _drain(session.events)
+        if e.event == "result-generated" and e.sentence is not None
+    ]
+    assert [sentence.text for sentence in finals] == ["前半句", "空洞后的话"]
+    mapped = sentence_to_asr_result(
+        finals[1],
+        task_epoch=max(1, session.task_epoch),
+        sample_rate=16_000,
+        revision=1,
+        stream_epoch=1,
+        sample_offset=session.task_sample_origin,
+    )
+    assert (mapped.capture_start_sample, mapped.capture_end_sample) == (33_600, 68_800)

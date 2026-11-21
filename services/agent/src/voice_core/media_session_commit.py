@@ -1105,13 +1105,13 @@ class MediaSessionCommitMixin(MediaSessionCommitRecoveryMixin):
                 context.runtime.publish_assistant_audio("restore", gain=1.0)
             return None, reason or "user_turn_rejected"
         if content_barge_in:
-            context.pending.content_barge_in = False
             if await self._stop_reply_for_voice_command(
                 context, text, cause=CONTENT_BARGE_IN_CAUSE
             ):
-                # The accepted turn already owns the floor: the stop's listen
-                # restore must not leave the answer queued behind user speech.
+                # Accepted turn owns the floor; keep answer unqueued behind speech.
                 context.runtime.open_assistant_floor(cause=CONTENT_BARGE_IN_CAUSE)
+            if fast_barge_in:
+                context.runtime.mark_conversation_close_not_needed(text)
         if context.runtime.assistant_speaking:
             context.runtime.publish_assistant_audio("restore", gain=1.0)
         before_prepare_fence = context.runtime.fence

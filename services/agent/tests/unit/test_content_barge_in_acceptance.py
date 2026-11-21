@@ -146,6 +146,8 @@ def test_clear_question_barge_in_skips_remote_close_classifier(text: str) -> Non
     [
         "我们今天聊到这里好吗？",
         "我没什么要问的了，今天就聊到这儿吧。",
+        "不用陪我了，你怎么还在说话？",
+        "别讲了，你怎么还没停？",
         "今天聊到这儿怎么样？",
         "先这样行吗？",
         "我们休息一会儿吧？",

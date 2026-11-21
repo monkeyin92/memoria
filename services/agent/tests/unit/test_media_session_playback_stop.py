@@ -1860,9 +1860,19 @@ async def test_question_content_barge_in_stops_reply_without_waiting_on_close_cl
             plan_called.append(text)
             return True
 
+        prepared_turns: list[str] = []
+
+        async def prepare_like_production(_identity: Any, text: str) -> GenerationFence:
+            # Mirrors ReplyPipeline.prepare_turn: both calls must hit the turn-scoped verdict.
+            harness.runtime.start_conversation_close_verdict(text)
+            assert await harness.runtime.resolve_conversation_close_needed(text) is False
+            prepared_turns.append(text)
+            return await harness.runtime.on_turn_committed(text, input_modality="audio")
+
         harness.runtime.set_conversation_close_semantic_resolver(slow_close_verdict)
         harness.runtime.set_live_lookup_semantic_resolver(live_lookup_verdict)
         harness.story.start_committed_turn_plan = spy_start_plan  # type: ignore[attr-defined]
+        harness.story.prepare_committed_turn = prepare_like_production  # type: ignore[attr-defined]
         try:
             await harness.audio_frames(
                 20,
@@ -1871,6 +1881,7 @@ async def test_question_content_barge_in_stops_reply_without_waiting_on_close_cl
             await harness.wait_for(lambda: bool(harness.cancel_effects()))
             await harness.wait_for(lambda: harness.story.reply_calls >= 2)
             assert close_called == []
+            assert prepared_turns == ["等一下，我想问另一个问题，云是怎么变出来的？"]
             assert all(gen > story.generation_id for _, gen in live_lookup_called)
             assert plan_called == []
             assert harness.runtime.fence.generation_id > story.generation_id
@@ -1886,6 +1897,7 @@ async def test_question_content_barge_in_stops_reply_without_waiting_on_close_cl
     [
         ("我们今天聊到这里好吗？", "聊到这里"),
         ("我没什么要问的了，今天就聊到这儿吧。", "聊到这儿"),
+        ("不用陪我了，你怎么还在说话？", "不用陪"),
     ],
 )
 async def test_polite_closing_question_during_story_still_checks_close_classifier(
