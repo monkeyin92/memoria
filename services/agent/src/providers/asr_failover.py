@@ -409,6 +409,8 @@ class FailoverASRSession:
         self._task_peak_abs = 0
         self._task_square_sum = 0.0
         self._backup_sentence_id = 0
+        self._primary_open_sentence_id: int | None = None
+        self._primary_finalized_sentence_ids: set[int] = set()
         self._last_segment_had_speech = False
         self._last_segment_provider_failed = False
         self._last_segment_backup_retried = False
@@ -702,6 +704,8 @@ class FailoverASRSession:
             primary = self._primary
             assert primary is not None
             self._primary_final_seen = False
+            self._primary_open_sentence_id = None
+            self._primary_finalized_sentence_ids.clear()
             try:
                 await primary.send_pcm(replay_pcm, capture_start_sample=actual_replay_start)
             except asyncio.CancelledError:
@@ -746,6 +750,8 @@ class FailoverASRSession:
         self._rotation_pending = False
         self._primary_final_seen = False
         self._primary_final_end_sample = None
+        self._primary_open_sentence_id = None
+        self._primary_finalized_sentence_ids.clear()
         self._finalize_at = None
         self._task_epoch += 1
         self._segment_epoch += 1
@@ -818,7 +824,13 @@ class FailoverASRSession:
             return False
         sentence = event.sentence
         if event.event == "result-generated" and sentence is not None:
-            self._backup_sentence_id = max(self._backup_sentence_id, sentence.sentence_id)
+            if sentence.sentence_end:
+                self._primary_finalized_sentence_ids.add(sentence.sentence_id)
+                self._backup_sentence_id = max(self._backup_sentence_id, sentence.sentence_id)
+                if self._primary_open_sentence_id == sentence.sentence_id:
+                    self._primary_open_sentence_id = None
+            elif sentence.sentence_id not in self._primary_finalized_sentence_ids:
+                self._primary_open_sentence_id = sentence.sentence_id
             if sentence.text.strip():
                 self._record_primary_success()
             if sentence.sentence_end and sentence.text.strip():
@@ -1047,13 +1059,24 @@ class FailoverASRSession:
         return True
 
     def _emit_backup_transcript(self, text: str, *, begin_ms: int, end_ms: int) -> None:
-        self._backup_sentence_id += 1
+        if (
+            self._primary_open_sentence_id is not None
+            and self._primary_open_sentence_id not in self._primary_finalized_sentence_ids
+        ):
+            sentence_id = self._primary_open_sentence_id
+            self._primary_open_sentence_id = None
+            self._backup_sentence_id = max(self._backup_sentence_id, sentence_id)
+        else:
+            self._backup_sentence_id += 1
+            while self._backup_sentence_id in self._primary_finalized_sentence_ids:
+                self._backup_sentence_id += 1
+            sentence_id = self._backup_sentence_id
         self.events.put_nowait(
             FunASRServerEvent(
                 event="result-generated",
                 task_id=self._ensure_task_identity(),
                 sentence=FunASRSentence(
-                    sentence_id=self._backup_sentence_id,
+                    sentence_id=sentence_id,
                     text=text,
                     begin_ms=begin_ms,
                     end_ms=max(begin_ms, end_ms),
@@ -1209,6 +1232,8 @@ class FailoverASRSession:
         self._segment_voiced_start = None
         self._vad_start_sample = None
         self._primary_final_end_sample = None
+        self._primary_open_sentence_id = None
+        self._primary_finalized_sentence_ids.clear()
 
     async def reset_for_gap(self) -> None:
         """Drop an idle primary task before the first frame after a capture gap.

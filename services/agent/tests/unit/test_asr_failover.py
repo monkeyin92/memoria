@@ -1539,3 +1539,71 @@ async def test_early_primary_final_before_gap_still_rescues_post_gap_speech_with
         mapped_results[1].capture_end_sample,
     ) == (33_600, 68_800)
     assert [seg.text for seg in timeline.pending] == ["前半句", "空洞后的话"]
+
+
+@pytest.mark.asyncio
+async def test_backup_replaces_stale_primary_partial_in_speech_timeline() -> None:
+    """When primary emits only a shorter partial then times out, backup supersedes that ID."""
+
+    primary = _OriginTrackingFakeSession(
+        task_id="volc-partial-1",
+        interim="给我讲",
+        final_on_send=False,
+        rotate_blocks=5.0,
+    )
+    sensevoice = FakeSenseVoice("给我讲个故事")
+    session = FailoverASRSession(
+        config=_config(final_result_timeout_s=0.05),
+        primary_factory=lambda: primary,
+        sensevoice=sensevoice,
+    )
+    await session.connect()
+    await session.send_pcm(_pcm(samples=16_000, amplitude=2500), capture_start_sample=0)
+    primary.interim = None
+    await session.send_pcm(_pcm(samples=16_000, amplitude=2500), capture_start_sample=16_000)
+
+    await session.rotate_task(require_consumed=False)
+
+    results = [
+        e.sentence
+        for e in _drain(session.events)
+        if e.event == "result-generated" and e.sentence is not None
+    ]
+    assert len(results) == 2
+    assert results[0].sentence_end is False
+    assert results[1].sentence_end is True
+    assert results[1].sentence_id == results[0].sentence_id
+
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    revisions: dict[tuple[int, int, str], int] = {}
+    task_epoch = max(1, session.task_epoch)
+    for sentence in results:
+        rev_key = (1, task_epoch, str(sentence.sentence_id))
+        revisions[rev_key] = revisions.get(rev_key, 0) + 1
+        mapped = sentence_to_asr_result(
+            sentence,
+            task_epoch=task_epoch,
+            sample_rate=16_000,
+            revision=revisions[rev_key],
+            stream_epoch=1,
+            sample_offset=session.task_sample_origin,
+        )
+        assert timeline.add(
+            SpeechSegment(
+                session_id="partial-replaced-by-backup",
+                stream_epoch=mapped.stream_epoch,
+                provider_task_epoch=mapped.task_epoch,
+                segment_id=mapped.sentence_id,
+                revision=mapped.revision,
+                kind=SegmentKind.ASR_FINAL if mapped.is_final else SegmentKind.ASR_PARTIAL,
+                capture_start_sample=mapped.capture_start_sample,
+                capture_end_sample=mapped.capture_end_sample,
+                text=mapped.text,
+                final=mapped.is_final,
+            )
+        )
+    assert [seg.text for seg in timeline.pending] == ["给我讲个故事"]
+    assert timeline.projected_text(stream_epoch=1, start_sample=0, end_sample=32_000) == (
+        "给我讲个故事"
+    )
