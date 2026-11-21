@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 
 namespace memoria {
@@ -15,6 +16,60 @@ enum class VadEdgeAction {
 inline float VadStartRmsFloorFromMilli(int milli) {
     return static_cast<float>(milli) / 1000.0f;
 }
+
+// Tracks steady ambient idle RMS so sustained mid-band room noise (~-40 dBFS,
+// field 2026-11-21 soak-1244: idle rms p50=0.0013/p90=0.0034, 21 false overlong
+// VAD epochs at rms 0.0030..0.0053) lifts the start floor above the noise band
+// without altering quiet-room weak speech (soak-1534: idle rms p50=0.0002/p90=0.0007,
+// effective floor stays at the 0.0030 base).
+class VadNoiseFloor {
+public:
+    static constexpr float kSampleCap = 0.0030f;
+    static constexpr uint32_t kWarmupFrames = 25;  // 0.5 s exact mean removes cold-start zero bias
+    static constexpr float kAlphaUp = 0.008f;      // ~2.5 s tau at 50 Hz: ignores brief transients
+    static constexpr float kAlphaDown = 0.050f;    // ~0.4 s tau at 50 Hz: recovers fast when quiet
+    static constexpr float kNoiseMultiplier = 3.5f;
+    static constexpr float kMaxAdaptiveFloor = 0.0100f;
+
+    void Observe(float rms) {
+        if (!std::isfinite(rms) || rms < 0.0f) {
+            return;
+        }
+        const float sample = rms > kSampleCap ? kSampleCap : rms;
+        float alpha = sample > ambient_ ? kAlphaUp : kAlphaDown;
+        if (samples_ < kWarmupFrames) {
+            ++samples_;
+            const float init_alpha = 1.0f / static_cast<float>(samples_);
+            if (init_alpha > alpha) {
+                alpha = init_alpha;
+            }
+        }
+        ambient_ += alpha * (sample - ambient_);
+    }
+
+    float EffectiveFloor(float base_floor) const {
+        if (!std::isfinite(base_floor) || base_floor <= 0.0f) {
+            return 0.0f;
+        }
+        const float adapted = ambient_ * kNoiseMultiplier;
+        const float max_floor = base_floor > kMaxAdaptiveFloor ? base_floor : kMaxAdaptiveFloor;
+        if (adapted <= base_floor) {
+            return base_floor;
+        }
+        return adapted > max_floor ? max_floor : adapted;
+    }
+
+    float ambient() const { return ambient_; }
+
+    void Reset() {
+        ambient_ = 0.0f;
+        samples_ = 0;
+    }
+
+private:
+    float ambient_ = 0.0f;
+    uint32_t samples_ = 0;
+};
 
 // Latest uplink frame RMS, relative full scale, written by the Opus encode task
 // before the packet reaches the protocol. One writer, one reader.
