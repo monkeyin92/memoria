@@ -818,6 +818,7 @@ class FailoverASRSession:
             return False
         sentence = event.sentence
         if event.event == "result-generated" and sentence is not None:
+            self._backup_sentence_id = max(self._backup_sentence_id, sentence.sentence_id)
             if sentence.text.strip():
                 self._record_primary_success()
             if sentence.sentence_end and sentence.text.strip():

@@ -10,6 +10,11 @@ from typing import Any
 
 import pytest
 from services.agent.src.observability.metrics import MetricsRegistry
+from services.agent.src.orchestration.speech_timeline import (
+    SegmentKind,
+    SpeechSegment,
+    SpeechTimeline,
+)
 from services.agent.src.providers import asr_failover
 from services.agent.src.providers.asr_failover import (
     ASRFailoverConfig,
@@ -1494,12 +1499,43 @@ async def test_early_primary_final_before_gap_still_rescues_post_gap_speech_with
         if e.event == "result-generated" and e.sentence is not None
     ]
     assert [sentence.text for sentence in finals] == ["前半句", "空洞后的话"]
-    mapped = sentence_to_asr_result(
-        finals[1],
-        task_epoch=max(1, session.task_epoch),
-        sample_rate=16_000,
-        revision=1,
-        stream_epoch=1,
-        sample_offset=session.task_sample_origin,
-    )
-    assert (mapped.capture_start_sample, mapped.capture_end_sample) == (33_600, 68_800)
+    assert finals[1].sentence_id > finals[0].sentence_id
+
+    # Map both events under the shared task and feed into SpeechTimeline:
+    # the backup tail must not collide with sentence 1 and erase the opening clause.
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    revisions: dict[tuple[int, int, str], int] = {}
+    task_epoch = max(1, session.task_epoch)
+    mapped_results = []
+    for sentence in finals:
+        rev_key = (1, task_epoch, str(sentence.sentence_id))
+        revisions[rev_key] = revisions.get(rev_key, 0) + 1
+        mapped = sentence_to_asr_result(
+            sentence,
+            task_epoch=task_epoch,
+            sample_rate=16_000,
+            revision=revisions[rev_key],
+            stream_epoch=1,
+            sample_offset=session.task_sample_origin,
+        )
+        mapped_results.append(mapped)
+        assert timeline.add(
+            SpeechSegment(
+                session_id="early-final-gap",
+                stream_epoch=mapped.stream_epoch,
+                provider_task_epoch=mapped.task_epoch,
+                segment_id=mapped.sentence_id,
+                revision=mapped.revision,
+                kind=SegmentKind.ASR_FINAL,
+                capture_start_sample=mapped.capture_start_sample,
+                capture_end_sample=mapped.capture_end_sample,
+                text=mapped.text,
+                final=True,
+            )
+        )
+    assert (
+        mapped_results[1].capture_start_sample,
+        mapped_results[1].capture_end_sample,
+    ) == (33_600, 68_800)
+    assert [seg.text for seg in timeline.pending] == ["前半句", "空洞后的话"]
