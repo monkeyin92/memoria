@@ -3368,6 +3368,9 @@ void MemoriaProtocol::NotifyPlaybackListening() {
 void MemoriaProtocol::TrackUplinkVadFrame(float packet_rms, uint64_t produced_ms) {
     std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
     const uint64_t now_ms = DeviceMonotonicMs();
+    if (!g_listening_closed.load(std::memory_order_relaxed)) {
+        vad_noise_floor_.KeepAlive(now_ms);
+    }
     const float floor = vad_noise_floor_.EffectiveFloor(ConfiguredVadStartRmsFloor(), now_ms);
     if (vad_handoff_.pending()) {
         const uint32_t epoch = afe_vad_epoch.load();

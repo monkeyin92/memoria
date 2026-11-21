@@ -136,6 +136,14 @@ int main() {
             if (std::sscanf(line + 8, "%llu", &delta) != 1) return 2;
             sim_now_ms += delta;
             std::printf("%llu\n", static_cast<unsigned long long>(sim_now_ms));
+        } else if (std::strncmp(line, "keepalive ", 10) == 0) {
+            int count = 1;
+            if (std::sscanf(line + 10, "%d", &count) != 1) return 2;
+            for (int i = 0; i < count; ++i) {
+                sim_now_ms += 20;
+                noise_floor.KeepAlive(sim_now_ms);
+            }
+            std::printf("%llu\n", static_cast<unsigned long long>(sim_now_ms));
         } else if (std::strncmp(line, "eff_floor ", 10) == 0) {
             const int milli = std::atoi(line + 10);
             const float base = memoria::VadStartRmsFloorFromMilli(milli);
@@ -464,3 +472,26 @@ def test_stale_noise_floor_expires_after_long_standby_gap(tool: pathlib.Path) ->
     assert float(out[4]) > 0.0053
     assert out[6] == "0.0030"
     assert out[8] == "0.0030"
+
+
+def test_long_uninterrupted_playback_preserves_calibrated_noise_floor_for_handoff(
+    tool: pathlib.Path,
+) -> None:
+    """A 75 s story playback keeps capture alive and must not expire the calibrated room floor."""
+
+    out = _run(
+        tool,
+        "noise_reset",
+        "observe 0.0018 25",   # steady -40 dBFS room -> calibrated floor 0.0063 (t = 500 ms)
+        "keepalive 3750",      # 75 s of uninterrupted playback uplink frames (t = 75500 ms)
+        "eff_floor 3",
+        "complete 1",
+        "listen 13 75500",
+        "packet 1 75800 75810 0.0018",
+        "packet 1 75820 75830 0.0033",
+        "packet 1 75840 75850 0.0033",
+        "packet 1 75860 75870 0.0080",
+        "packet 1 75880 75890 0.0080",
+    )
+    assert float(out[3]) > 0.0053
+    assert out[4:] == ["complete", "armed", "ignore", "ignore", "ignore", "ignore", "report"]

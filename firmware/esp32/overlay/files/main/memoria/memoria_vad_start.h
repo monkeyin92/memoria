@@ -32,16 +32,25 @@ public:
     static constexpr float kNoiseMultiplier = 3.5f;
     static constexpr float kMaxAdaptiveFloor = 0.0100f;
 
+    void KeepAlive(uint64_t now_ms) {
+        if (IsStale(now_ms)) {
+            Reset();
+            return;
+        }
+        if (has_active_) {
+            last_active_ms_ = now_ms;
+        }
+    }
+
     void Observe(float rms, uint64_t now_ms) {
         if (!std::isfinite(rms) || rms < 0.0f) {
             return;
         }
-        if (has_observed_ && now_ms >= last_observe_ms_ &&
-            now_ms - last_observe_ms_ >= kStaleResetMs) {
+        if (IsStale(now_ms)) {
             Reset();
         }
-        last_observe_ms_ = now_ms;
-        has_observed_ = true;
+        last_active_ms_ = now_ms;
+        has_active_ = true;
         const float sample = rms > kSampleCap ? kSampleCap : rms;
         if (samples_ < kWarmupFrames) {
             warmup_[samples_++] = sample;
@@ -74,14 +83,14 @@ public:
     void Reset() {
         ambient_ = 0.0f;
         samples_ = 0;
-        has_observed_ = false;
-        last_observe_ms_ = 0;
+        has_active_ = false;
+        last_active_ms_ = 0;
     }
 
 private:
     bool IsStale(uint64_t now_ms) const {
-        return has_observed_ && now_ms >= last_observe_ms_ &&
-               now_ms - last_observe_ms_ >= kStaleResetMs;
+        return has_active_ && now_ms >= last_active_ms_ &&
+               now_ms - last_active_ms_ >= kStaleResetMs;
     }
 
     float WarmupMedian() const {
@@ -101,8 +110,8 @@ private:
     float ambient_ = 0.0f;
     float warmup_[kWarmupFrames] = {};
     uint32_t samples_ = 0;
-    bool has_observed_ = false;
-    uint64_t last_observe_ms_ = 0;
+    bool has_active_ = false;
+    uint64_t last_active_ms_ = 0;
 };
 
 // Latest uplink frame RMS, relative full scale, written by the Opus encode task
