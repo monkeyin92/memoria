@@ -22,6 +22,7 @@ import json
 import logging
 import struct
 import zlib
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -141,9 +142,11 @@ def build_task_request(
     model_name: str = "bigmodel",
     sample_rate: int = 16_000,
     end_window_ms: int = 550,
+    force_to_speech_ms: int | None = None,
     enable_nonstream: bool = True,
     show_utterances: bool = True,
     boosting_table_id: str | None = None,
+    hotwords: Sequence[str] = (),
 ) -> dict[str, Any]:
     """The full client request payload for one VAD segment."""
 
@@ -153,9 +156,31 @@ def build_task_request(
         "show_utterances": show_utterances,
         "end_window_size": end_window_ms,
     }
+    if force_to_speech_ms is not None:
+        if force_to_speech_ms < 1:
+            raise ValueError("Volc ASR force_to_speech_ms must be at least 1 ms")
+        request["force_to_speech_time"] = force_to_speech_ms
+    corpus: dict[str, str] = {}
     if boosting_table_id:
         # The document nests hotword tables under ``request.corpus``.
-        request["corpus"] = {"boosting_table_id": boosting_table_id}
+        corpus["boosting_table_id"] = boosting_table_id
+    cleaned_hotwords: list[str] = []
+    seen: set[str] = set()
+    for word in hotwords:
+        stripped = word.strip()
+        if stripped and stripped not in seen:
+            seen.add(stripped)
+            cleaned_hotwords.append(stripped)
+    if cleaned_hotwords:
+        # Volcengine BigModel streaming ASR expects ``request.corpus.context`` as
+        # a serialized JSON string carrying ``{"hotwords": [{"word": ...}]}``.
+        corpus["context"] = json.dumps(
+            {"hotwords": [{"word": word} for word in cleaned_hotwords]},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    if corpus:
+        request["corpus"] = corpus
     return {
         "user": {"uid": uid},
         "audio": {
