@@ -31,7 +31,10 @@ from typing import Any, ClassVar, assert_never
 from services.agent.src.providers.asr_session import StreamingASRSession
 from services.agent.src.providers.funasr_protocol import FunASRSentence, FunASRServerEvent
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
-from services.agent.src.providers.sensevoice import SenseVoiceRescue, SenseVoiceRescueConfig
+from services.agent.src.providers.sensevoice import (
+    SenseVoiceRescue,
+    SenseVoiceRescueConfig,
+)
 from services.agent.src.providers.volc_asr import VolcASRConfig, VolcASRSession
 from services.common.voice_engines import ASREngine
 
@@ -55,6 +58,79 @@ _FAILOVER_REASONS = frozenset(
         "breaker_open",
     }
 )
+
+
+def _slice_segment_chunks(
+    chunks: list[bytes],
+    ranges: list[tuple[int, int]],
+    from_sample: int,
+) -> list[tuple[bytes, int, int]]:
+    """Slice ``(pcm, start, end)`` pieces at or after ``from_sample``."""
+
+    kept: list[tuple[bytes, int, int]] = []
+    for chunk, (start, end) in zip(chunks, ranges, strict=True):
+        if end <= from_sample:
+            continue
+        if start < from_sample and end - start == len(chunk) // 2:
+            chunk = chunk[(from_sample - start) * 2 :]
+            start = from_sample
+        if chunk:
+            kept.append((chunk, start, end))
+    return kept
+
+
+def _tail_segment_pcm(
+    chunks: list[bytes],
+    ranges: list[tuple[int, int]],
+    from_sample: int,
+    *,
+    max_samples: int,
+) -> tuple[bytes, int | None, int | None, int]:
+    """Return bounded tail PCM with true absolute ``(first, last)`` sample bounds."""
+
+    kept = _slice_segment_chunks(chunks, ranges, from_sample)
+    if not kept:
+        return b"", None, None, 0
+    total_samples = sum(len(chunk) // 2 for chunk, _, _ in kept)
+    if total_samples > max_samples:
+        excess = total_samples - max_samples
+        trimmed: list[tuple[bytes, int, int]] = []
+        for chunk, start, end in kept:
+            chunk_samples = len(chunk) // 2
+            if excess >= chunk_samples:
+                excess -= chunk_samples
+                continue
+            if excess > 0:
+                chunk = chunk[excess * 2 :]
+                start += excess
+                excess = 0
+            trimmed.append((chunk, start, end))
+        kept = trimmed
+    if not kept:
+        return b"", None, None, total_samples
+    return b"".join(chunk for chunk, _, _ in kept), kept[0][1], kept[-1][2], total_samples
+
+
+def _contiguous_segment_pcm(
+    chunks: list[bytes],
+    ranges: list[tuple[int, int]],
+    from_sample: int,
+) -> tuple[bytes, int | None, int | None]:
+    """Return contiguous PCM from ``from_sample``, or empty if an internal gap exists.
+
+    Streaming primaries advance their internal clock strictly by the PCM bytes
+    they receive. Flattening an internal gap shifts provider timestamps, while
+    replaying only the post-gap tail would let a partial primary final cancel
+    whole-segment backup and advance ``task_sample_origin`` past earlier speech.
+    """
+
+    kept = _slice_segment_chunks(chunks, ranges, from_sample)
+    if not kept:
+        return b"", None, None
+    for idx in range(1, len(kept)):
+        if kept[idx - 1][2] != kept[idx][1]:
+            return b"", None, None
+    return b"".join(chunk for chunk, _, _ in kept), kept[0][1], kept[-1][2]
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,7 +395,8 @@ class FailoverASRSession:
         self._gap_primary_ready = False
         self._segment_start: int | None = None
         self._segment_end: int | None = None
-        self._segment_pcm = bytearray()
+        self._segment_pcm: list[bytes] = []
+        self._segment_pcm_ranges: list[tuple[int, int]] = []
         self._segment_pcm_start: int | None = None
         self._segment_voiced_start: int | None = None
         self._vad_start_sample: int | None = None
@@ -555,7 +632,8 @@ class FailoverASRSession:
         if self._rotation_pending:
             await self._arm_next_task(start)
         self._start_segment_if_needed(start)
-        self._segment_pcm.extend(pcm)
+        self._segment_pcm.append(pcm)
+        self._segment_pcm_ranges.append((start, end))
         self._record_task_pcm(pcm, start=start, end=end)
         if self._segment_voiced_start is None and self._has_speech_energy(pcm):
             self._segment_voiced_start = start
@@ -588,23 +666,29 @@ class FailoverASRSession:
         if self._closed or self._recovering or self._rotation_pending:
             return False
         start = self._segment_pcm_start
-        if start is None or not self._segment_pcm:
+        end = self._segment_end
+        if start is None or end is None or not self._segment_pcm:
             self._rotation_pending = True
             return False
-        end = start + len(self._segment_pcm) // 2
         vad_start = self._vad_start_sample if self._vad_start_sample is not None else start
         replay_start = max(start, vad_start, self._last_committed_sample)
         if replay_start >= end:
             self._rotation_pending = True
             return False
-        replay_pcm = bytes(self._segment_pcm[(replay_start - start) * 2 :])
+        replay_pcm, actual_replay_start, actual_replay_end = _contiguous_segment_pcm(
+            self._segment_pcm, self._segment_pcm_ranges, replay_start
+        )
+        if not replay_pcm or actual_replay_start is None or actual_replay_end is None:
+            # An internal packet gap splits the uncommitted utterance. Stay degraded
+            # for the rest of this segment so backup transcribes both sides of the
+            # gap with the original task_sample_origin intact.
+            return False
         self._recovering = True
         try:
             self._degraded = False
             self._degrade_reason = None
             self._rotation_pending = False
             self._task_epoch += 1
-            self._task_sample_origin = replay_start
             self._reset_task_evidence()
             if not await self._open_primary(segment_is_healthy=True):
                 self._rotation_pending = True
@@ -612,7 +696,7 @@ class FailoverASRSession:
             primary = self._primary
             assert primary is not None
             try:
-                await primary.send_pcm(replay_pcm, capture_start_sample=replay_start)
+                await primary.send_pcm(replay_pcm, capture_start_sample=actual_replay_start)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -627,7 +711,7 @@ class FailoverASRSession:
             self.task_id = primary.task_id or self.task_id
             self._task_epoch = max(self._task_epoch, primary.task_epoch)
             self._task_sample_origin = primary.task_sample_origin
-            self._record_task_pcm(replay_pcm, start=replay_start, end=end)
+            self._record_task_pcm(replay_pcm, start=actual_replay_start, end=actual_replay_end)
             logger.info(
                 "asr failover primary recovered task_epoch=%s replay_samples=%s",
                 self._task_epoch,
@@ -747,7 +831,7 @@ class FailoverASRSession:
         if primary is not None and not self._degraded:
             await self._drain_primary()
             primary = self._primary
-        pcm, begin_ms = self._voiced_segment_pcm()
+        pcm, begin_ms, end_ms = self._voiced_segment_pcm()
         had_speech = bool(pcm) and self._has_speech_energy(pcm)
         self._last_segment_had_speech = had_speech
         self._last_segment_rms = audioop.rms(pcm, 2) if pcm else 0
@@ -821,6 +905,7 @@ class FailoverASRSession:
                         backup_task,
                         pcm=pcm,
                         begin_ms=begin_ms,
+                        end_ms=end_ms,
                         emit_finished=True,
                         budget_s=self.config.rescue_budget_s,
                         timeout_message="asr failover rescue timed out budget_s=%s",
@@ -832,6 +917,7 @@ class FailoverASRSession:
                     backup_task,
                     pcm=pcm,
                     begin_ms=begin_ms,
+                    end_ms=end_ms,
                     emit_finished=False,
                     budget_s=budget_s,
                     timeout_message="asr failover empty retry timed out budget_s=%s",
@@ -886,6 +972,7 @@ class FailoverASRSession:
         *,
         pcm: bytes,
         begin_ms: int,
+        end_ms: int,
         emit_finished: bool,
         budget_s: float,
         timeout_message: str,
@@ -914,14 +1001,13 @@ class FailoverASRSession:
             if emit_finished:
                 self._emit_task_finished()
             return False
-        self._emit_backup_transcript(text, pcm=pcm, begin_ms=begin_ms)
+        self._emit_backup_transcript(text, begin_ms=begin_ms, end_ms=end_ms)
         if emit_finished:
             self._emit_task_finished()
         return True
 
-    def _emit_backup_transcript(self, text: str, *, pcm: bytes, begin_ms: int) -> None:
+    def _emit_backup_transcript(self, text: str, *, begin_ms: int, end_ms: int) -> None:
         self._backup_sentence_id += 1
-        duration_ms = round(len(pcm) // 2 * 1000 / 16_000)
         self.events.put_nowait(
             FunASRServerEvent(
                 event="result-generated",
@@ -930,7 +1016,7 @@ class FailoverASRSession:
                     sentence_id=self._backup_sentence_id,
                     text=text,
                     begin_ms=begin_ms,
-                    end_ms=begin_ms + duration_ms,
+                    end_ms=max(begin_ms, end_ms),
                     sentence_end=True,
                     heartbeat=False,
                     words=(),
@@ -953,37 +1039,46 @@ class FailoverASRSession:
             self._degrade_reason or "unknown",
         )
 
-    def _voiced_segment_pcm(self) -> tuple[bytes, int]:
+    def _voiced_segment_pcm(self) -> tuple[bytes, int, int]:
         """The utterance after VAD onset, capped to the backup budget.
 
         A degraded segment spans the whole provider task, which begins before
         the child speaks. Prefer the bridge's VAD onset, fall back to the first
         speech-energy frame, then keep only the last ``max_segment_s`` seconds.
-        The returned begin offset keeps the synthetic final on the absolute
-        clock.
+        The returned ``(begin_ms, end_ms)`` are measured from the emitting
+        task's ``task_sample_origin`` so adapter mapping recovers true capture
+        bounds even across uplink packet gaps or mid-segment task recovery.
         """
 
         start = self._segment_pcm_start
-        if start is None:
-            return b"", 0
+        if start is None or not self._segment_pcm:
+            return b"", 0, 0
         voiced = self._vad_start_sample
         if voiced is None:
             voiced = self._segment_voiced_start
-        speech_start = start if voiced is None else max(start, voiced)
-        offset = speech_start - start
-        pcm = self._segment_pcm[offset * 2 :]
+        speech_start = max(start, self._last_committed_sample)
+        if voiced is not None:
+            speech_start = max(speech_start, voiced)
         max_samples = int(self.config.max_segment_s * 16_000)
-        if len(pcm) // 2 > max_samples:
-            dropped = len(pcm) // 2 - max_samples
-            pcm = pcm[dropped * 2 :]
-            offset += dropped
+        pcm, first_sample, last_sample, total_samples = _tail_segment_pcm(
+            self._segment_pcm,
+            self._segment_pcm_ranges,
+            speech_start,
+            max_samples=max_samples,
+        )
+        if not pcm or first_sample is None or last_sample is None:
+            return b"", 0, 0
+        if total_samples > max_samples:
             logger.info(
                 "asr failover backup truncated from_samples=%s to_samples=%s cap_s=%s",
-                len(self._segment_pcm) // 2 - (speech_start - start),
+                total_samples,
                 max_samples,
                 self.config.max_segment_s,
             )
-        return bytes(pcm), round(offset * 1000 / 16_000)
+        origin = self._task_sample_origin
+        begin_ms = max(0, round((first_sample - origin) * 1000 / 16_000))
+        end_ms = max(begin_ms, round((last_sample - origin) * 1000 / 16_000))
+        return pcm, begin_ms, end_ms
 
     def _has_speech_energy(self, pcm: bytes) -> bool:
         rms = audioop.rms(pcm, 2)
@@ -1063,6 +1158,7 @@ class FailoverASRSession:
 
     def _reset_segment_evidence(self) -> None:
         self._segment_pcm.clear()
+        self._segment_pcm_ranges.clear()
         self._segment_start = None
         self._segment_end = None
         self._segment_pcm_start = None

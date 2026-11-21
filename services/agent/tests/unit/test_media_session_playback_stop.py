@@ -1834,3 +1834,90 @@ async def test_device_rescue_farewell_during_story_is_held() -> None:
     finally:
         provider.release.set()
         await harness.close()
+
+
+@pytest.mark.asyncio
+async def test_question_content_barge_in_stops_reply_without_waiting_on_close_classifier() -> None:
+    """R02 2026-11-21 suite c: clear question barge-in must not wait ~750 ms on close classifier."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        close_called: list[str] = []
+        live_lookup_called: list[tuple[str, int]] = []
+        plan_called: list[str] = []
+        blocked = asyncio.Event()
+
+        async def slow_close_verdict(text: str) -> bool:
+            close_called.append(text)
+            await blocked.wait()
+            return False
+
+        async def live_lookup_verdict(text: str) -> bool:
+            live_lookup_called.append((text, harness.runtime.fence.generation_id))
+            return False
+
+        def spy_start_plan(_identity: Any, text: str) -> bool:
+            plan_called.append(text)
+            return True
+
+        harness.runtime.set_conversation_close_semantic_resolver(slow_close_verdict)
+        harness.runtime.set_live_lookup_semantic_resolver(live_lookup_verdict)
+        harness.story.start_committed_turn_plan = spy_start_plan  # type: ignore[attr-defined]
+        try:
+            await harness.audio_frames(
+                20,
+                final_text="等一下，我想问另一个问题，云是怎么变出来的？",
+            )
+            await harness.wait_for(lambda: bool(harness.cancel_effects()))
+            await harness.wait_for(lambda: harness.story.reply_calls >= 2)
+            assert close_called == []
+            assert all(gen > story.generation_id for _, gen in live_lookup_called)
+            assert plan_called == []
+            assert harness.runtime.fence.generation_id > story.generation_id
+        finally:
+            blocked.set()
+
+    await _run_story(_device_identity("fast-question-barge-in"), script)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("utterance", "cue"),
+    [
+        ("我们今天聊到这里好吗？", "聊到这里"),
+        ("我没什么要问的了，今天就聊到这儿吧。", "聊到这儿"),
+    ],
+)
+async def test_polite_closing_question_during_story_still_checks_close_classifier(
+    utterance: str,
+    cue: str,
+) -> None:
+    """Polite or negated closing utterances over playback must still consult semantic close."""
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        context = harness.context
+        close_called: list[str] = []
+
+        async def close_verdict(text: str) -> bool:
+            close_called.append(text)
+            return cue in text
+
+        harness.runtime.set_conversation_close_semantic_resolver(close_verdict)
+        await harness.audio_frames(20, final_text=utterance)
+        await harness.wait_for(
+            lambda: bool(close_called)
+            and (
+                harness.closed()
+                or context.standby_requested
+                or (
+                    context.output.output_owner is not None
+                    and str(getattr(context.output.output_owner.intent, "tts_source", ""))
+                    == FAREWELL_STANDBY_PHRASE
+                )
+            )
+        )
+        assert close_called == [utterance]
+        assert harness.story.reply_calls == 1
+
+    await _run_story(_device_identity(f"polite-close-{cue}"), script)
