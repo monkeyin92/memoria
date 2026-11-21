@@ -14,18 +14,23 @@
 - **生产主机（2026-10-05 起）**：整套服务 01:33–01:40（CST）从旧机 122.51.108.140 迁到 110.42.235.198（原 pocketSparks 生产机，与 hr-tracker、MySQL 等共用，40 GB 盘、3.7 GiB 内存）；ssh 别名 `memoria-prod` 指新机，旧机别名 `memoria-prod-old`（旧机 10-06 到期，到期后别名和 known_hosts 条目可删）。Control API 绑 `127.0.0.1:18791`（hr-tracker 占 8791），由 `MEMORIA_CONTROL_API_PORT` 参数化。对外域名是 `aginice.cn`（你 10-05 说「域名换成aginice.cn这个域名，之前那个不用了」；证书到 2027-01-02，**2026-12-19 前换证**；`aigcnice.com` 仍解析到旧机，旧机到期后失效，已定不做桥、不动 DNS）。客户端当时已切完（之后的版本见下面「设备固件」「小程序体验版」两条）：小程序体验版 `0.2.20261005.3`，固件 build 24，机器人只连 `aginice.cn:8443`。详见「2026-10-05 服务迁移到 110.42.235.198」「2026-10-05 域名切换到 aginice.cn」两节。
 - **产品定位（2026-10-04 起）**：聚焦儿童青少年（陪伴、关怀、教学导师）；老年人与年轻人方向先删去，不进工程队列、验收与对外叙事（README「产品定位」已改写）；代码里已有的长辈、成人服务模式暂留、不再投入，是否清理另行决定；更早各节里的老年相关记录是当时的历史收据，不改。
 
-## 2026-11-21 产品固件 `build 37` 单设备 OTA 升级通过；卡 5 soak 45/45 有答（1 处单字停词未过）与 `vad.start handoff` 真机闭环验证
+## 2026-11-21 产品固件 `build 37` 单设备 OTA、卡 5 soak 全绿 PASS 与 `vad.start handoff` 真机闭环验证
 
 - **单设备 OTA 发布与升级**（`MEMORIA_FIRMWARE_BUILD=37`，`2.4.2+m37`，`ELF 0de37a2dc`，`3,405,120 B`，`sha256 d6b3b3df3e3bcb4fbd9a4d4e1722429b3ad68180b0b02234c8a4e5e425cd32b6`，干净产品镜像不含 `--bench`/`--keep-awake`）：
   - `check-overlay.sh` 通过，`firmware/esp32/tests` 876 项通过；经 `publish_firmware_release.py sign --build 37` 签名并仅上传至单设备指针 `devices/dev_atk_a4cb8fd6095c.json`，全局 `current.json` 保持 `build 21` 未动。
   - 真机 OTA 全链路 PASS（`outputs/acceptance/ota-build37-20261121-1050/ota-serial.log`）：测试机从 `build 36 (slot=ota_0)` 自动下载 100%、校验 Ed25519 签名、写入 `ota_1` 并软重启，以 `ELF 0de37a2dc` / `MEMORIA_FIRMWARE_BUILD=37; slot=ota_1` 启动并确认 **`Firmware build 37 confirmed`** 进入 `idle`（`ota_0` 保留 `build 36`）；升级后 USB `wake` 问候与 30 s `listening_closed` 冒烟通过。
-- **卡 5 `soak`（干净产品 `build 37` + 线上 bridge `20261119-post-safety-repeat-v1`，`outputs/acceptance/soak-build37-20261121-1055/`）**：
-  - **45/45 全部有回复（`no_reply=0`）**，`t018-backchannel` 保持播放，`t042-silence` 正常 `listening_closed` 与 `screen off (idle)`，`t045-bye` 尾窗 `verified_idle`（`final_state=idle`）。延迟 `p90=2.8 s`、`max=3.01 s`（按 11-06 决定只记录不拦）。同期房麦初始静默 −57.17 dBFS（989.3 s）。
-  - PR #611 机制实机表现：`vad.start recovered` 在 45 步中实机救回 **6 句**；`vad.handoff armed` 出现 **7 次**、0 误触发。
-  - **整体判定 `FAIL`（仅 1 项未过）**：停止词 **3/4 确认**（`t012-story-stop`「别说了。」2.26 s、`t017-new-question-mid`、`t019-early-mid` 均停播），`t016-long-stop` 播报中单字「停。」未触发停播（`generation-18` 自然播完 `playback_completed`，`stop_reason=missing_delivery_terminal`）。
+- **卡 5 `soak` 最终复测全绿 `PASS`（干净产品 `build 37` + 线上 bridge `20261119-post-safety-repeat-v1`，`outputs/acceptance/soak-build37-20261121-1534/`）**：
+  - **总判定 `PASS`**（`verdict_exit=0`、`keepawake_exit=0`、`failures=[]`）：**45/45 全部有回复（`no_reply=0`）**、`tool_wait_timeout=0`、`ASR failover degraded=0`。
+  - **打断 / 停播 4/4 全过**（`t012-story-stop`、`t016-long-stop`、`t017-new-question-mid`、`t019-early-mid`）；`t018-backchannel`（"嗯。"）保持播放未打断（`still_speaking_after_interrupt=true`、`reply_s=14.75 s`）。
+  - **静默待机与再见退场**：`t042-silence` 30.0 s 触发 `listening_closed` + `screen off (idle)`；`t043` 重唤醒 + `t044` 记忆接续成功；`t045-bye` 尾窗 `verified_idle`（`final_state=idle`）。
+  - **延迟（按 11-06 决定只记录不拦）**：`p90=2.58 s`、`p95=2.60 s`、`max=3.03 s`（`t020-lonely`）；长会话前后半程 `p50` `1.99 s -> 1.83 s`（`Δ=-0.16 s`，未见退化）。
+  - **PR #611 机制与环境基线**：`vad.start recovered` 救回 2 轮、`vad.handoff armed` 2 次 / 命中 1 次、`overlong=0`、`vad.idle` `p50=0.0002 / p90=0.0007`；同期房间麦 966.6 s 安静基线 `p10=-58.2 / p50=-55.2 / p90=-39.6 dBFS`；`clock_offset` pre `0.030 s` / post `0.012 s`。
+- **同日中间排查记录（均已归档）**：
+  - 首轮 `soak-build37-20261121-1055/` 45/45 有答（`vad.start recovered` 救回 6 句，`vad.handoff armed` ×7 0 误触发，延迟 `p90=2.8 s / max=3.01 s`），仅 `t016-long-stop` 0.538 s 单字「停。」未停播（3/4 stop）；随后定向 3 轮排查 `outputs/acceptance/stop-probe-build37-20261121-1235/`（临时单设备开 `ASR_TEXT_DEBUG_LOG_SUBJECTS=dev_atk_a4cb8fd6095c` 并已核验恢复关闭）命中 2/3（Trial 1/2 均产出 Volc `stream_final text=2:停。` 并 ~1.6 s 停播；Trial 3 板子后 AEC/NS 峰 `0.0078`、DTLN 连续上行但 Volc 无任何 `stream_final`），排除 `build 37` 回归与服务端状态机/过滤 bug，定位为单音节「停。」双讲叠音下的云端 Volc ASR 偶发漏召回。
+  - 次轮 `soak-build37-20261121-1244/` 期间房间出现持续 +14 dB 中频稳态噪声（房间麦 25 分钟恒定 `p50=-40.1 dBFS`，`200 Hz–3 kHz` 占比 >40%），导致固定 `floor=0.0030` 触发 `vad.handoff` 误开 20 次及 20 s `overlong` 21 次（`no_reply=16`）；关闭噪声源回到 `-55.2 dBFS` 后即录得上述 `1534` 全绿 `PASS`。两项后续鲁棒性增强已记入 [TODOLIST](TODOLIST.md)。
 - **`0052` 播后跨态接力真机闭环验证**（`outputs/acceptance/handoff-probe-build37-20261121-1116/`，中性语音探针）：
   - 在 `generation=1` 问候播音尾声重叠播放中性语音探针，实机首次完整命中 `State: speaking -> listening` → **`vad.handoff armed epoch=525`** → 460 ms 后 **`vad.start handoff sample=78720 epoch=525`** → `Device VAD start at sample=78720 rms=0.0099` → bridge `media vad start admitted sample=78720` → `turn_committed turn_id=2 text_len=7` → `generation=2` 完整播完（`actual_heard=True`、`playback_completed`）。
-- **当前状态与未验证边界**：测试板当前运行干净产品 `build 37 (slot=ota_1)`；`post_fixed_safety_repeat_request`（#609）仍未在真机命中（已有本地回归）；卡 5 `soak` 因 `t016-long-stop` 单字「停。」未停播暂记 FAIL，尚未构成内测放行。
+- **当前状态与未验证边界**：测试板当前运行干净产品 `build 37 (slot=ota_1)`，已集齐单设备 OTA + 20 句安全卡（20/20）+ `0052` 真机 overlap handoff + 卡 5 `soak`（45/45 + 4/4 stop）全套安静房现场 `PASS` 证据；`post_fixed_safety_repeat_request`（#609）仍未在真机命中（已有本地回归）；全局 OTA 指针 `current.json` 仍保持 `build 21` 未升级。
 
 ## 2026-11-20 固件起音恢复与播后跨态接力修复；20 句 safety 卡 20/20 通过（固件未发布）
 
