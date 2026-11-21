@@ -241,6 +241,7 @@ private:
     bool vad_active_ = false;
     uint64_t vad_started_sample_ = 0;
     VadStartGate vad_gate_;
+    VadNoiseFloor vad_noise_floor_;
     PlaybackVadHandoff vad_handoff_;
     uint32_t vad_candidate_epoch_ = 0;
     uint64_t vad_onset_sample_ = 0;
