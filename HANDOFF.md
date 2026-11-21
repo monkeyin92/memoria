@@ -14,6 +14,19 @@
 - **生产主机（2026-10-05 起）**：整套服务 01:33–01:40（CST）从旧机 122.51.108.140 迁到 110.42.235.198（原 pocketSparks 生产机，与 hr-tracker、MySQL 等共用，40 GB 盘、3.7 GiB 内存）；ssh 别名 `memoria-prod` 指新机，旧机别名 `memoria-prod-old`（旧机 10-06 到期，到期后别名和 known_hosts 条目可删）。Control API 绑 `127.0.0.1:18791`（hr-tracker 占 8791），由 `MEMORIA_CONTROL_API_PORT` 参数化。对外域名是 `aginice.cn`（你 10-05 说「域名换成aginice.cn这个域名，之前那个不用了」；证书到 2027-01-02，**2026-12-19 前换证**；`aigcnice.com` 仍解析到旧机，旧机到期后失效，已定不做桥、不动 DNS）。客户端当时已切完（之后的版本见下面「设备固件」「小程序体验版」两条）：小程序体验版 `0.2.20261005.3`，固件 build 24，机器人只连 `aginice.cn:8443`。详见「2026-10-05 服务迁移到 110.42.235.198」「2026-10-05 域名切换到 aginice.cn」两节。
 - **产品定位（2026-10-04 起）**：聚焦儿童青少年（陪伴、关怀、教学导师）；老年人与年轻人方向先删去，不进工程队列、验收与对外叙事（README「产品定位」已改写）；代码里已有的长辈、成人服务模式暂留、不再投入，是否清理另行决定；更早各节里的老年相关记录是当时的历史收据，不改。
 
+## 2026-11-21 产品固件 `build 37` 单设备 OTA 升级通过；卡 5 soak 45/45 有答（1 处单字停词未过）与 `vad.start handoff` 真机闭环验证
+
+- **单设备 OTA 发布与升级**（`MEMORIA_FIRMWARE_BUILD=37`，`2.4.2+m37`，`ELF 0de37a2dc`，`3,405,120 B`，`sha256 d6b3b3df3e3bcb4fbd9a4d4e1722429b3ad68180b0b02234c8a4e5e425cd32b6`，干净产品镜像不含 `--bench`/`--keep-awake`）：
+  - `check-overlay.sh` 通过，`firmware/esp32/tests` 876 项通过；经 `publish_firmware_release.py sign --build 37` 签名并仅上传至单设备指针 `devices/dev_atk_a4cb8fd6095c.json`，全局 `current.json` 保持 `build 21` 未动。
+  - 真机 OTA 全链路 PASS（`outputs/acceptance/ota-build37-20261121-1050/ota-serial.log`）：测试机从 `build 36 (slot=ota_0)` 自动下载 100%、校验 Ed25519 签名、写入 `ota_1` 并软重启，以 `ELF 0de37a2dc` / `MEMORIA_FIRMWARE_BUILD=37; slot=ota_1` 启动并确认 **`Firmware build 37 confirmed`** 进入 `idle`（`ota_0` 保留 `build 36`）；升级后 USB `wake` 问候与 30 s `listening_closed` 冒烟通过。
+- **卡 5 `soak`（干净产品 `build 37` + 线上 bridge `20261119-post-safety-repeat-v1`，`outputs/acceptance/soak-build37-20261121-1055/`）**：
+  - **45/45 全部有回复（`no_reply=0`）**，`t018-backchannel` 保持播放，`t042-silence` 正常 `listening_closed` 与 `screen off (idle)`，`t045-bye` 尾窗 `verified_idle`（`final_state=idle`）。延迟 `p90=2.8 s`、`max=3.01 s`（按 11-06 决定只记录不拦）。同期房麦初始静默 −57.17 dBFS（989.3 s）。
+  - PR #611 机制实机表现：`vad.start recovered` 在 45 步中实机救回 **6 句**；`vad.handoff armed` 出现 **7 次**、0 误触发。
+  - **整体判定 `FAIL`（仅 1 项未过）**：停止词 **3/4 确认**（`t012-story-stop`「别说了。」2.26 s、`t017-new-question-mid`、`t019-early-mid` 均停播），`t016-long-stop` 播报中单字「停。」未触发停播（`generation-18` 自然播完 `playback_completed`，`stop_reason=missing_delivery_terminal`）。
+- **`0052` 播后跨态接力真机闭环验证**（`outputs/acceptance/handoff-probe-build37-20261121-1116/`，中性语音探针）：
+  - 在 `generation=1` 问候播音尾声重叠播放中性语音探针，实机首次完整命中 `State: speaking -> listening` → **`vad.handoff armed epoch=525`** → 460 ms 后 **`vad.start handoff sample=78720 epoch=525`** → `Device VAD start at sample=78720 rms=0.0099` → bridge `media vad start admitted sample=78720` → `turn_committed turn_id=2 text_len=7` → `generation=2` 完整播完（`actual_heard=True`、`playback_completed`）。
+- **当前状态与未验证边界**：测试板当前运行干净产品 `build 37 (slot=ota_1)`；`post_fixed_safety_repeat_request`（#609）仍未在真机命中（已有本地回归）；卡 5 `soak` 因 `t016-long-stop` 单字「停。」未停播暂记 FAIL，尚未构成内测放行。
+
 ## 2026-11-20 固件起音恢复与播后跨态接力修复；20 句 safety 卡 20/20 通过（固件未发布）
 
 - **问题**：2026-11-19 重跑 safety 卡（`devicetest/safety-20261119-203636-card5-overlay`）15/20 FAIL。`t008`/`t010`/`t013` 在设备起音门控提前触发、且 250 ms 内峰值低于 0.0030 被抑制后，持续语音阶段 AFE 不再产生新的上升沿，导致整句缺少 `Device VAD start` 而漏收；另在 `t013` 弱前导样本中，若 AFE 上升沿落在播音态并持续跨入监听态，监听态同样无新上升沿。
