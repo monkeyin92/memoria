@@ -78,6 +78,51 @@ class VolcASRError(RuntimeError):
     """Provider rejected a connection, session or task."""
 
 
+# Stop commands, farewells and wake word kept well under Volcengine's 100-token
+# bidirectional streaming ``corpus.context`` budget so double-talk stop recall
+# works out of the box without requiring an external console table ID.
+DEFAULT_VOLC_HOTWORDS: tuple[str, ...] = (
+    "停",
+    "停一下",
+    "别说了",
+    "不要说了",
+    "好了好了",
+    "够了",
+    "安静",
+    "等一下",
+    "再见",
+    "拜拜",
+    "茉莉",
+)
+# Volcengine bidirectional streaming applies inline hotwords in order up to
+# ~100 tokens (1 CJK char ~ 1-2 tokens, recommended <= 50 short words).
+_STREAMING_HOTWORD_WARN_COUNT = 50
+_STREAMING_HOTWORD_WARN_CHARS = 100
+
+
+def _parse_hotwords(raw: str) -> tuple[str, ...]:
+    cleaned = raw.strip()
+    if not cleaned:
+        return DEFAULT_VOLC_HOTWORDS
+    if cleaned.lower() in {"none", "off"}:
+        return ()
+    words: list[str] = []
+    seen: set[str] = set()
+    for part in cleaned.replace("，", ",").split(","):
+        word = part.strip()
+        if word and word not in seen:
+            seen.add(word)
+            words.append(word)
+    return tuple(words)
+
+
+def _parse_force_to_speech_ms(raw: str) -> int | None:
+    cleaned = raw.strip()
+    if not cleaned or cleaned.lower() in {"0", "none", "off"}:
+        return None
+    return int(cleaned)
+
+
 @dataclass
 class VolcASRConfig:
     ENV_KEYS: ClassVar[frozenset[str]] = frozenset({
@@ -89,9 +134,11 @@ class VolcASRConfig:
         "VOLC_ASR_MODEL",
         "VOLC_ASR_CHUNK_MS",
         "VOLC_ASR_END_WINDOW_MS",
+        "VOLC_ASR_FORCE_TO_SPEECH_MS",
         "VOLC_ASR_ENABLE_NONSTREAM",
         "VOLC_ASR_SHOW_UTTERANCES",
         "VOLC_ASR_BOOSTING_TABLE_ID",
+        "VOLC_ASR_HOTWORDS",
         "VOLC_ASR_CONNECT_TIMEOUT_S",
         "VOLC_ASR_RESULT_TIMEOUT_S",
         "VOLC_ASR_POST_FINISH_TAIL_GRACE_S",
@@ -105,9 +152,11 @@ class VolcASRConfig:
     sample_rate: int = 16_000
     chunk_ms: int = 100
     end_window_ms: int = 550
+    force_to_speech_ms: int | None = None
     enable_nonstream: bool = False
     show_utterances: bool = True
     boosting_table_id: str | None = None
+    hotwords: tuple[str, ...] = DEFAULT_VOLC_HOTWORDS
     connect_timeout_s: float = 5.0
     result_timeout_s: float = 8.0
     post_finish_tail_grace_s: float = 0.25
@@ -123,6 +172,20 @@ class VolcASRConfig:
             raise ValueError("Volc ASR only supports 16000 Hz input")
         if self.chunk_ms <= 0 or self.sample_rate * self.chunk_ms % 1000:
             raise ValueError("Volc ASR chunk_ms must produce whole samples")
+        if not 300 <= self.end_window_ms <= 5_000:
+            raise ValueError("Volc ASR end_window_ms must be within [300, 5000] ms")
+        if self.force_to_speech_ms is not None and not 1 <= self.force_to_speech_ms <= 10_000:
+            raise ValueError("Volc ASR force_to_speech_ms must be within [1, 10000] ms")
+        if not self.enable_nonstream and (
+            len(self.hotwords) > _STREAMING_HOTWORD_WARN_COUNT
+            or sum(len(word) for word in self.hotwords) > _STREAMING_HOTWORD_WARN_CHARS
+        ):
+            logger.warning(
+                "volc ASR inline hotwords exceed bidirectional streaming budget "
+                "(count=%s chars=%s; provider truncates tail past ~100 tokens in order)",
+                len(self.hotwords),
+                sum(len(word) for word in self.hotwords),
+            )
         if not 0 < self.connect_timeout_s <= 30:
             raise ValueError("Volc ASR connect timeout must be within (0, 30] seconds")
         if not 0 < self.result_timeout_s <= 60:
@@ -149,9 +212,13 @@ class VolcASRConfig:
             model_name=e.get("VOLC_ASR_MODEL", "bigmodel").strip() or "bigmodel",
             chunk_ms=int(e.get("VOLC_ASR_CHUNK_MS", "100")),
             end_window_ms=int(e.get("VOLC_ASR_END_WINDOW_MS", "550")),
+            force_to_speech_ms=_parse_force_to_speech_ms(
+                e.get("VOLC_ASR_FORCE_TO_SPEECH_MS", "")
+            ),
             enable_nonstream=e.get("VOLC_ASR_ENABLE_NONSTREAM", "false").lower() == "true",
             show_utterances=e.get("VOLC_ASR_SHOW_UTTERANCES", "true").lower() == "true",
             boosting_table_id=e.get("VOLC_ASR_BOOSTING_TABLE_ID", "").strip() or None,
+            hotwords=_parse_hotwords(e.get("VOLC_ASR_HOTWORDS", "")),
             connect_timeout_s=float(e.get("VOLC_ASR_CONNECT_TIMEOUT_S", "5")),
             result_timeout_s=float(e.get("VOLC_ASR_RESULT_TIMEOUT_S", "8")),
             post_finish_tail_grace_s=float(
@@ -336,9 +403,11 @@ class VolcASRSession:
                     model_name=self.config.model_name,
                     sample_rate=self.config.sample_rate,
                     end_window_ms=self.config.end_window_ms,
+                    force_to_speech_ms=self.config.force_to_speech_ms,
                     enable_nonstream=self.config.enable_nonstream,
                     show_utterances=self.config.show_utterances,
                     boosting_table_id=self.config.boosting_table_id,
+                    hotwords=self.config.hotwords,
                 )
             )
         )

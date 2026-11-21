@@ -387,10 +387,76 @@ def test_config_reads_credentials_only_from_env() -> None:
     assert config.access_token == "token"
     assert config.resource_id == "volc.seedasr.sauc.duration"
     assert config.boosting_table_id == "1eee65f3-d583-43ee-8d31-df64b7a36bf0"
+    assert config.force_to_speech_ms is None
+    assert "停" in config.hotwords and "停一下" in config.hotwords
     assert config.ws_url.endswith("/bigmodel_async")
     headers = config.auth_headers()
     assert headers["X-Api-App-Key"] == "app"
     assert headers["X-Api-Access-Key"] == "token"
+
+
+def test_config_hotwords_and_force_to_speech_env_overrides_and_opt_out(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    custom = VolcASRConfig.from_env(
+        {
+            "VOLC_ASR_HOTWORDS": "停，停一下, 停 , 别说了",
+            "VOLC_ASR_FORCE_TO_SPEECH_MS": "600",
+        }
+    )
+    assert custom.hotwords == ("停", "停一下", "别说了")
+    assert custom.force_to_speech_ms == 600
+
+    disabled = VolcASRConfig.from_env(
+        {
+            "VOLC_ASR_HOTWORDS": "off",
+            "VOLC_ASR_FORCE_TO_SPEECH_MS": "0",
+        }
+    )
+    assert disabled.hotwords == ()
+    assert disabled.force_to_speech_ms is None
+
+    with pytest.raises(ValueError, match="end_window_ms"):
+        VolcASRConfig(app_id="app", access_token="token", end_window_ms=200)
+    with pytest.raises(ValueError, match="end_window_ms"):
+        VolcASRConfig(app_id="app", access_token="token", end_window_ms=5001)
+
+    with caplog.at_level("WARNING"):
+        VolcASRConfig(
+            app_id="app",
+            access_token="token",
+            hotwords=tuple(f"热词{i}" for i in range(60)),
+        )
+    assert "exceed bidirectional streaming budget" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_session_sends_inline_stop_hotwords_and_omits_default_force_to_speech() -> None:
+    conn = FakeVolcConnection()
+    session = VolcASRSession(_config(_one_connection(conn)))
+    try:
+        await session.connect()
+        assert len(conn.sent) == 1
+        frame = parse_frame(conn.sent[0])
+        req = frame.payload["request"]
+        assert "force_to_speech_time" not in req
+        context = json.loads(req["corpus"]["context"])
+        words = [item["word"] for item in context["hotwords"]]
+        assert words[:4] == ["停", "停一下", "别说了", "不要说了"]
+    finally:
+        await session.aclose()
+
+
+@pytest.mark.asyncio
+async def test_session_sends_explicit_force_to_speech_time_when_configured() -> None:
+    conn = FakeVolcConnection()
+    session = VolcASRSession(_config(_one_connection(conn), force_to_speech_ms=400))
+    try:
+        await session.connect()
+        frame = parse_frame(conn.sent[0])
+        assert frame.payload["request"]["force_to_speech_time"] == 400
+    finally:
+        await session.aclose()
 
 
 def test_config_rejects_unrequested_sample_rates() -> None:

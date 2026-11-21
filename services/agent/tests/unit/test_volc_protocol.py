@@ -107,7 +107,32 @@ def test_task_request_pins_pcm_16k_and_nests_hotword_table() -> None:
 
 
 def test_task_request_omits_absent_boosting_table() -> None:
-    assert "corpus" not in build_task_request()["request"]
+    payload = build_task_request()["request"]
+    assert "corpus" not in payload
+    assert "force_to_speech_time" not in payload
+
+
+def test_task_request_serializes_inline_hotwords_and_force_to_speech_time() -> None:
+    payload = build_task_request(
+        end_window_ms=550,
+        force_to_speech_ms=400,
+        boosting_table_id="stop-table",
+        hotwords=(" 停 ", "停一下", "停", "", "别说了"),
+    )
+    request = payload["request"]
+    assert request["force_to_speech_time"] == 400
+    corpus = request["corpus"]
+    assert corpus["boosting_table_id"] == "stop-table"
+    # Volcengine requires ``request.corpus.context`` to be a serialized JSON string.
+    assert isinstance(corpus["context"], str)
+    assert json.loads(corpus["context"]) == {
+        "hotwords": [{"word": "停"}, {"word": "停一下"}, {"word": "别说了"}]
+    }
+
+
+def test_task_request_rejects_non_positive_force_to_speech_ms() -> None:
+    with pytest.raises(ValueError, match="force_to_speech_ms"):
+        build_task_request(force_to_speech_ms=0)
 
 
 def test_extract_transcript_reads_utterance_word_times() -> None:
