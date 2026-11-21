@@ -10,6 +10,11 @@ from typing import Any
 
 import pytest
 from services.agent.src.observability.metrics import MetricsRegistry
+from services.agent.src.orchestration.speech_timeline import (
+    SegmentKind,
+    SpeechSegment,
+    SpeechTimeline,
+)
 from services.agent.src.providers import asr_failover
 from services.agent.src.providers.asr_failover import (
     ASRFailoverConfig,
@@ -17,7 +22,11 @@ from services.agent.src.providers.asr_failover import (
     ProcessASRBreaker,
     build_asr_session_factory,
 )
-from services.agent.src.providers.funasr_protocol import FunASRSentence, FunASRServerEvent
+from services.agent.src.providers.funasr_protocol import (
+    FunASRSentence,
+    FunASRServerEvent,
+    sentence_to_asr_result,
+)
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
 
 
@@ -1174,3 +1183,497 @@ async def test_segment_too_long_is_truncated_to_the_last_cap() -> None:
     await session.rotate_task(require_consumed=False)
     assert len(sensevoice.requests) == 1
     assert len(sensevoice.requests[0][0]) == int(0.01 * 16_000) * 2
+
+
+class _OriginTrackingFakeSession(FakeSession):
+    """Primary double that sets ``task_sample_origin`` on first audio, like VolcASRSession."""
+
+    def __init__(self, *, task_id: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.task_id = task_id
+        self.sent_starts: list[int | None] = []
+        self._origin_set = False
+
+    async def send_pcm(self, pcm: bytes, *, capture_start_sample: int | None = None) -> None:
+        self.sent_starts.append(capture_start_sample)
+        if not self._origin_set and capture_start_sample is not None:
+            self.task_sample_origin = capture_start_sample
+            self._origin_set = True
+        await super().send_pcm(pcm, capture_start_sample=capture_start_sample)
+
+
+@pytest.mark.asyncio
+async def test_backup_slices_by_real_sample_ranges_after_uplink_packet_gap() -> None:
+    """R02 2026-11-21 t005-crisis-05: a 2.16 s pre-speech packet gap shifted flat slicing.
+
+    Slicing a gapless bytearray by ``vad_start - segment_start`` jumped past the
+    child's speech into trailing silence, marked ``had_speech=False`` (low_rms),
+    and skipped SenseVoice rescue when Volc timed out.
+    """
+
+    sensevoice = FakeSenseVoice("我想拿刀划自己")
+    session = FailoverASRSession(
+        config=_config(final_result_timeout_s=0.05),
+        primary_factory=lambda: _OriginTrackingFakeSession(
+            task_id="volc-gap-1",
+            rotate_blocks=5.0,
+        ),
+        sensevoice=sensevoice,
+    )
+    await session.connect()
+    base = 2_433_280
+    # Quiet pre-speech audio, then a 34_560-sample (2.16 s) uplink gap, then loud speech.
+    await session.send_pcm(_silence(3200), capture_start_sample=base)
+    vad_start = base + 3200 + 34_560
+    session.note_vad_start(vad_start)
+    speech = _pcm(samples=3200, amplitude=2500)
+    await session.send_pcm(speech, capture_start_sample=vad_start)
+    await session.send_pcm(_silence(1600), capture_start_sample=vad_start + 3200)
+
+    await session.rotate_task(require_consumed=False)
+
+    assert len(sensevoice.requests) == 1
+    sent_pcm, sample_rate, language = sensevoice.requests[0]
+    assert sample_rate == 16_000
+    assert language == "zh"
+    assert sent_pcm[: len(speech)] == speech
+    finals = [
+        e.sentence
+        for e in _drain(session.events)
+        if e.event == "result-generated" and e.sentence is not None
+    ]
+    assert len(finals) == 1
+    assert finals[0].text == "我想拿刀划自己"
+    mapped = sentence_to_asr_result(
+        finals[0],
+        task_epoch=session.task_epoch,
+        sample_rate=16_000,
+        revision=1,
+        stream_epoch=1,
+        sample_offset=session.task_sample_origin,
+    )
+    assert mapped.capture_start_sample == vad_start
+    assert mapped.capture_end_sample == vad_start + 4800
+
+
+@pytest.mark.asyncio
+async def test_backup_timestamps_preserve_internal_gap_before_and_after_truncation() -> None:
+    """Internal gaps inside kept audio must preserve true absolute start/end timestamps."""
+
+    first = _pcm(samples=1600, amplitude=2500)
+    second = _pcm(samples=1600, amplitude=3000)
+
+    # Without truncation: [0, 100 ms) + [2100, 2200 ms) -> absolute [0, 35_200).
+    sensevoice_full = FakeSenseVoice("完整两段")
+    full_session = FailoverASRSession(
+        config=_config(max_segment_s=12.0),
+        primary_factory=lambda: FakeSession(fail_connect=True),
+        sensevoice=sensevoice_full,
+    )
+    await full_session.connect()
+    await full_session.send_pcm(first, capture_start_sample=0)
+    await full_session.send_pcm(second, capture_start_sample=33_600)
+    await full_session.rotate_task(require_consumed=False)
+
+    full_finals = [
+        e.sentence
+        for e in _drain(full_session.events)
+        if e.event == "result-generated" and e.sentence is not None
+    ]
+    assert len(full_finals) == 1
+    assert full_finals[0].begin_ms == 0
+    assert full_finals[0].end_ms == 2200
+    full_mapped = sentence_to_asr_result(
+        full_finals[0],
+        task_epoch=max(1, full_session.task_epoch),
+        sample_rate=16_000,
+        revision=1,
+        stream_epoch=1,
+        sample_offset=full_session.task_sample_origin,
+    )
+    assert (full_mapped.capture_start_sample, full_mapped.capture_end_sample) == (0, 35_200)
+
+    # With 100 ms cap: only [2100, 2200 ms) survives -> absolute [33_600, 35_200), not [100, 200) ms.
+    sensevoice_trim = FakeSenseVoice("末尾一段")
+    trim_session = FailoverASRSession(
+        config=_config(max_segment_s=0.1),
+        primary_factory=lambda: FakeSession(fail_connect=True),
+        sensevoice=sensevoice_trim,
+    )
+    await trim_session.connect()
+    await trim_session.send_pcm(first, capture_start_sample=0)
+    await trim_session.send_pcm(second, capture_start_sample=33_600)
+    await trim_session.rotate_task(require_consumed=False)
+
+    assert sensevoice_trim.requests[0][0] == second
+    trim_finals = [
+        e.sentence
+        for e in _drain(trim_session.events)
+        if e.event == "result-generated" and e.sentence is not None
+    ]
+    assert len(trim_finals) == 1
+    assert trim_finals[0].begin_ms == 2100
+    assert trim_finals[0].end_ms == 2200
+    trim_mapped = sentence_to_asr_result(
+        trim_finals[0],
+        task_epoch=max(1, trim_session.task_epoch),
+        sample_rate=16_000,
+        revision=1,
+        stream_epoch=1,
+        sample_offset=trim_session.task_sample_origin,
+    )
+    assert (trim_mapped.capture_start_sample, trim_mapped.capture_end_sample) == (33_600, 35_200)
+
+
+@pytest.mark.asyncio
+async def test_mid_segment_recovery_skips_partial_replay_across_internal_gap_and_rescues_whole_segment() -> (
+    None
+):
+    """Internal gaps inside uncommitted speech must stay degraded for whole-segment backup.
+
+    Replaying only the post-gap tail to a new primary would let a partial primary final
+    cancel SenseVoice rescue (dropping pre-gap speech/safety words) and advance
+    ``task_sample_origin`` past pre-gap audio.
+    """
+
+    created: list[_OriginTrackingFakeSession] = []
+
+    def factory() -> _OriginTrackingFakeSession:
+        idx = len(created) + 1
+        instance = _OriginTrackingFakeSession(
+            task_id=f"volc-mid-{idx}",
+            text="只有后半句" if idx > 1 else None,
+        )
+        created.append(instance)
+        return instance
+
+    sensevoice = FakeSenseVoice("前半句安全词和后半句")
+    session = FailoverASRSession(
+        config=_config(),
+        primary_factory=factory,
+        sensevoice=sensevoice,
+    )
+    await session.connect()
+    first = _pcm(samples=1600, amplitude=2000)
+    second = _pcm(samples=1600, amplitude=3000)
+    third = _pcm(samples=1600, amplitude=2800)
+    session.note_vad_start(0)
+    await session.send_pcm(first, capture_start_sample=0)
+    created[0].fail_event_on_send = True
+    await session.send_pcm(second, capture_start_sample=33_600)
+
+    # Stay degraded without opening a partial-context primary; keep pre-gap origin.
+    assert len(created) == 1
+    assert session.degraded is True
+    assert session.task_sample_origin == 0
+
+    # Further frames in the same segment must keep accumulating rather than arming a new task.
+    await session.send_pcm(third, capture_start_sample=35_200)
+    assert len(created) == 1
+
+    await session.rotate_task(require_consumed=False)
+    assert len(sensevoice.requests) == 1
+    assert sensevoice.requests[0][0] == first + second + third
+    finals = [
+        e.sentence
+        for e in _drain(session.events)
+        if e.event == "result-generated" and e.sentence is not None
+    ]
+    assert len(finals) == 1
+    assert finals[0].text == "前半句安全词和后半句"
+    assert finals[0].begin_ms == 0
+    assert finals[0].end_ms == 2300
+    mapped = sentence_to_asr_result(
+        finals[0],
+        task_epoch=max(1, session.task_epoch),
+        sample_rate=16_000,
+        revision=1,
+        stream_epoch=1,
+        sample_offset=session.task_sample_origin,
+    )
+    assert (mapped.capture_start_sample, mapped.capture_end_sample) == (0, 36_800)
+
+
+@pytest.mark.asyncio
+async def test_mid_segment_recovery_then_backup_avoids_double_sample_offset() -> None:
+    """Backup after mid-segment recovery must measure offsets from the new task origin."""
+
+    created: list[_OriginTrackingFakeSession] = []
+
+    def factory() -> _OriginTrackingFakeSession:
+        idx = len(created) + 1
+        instance = _OriginTrackingFakeSession(
+            task_id=f"volc-rec-{idx}",
+            rotate_blocks=5.0 if idx == 2 else 0.0,
+        )
+        created.append(instance)
+        return instance
+
+    sensevoice = FakeSenseVoice("二次兜底")
+    session = FailoverASRSession(
+        config=_config(final_result_timeout_s=0.05),
+        primary_factory=factory,
+        sensevoice=sensevoice,
+    )
+    await session.connect()
+    await session.send_pcm(_silence(1600), capture_start_sample=0)
+    vad_start = 33_600
+    session.note_vad_start(vad_start)
+    created[0].fail_event_on_send = True
+    speech = _pcm(samples=1600, amplitude=3000)
+    await session.send_pcm(speech, capture_start_sample=vad_start)
+
+    assert len(created) == 2
+    assert session.task_id == "volc-rec-2"
+    assert session.task_sample_origin == vad_start
+
+    await session.rotate_task(require_consumed=False)
+
+    finals = [
+        e.sentence
+        for e in _drain(session.events)
+        if e.event == "result-generated" and e.sentence is not None
+    ]
+    assert len(finals) == 1
+    assert finals[0].text == "二次兜底"
+    assert finals[0].begin_ms == 0
+    assert finals[0].end_ms == 100
+    mapped = sentence_to_asr_result(
+        finals[0],
+        task_epoch=session.task_epoch,
+        sample_rate=16_000,
+        revision=1,
+        stream_epoch=1,
+        sample_offset=session.task_sample_origin,
+    )
+    assert (mapped.capture_start_sample, mapped.capture_end_sample) == (33_600, 35_200)
+
+
+@pytest.mark.asyncio
+async def test_early_primary_final_before_gap_still_rescues_post_gap_speech_without_duplicating() -> (
+    None
+):
+    """An early primary final before a gap must not suppress backup for degraded post-gap speech."""
+
+    created: list[_OriginTrackingFakeSession] = []
+
+    def factory() -> _OriginTrackingFakeSession:
+        instance = _OriginTrackingFakeSession(task_id=f"volc-early-{len(created) + 1}")
+        created.append(instance)
+        return instance
+
+    sensevoice = FakeSenseVoice("空洞后的话")
+    session = FailoverASRSession(
+        config=_config(),
+        primary_factory=factory,
+        sensevoice=sensevoice,
+    )
+    await session.connect()
+    first = _pcm(samples=1600, amplitude=2000)
+    second = _pcm(samples=1600, amplitude=2600)
+    third = _pcm(samples=1600, amplitude=3000)
+
+    # Primary finalizes clause 1 [0, 1600) mid-segment.
+    created[0].interim = "前半句"
+    created[0].final_on_send = True
+    await session.send_pcm(first, capture_start_sample=0)
+
+    # Later in the same VAD segment, unfinalized speech spans an internal gap and primary dies.
+    created[0].interim = None
+    created[0].final_on_send = False
+    await session.send_pcm(second, capture_start_sample=33_600)
+    created[0].fail_event_on_send = True
+    await session.send_pcm(third, capture_start_sample=67_200)
+
+    assert len(created) == 1
+    assert session.degraded is True
+
+    await session.rotate_task(require_consumed=False)
+
+    # Backup sees only the unfinalized post-gap speech, never duplicating clause 1.
+    assert len(sensevoice.requests) == 1
+    assert sensevoice.requests[0][0] == second + third
+    finals = [
+        e.sentence
+        for e in _drain(session.events)
+        if e.event == "result-generated" and e.sentence is not None
+    ]
+    assert [sentence.text for sentence in finals] == ["前半句", "空洞后的话"]
+    assert finals[1].sentence_id > finals[0].sentence_id
+
+    # Map both events under the shared task and feed into SpeechTimeline:
+    # the backup tail must not collide with sentence 1 and erase the opening clause.
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    revisions: dict[tuple[int, int, str], int] = {}
+    task_epoch = max(1, session.task_epoch)
+    mapped_results = []
+    for sentence in finals:
+        rev_key = (1, task_epoch, str(sentence.sentence_id))
+        revisions[rev_key] = revisions.get(rev_key, 0) + 1
+        mapped = sentence_to_asr_result(
+            sentence,
+            task_epoch=task_epoch,
+            sample_rate=16_000,
+            revision=revisions[rev_key],
+            stream_epoch=1,
+            sample_offset=session.task_sample_origin,
+        )
+        mapped_results.append(mapped)
+        assert timeline.add(
+            SpeechSegment(
+                session_id="early-final-gap",
+                stream_epoch=mapped.stream_epoch,
+                provider_task_epoch=mapped.task_epoch,
+                segment_id=mapped.sentence_id,
+                revision=mapped.revision,
+                kind=SegmentKind.ASR_FINAL,
+                capture_start_sample=mapped.capture_start_sample,
+                capture_end_sample=mapped.capture_end_sample,
+                text=mapped.text,
+                final=True,
+            )
+        )
+    assert (
+        mapped_results[1].capture_start_sample,
+        mapped_results[1].capture_end_sample,
+    ) == (33_600, 68_800)
+    assert [seg.text for seg in timeline.pending] == ["前半句", "空洞后的话"]
+
+
+@pytest.mark.asyncio
+async def test_backup_replaces_stale_primary_partial_in_speech_timeline() -> None:
+    """When primary emits only a shorter partial then times out, backup supersedes that ID."""
+
+    primary = _OriginTrackingFakeSession(
+        task_id="volc-partial-1",
+        interim="给我讲",
+        final_on_send=False,
+        rotate_blocks=5.0,
+    )
+    sensevoice = FakeSenseVoice("给我讲个故事")
+    session = FailoverASRSession(
+        config=_config(final_result_timeout_s=0.05),
+        primary_factory=lambda: primary,
+        sensevoice=sensevoice,
+    )
+    await session.connect()
+    await session.send_pcm(_pcm(samples=16_000, amplitude=2500), capture_start_sample=0)
+    primary.interim = None
+    await session.send_pcm(_pcm(samples=16_000, amplitude=2500), capture_start_sample=16_000)
+
+    await session.rotate_task(require_consumed=False)
+
+    results = [
+        e.sentence
+        for e in _drain(session.events)
+        if e.event == "result-generated" and e.sentence is not None
+    ]
+    assert len(results) == 2
+    assert results[0].sentence_end is False
+    assert results[1].sentence_end is True
+    assert results[1].sentence_id == results[0].sentence_id
+
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    revisions: dict[tuple[int, int, str], int] = {}
+    task_epoch = max(1, session.task_epoch)
+    for sentence in results:
+        rev_key = (1, task_epoch, str(sentence.sentence_id))
+        revisions[rev_key] = revisions.get(rev_key, 0) + 1
+        mapped = sentence_to_asr_result(
+            sentence,
+            task_epoch=task_epoch,
+            sample_rate=16_000,
+            revision=revisions[rev_key],
+            stream_epoch=1,
+            sample_offset=session.task_sample_origin,
+        )
+        assert timeline.add(
+            SpeechSegment(
+                session_id="partial-replaced-by-backup",
+                stream_epoch=mapped.stream_epoch,
+                provider_task_epoch=mapped.task_epoch,
+                segment_id=mapped.sentence_id,
+                revision=mapped.revision,
+                kind=SegmentKind.ASR_FINAL if mapped.is_final else SegmentKind.ASR_PARTIAL,
+                capture_start_sample=mapped.capture_start_sample,
+                capture_end_sample=mapped.capture_end_sample,
+                text=mapped.text,
+                final=mapped.is_final,
+            )
+        )
+    assert [seg.text for seg in timeline.pending] == ["给我讲个故事"]
+    assert timeline.projected_text(stream_epoch=1, start_sample=0, end_sample=32_000) == (
+        "给我讲个故事"
+    )
+
+
+@pytest.mark.asyncio
+async def test_truncated_tail_backup_preserves_earlier_partial_under_disjoint_id() -> None:
+    """When max_segment_s truncates past an earlier partial's start, backup uses a fresh ID."""
+
+    primary = _OriginTrackingFakeSession(
+        task_id="volc-trunc-1",
+        interim="前半段内容",
+        final_on_send=False,
+        rotate_blocks=5.0,
+    )
+    sensevoice = FakeSenseVoice("后半段内容")
+    session = FailoverASRSession(
+        config=_config(final_result_timeout_s=0.05, max_segment_s=1.0),
+        primary_factory=lambda: primary,
+        sensevoice=sensevoice,
+    )
+    await session.connect()
+    # First second produces a partial covering [0, 100 ms); then 2 more seconds arrive so the
+    # 1.0 s backup cap retains only [2.0 s, 3.0 s), strictly after the partial's start.
+    await session.send_pcm(_pcm(samples=16_000, amplitude=2500), capture_start_sample=0)
+    primary.interim = None
+    await session.send_pcm(_pcm(samples=16_000, amplitude=2500), capture_start_sample=16_000)
+    await session.send_pcm(_pcm(samples=16_000, amplitude=2500), capture_start_sample=32_000)
+
+    await session.rotate_task(require_consumed=False)
+
+    results = [
+        e.sentence
+        for e in _drain(session.events)
+        if e.event == "result-generated" and e.sentence is not None
+    ]
+    assert len(results) == 2
+    assert results[0].sentence_end is False
+    assert results[1].sentence_end is True
+    assert results[1].sentence_id > results[0].sentence_id
+    assert results[1].begin_ms == 2000
+    assert results[1].end_ms == 3000
+
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    revisions: dict[tuple[int, int, str], int] = {}
+    task_epoch = max(1, session.task_epoch)
+    for sentence in results:
+        rev_key = (1, task_epoch, str(sentence.sentence_id))
+        revisions[rev_key] = revisions.get(rev_key, 0) + 1
+        mapped = sentence_to_asr_result(
+            sentence,
+            task_epoch=task_epoch,
+            sample_rate=16_000,
+            revision=revisions[rev_key],
+            stream_epoch=1,
+            sample_offset=session.task_sample_origin,
+        )
+        assert timeline.add(
+            SpeechSegment(
+                session_id="truncated-tail-preserves-partial",
+                stream_epoch=mapped.stream_epoch,
+                provider_task_epoch=mapped.task_epoch,
+                segment_id=mapped.sentence_id,
+                revision=mapped.revision,
+                kind=SegmentKind.ASR_FINAL if mapped.is_final else SegmentKind.ASR_PARTIAL,
+                capture_start_sample=mapped.capture_start_sample,
+                capture_end_sample=mapped.capture_end_sample,
+                text=mapped.text,
+                final=mapped.is_final,
+            )
+        )
+    assert [seg.text for seg in timeline.pending] == ["前半段内容", "后半段内容"]
