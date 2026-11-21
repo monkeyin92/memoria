@@ -11,7 +11,10 @@ import logging
 import os
 from difflib import SequenceMatcher
 
-from services.agent.src.orchestration.interruption_guard import count_cjk_chars
+from services.agent.src.orchestration.interruption_guard import (
+    count_cjk_chars,
+    is_conversation_close_only,
+)
 
 # UtteranceRouter rule 4 (pure stop / completion acknowledgement) reports this
 # reason when ``accept_user_turn`` suppresses the control turn.
@@ -129,6 +132,123 @@ def playback_text_is_echo(text: str, playback_text: str) -> bool:
         len(spoken),
     )
     return match.size / len(heard) >= _FUZZY_ECHO_COVERAGE
+
+
+_CONTENT_INQUIRY_MARKERS = (
+    "我想问",
+    "我想知道",
+    "我问你",
+    "问你",
+    "问一下",
+    "告诉我",
+    "为什么",
+    "怎么",
+    "什么",
+    "哪儿",
+    "哪里",
+    "哪个",
+    "哪些",
+    "谁",
+    "多少",
+    "几点",
+    "几岁",
+    "多久",
+    "多大",
+    "多长",
+    "多高",
+)
+_CONTENT_BARGE_CLOSE_HINTS = (
+    "再见",
+    "拜拜",
+    "晚安",
+    "明天见",
+    "明天再",
+    "改天",
+    "走了",
+    "睡了",
+    "睡觉",
+    "该睡",
+    "去睡",
+    "困了",
+    "累了",
+    "太晚",
+    "不聊",
+    "不玩",
+    "不想聊",
+    "不想听",
+    "不听了",
+    "不说了",
+    "关机",
+    "到这里",
+    "到这儿",
+    "到这",
+    "先这样",
+    "就这样",
+    "休息",
+    "结束",
+    "待命",
+    "退下",
+    "下次",
+    "下回",
+    "以后再",
+    "不用了",
+    "不用陪",
+    "别陪",
+    "不要陪",
+    "不需要",
+    "不用管",
+    "别管",
+    "走开",
+    "闭嘴",
+    "别吵",
+    "吵死了",
+    "好吵",
+    "别说",
+    "不要说",
+    "别讲",
+    "不要讲",
+    "别念",
+    "不要念",
+    "停下",
+    "快停",
+    "怎么还在",
+    "怎么还",
+    "怎么没停",
+    "怎么不停",
+    "你别",
+    "你不要",
+    "算了",
+    "没什么",
+    "没有什么",
+    "没啥",
+    "没问题",
+    "没有问题",
+    "不问",
+    "不想问",
+    "不用问",
+    "别问",
+    "不怎么",
+    "怎么样",
+    "什么都不",
+    "什么也没",
+)
+
+
+def content_barge_in_skips_semantic_close(text: str) -> bool:
+    """True when a content barge-in positively carries a content inquiry.
+
+    R02 2026-11-21 suite c: every content barge-in waited ~720-780 ms for the
+    remote semantic conversation-close classifier before stopping playback and
+    starting the new answer. Polite closing questions (「我们今天聊到这里好吗？」)
+    have question marks without an inquiry cue and must still check the remote
+    classifier; explicit inquiries without leave-taking cues skip that wait.
+    """
+
+    if is_conversation_close_only(text):
+        return False
+    if any(hint in text for hint in _CONTENT_BARGE_CLOSE_HINTS):
+        return False
+    return any(marker in text for marker in _CONTENT_INQUIRY_MARKERS)
 
 
 def content_barge_in_wanted(text: str, *, playback_text: str = "") -> bool:

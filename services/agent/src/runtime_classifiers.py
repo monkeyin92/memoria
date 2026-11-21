@@ -121,6 +121,21 @@ class DuplexRuntimeClassifierMixin:
             turn_key=self._turn_verdict_key,
         )
 
+    def mark_conversation_close_not_needed(self, text: str) -> None:
+        """Record a confirmed fast-path non-close verdict for the current turn."""
+
+        from services.agent.src.classifier_inflight import ClassifierCache
+        from services.agent.src.conversation_close_router import conversation_close_cache_key
+
+        compact = conversation_close_cache_key(text)
+        if not compact:
+            return
+        cache = self._conversation_close_cache
+        if isinstance(cache, ClassifierCache):
+            cache.record_turn_verdict(compact, False, self._turn_verdict_key)
+        else:
+            cache[compact] = False
+
     def conversation_close_needed(self, text: str) -> bool:
         from services.agent.src.conversation_close_router import conversation_close_needed
 

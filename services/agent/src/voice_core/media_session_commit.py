@@ -62,6 +62,7 @@ from services.agent.src.voice_core.media_session_types import (
     OutputDispatchStatus,
     fixed_safety_planned_for,
 )
+from services.agent.src.voice_core.playback_text import content_barge_in_skips_semantic_close
 from services.agent.src.voice_core.speech_timeline import (
     ASRResult,
     SegmentKind,
@@ -882,14 +883,17 @@ class MediaSessionCommitMixin(MediaSessionCommitRecoveryMixin):
                 retire_end=end_sample,
             )
             await self._discard_projection(context, "duplicate_media_turn")
-            # A reply is in flight, so the floor is still held and the
-            # assistant-state projection reopens the timer once playback
-            # returns it.  Arming it here would close the session early.
+            # Reply in flight: assistant-state projection reopens the timer once playback yields.
             self._pause_owner_silence_timer(context)
             return None, "duplicate_media_turn"
-        # Both semantic verdicts start before the projection and route work. The commit joins the close
-        # verdict below; the live verdict only fills its cache and must not hold the reply.
-        context.runtime.start_conversation_close_verdict(text)
+        # Start verdicts before projection; fast content barge-in skips remote close.
+        fast_barge_in = (
+            bool(context.pending.content_barge_in)
+            and was_assistant_speaking
+            and content_barge_in_skips_semantic_close(text)
+        )
+        if not fast_barge_in:
+            context.runtime.start_conversation_close_verdict(text)
         if not self._reply_in_flight(context):
             context.runtime.live_lookup_needed(text, start_verdict=True)
         aligned = context.projection.align_provisional_text(text)
@@ -938,8 +942,7 @@ class MediaSessionCommitMixin(MediaSessionCommitRecoveryMixin):
             await self._emit_projection_patch(context, speaker_patch)
         elapsed_ms = (end_sample - start_sample) * 1_000 // 16_000
         if not was_assistant_speaking:
-            # The plan request runs beside the close verdict and the rest of the commit instead of after
-            # them. Not under a reply: an utterance there may still turn out to be a backchannel or echo.
+            # Start plan beside commit; playback barge-in bumps the fence during stop first.
             start_plan = getattr(context.provider, "start_committed_turn_plan", None)
             try:
                 if callable(start_plan) and bool(
@@ -954,13 +957,11 @@ class MediaSessionCommitMixin(MediaSessionCommitRecoveryMixin):
                     exc_info=True,
                 )
         stage_started = time.monotonic()
-        await context.runtime.resolve_conversation_close_needed(text)
+        if not fast_barge_in:
+            await context.runtime.resolve_conversation_close_needed(text)
         _mark_stage(timing, "close_ms", stage_started)
         route = context.runtime.route_user_turn(text)
-        guarded_reason = context.runtime.playback_guarded_reason(
-            text,
-            duration_ms=elapsed_ms,
-        )
+        guarded_reason = context.runtime.playback_guarded_reason(text, duration_ms=elapsed_ms)
         if (
             guarded_reason is None
             and was_assistant_speaking
@@ -1057,8 +1058,7 @@ class MediaSessionCommitMixin(MediaSessionCommitRecoveryMixin):
             and context.runtime.floor.interruptible
             and not context.runtime.floor.fixed_safety_audible
         )
-        # Consume the pin's intent here: a retry must not stop the reply twice, and a
-        # guarded or fixed-safety final must fall back to the old hold.
+        # Consume the pin here so guarded/fixed-safety finals fall back to the hold.
         context.pending.content_barge_in = False
         if (
             context.runtime.assistant_speaking
@@ -1105,13 +1105,13 @@ class MediaSessionCommitMixin(MediaSessionCommitRecoveryMixin):
                 context.runtime.publish_assistant_audio("restore", gain=1.0)
             return None, reason or "user_turn_rejected"
         if content_barge_in:
-            context.pending.content_barge_in = False
             if await self._stop_reply_for_voice_command(
                 context, text, cause=CONTENT_BARGE_IN_CAUSE
             ):
-                # The accepted turn already owns the floor: the stop's listen
-                # restore must not leave the answer queued behind user speech.
+                # Accepted turn owns the floor; keep answer unqueued behind speech.
                 context.runtime.open_assistant_floor(cause=CONTENT_BARGE_IN_CAUSE)
+            if fast_barge_in:
+                context.runtime.mark_conversation_close_not_needed(text)
         if context.runtime.assistant_speaking:
             context.runtime.publish_assistant_audio("restore", gain=1.0)
         before_prepare_fence = context.runtime.fence
