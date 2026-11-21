@@ -409,7 +409,7 @@ class FailoverASRSession:
         self._task_peak_abs = 0
         self._task_square_sum = 0.0
         self._backup_sentence_id = 0
-        self._primary_open_sentence_id: int | None = None
+        self._primary_open_sentence: tuple[int, int] | None = None
         self._primary_finalized_sentence_ids: set[int] = set()
         self._last_segment_had_speech = False
         self._last_segment_provider_failed = False
@@ -704,7 +704,7 @@ class FailoverASRSession:
             primary = self._primary
             assert primary is not None
             self._primary_final_seen = False
-            self._primary_open_sentence_id = None
+            self._primary_open_sentence = None
             self._primary_finalized_sentence_ids.clear()
             try:
                 await primary.send_pcm(replay_pcm, capture_start_sample=actual_replay_start)
@@ -750,7 +750,7 @@ class FailoverASRSession:
         self._rotation_pending = False
         self._primary_final_seen = False
         self._primary_final_end_sample = None
-        self._primary_open_sentence_id = None
+        self._primary_open_sentence = None
         self._primary_finalized_sentence_ids.clear()
         self._finalize_at = None
         self._task_epoch += 1
@@ -827,10 +827,19 @@ class FailoverASRSession:
             if sentence.sentence_end:
                 self._primary_finalized_sentence_ids.add(sentence.sentence_id)
                 self._backup_sentence_id = max(self._backup_sentence_id, sentence.sentence_id)
-                if self._primary_open_sentence_id == sentence.sentence_id:
-                    self._primary_open_sentence_id = None
+                if (
+                    self._primary_open_sentence is not None
+                    and self._primary_open_sentence[0] == sentence.sentence_id
+                ):
+                    self._primary_open_sentence = None
             elif sentence.sentence_id not in self._primary_finalized_sentence_ids:
-                self._primary_open_sentence_id = sentence.sentence_id
+                open_begin = sentence.begin_ms
+                if (
+                    self._primary_open_sentence is not None
+                    and self._primary_open_sentence[0] == sentence.sentence_id
+                ):
+                    open_begin = min(self._primary_open_sentence[1], open_begin)
+                self._primary_open_sentence = (sentence.sentence_id, open_begin)
             if sentence.text.strip():
                 self._record_primary_success()
             if sentence.sentence_end and sentence.text.strip():
@@ -1059,14 +1068,18 @@ class FailoverASRSession:
         return True
 
     def _emit_backup_transcript(self, text: str, *, begin_ms: int, end_ms: int) -> None:
+        open_sentence = self._primary_open_sentence
         if (
-            self._primary_open_sentence_id is not None
-            and self._primary_open_sentence_id not in self._primary_finalized_sentence_ids
+            open_sentence is not None
+            and open_sentence[0] not in self._primary_finalized_sentence_ids
+            and begin_ms <= open_sentence[1]
         ):
-            sentence_id = self._primary_open_sentence_id
-            self._primary_open_sentence_id = None
+            sentence_id = open_sentence[0]
+            self._primary_open_sentence = None
             self._backup_sentence_id = max(self._backup_sentence_id, sentence_id)
         else:
+            if open_sentence is not None:
+                self._backup_sentence_id = max(self._backup_sentence_id, open_sentence[0])
             self._backup_sentence_id += 1
             while self._backup_sentence_id in self._primary_finalized_sentence_ids:
                 self._backup_sentence_id += 1
@@ -1232,7 +1245,7 @@ class FailoverASRSession:
         self._segment_voiced_start = None
         self._vad_start_sample = None
         self._primary_final_end_sample = None
-        self._primary_open_sentence_id = None
+        self._primary_open_sentence = None
         self._primary_finalized_sentence_ids.clear()
 
     async def reset_for_gap(self) -> None:

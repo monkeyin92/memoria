@@ -1607,3 +1607,73 @@ async def test_backup_replaces_stale_primary_partial_in_speech_timeline() -> Non
     assert timeline.projected_text(stream_epoch=1, start_sample=0, end_sample=32_000) == (
         "给我讲个故事"
     )
+
+
+@pytest.mark.asyncio
+async def test_truncated_tail_backup_preserves_earlier_partial_under_disjoint_id() -> None:
+    """When max_segment_s truncates past an earlier partial's start, backup uses a fresh ID."""
+
+    primary = _OriginTrackingFakeSession(
+        task_id="volc-trunc-1",
+        interim="前半段内容",
+        final_on_send=False,
+        rotate_blocks=5.0,
+    )
+    sensevoice = FakeSenseVoice("后半段内容")
+    session = FailoverASRSession(
+        config=_config(final_result_timeout_s=0.05, max_segment_s=1.0),
+        primary_factory=lambda: primary,
+        sensevoice=sensevoice,
+    )
+    await session.connect()
+    # First second produces a partial covering [0, 100 ms); then 2 more seconds arrive so the
+    # 1.0 s backup cap retains only [2.0 s, 3.0 s), strictly after the partial's start.
+    await session.send_pcm(_pcm(samples=16_000, amplitude=2500), capture_start_sample=0)
+    primary.interim = None
+    await session.send_pcm(_pcm(samples=16_000, amplitude=2500), capture_start_sample=16_000)
+    await session.send_pcm(_pcm(samples=16_000, amplitude=2500), capture_start_sample=32_000)
+
+    await session.rotate_task(require_consumed=False)
+
+    results = [
+        e.sentence
+        for e in _drain(session.events)
+        if e.event == "result-generated" and e.sentence is not None
+    ]
+    assert len(results) == 2
+    assert results[0].sentence_end is False
+    assert results[1].sentence_end is True
+    assert results[1].sentence_id > results[0].sentence_id
+    assert results[1].begin_ms == 2000
+    assert results[1].end_ms == 3000
+
+    timeline = SpeechTimeline()
+    timeline.start_stream_epoch(1)
+    revisions: dict[tuple[int, int, str], int] = {}
+    task_epoch = max(1, session.task_epoch)
+    for sentence in results:
+        rev_key = (1, task_epoch, str(sentence.sentence_id))
+        revisions[rev_key] = revisions.get(rev_key, 0) + 1
+        mapped = sentence_to_asr_result(
+            sentence,
+            task_epoch=task_epoch,
+            sample_rate=16_000,
+            revision=revisions[rev_key],
+            stream_epoch=1,
+            sample_offset=session.task_sample_origin,
+        )
+        assert timeline.add(
+            SpeechSegment(
+                session_id="truncated-tail-preserves-partial",
+                stream_epoch=mapped.stream_epoch,
+                provider_task_epoch=mapped.task_epoch,
+                segment_id=mapped.sentence_id,
+                revision=mapped.revision,
+                kind=SegmentKind.ASR_FINAL if mapped.is_final else SegmentKind.ASR_PARTIAL,
+                capture_start_sample=mapped.capture_start_sample,
+                capture_end_sample=mapped.capture_end_sample,
+                text=mapped.text,
+                final=mapped.is_final,
+            )
+        )
+    assert [seg.text for seg in timeline.pending] == ["前半段内容", "后半段内容"]
