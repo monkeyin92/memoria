@@ -1933,3 +1933,652 @@ async def test_polite_closing_question_during_story_still_checks_close_classifie
         assert harness.story.reply_calls == 1
 
     await _run_story(_device_identity(f"polite-close-{cue}"), script)
+
+
+@pytest.mark.parametrize(
+    ("heard", "spoken", "expected"),
+    [
+        (
+            "霸王龙大概有十二米长。停一下。",
+            "霸王龙大概有十二米长，是白垩纪最厉害的肉食恐龙。",
+            "停一下。",
+        ),
+        (
+            "霸王龙大概12米长。停一下。",
+            "霸王龙大概有十二米长，是白垩纪最厉害的肉食恐龙。",
+            "停一下。",
+        ),
+        (
+            "大气层中的气体分子对蓝光散射。安静。",
+            "天空呈现蓝色是因为大气层中的气体分子对短波长的蓝光散射作用更强。",
+            "安静。",
+        ),
+        (
+            "大熊猫每天都在吃竹子，不要说了。",
+            "大熊猫每天大部分时间都在吃竹子，它们圆滚滚的非常可爱。",
+            "不要说了。",
+        ),
+        (
+            "长颈鹿的脖子很长。停。",
+            "长颈鹿的脖子很长，用来吃高处的树叶。",
+            "停。",
+        ),
+        (
+            "大气层中的气体分子对蓝光散射。停。",
+            "大气层中的气体分子对蓝光散射，所以天空是蓝色的。",
+            "停。",
+        ),
+        (
+            "小土子轻轻地说，安静。",
+            "小兔子轻轻地说，咱们去看星星吧。",
+            "安静。",
+        ),
+        # Negative: pure echo (including stop words inside the assistant reply)
+        (
+            "如果觉得吵可以说安静或者停一下。",
+            "如果觉得吵可以说安静或者停一下。",
+            None,
+        ),
+        (
+            "小土子轻轻地说，安静。",
+            "小兔子轻轻地说，安静地听一会儿。",
+            None,
+        ),
+        (
+            "小兔子说太好了",
+            "小兔子说，太好了，终于找到萝卜了。",
+            None,
+        ),
+        (
+            "森林里非常安静",
+            "森林里非常安静，小兔子睡着了。",
+            None,
+        ),
+        # Negative: unaligned user phrase before stop word must not be swallowed
+        (
+            "森林里的小动物该不该暂停",
+            "森林里的小动物藏在草里。",
+            None,
+        ),
+        # Negative: negated long stop must never be chopped into a shorter suffix
+        (
+            "森林里的小动物不想暂停",
+            "森林里的小动物藏在草里。",
+            None,
+        ),
+        (
+            "森林里的小动物不能先安静",
+            "森林里的小动物藏在草里。",
+            None,
+        ),
+        # Negative: garbled echo + unpunctuated soft stop or degree adverb
+        (
+            "小土子说太好了",
+            "小兔子说，太好了，终于找到萝卜了。",
+            None,
+        ),
+        (
+            "生林里非常安静",
+            "森林里非常安静，小兔子睡着了。",
+            None,
+        ),
+        # Negative: negated stop or keep-playing request
+        (
+            "霸王龙大概十二米长不要停",
+            "霸王龙大概有十二米长，是白垩纪最厉害的肉食恐龙。",
+            None,
+        ),
+        (
+            "大熊猫每天吃竹子不想安静",
+            "大熊猫每天大部分时间都在吃竹子，它们圆滚滚的非常可爱。",
+            None,
+        ),
+        # Positive: echoed assistant prefix containing 「继续」 or 「？」 still strips real stop
+        (
+            "往前继续走。停一下。",
+            "往前继续走，直到看见大海。",
+            "停一下。",
+        ),
+        (
+            "你看见小兔子了吗？停一下。",
+            "你看见小兔子了吗？它躲进森林了。",
+            "停一下。",
+        ),
+        # Positive: complete echo clause followed by appended 「停。」
+        (
+            "小兔子走进了凉亭。停。",
+            "小兔子走进了凉亭。",
+            "停。",
+        ),
+        # Negative: single-char homophone replacement of spoken clause ending (凉亭 -> 凉停)
+        (
+            "小兔子走进了凉停。",
+            "小兔子走进了凉亭。",
+            None,
+        ),
+        # Negative: unpunctuated modal char before stop word must not be absorbed into echo
+        (
+            "森林里的小动物要安静",
+            "森林里的小动物藏在草里。",
+            None,
+        ),
+        # Negative: novel 「？」 or 「继续」 not in assistant speech must never be stripped
+        (
+            "你看见小兔子了吗？停一下。",
+            "你看见小兔子了。它躲进森林了。",
+            None,
+        ),
+        (
+            "森林里的小动物，继续暂停",
+            "森林里的小动物藏在草里。",
+            None,
+        ),
+        # Positive: echoed sentence ending in negator followed by sentence-delimited stop
+        (
+            "小兔子摇摇头说不用。停一下。",
+            "小兔子摇摇头说不用。它接着往前走。",
+            "停一下。",
+        ),
+        # Negative: unpunctuated same-clause inquiry marker before stop suffix
+        (
+            "这个故事怎么暂停",
+            "这个故事怎么开始呢？",
+            None,
+        ),
+        # Negative: multi-char homophone misrecognition of spoken continuation (听一下 -> 停一下)
+        (
+            "小兔子竖起耳朵停一下。",
+            "小兔子竖起耳朵听一下。",
+            None,
+        ),
+        # Positive: complete echo clause 「听一下。」 followed by appended 「停一下。」
+        (
+            "小兔子竖起耳朵听一下。停一下。",
+            "小兔子竖起耳朵听一下。",
+            "停一下。",
+        ),
+        # Negative: echoed 「不用停」 split artificially across a period
+        (
+            "小兔子摇摇头说不用。停。",
+            "小兔子摇摇头说不用停。",
+            None,
+        ),
+        # Negative: spoken comma after 「不用」 promoted to period by ASR before misheard 「听」->「停」
+        (
+            "小兔子摆摆手说不用。停！",
+            "小兔子摆摆手说不用，听！那是什么声音？",
+            None,
+        ),
+        # Negative: genuine user question or novel inquiry ending with stop word
+        (
+            "霸王龙大概十二米长为什么这么安静？",
+            "霸王龙大概有十二米长，是白垩纪最厉害的肉食恐龙。",
+            None,
+        ),
+        (
+            "我想知道大熊猫为什么这么安静",
+            "大熊猫每天大部分时间都在吃竹子，它们圆滚滚的非常可爱。",
+            None,
+        ),
+        (
+            "等一下，怎么暂停？",
+            "你可以让我暂停，也可以继续听故事。",
+            None,
+        ),
+        (
+            "怎么暂停",
+            "你知道怎么暂停吗？",
+            None,
+        ),
+    ],
+)
+def test_extract_playback_stop_after_echo_separates_leaked_echo_from_real_questions(
+    heard: str,
+    spoken: str,
+    expected: str | None,
+) -> None:
+    from services.agent.src.voice_core.playback_text import extract_playback_stop_after_echo
+
+    assert extract_playback_stop_after_echo(heard, spoken) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "heard",
+    [
+        "霸王龙大概12米长。停一下。",
+        "霸王龙大概有十二米长。安静。",
+        "霸王龙大概有十二米长，不要说了。",
+    ],
+)
+async def test_echo_prefixed_stop_during_story_stops_silently_without_resuming_reply(
+    heard: str,
+) -> None:
+    """Build 39 FD_HIGH_PERF: echo ahead of a stop word must silence playback, never chat."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text=heard)
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+        assert harness.story.reply_calls == 1
+        assert _user_turn_texts(harness.context) == ["给我讲个故事"]
+
+    await _run_story(
+        _device_identity(f"echo-prefixed-stop-{len(heard)}"),
+        script,
+        opening="霸王龙大概有十二米长，是白垩纪最厉害的肉食恐龙。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_echo_prefixed_stop_still_blocks_echo_of_story_containing_ting() -> None:
+    """When the current line itself contains 「停」, echoed 「……停」 must not stop it."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text="小兔子大喊。停。")
+        await harness.assert_story_still_playing(story)
+        assert harness.story.reply_calls == 1
+
+    await _run_story(
+        _device_identity("echo-prefixed-stop-story-ting"),
+        script,
+        opening="小兔子大喊：停！然后继续往前跑。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_novel_inquiry_ending_in_stop_word_still_barges_in_and_answers() -> None:
+    """A genuine question ending in 「安静」 must never be stripped into a silent stop."""
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        await harness.audio_frames(20, final_text="我想知道大熊猫为什么这么安静")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert _user_turn_texts(harness.context)[-1] == "我想知道大熊猫为什么这么安静"
+
+    await _run_story(
+        _device_identity("inquiry-ending-anjing"),
+        script,
+        opening="大熊猫每天大部分时间都在吃竹子，它们圆滚滚的非常可爱。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_long_verbatim_echo_followed_by_short_ting_still_stops_silently() -> None:
+    """Long exact echo + short 「停。」 must not be dropped by whole-text fuzzy echo."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text="大气层中的气体分子对蓝光散射。停。")
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+        assert harness.story.reply_calls == 1
+
+    await _run_story(
+        _device_identity("long-echo-short-ting"),
+        script,
+        opening="大气层中的气体分子对蓝光散射，所以天空是蓝色的。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_typo_echo_of_story_continuing_with_anjing_does_not_stop_story() -> None:
+    """「小土子轻轻地说，安静。」 echoing 「小兔子轻轻地说，安静地听一会儿」 stays echo."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text="小土子轻轻地说，安静。")
+        await harness.assert_story_still_playing(story)
+        assert harness.story.reply_calls == 1
+
+    await _run_story(
+        _device_identity("typo-echo-anjing-continuation"),
+        script,
+        opening="小兔子轻轻地说，安静地听一会儿。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_unaligned_user_question_or_negated_stop_over_story_is_not_swallowed() -> None:
+    """「森林里的小动物该不该暂停」 must answer as chat, never silence as a stop."""
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        await harness.audio_frames(20, final_text="森林里的小动物该不该暂停")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert _user_turn_texts(harness.context)[-1] == "森林里的小动物该不该暂停"
+
+    await _run_story(
+        _device_identity("unaligned-user-question-zanting"),
+        script,
+        opening="森林里的小动物藏在草里。",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("revised_text", "expect_story_reply"),
+    [
+        ("停一下我想问云是怎么变出来的", True),
+        ("停一下我想问明天的天气", False),
+    ],
+)
+async def test_later_asr_revision_replacing_stop_word_answers_the_full_question(
+    revised_text: str,
+    expect_story_reply: bool,
+) -> None:
+    """Revision 2 extending 「停一下」 into a question must not be overridden."""
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        start = harness.sample
+        await harness.audio_frames(15)
+        end = harness.sample
+        context = harness.context
+        rev1 = ASRResult(
+            stream_epoch=context.stream_epoch,
+            task_epoch=1,
+            sentence_id="77",
+            revision=1,
+            text="停一下",
+            is_final=True,
+            capture_start_sample=start,
+            capture_end_sample=end,
+            confidence=0.95,
+        )
+        rev2 = ASRResult(
+            stream_epoch=context.stream_epoch,
+            task_epoch=1,
+            sentence_id="77",
+            revision=2,
+            text=revised_text,
+            is_final=True,
+            capture_start_sample=start,
+            capture_end_sample=end,
+            confidence=0.95,
+        )
+        await harness.registry.accept_asr_result(context.identity.session_id, rev1)
+        await harness.registry.accept_asr_result(context.identity.session_id, rev2)
+        await harness.wait_for(lambda: _user_turn_texts(context)[-1] == revised_text)
+        if expect_story_reply:
+            await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        else:
+            await harness.wait_for(
+                lambda: (
+                    context.output.reply_task is None or context.output.reply_task.done()
+                )
+            )
+
+    await _run_story(_device_identity(f"stop-revision-{len(revised_text)}"), script)
+
+
+@pytest.mark.asyncio
+async def test_punctuation_only_revision_on_pinned_echo_stop_still_stops_silently() -> None:
+    """Revision 2 adding only 「。」 to 「……安静」 must still execute a silent stop."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        start = harness.sample
+        await harness.audio_frames(15)
+        end = harness.sample
+        context = harness.context
+        rev1 = ASRResult(
+            stream_epoch=context.stream_epoch,
+            task_epoch=1,
+            sentence_id="78",
+            revision=1,
+            text="霸王龙大概有十二米长。安静",
+            is_final=True,
+            capture_start_sample=start,
+            capture_end_sample=end,
+            confidence=0.95,
+        )
+        rev2 = ASRResult(
+            stream_epoch=context.stream_epoch,
+            task_epoch=1,
+            sentence_id="78",
+            revision=2,
+            text="霸王龙大概有十二米长。安静。",
+            is_final=True,
+            capture_start_sample=start,
+            capture_end_sample=end,
+            confidence=0.95,
+        )
+        await harness.registry.accept_asr_result(context.identity.session_id, rev1)
+        await harness.registry.accept_asr_result(context.identity.session_id, rev2)
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+        assert harness.story.reply_calls == 1
+        assert _user_turn_texts(context) == ["给我讲个故事"]
+
+    await _run_story(
+        _device_identity("stop-revision-punct"),
+        script,
+        opening="霸王龙大概有十二米长，是白垩纪最厉害的肉食恐龙。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_user_negation_correction_over_similar_story_line_is_not_dropped_as_echo() -> None:
+    """Inserting 「不」 into the played sentence is a real correction, never fuzzy echo."""
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        await harness.audio_frames(20, final_text="这只小熊不喜欢吃蜂蜜。")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert _user_turn_texts(harness.context)[-1] == "这只小熊不喜欢吃蜂蜜。"
+
+    await _run_story(
+        _device_identity("negation-correction-not-echo"),
+        script,
+        opening="这只小熊喜欢吃蜂蜜。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_unpunctuated_modal_before_stop_word_enters_chat_instead_of_stopping() -> None:
+    """「森林里的小动物要安静」 must not swallow 「要」 into echo and emit voice_stop_command."""
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        await harness.audio_frames(20, final_text="森林里的小动物要安静")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert _user_turn_texts(harness.context)[-1] == "森林里的小动物要安静"
+
+    await _run_story(
+        _device_identity("modal-before-stop-chat"),
+        script,
+        opening="森林里的小动物藏在草里。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_homophone_stop_replacing_spoken_char_stays_echo_while_appended_stop_silences() -> None:
+    """「凉亭」 misheard as 「凉停」 keeps playing; 「凉亭。停。」 silences playback."""
+
+    async def echo_script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text="小兔子走进了凉停。")
+        await harness.assert_story_still_playing(story)
+        assert harness.story.reply_calls == 1
+
+    await _run_story(
+        _device_identity("homophone-ting-echo"),
+        echo_script,
+        opening="小兔子走进了凉亭。",
+    )
+
+    async def stop_script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text="小兔子走进了凉亭。停。")
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+        assert harness.story.reply_calls == 1
+
+    await _run_story(
+        _device_identity("homophone-ting-appended-stop"),
+        stop_script,
+        opening="小兔子走进了凉亭。",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("opening", "heard"),
+    [
+        ("往前继续走，直到看见大海。", "往前继续走。停一下。"),
+        ("你看见小兔子了吗？它躲进森林了。", "你看见小兔子了吗？停一下。"),
+    ],
+)
+async def test_echoed_keep_playing_or_question_prefix_does_not_veto_trailing_stop(
+    opening: str,
+    heard: str,
+) -> None:
+    """「继续」 or 「？」 inside the aligned echo prefix must not block the user's 「停一下。」."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text=heard)
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+        assert harness.story.reply_calls == 1
+        assert _user_turn_texts(harness.context) == ["给我讲个故事"]
+
+    await _run_story(
+        _device_identity(f"echo-prefix-signal-{len(opening)}"),
+        script,
+        opening=opening,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("opening", "heard"),
+    [
+        ("小兔子说完以后，停下来休息。", "小兔子说完以后。安静。"),
+        ("小兔子停下来看了看，然后继续往前走。", "然后继续往前走。停。"),
+    ],
+)
+async def test_stripped_stop_is_not_blocked_by_unrelated_ting_in_current_line(
+    opening: str,
+    heard: str,
+) -> None:
+    """An echo-stripped stop whose own position is not a continuation must stop playback."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text=heard)
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+        assert harness.story.reply_calls == 1
+        assert _user_turn_texts(harness.context) == ["给我讲个故事"]
+
+    await _run_story(
+        _device_identity(f"stripped-stop-line-ting-{len(opening)}"),
+        script,
+        opening=opening,
+    )
+
+
+@pytest.mark.asyncio
+async def test_unpunctuated_same_clause_inquiry_sharing_reply_wording_answers_instead_of_stopping() -> None:
+    """「这个故事怎么暂停」 over 「这个故事怎么开始呢？」 is a question, never a silent stop."""
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        await harness.audio_frames(20, final_text="这个故事怎么暂停")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert _user_turn_texts(harness.context)[-1] == "这个故事怎么暂停"
+
+    await _run_story(
+        _device_identity("unpunctuated-inquiry-zanting"),
+        script,
+        opening="这个故事怎么开始呢？",
+    )
+
+
+@pytest.mark.asyncio
+async def test_misheard_multichar_continuation_tingyixia_stays_echo_while_appended_stop_silences() -> None:
+    """「听一下」 misheard as 「停一下」 keeps playing; 「听一下。停一下。」 silences playback."""
+
+    async def echo_script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text="小兔子竖起耳朵停一下。")
+        await harness.assert_story_still_playing(story)
+        assert harness.story.reply_calls == 1
+
+    await _run_story(
+        _device_identity("homophone-tingyixia-echo"),
+        echo_script,
+        opening="小兔子竖起耳朵听一下。",
+    )
+
+    async def stop_script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text="小兔子竖起耳朵听一下。停一下。")
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+        assert harness.story.reply_calls == 1
+
+    await _run_story(
+        _device_identity("homophone-tingyixia-stop"),
+        stop_script,
+        opening="小兔子竖起耳朵听一下。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_validated_stripped_stop_is_not_vetoed_by_earlier_identical_phrase_in_reply() -> None:
+    """An echo-stripped 「不要说了。」 must stop playback even when an earlier sentence said it."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text="小熊听见了声音。不要说了。")
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+        assert harness.story.reply_calls == 1
+        assert _user_turn_texts(harness.context) == ["给我讲个故事"]
+
+    await _run_story(
+        _device_identity("stripped-stop-earlier-buyaoshuole"),
+        script,
+        opening="小兔子大喊不要说了。小熊听见了声音。接着他们一起走回家。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_echoed_sentence_ending_in_buyong_does_not_block_separate_stop_sentence() -> None:
+    """A sentence boundary after echoed 「不用。」 allows the listener's separate 「停一下。」."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text="小兔子摇摇头说不用。停一下。")
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+        assert harness.story.reply_calls == 1
+        assert _user_turn_texts(harness.context) == ["给我讲个故事"]
+
+    await _run_story(
+        _device_identity("echoed-buyong-separate-stop"),
+        script,
+        opening="小兔子摇摇头说不用。它接着往前走。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_spoken_comma_after_buyong_promoted_to_period_does_not_stop_on_misheard_ting() -> None:
+    """ASR promoting 「不用，听！」 into 「不用。停！」 must remain echo, never stop playback."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text="小兔子摆摆手说不用。停！")
+        await harness.assert_story_still_playing(story)
+        assert harness.story.reply_calls == 1
+
+    await _run_story(
+        _device_identity("comma-promoted-buyong-misheard-ting"),
+        script,
+        opening="小兔子摆摆手说不用，听！那是什么声音？",
+    )
