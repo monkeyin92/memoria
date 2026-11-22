@@ -1,0 +1,14 @@
+diff --git a/main/audio/engines/afe_audio_engine.cc b/main/audio/engines/afe_audio_engine.cc
+--- a/main/audio/engines/afe_audio_engine.cc
++++ b/main/audio/engines/afe_audio_engine.cc
+@@ -167,6 +167,10 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, srmodel_list_t* models) {
+     // The protocol layer still supplies the independent 20 s hard fence.
+     afe_config->vad_mode = VAD_MODE_0;
+     afe_config->vad_min_noise_ms = 900;
++    // Full-duplex AEC preserves initial plosives during double-talk (e.g.
++    // "停一下" lost "停" under AEC_MODE_VOIP_HIGH_PERF) while keeping
++    // AEC_NLP_LEVEL_VERYAGGR and WebRTC NS intact for echo suppression.
++    afe_config->aec_mode = AEC_MODE_FD_HIGH_PERF;
+     afe_config->afe_ns_mode = AFE_NS_MODE_WEBRTC;
+     afe_config->ns_model_name = nullptr;
+ #else
