@@ -169,6 +169,7 @@ _STOP_LEXICON: tuple[_StopLexeme, ...] = (
     _PrefixStop("安静"),
     _PrefixStop("闭嘴"),
     _PrefixStop("好了", glued_followers=("知道了", "我知道了")),
+    _PrefixStop("好啦", glued_followers=("知道了", "我知道了")),
     _CharRunStop("嘘"),
     _ExactStop("stop"),
 )
@@ -176,7 +177,7 @@ _STOP_LEXICON: tuple[_StopLexeme, ...] = (
 _STOP_CHARACTERS = "停嘘"
 #: Commands that yield the floor without being stop words.  「好了」 alone is a
 #: completion acknowledgment, but it may precede a real stop (「好了别说了」).
-_SOFT_STOP_PHRASES = frozenset({"好了"})
+_SOFT_STOP_PHRASES = frozenset({"好了", "好啦"})
 #: Interrupt prefixes that are genuine stop commands (「先停」「你先停」);
 #: every other prefix (「等等」「等一下」) only yields the floor.
 _STOP_PREFIX_COMMANDS = frozenset({"先停", "你先停"})
@@ -187,6 +188,7 @@ _STOP_TALKING_PHRASES = (
     "先别说",
     "够了",
     "好了",
+    "好啦",
     "行了",
     "可以了",
     "不用了",
@@ -199,6 +201,8 @@ _COMPLETION_ACK_ONLY = frozenset(
     {
         "好了",
         "好了好了",
+        "好啦",
+        "好啦好啦",
         "好了知道了",
         "好了我知道了",
         "够了",
@@ -369,7 +373,7 @@ def is_backchannel(text: str, *, duration_ms: int) -> bool:
 
 def is_explicit_interrupt(text: str) -> bool:
     return (
-        _match_stop(_normalize_stop_text(text)) is not None
+        _match_stop(_normalize_stop_text(text), allow_embedded_soft=False) is not None
         or _interrupt_prefix(text) is not None
         or is_completion_ack_only(text)
     )
@@ -507,10 +511,20 @@ def _normalize_stop_text(text: str) -> str:
     return _compact_interrupt_text(text).casefold()
 
 
-def _stop_span_at(text: str, start: int) -> tuple[_StopLexeme, int] | None:
+def _is_soft_stop(lexeme: _StopLexeme) -> bool:
+    return isinstance(lexeme, _PrefixStop) and lexeme.phrase in _SOFT_STOP_PHRASES
+
+
+def _stop_span_at(
+    text: str,
+    start: int,
+    *,
+    exclude_soft: bool = False,
+) -> tuple[_StopLexeme, int] | None:
     spans = [
         (lexeme, end)
         for lexeme in _STOP_LEXICON
+        if not (exclude_soft and _is_soft_stop(lexeme))
         if (end := lexeme.span_end(text, start)) is not None
     ]
     return max(spans, key=lambda candidate: candidate[1], default=None)
@@ -523,21 +537,41 @@ class _StopHit:
     end: int
 
 
-def _match_stop(normalized: str) -> _StopHit | None:
+def _match_stop(
+    normalized: str,
+    *,
+    allow_embedded_soft: bool = True,
+    exclude_soft: bool = False,
+) -> _StopHit | None:
     stripped = _strip_leading_interrupt_fillers(normalized)
     starts = range(len(stripped)) if len(normalized) <= _STOP_MAX_CHARS else range(1)
     hits = [
         _StopHit(span[0], start, span[1])
         for start in starts
         if start == 0 or not stripped[:start].endswith(_STOP_NEGATORS)
-        if (span := _stop_span_at(stripped, start)) is not None
+        if (
+            span := _stop_span_at(
+                stripped,
+                start,
+                exclude_soft=exclude_soft or (not allow_embedded_soft and start > 0),
+            )
+        )
+        is not None
     ]
     return max(hits, key=lambda hit: hit.end - hit.start, default=None)
 
 
+def _is_terminal_embedded_hard_stop(normalized: str) -> bool:
+    """True when a short utterance ends in an addressed hard stop command."""
+
+    stripped = _strip_leading_interrupt_fillers(normalized)
+    hit = _match_stop(normalized, exclude_soft=True)
+    return hit is not None and hit.start > 0 and hit.end == len(stripped)
+
+
 def is_embedded_short_stop(text: str) -> bool:
-    hit = _match_stop(_normalize_stop_text(text))
-    return hit is not None and hit.start > 0
+    normalized = _strip_trailing_control_particles(_normalize_stop_text(text))
+    return _is_terminal_embedded_hard_stop(normalized)
 
 
 def _strip_stop_spans(normalized: str) -> str:
@@ -690,8 +724,9 @@ def is_interrupt_command_only(text: str) -> bool:
     normalized = _strip_trailing_control_particles(_normalize_stop_text(text))
     commands, remainder = _peel_commands(normalized)
     if not commands:
-        return is_embedded_short_stop(text)
-    return not _strip_trailing_control_particles(remainder)
+        return _is_terminal_embedded_hard_stop(normalized)
+    tail = _strip_trailing_control_particles(remainder)
+    return not tail or _is_terminal_embedded_hard_stop(tail)
 
 
 def is_stop_command_only(text: str) -> bool:
@@ -707,15 +742,13 @@ def is_stop_command_only(text: str) -> bool:
     commands, remainder = _peel_commands(normalized)
     if not commands:
         # 「你别说了」: an address before the stop, with nothing after it.
-        hit = _match_stop(normalized)
-        if hit is None or hit.start == 0:
-            return False
-        return not (
-            isinstance(hit.lexeme, _PrefixStop) and hit.lexeme.phrase in _SOFT_STOP_PHRASES
-        )
-    if _strip_trailing_control_particles(remainder):
-        return False
+        return _is_terminal_embedded_hard_stop(normalized)
+    tail = _strip_trailing_control_particles(remainder)
     strong = False
+    if tail:
+        if not _is_terminal_embedded_hard_stop(tail):
+            return False
+        strong = True
     for command in commands:
         if isinstance(command, _PrefixStop) and command.phrase in _SOFT_STOP_PHRASES:
             continue

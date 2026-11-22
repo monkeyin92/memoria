@@ -31,6 +31,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from time import monotonic
 from typing import Any, ClassVar, cast
+from urllib.parse import urlsplit
 
 import websockets
 from websockets.asyncio.client import ClientConnection
@@ -123,6 +124,24 @@ def _parse_force_to_speech_ms(raw: str) -> int | None:
     return int(cleaned)
 
 
+def _is_legacy_streaming_endpoint(ws_url: str) -> bool:
+    """True for the legacy bidirectional streaming path without two-pass support."""
+
+    return urlsplit(ws_url).path.rstrip("/").endswith("/sauc/bigmodel")
+
+
+def _default_enable_nonstream(
+    ws_url: str,
+    hotwords: tuple[str, ...],
+    boosting_table_id: str | None,
+) -> bool:
+    """Resolve the implicit two-pass setting shared by direct and env configs."""
+
+    return not _is_legacy_streaming_endpoint(ws_url) and bool(
+        hotwords or boosting_table_id
+    )
+
+
 @dataclass
 class VolcASRConfig:
     ENV_KEYS: ClassVar[frozenset[str]] = frozenset({
@@ -153,7 +172,11 @@ class VolcASRConfig:
     chunk_ms: int = 100
     end_window_ms: int = 550
     force_to_speech_ms: int | None = None
-    enable_nonstream: bool = False
+    # Two-pass recognition recovers short double-talk stop commands without
+    # rewriting "停" -> "行" once inline stop hotwords are sent alongside it;
+    # None resolves via _default_enable_nonstream (on for bigmodel_async with
+    # hotwords/boosting table, off otherwise). Set False to force single-pass.
+    enable_nonstream: bool | None = None
     show_utterances: bool = True
     boosting_table_id: str | None = None
     hotwords: tuple[str, ...] = DEFAULT_VOLC_HOTWORDS
@@ -176,6 +199,14 @@ class VolcASRConfig:
             raise ValueError("Volc ASR end_window_ms must be at least 200 ms")
         if self.force_to_speech_ms is not None and not 1 <= self.force_to_speech_ms <= 10_000:
             raise ValueError("Volc ASR force_to_speech_ms must be within [1, 10000] ms")
+        if self.enable_nonstream is None:
+            self.enable_nonstream = _default_enable_nonstream(
+                self.ws_url, self.hotwords, self.boosting_table_id
+            )
+        elif self.enable_nonstream and _is_legacy_streaming_endpoint(self.ws_url):
+            raise ValueError(
+                "Volc ASR enable_nonstream requires the /sauc/bigmodel_async endpoint"
+            )
         if not self.enable_nonstream and (
             len(self.hotwords) > _STREAMING_HOTWORD_WARN_COUNT
             or sum(len(word) for word in self.hotwords) > _STREAMING_HOTWORD_WARN_CHARS
@@ -203,6 +234,10 @@ class VolcASRConfig:
             or e.get("VOLC_ASR_WS_ENDPOINT", "").strip()
             or DEFAULT_VOLC_ASR_ENDPOINT
         )
+        boosting_table_id = e.get("VOLC_ASR_BOOSTING_TABLE_ID", "").strip() or None
+        hotwords = _parse_hotwords(e.get("VOLC_ASR_HOTWORDS", ""))
+        raw_nonstream = e.get("VOLC_ASR_ENABLE_NONSTREAM", "").strip().lower()
+        enable_nonstream = (raw_nonstream == "true") if raw_nonstream else None
         return cls(
             app_id=e.get("VOLC_ASR_APP_ID", "").strip(),
             access_token=e.get("VOLC_ASR_ACCESS_TOKEN", "").strip(),
@@ -215,10 +250,10 @@ class VolcASRConfig:
             force_to_speech_ms=_parse_force_to_speech_ms(
                 e.get("VOLC_ASR_FORCE_TO_SPEECH_MS", "")
             ),
-            enable_nonstream=e.get("VOLC_ASR_ENABLE_NONSTREAM", "false").lower() == "true",
+            enable_nonstream=enable_nonstream,
             show_utterances=e.get("VOLC_ASR_SHOW_UTTERANCES", "true").lower() == "true",
-            boosting_table_id=e.get("VOLC_ASR_BOOSTING_TABLE_ID", "").strip() or None,
-            hotwords=_parse_hotwords(e.get("VOLC_ASR_HOTWORDS", "")),
+            boosting_table_id=boosting_table_id,
+            hotwords=hotwords,
             connect_timeout_s=float(e.get("VOLC_ASR_CONNECT_TIMEOUT_S", "5")),
             result_timeout_s=float(e.get("VOLC_ASR_RESULT_TIMEOUT_S", "8")),
             post_finish_tail_grace_s=float(
@@ -404,7 +439,7 @@ class VolcASRSession:
                     sample_rate=self.config.sample_rate,
                     end_window_ms=self.config.end_window_ms,
                     force_to_speech_ms=self.config.force_to_speech_ms,
-                    enable_nonstream=self.config.enable_nonstream,
+                    enable_nonstream=bool(self.config.enable_nonstream),
                     show_utterances=self.config.show_utterances,
                     boosting_table_id=self.config.boosting_table_id,
                     hotwords=self.config.hotwords,

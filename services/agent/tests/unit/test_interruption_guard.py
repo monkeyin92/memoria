@@ -16,6 +16,7 @@ from services.agent.src.orchestration.interruption_guard import (
     is_primarily_non_chinese_script,
     is_resume_command_only,
     is_short_assistant_farewell_reply,
+    is_stop_command_only,
     user_turn_suggests_conversation_close,
 )
 from services.common.fixed_safety_scripts import CRISIS_SELF_SCRIPT
@@ -34,6 +35,36 @@ def test_explicit_interrupt_prefixes() -> None:
     assert is_explicit_interrupt("别说了")
     assert is_explicit_interrupt("好了，知道了")
     assert is_completion_ack_only("好了，知道了。")
+    assert is_completion_ack_only("好啦。")
+    assert is_completion_ack_only("好啦好啦。")
+    assert is_completion_ack_only("好啦，好啦。")
+    assert is_interrupt_command_only("好啦别说了")
+    assert is_stop_command_only("好啦别说了")
+    assert not is_stop_command_only("好啦")
+    assert not is_stop_command_only("好啦好啦")
+    assert is_interrupt_command_only("你，好啦，闭嘴")
+    assert is_stop_command_only("你，好啦，闭嘴")
+    assert is_interrupt_command_only("你，好了，闭嘴")
+    assert is_stop_command_only("你，好了，闭嘴")
+    assert is_interrupt_command_only("好啦，你闭嘴")
+    assert is_stop_command_only("好啦，你闭嘴")
+    assert is_interrupt_command_only("好啦，你别说了")
+    assert is_stop_command_only("好啦，你别说了")
+    assert not is_interrupt_command_only("好啦，我换个话题")
+    assert not is_stop_command_only("好啦，我换个话题")
+    assert not is_interrupt_command_only("修好了暂停键")
+    assert not is_stop_command_only("修好了暂停键")
+    assert not is_completion_ack_only("好。")
+    assert not is_completion_ack_only("好的。")
+    assert not is_completion_ack_only("太好啦！")
+    assert not is_explicit_interrupt("太好啦！")
+    assert not is_explicit_interrupt("太好了！")
+    assert not is_interrupt_command_only("太好啦！")
+    assert not is_interrupt_command_only("太好了！")
+    assert not is_stop_command_only("太好啦！")
+    assert not is_stop_command_only("太好了！")
+    assert is_backchannel("好。", duration_ms=400)
+    assert is_backchannel("好的。", duration_ms=500)
 
 
 def test_conversation_close_phrases_are_exact_control_only_matches() -> None:
