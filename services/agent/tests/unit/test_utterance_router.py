@@ -27,6 +27,8 @@ from services.agent.src.orchestration.utterance_router import (
         ("好啦，你闭嘴", 400, UtteranceIntent.INTERRUPT_COMMAND, False),
         ("好啦，你别说了", 400, UtteranceIntent.INTERRUPT_COMMAND, False),
         ("你别说了，暂停", 400, UtteranceIntent.INTERRUPT_COMMAND, False),
+        ("麻烦别说了", 400, UtteranceIntent.INTERRUPT_COMMAND, False),
+        ("拜托安静", 400, UtteranceIntent.INTERRUPT_COMMAND, False),
         ("等一下，怎么暂停？", 400, UtteranceIntent.INTERRUPT_THEN_CHAT, False),
         ("别说了，怎么暂停？", 400, UtteranceIntent.INTERRUPT_THEN_CHAT, False),
         ("好啦，我换个话题", 400, UtteranceIntent.INTERRUPT_THEN_CHAT, False),

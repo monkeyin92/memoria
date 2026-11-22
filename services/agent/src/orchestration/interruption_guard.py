@@ -628,7 +628,21 @@ def _leading_command(text: str) -> tuple[_StopLexeme | str, int] | None:
     return None if prefix is None else (prefix, len(prefix))
 
 
-_STOP_ADDRESS_PREFIXES = ("请你", "我想", "我要", "你", "请")
+_STOP_ADDRESS_PREFIXES = (
+    "麻烦你",
+    "拜托你",
+    "麻烦",
+    "拜托",
+    "帮我",
+    "请你",
+    "我想",
+    "我要",
+    "你先",
+    "请先",
+    "先",
+    "你",
+    "请",
+)
 
 
 def _leading_stop_command(text: str) -> tuple[_StopLexeme | str, int] | None:
