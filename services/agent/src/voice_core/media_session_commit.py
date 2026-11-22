@@ -47,6 +47,7 @@ from services.agent.src.voice_core.media_session_commit_text import (
     _elapsed_ms,
     _log_empty_media_turn,
     _mark_stage,
+    _resolve_commit_playback_guard,
     _resolve_media_turn_text,
 )
 from services.agent.src.voice_core.media_session_pending_turn import open_turn_verdict_scope
@@ -961,13 +962,12 @@ class MediaSessionCommitMixin(MediaSessionCommitRecoveryMixin):
             await context.runtime.resolve_conversation_close_needed(text)
         _mark_stage(timing, "close_ms", stage_started)
         route = context.runtime.route_user_turn(text)
-        guarded_reason = context.runtime.playback_guarded_reason(text, duration_ms=elapsed_ms)
-        if (
-            guarded_reason is None
-            and was_assistant_speaking
-            and self._playback_stop_is_echo(context, text)
-        ):
-            guarded_reason = "assistant_echo"
+        guarded_reason = _resolve_commit_playback_guard(
+            context, text,
+            elapsed_ms=elapsed_ms,
+            was_assistant_speaking=was_assistant_speaking,
+            stop_is_echo=self._playback_stop_is_echo,
+        )
         interaction = context.runtime.decide_interaction(
             InteractionSnapshot(
                 event=InteractionEvent.TRANSCRIPT,

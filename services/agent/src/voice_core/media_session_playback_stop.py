@@ -33,7 +33,6 @@ from services.agent.src.asr_text_debug_log import (
 )
 from services.agent.src.contracts.ids import GenerationFence
 from services.agent.src.conversation_close_router import (
-    lexical_playback_control_only,
     rule_conversation_close_only,
 )
 from services.agent.src.orchestration.interruption_guard import (
@@ -61,7 +60,9 @@ from services.agent.src.voice_core.playback_text import (
     content_barge_in_wanted,
     followup_utterance_looks_complete,
     playback_followup_grace_s,
+    playback_stop_is_echo_for_line,
     playback_text_is_echo,
+    resolve_playback_stop_text,
 )
 from services.agent.src.voice_core.semantic_completeness import is_semantically_complete
 from services.agent.src.voice_core.speech_timeline import ASRResult
@@ -210,23 +211,28 @@ class MediaPlaybackStopMixin:
 
     @staticmethod
     def _playback_stop_is_echo(context: _MediaVoiceSession, text: str) -> bool:
-        """True when the line now playing itself contains the stop character.
+        """True when the line now playing echoes a standalone lexical stop."""
 
-        A single character such as 「停」 is below the generic assistant-echo
-        guard. Suppress it only while the current line carries 「停」 (a story
-        line like 「小兔子大喊：停！」); a stop heard against any other line is
-        the owner's command, even if an earlier sentence said 「停」.
-        """
-
-        if not lexical_playback_control_only(text):
+        if getattr(context.pending, "playback_stop_from_echo_strip", False):
             return False
-        return "停" in MediaPlaybackStopMixin._playback_current_line(context)
+        line = MediaPlaybackStopMixin._playback_current_line(context)
+        return playback_stop_is_echo_for_line(text, line)
 
     @staticmethod
-    def _playback_echo_for_guard(context: _MediaVoiceSession, text: str) -> bool:
-        if lexical_playback_control_only(text):
-            return MediaPlaybackStopMixin._playback_stop_is_echo(context, text)
-        return MediaPlaybackStopMixin._playback_text_is_echo(context, text)
+    def _resolve_stop_text(context: _MediaVoiceSession, text: str) -> str | None:
+        return resolve_playback_stop_text(
+            text, playback_text=str(getattr(context.output, "assistant_text", ""))
+        )
+
+    @staticmethod
+    def _playback_echo_for_guard(
+        context: _MediaVoiceSession, raw_text: str, stop_text: str | None
+    ) -> bool:
+        if stop_text is not None:
+            if stop_text != raw_text:
+                return False
+            return MediaPlaybackStopMixin._playback_stop_is_echo(context, stop_text)
+        return MediaPlaybackStopMixin._playback_text_is_echo(context, raw_text)
 
     def _playback_stop_diagnosis(self, context: _MediaVoiceSession, result: ASRResult) -> str:
         """Why a final could or could not be a spoken stop, without its text.
@@ -238,13 +244,13 @@ class MediaPlaybackStopMixin:
 
         try:
             text = result.text.strip()
-            pending = context.pending
-            start = result.capture_start_sample
+            stop_text = self._resolve_stop_text(context, text)
+            pending, start = context.pending, result.capture_start_sample
+            barge = content_barge_in_wanted(text, playback_text=self._playback_current_line(context))
             return (
-                f"stop_word={lexical_playback_control_only(text)} "
-                f"content_barge_in={content_barge_in_wanted(text, playback_text=self._playback_current_line(context))} "
+                f"stop_word={stop_text is not None} content_barge_in={barge} "
                 f"guard={self._playback_input_guard_reason(context, result)} "
-                f"echo={self._playback_echo_for_guard(context, text)} "
+                f"echo={self._playback_echo_for_guard(context, text, stop_text)} "
                 f"in_flight={self._reply_in_flight(context)} "
                 f"speaking={context.runtime.assistant_speaking} "
                 f"owner={context.output.output_owner is not None} "
@@ -991,7 +997,8 @@ class MediaPlaybackStopMixin:
         # tail being retired, not to a new turn.  So does a content question
         # (soak 2026-10-30 t019): the pin it replaces holds no words either.
         if start >= endpoint:
-            return is_stop_command_only(result.text) or content_barge_in
+            stop_text = MediaPlaybackStopMixin._resolve_stop_text(context, result.text)
+            return is_stop_command_only(stop_text or result.text) or content_barge_in
         return not context.runtime.speech_timeline.projected_text(
             stream_epoch=result.stream_epoch, start_sample=start, end_sample=endpoint
         )
@@ -1036,7 +1043,7 @@ class MediaPlaybackStopMixin:
             end_sample=result.capture_end_sample,
             playback_boundary_sample=context.last_playback_end_sample,
             in_flight=self._reply_in_flight(context),
-            stop_word=bool(text) and lexical_playback_control_only(text),
+            stop_word=self._resolve_stop_text(context, text) is not None,
             text=excerpt(result.text) if result.text else None,
         )
         if line is not None:
@@ -1074,8 +1081,9 @@ class MediaPlaybackStopMixin:
         if context.identity.client_type != "device":
             return
         self._log_asr_text_debug(context, result, source=source)
-        text = result.text.strip()
-        stop_word = bool(text) and lexical_playback_control_only(text)
+        raw_text = result.text.strip()
+        stop_text = self._resolve_stop_text(context, raw_text)
+        text, stop_word = (stop_text or raw_text), (stop_text is not None)
         content_barge_in = (
             not stop_word
             and not result.rescue_synthesized
@@ -1084,12 +1092,8 @@ class MediaPlaybackStopMixin:
             and not self._playback_text_is_echo(context, text)
             and self._playback_input_guard_reason(context, result) is None
         )
-        tail_final = content_barge_in and self._final_overlaps_handled_turn(
-            result, handled_range
-        )
-        pre_playback_final = content_barge_in and self._final_is_pre_playback_tail(
-            context, result
-        )
+        tail_final = content_barge_in and self._final_overlaps_handled_turn(result, handled_range)
+        pre_playback_final = content_barge_in and self._final_is_pre_playback_tail(context, result)
         if tail_final or pre_playback_final:
             content_barge_in = False
         in_flight = self._reply_in_flight(context)
@@ -1128,13 +1132,11 @@ class MediaPlaybackStopMixin:
                     text=text if reason == "not_stop_word" else "",
                 )
             return
-        if self._playback_stop_is_echo(context, text):
+        stripped_stop = stop_word and stop_text != raw_text
+        if not stripped_stop and self._playback_stop_is_echo(context, text):
             logger.info(
                 "media playback stop ignored as reply echo session=%s text_len=%s source=%s %s",
-                context.identity.session_id,
-                len(text),
-                source,
-                diagnosis,
+                context.identity.session_id, len(text), source, diagnosis,
             )
             return
         self._scope_pending_turn_to(context, result)
@@ -1145,6 +1147,7 @@ class MediaPlaybackStopMixin:
         pending.turn_retire_sample = endpoint
         self._mark_empty_turn_endpoint_pin(context, source="vad_end")
         pending.playback_stop_text = text if stop_word else None
+        pending.playback_stop_from_echo_strip = stripped_stop
         pending.content_barge_in = content_barge_in
         # Also drops the replaced pin's tail bound: its timer belongs to the old endpoint.
         pending.restart_endpoint_bounds(0.0)
@@ -1153,11 +1156,8 @@ class MediaPlaybackStopMixin:
             "text_len=%s source=%s replaced_empty_endpoint=%s %s",
             context.identity.session_id,
             start,
-            endpoint,
-            len(text),
-            source,
-            replaced_endpoint,
-            diagnosis,
+            endpoint, len(text),
+            source, replaced_endpoint, diagnosis,
         )
         self._schedule_turn_commit(context)
 
