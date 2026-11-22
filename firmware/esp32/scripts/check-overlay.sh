@@ -590,6 +590,33 @@ afe_engine="$MEMORIA_UPSTREAM_DIR/main/audio/engines/afe_audio_engine.cc"
 rg -q 'ns_init = kUseAfeNoiseSuppression' "$afe_engine" || \
     die "AFE noise suppression must be wired for the Memoria build"
 
+# Full-duplex AEC mode preserves initial plosives during double-talk while
+# keeping AEC_NLP_LEVEL_VERYAGGR and WebRTC NS intact on the Memoria board.
+overlay_patch_0053="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0053-use-full-duplex-aec-mode-for-memoria.patch"
+[[ -f "$overlay_patch_0053" ]] || die "overlay patch 0053 is missing"
+rg -q 'aec_mode = AEC_MODE_FD_HIGH_PERF' "$overlay_patch_0053" || \
+    die "patch 0053 must pin AEC_MODE_FD_HIGH_PERF for the Memoria board"
+python3 - "$afe_engine" <<'PYEOF' || die "applied afe_audio_engine.cc must scope AEC_MODE_FD_HIGH_PERF to Memoria VoCat only"
+import sys
+from pathlib import Path
+
+src = Path(sys.argv[1]).read_text(encoding="utf-8")
+start = src.index("afe_config_init(")
+end = src.index("afe_config_free(afe_config);", start)
+block = src[start:end]
+guard = "#if defined(CONFIG_BOARD_TYPE_MEMORIA_ESP_VOCAT)"
+before, after = block.split(guard, 1)
+vocat_branch, other_branch = after.split("#else", 1)
+assert "afe_config->aec_mode = AEC_MODE_VOIP_HIGH_PERF;" in before
+assert "afe_config->aec_nlp_level = AEC_NLP_LEVEL_VERYAGGR;" in before
+assert "afe_config->ns_init = kUseAfeNoiseSuppression;" in before
+assert "afe_config->aec_mode = AEC_MODE_FD_HIGH_PERF;" not in before
+assert "afe_config->aec_mode = AEC_MODE_FD_HIGH_PERF;" in vocat_branch
+assert "afe_config->aec_nlp_level" not in vocat_branch
+assert "afe_config->ns_init" not in vocat_branch
+assert "afe_config->aec_mode = AEC_MODE_FD_HIGH_PERF;" not in other_branch
+PYEOF
+
 # Queue overflow is backpressure, not a terminal playback.error. Playback and
 # Opus live on core 1 so AFE capture on core 0 cannot stall a long reply.
 overlay_patch_0023="$MEMORIA_FIRMWARE_ROOT/overlay/patches/0023-do-not-terminal-decode-queue-overflow.patch"

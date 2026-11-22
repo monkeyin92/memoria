@@ -21,6 +21,12 @@ NS_PATCH = (
     / "patches"
     / "0022-enable-memoria-afe-noise-suppression.patch"
 ).read_text(encoding="utf-8")
+AEC_FD_PATCH = (
+    Path(__file__).parents[1]
+    / "overlay"
+    / "patches"
+    / "0053-use-full-duplex-aec-mode-for-memoria.patch"
+).read_text(encoding="utf-8")
 HALF_DUPLEX_PATCH = (
     Path(__file__).parents[1]
     / "overlay"
@@ -546,6 +552,27 @@ def test_memoria_afe_noise_suppression_patch_enables_webrtc_ns_for_memoria_only(
     assert "+static constexpr bool kUseAfeNoiseSuppression = false;" in NS_PATCH
     assert "NS: %s" in NS_PATCH
     assert '"NS: off"' not in NS_PATCH
+
+
+def test_memoria_afe_full_duplex_aec_mode_patch_is_board_scoped() -> None:
+    # Full-duplex AEC preserves double-talk plosive onsets (e.g. "停一下")
+    # without relaxing NLP aggressiveness or disabling WebRTC NS, and stays
+    # scoped to the Memoria VoCat #if branch (before #else).
+    added = [
+        line[1:]
+        for line in AEC_FD_PATCH.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    ]
+    assert any("afe_config->aec_mode = AEC_MODE_FD_HIGH_PERF;" in line for line in added)
+    assert all("aec_nlp_level" not in line for line in added)
+    assert all("ns_init" not in line for line in added)
+    # Context anchors prove the assignment sits inside the VoCat #if branch
+    # between vad_min_noise_ms = 900 and #else (never in the common path).
+    vad_pos = AEC_FD_PATCH.index("afe_config->vad_min_noise_ms = 900;")
+    aec_pos = AEC_FD_PATCH.index("+    afe_config->aec_mode = AEC_MODE_FD_HIGH_PERF;")
+    ns_pos = AEC_FD_PATCH.index("afe_config->afe_ns_mode = AFE_NS_MODE_WEBRTC;")
+    else_pos = AEC_FD_PATCH.index("#else")
+    assert vad_pos < aec_pos < ns_pos < else_pos
 
 
 def test_device_vad_hard_fence_stays_at_tuned_20s() -> None:
