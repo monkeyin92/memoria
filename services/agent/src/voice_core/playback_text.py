@@ -104,6 +104,8 @@ _UNPUNCTUATED_DEGREE_PREFIXES = (
 )
 _UNPUNCTUATED_SOFT_STOPS = frozenset({"好了", "好啦"})
 _CLAUSE_BOUNDARY_CHARS = frozenset("，。！？、,.!?;；:：…~～\"'“”‘’（）() \t\r\n　")
+_SENTENCE_BOUNDARY_CHARS = frozenset("。！？.!?;；")
+_SAME_CLAUSE_EXTRA_INQUIRY_SUFFIXES = ("能不能", "可不可以", "为啥", "如何", "咋", "该不该", "要不要")
 
 
 def _strip_edge_backchannels(text: str) -> str:
@@ -322,12 +324,34 @@ def _match_playback_echo_prefix_ends(
     return fuzzy_ends
 
 
-def _tail_continues_spoken_echo(tail_compact: str, spoken: str, prefix_ends: list[int]) -> bool:
-    """True when ``tail_compact`` itself continues the assistant text after the prefix."""
+def _tail_continues_spoken_echo(
+    tail_compact: str,
+    spoken: str,
+    prefix_ends: list[int],
+    clause_ends: set[int],
+    *,
+    punctuated: bool,
+) -> bool:
+    """True when ``tail_compact`` continues ``spoken`` verbatim or via a 1-char ASR typo."""
 
+    tail_len = len(tail_compact)
     for end in prefix_ends:
-        window = spoken[max(0, end - 1) : end + len(tail_compact) + 4]
+        window = spoken[max(0, end - 1) : end + tail_len + 4]
         if tail_compact in window:
+            return True
+        aligned = spoken[end : end + tail_len]
+        if len(aligned) != tail_len:
+            continue
+        shared = sum(a == b for a, b in zip(tail_compact, aligned, strict=True))
+        if tail_len >= 3 and shared >= tail_len - 1:
+            return True
+        if (
+            tail_len == 2
+            and not punctuated
+            and end not in clause_ends
+            and (end + 2) in clause_ends
+            and shared >= 1
+        ):
             return True
     return False
 
@@ -406,16 +430,26 @@ def extract_playback_stop_after_echo(text: str, playback_text: str) -> str | Non
         return None
     prefix_raw = raw[:idx]
     punctuated = bool(prefix_raw) and prefix_raw[-1] in _CLAUSE_BOUNDARY_CHARS
+    sentence_boundary = (
+        bool(prefix_raw.rstrip()) and prefix_raw.rstrip()[-1] in _SENTENCE_BOUNDARY_CHARS
+    )
     prefix_compact = _compact(prefix_raw)
-    if len(prefix_compact) < 3 or prefix_compact.endswith(_ECHO_PREFIX_STOP_NEGATORS):
+    if len(prefix_compact) < 3:
         return None
     boundary_text = prefix_compact[-3:] + tail_compact
-    if any(phrase in boundary_text and phrase not in prefix_compact for phrase in _KEEP_PLAYING):
+    needs_sentence_boundary = prefix_compact.endswith(_ECHO_PREFIX_STOP_NEGATORS) or any(
+        phrase in boundary_text and phrase not in prefix_compact for phrase in _KEEP_PLAYING
+    )
+    if needs_sentence_boundary and not sentence_boundary:
         return None
     if not punctuated:
         if tail_compact in _UNPUNCTUATED_SOFT_STOPS:
             return None
         if prefix_compact.endswith(_UNPUNCTUATED_DEGREE_PREFIXES):
+            return None
+        if prefix_compact.endswith(_CONTENT_INQUIRY_MARKERS) or prefix_compact.endswith(
+            _SAME_CLAUSE_EXTRA_INQUIRY_SUFFIXES
+        ):
             return None
         glued = prefix_compact[-1:] + tail_compact
         if any(glued in spoken for _, spoken, _ in spoken_windows):
@@ -432,7 +466,11 @@ def extract_playback_stop_after_echo(text: str, playback_text: str) -> str | Non
         )
         if not ends:
             continue
-        if _tail_continues_spoken_echo(tail_compact, spoken, ends):
+        if needs_sentence_boundary and not any(end in clause_ends for end in ends):
+            continue
+        if _tail_continues_spoken_echo(
+            tail_compact, spoken, ends, clause_ends, punctuated=punctuated
+        ):
             return None
         if _single_char_tail_replaces_spoken_char(
             tail_compact, ends, clause_ends, punctuated=punctuated

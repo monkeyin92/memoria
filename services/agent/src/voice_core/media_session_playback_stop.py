@@ -220,7 +220,9 @@ class MediaPlaybackStopMixin:
 
     @staticmethod
     def _resolve_stop_text(context: _MediaVoiceSession, text: str) -> str | None:
-        return resolve_playback_stop_text(text, playback_text=context.output.assistant_text)
+        return resolve_playback_stop_text(
+            text, playback_text=str(getattr(context.output, "assistant_text", ""))
+        )
 
     @staticmethod
     def _playback_echo_for_guard(
@@ -1154,10 +1156,8 @@ class MediaPlaybackStopMixin:
             "text_len=%s source=%s replaced_empty_endpoint=%s %s",
             context.identity.session_id,
             start,
-            endpoint,
-            len(text),
-            source,
-            replaced_endpoint, diagnosis,
+            endpoint, len(text),
+            source, replaced_endpoint, diagnosis,
         )
         self._schedule_turn_commit(context)
 

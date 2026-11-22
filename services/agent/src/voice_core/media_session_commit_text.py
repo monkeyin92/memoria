@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from services.agent.src.clock_fact_queries import is_clock_fact_query
@@ -117,11 +118,12 @@ def _resolve_media_turn_text(
         # never overwritten by the older pinned stop string, while punctuation-only
         # revisions (e.g. 「……安静」 -> 「……安静。」) still commit as a stop.
         resolved_stop = resolve_playback_stop_text(
-            text, playback_text=context.output.assistant_text
+            text, playback_text=str(getattr(context.output, "assistant_text", ""))
         )
         if resolved_stop is not None:
             context.pending.playback_stop_from_echo_strip = resolved_stop != text.strip()
             return resolved_stop
+        context.pending.playback_stop_from_echo_strip = False
     if not preferred_clock:
         return text
     if not text or not is_clock_fact_query(text):
@@ -129,6 +131,28 @@ def _resolve_media_turn_text(
     if text.strip() != preferred_clock:
         return preferred_clock
     return text
+
+
+def _resolve_commit_playback_guard(
+    context: _MediaVoiceSession,
+    text: str,
+    *,
+    elapsed_ms: int,
+    was_assistant_speaking: bool,
+    stop_is_echo: Callable[[_MediaVoiceSession, str], bool],
+) -> str | None:
+    """Evaluate playback echo guards while honoring validated echo-stripped stops."""
+
+    guarded_reason = context.runtime.playback_guarded_reason(text, duration_ms=elapsed_ms)
+    if not was_assistant_speaking:
+        return guarded_reason
+    if guarded_reason == "assistant_echo" and getattr(
+        context.pending, "playback_stop_from_echo_strip", False
+    ):
+        return None
+    if guarded_reason is None and stop_is_echo(context, text):
+        return "assistant_echo"
+    return guarded_reason
 
 
 def _log_empty_media_turn(
