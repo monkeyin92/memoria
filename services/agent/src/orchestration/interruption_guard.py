@@ -561,17 +561,13 @@ def _match_stop(
     return max(hits, key=lambda hit: hit.end - hit.start, default=None)
 
 
-def _is_terminal_embedded_hard_stop(normalized: str) -> bool:
-    """True when a short utterance ends in an addressed hard stop command."""
-
-    stripped = _strip_leading_interrupt_fillers(normalized)
-    hit = _match_stop(normalized, exclude_soft=True)
-    return hit is not None and hit.start > 0 and hit.end == len(stripped)
-
-
 def is_embedded_short_stop(text: str) -> bool:
     normalized = _strip_trailing_control_particles(_normalize_stop_text(text))
-    return _is_terminal_embedded_hard_stop(normalized)
+    commands, remainder = _peel_commands(normalized)
+    if not commands or _strip_trailing_control_particles(remainder):
+        return False
+    hit = _match_stop(normalized, exclude_soft=True)
+    return hit is not None and hit.start > 0
 
 
 def _strip_stop_spans(normalized: str) -> str:
@@ -632,16 +628,57 @@ def _leading_command(text: str) -> tuple[_StopLexeme | str, int] | None:
     return None if prefix is None else (prefix, len(prefix))
 
 
+_STOP_ADDRESS_PREFIXES = ("请你", "我想", "我要", "你", "请")
+
+
+def _leading_stop_command(text: str) -> tuple[_StopLexeme | str, int] | None:
+    span = _stop_span_at(text, 0)
+    if span is not None:
+        return span
+    run_end = _leading_stop_run(text)
+    if run_end is not None:
+        return text[:run_end], run_end
+    return None
+
+
+def _peel_addressed_command(candidate: str) -> tuple[_StopLexeme | str, str] | None:
+    """Peel a vocative/polite/intent lead-in before a stop lexeme.
+
+    Only stop lexemes (not general ``INTERRUPT_PREFIXES`` like 「不是」「不对」)
+    qualify, and a standalone addressed soft stop (「你好了吗」「我想好了」)
+    stays chat unless another command follows it (「你，好啦，闭嘴」).
+    """
+
+    for address in _STOP_ADDRESS_PREFIXES:
+        if not candidate.startswith(address):
+            continue
+        after_address = _strip_leading_interrupt_fillers(candidate[len(address) :])
+        addressed = _leading_stop_command(after_address)
+        if addressed is None:
+            continue
+        command, end = addressed
+        rest = after_address[end:]
+        if isinstance(command, _PrefixStop) and _is_soft_stop(command) and not rest:
+            continue
+        return command, rest
+    return None
+
+
 def _peel_commands(normalized: str) -> tuple[list[_StopLexeme | str], str]:
     commands: list[_StopLexeme | str] = []
     remainder = normalized
     while True:
         candidate = _strip_leading_interrupt_fillers(remainder)
         command = _leading_command(candidate)
-        if command is None:
+        if command is not None:
+            commands.append(command[0])
+            remainder = candidate[command[1] :]
+            continue
+        addressed = _peel_addressed_command(candidate)
+        if addressed is None:
             return commands, remainder
-        commands.append(command[0])
-        remainder = candidate[command[1] :]
+        commands.append(addressed[0])
+        remainder = addressed[1]
 
 
 def interrupt_ack_phrase(text: str) -> str | None:
@@ -723,10 +760,7 @@ def is_interrupt_command_only(text: str) -> bool:
     # before peeling (「停下来」 is an exact stop, not a prefix).
     normalized = _strip_trailing_control_particles(_normalize_stop_text(text))
     commands, remainder = _peel_commands(normalized)
-    if not commands:
-        return _is_terminal_embedded_hard_stop(normalized)
-    tail = _strip_trailing_control_particles(remainder)
-    return not tail or _is_terminal_embedded_hard_stop(tail)
+    return bool(commands) and not _strip_trailing_control_particles(remainder)
 
 
 def is_stop_command_only(text: str) -> bool:
@@ -740,15 +774,9 @@ def is_stop_command_only(text: str) -> bool:
 
     normalized = _strip_trailing_control_particles(_normalize_stop_text(text))
     commands, remainder = _peel_commands(normalized)
-    if not commands:
-        # 「你别说了」: an address before the stop, with nothing after it.
-        return _is_terminal_embedded_hard_stop(normalized)
-    tail = _strip_trailing_control_particles(remainder)
+    if not commands or _strip_trailing_control_particles(remainder):
+        return False
     strong = False
-    if tail:
-        if not _is_terminal_embedded_hard_stop(tail):
-            return False
-        strong = True
     for command in commands:
         if isinstance(command, _PrefixStop) and command.phrase in _SOFT_STOP_PHRASES:
             continue
