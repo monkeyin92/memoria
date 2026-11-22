@@ -99,6 +99,9 @@ class PendingTurn:
     # to keep the stop a control turn and to release it from the fixed-safety
     # hold; a text-based peel alone must not decide after the reply was muted.
     playback_stop_text: str | None = None
+    # True when ``playback_stop_text`` was stripped behind an echo prefix whose
+    # continuation check already cleared it against the assistant line.
+    playback_stop_from_echo_strip: bool = False
     # The utterance that ended the conversation explicitly; the media session
     # speaks the product farewell before standby when it is a farewell.
     conversation_close_text: str | None = None
@@ -221,6 +224,7 @@ class PendingTurn:
         self.pending_turn_onset_floor = None
         self.playback_followup_endpoint_sample = None
         self.playback_stop_text = None
+        self.playback_stop_from_echo_strip = False
         self.conversation_close_text = None
         self.content_barge_in = False
         self.followup_pin_monotonic = None

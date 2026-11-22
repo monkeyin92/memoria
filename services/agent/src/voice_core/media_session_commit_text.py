@@ -12,6 +12,7 @@ import time
 from typing import TYPE_CHECKING
 
 from services.agent.src.clock_fact_queries import is_clock_fact_query
+from services.agent.src.voice_core.playback_text import resolve_playback_stop_text
 
 if TYPE_CHECKING:
     from services.agent.src.voice_core.media_session_state import (
@@ -106,6 +107,21 @@ def _resolve_media_turn_text(
             return preferred_live
         if not text or len(preferred_live.strip()) > len(text.strip()):
             return preferred_live
+    if (
+        text
+        and context.identity.client_type == "device"
+        and context.pending.playback_stop_text
+    ):
+        # Re-validate against the current projected text so a newer ASR revision
+        # on the same range (e.g. 「停一下」 -> 「停一下我想问明天的天气」) is
+        # never overwritten by the older pinned stop string, while punctuation-only
+        # revisions (e.g. 「……安静」 -> 「……安静。」) still commit as a stop.
+        resolved_stop = resolve_playback_stop_text(
+            text, playback_text=context.output.assistant_text
+        )
+        if resolved_stop is not None:
+            context.pending.playback_stop_from_echo_strip = resolved_stop != text.strip()
+            return resolved_stop
     if not preferred_clock:
         return text
     if not text or not is_clock_fact_query(text):

@@ -11,11 +11,13 @@ import logging
 import os
 from difflib import SequenceMatcher
 
+from services.agent.src.conversation_close_router import lexical_playback_control_only
 from services.agent.src.orchestration.interruption_guard import (
     count_cjk_chars,
     is_conversation_close_only,
 )
 from services.agent.src.voice_core.semantic_completeness import is_semantically_complete
+from services.common.fixed_safety_scripts import spoken_prefix_for_display
 
 # UtteranceRouter rule 4 (pure stop / completion acknowledgement) reports this
 # reason when ``accept_user_turn`` suppresses the control turn.
@@ -79,6 +81,29 @@ _FUZZY_ECHO_COVERAGE = 0.85
 _SPEECH_MARKUP = str.maketrans("", "", "，。！？、,.!?;；:：…~～\"'“”‘’（）() \t\r\n　")
 # A request to keep talking is the opposite of a barge-in; 「不要停」 must never stop the reply.
 _KEEP_PLAYING = ("不要停", "别停", "不用停", "继续", "接着讲", "接着说")
+# Window of recent assistant speech checked when separating a leaked playback
+# echo prefix from a trailing stop command (covers ~5.5 s ASR playback segments
+# plus buffered TTS audio).
+_PLAYBACK_ECHO_PREFIX_WINDOW_CHARS = 200
+_ECHO_PREFIX_FUZZY_COVERAGE = 0.70
+_ECHO_PREFIX_STOP_NEGATORS = ("不想", "不能", "不会", "不用", "没有", "不要", "别", "不", "没")
+_ECHO_TYPO_FORBIDDEN_CHARS = frozenset("不没别莫非无未否哪谁什怎几吗呢要")
+_ECHO_PREFIX_TRAILING_FORBIDDEN_CHARS = _ECHO_TYPO_FORBIDDEN_CHARS | frozenset("想会能敢该")
+_UNPUNCTUATED_DEGREE_PREFIXES = (
+    "太",
+    "很",
+    "真",
+    "非常",
+    "特别",
+    "挺",
+    "好",
+    "更",
+    "最",
+    "这么",
+    "那么",
+)
+_UNPUNCTUATED_SOFT_STOPS = frozenset({"好了", "好啦"})
+_CLAUSE_BOUNDARY_CHARS = frozenset("，。！？、,.!?;；:：…~～\"'“”‘’（）() \t\r\n　")
 
 
 def _strip_edge_backchannels(text: str) -> str:
@@ -119,20 +144,313 @@ def playback_text_is_echo(text: str, playback_text: str) -> bool:
         return False
     if heard in spoken:
         return True
-    if len(heard) < 10 or len(spoken) < 10:
+    if len(heard) < 8 or len(spoken) < 8:
         return False
     # A near-copy question is still the owner's turn: 「公园吗」 versus the
     # played 「公园吧」 shares almost the whole candidate, but treating that
     # coverage as echo would suppress a real question.
     if _candidate_has_question_signal(text):
         return False
-    match = SequenceMatcher(None, heard, spoken).find_longest_match(
-        0,
-        len(heard),
-        0,
-        len(spoken),
+    matcher = SequenceMatcher(None, heard, spoken, autojunk=False)
+    if len(heard) >= 10 and len(spoken) >= 10:
+        match = matcher.find_longest_match(0, len(heard), 0, len(spoken))
+        if match.size / len(heard) >= _FUZZY_ECHO_COVERAGE:
+            return True
+    # Tolerate a single homophone substitution inside an 8+ char echo (e.g.
+    # 「小土子轻轻地说安静」 vs 「小兔子轻轻地说安静地听一会儿」) when both edges
+    # anchor inside one tight span. Reject pure insertions (e.g. user inserting
+    # 「不」 into 「这只小熊喜欢吃蜂蜜」) and any unaligned negation/inquiry char.
+    blocks = [block for block in matcher.get_matching_blocks() if block.size > 0]
+    max_span = len(heard) + 2
+    for start_idx, first in enumerate(blocks):
+        if first.a > 1 or first.a > first.b:
+            continue
+        span_blocks = [first]
+        covered = first.size
+        max_block = first.size
+        valid_gaps = True
+        for block in blocks[start_idx + 1 :]:
+            if (block.b + block.size) - first.b > max_span:
+                break
+            prev = span_blocks[-1]
+            gap_a = block.a - (prev.a + prev.size)
+            gap_b = block.b - (prev.b + prev.size)
+            if gap_a > gap_b:
+                valid_gaps = False
+                break
+            span_blocks.append(block)
+            covered += block.size
+            if block.size > max_block:
+                max_block = block.size
+        if not valid_gaps:
+            continue
+        last = span_blocks[-1]
+        trailing_gap = len(heard) - (last.a + last.size)
+        if (
+            max_block < 4
+            or trailing_gap > 1
+            or last.b + last.size + trailing_gap > len(spoken)
+            or covered / len(heard) < _FUZZY_ECHO_COVERAGE
+        ):
+            continue
+        unaligned_parts = [heard[: first.a], heard[last.a + last.size :]]
+        for prev, cur in zip(span_blocks, span_blocks[1:], strict=False):
+            unaligned_parts.append(heard[prev.a + prev.size : cur.a])
+        unaligned = "".join(unaligned_parts)
+        if any(char in _ECHO_TYPO_FORBIDDEN_CHARS for char in unaligned):
+            continue
+        return True
+    return False
+
+
+def playback_stop_is_echo_for_line(text: str, current_line: str) -> bool:
+    """True when a standalone lexical stop matches the line currently playing."""
+
+    if not lexical_playback_control_only(text):
+        return False
+    compact = _compact(text)
+    line = _compact(current_line)
+    if not compact or not line:
+        return False
+    return compact in line or ("停" in compact and "停" in line)
+
+
+def _compact_with_clause_ends(raw_window: str) -> tuple[str, set[int]]:
+    """Compact ``raw_window`` and record compact offsets that end a spoken clause."""
+
+    chars: list[str] = []
+    clause_ends: set[int] = set()
+    for char in raw_window:
+        if char.isalnum():
+            chars.append(char)
+        elif char in _CLAUSE_BOUNDARY_CHARS and chars:
+            clause_ends.add(len(chars))
+    if chars:
+        clause_ends.add(len(chars))
+    return "".join(chars), clause_ends
+
+
+def _match_playback_echo_prefix_ends(
+    prefix_compact: str,
+    spoken: str,
+    *,
+    allow_trailing_typo: bool,
+) -> list[int]:
+    """Return end offsets in ``spoken`` where ``prefix_compact`` aligns as echo.
+
+    Short prefixes (3–5 chars) require a verbatim match with no inquiry cue.
+    Longer prefixes (>= 6 chars) also accept local-window fuzzy overlap (to
+    tolerate internal ASR numeral/homophone variance such as 「12」 vs 「十二」)
+    only when the match anchors to both edges (requiring exact alignment at the
+    tail when no punctuation separates prefix and stop word, so modal words like
+    「要」 in 「森林里的小动物要安静」 are never swallowed) and introduces no
+    inquiry or negation cue absent from ``spoken``.
+    """
+
+    if len(prefix_compact) < 3 or not spoken:
+        return []
+    if len(prefix_compact) < 6:
+        if any(marker in prefix_compact for marker in _CONTENT_INQUIRY_MARKERS):
+            return []
+        ends: list[int] = []
+        pos = spoken.find(prefix_compact)
+        while pos != -1:
+            ends.append(pos + len(prefix_compact))
+            pos = spoken.find(prefix_compact, pos + 1)
+        return ends
+    if any(
+        marker in prefix_compact and marker not in spoken
+        for marker in _CONTENT_INQUIRY_MARKERS
+    ):
+        return []
+    exact_ends: list[int] = []
+    pos = spoken.find(prefix_compact)
+    while pos != -1:
+        exact_ends.append(pos + len(prefix_compact))
+        pos = spoken.find(prefix_compact, pos + 1)
+    if exact_ends:
+        return exact_ends
+    blocks = [
+        block
+        for block in SequenceMatcher(
+            None, prefix_compact, spoken, autojunk=False
+        ).get_matching_blocks()
+        if block.size > 0
+    ]
+    if not blocks:
+        return []
+    max_span = int(len(prefix_compact) * 1.6) + 4
+    fuzzy_ends: list[int] = []
+    for start_idx, first in enumerate(blocks):
+        if first.a > 1 or first.a > first.b:
+            continue
+        if first.a == 1 and prefix_compact[0] in _ECHO_TYPO_FORBIDDEN_CHARS:
+            continue
+        span_blocks = [first]
+        covered = first.size
+        max_block = first.size
+        valid_gaps = True
+        for block in blocks[start_idx + 1 :]:
+            if (block.b + block.size) - first.b > max_span:
+                break
+            prev = span_blocks[-1]
+            unaligned_a = prefix_compact[prev.a + prev.size : block.a]
+            unaligned_b = spoken[prev.b + prev.size : block.b]
+            if any(
+                char in _ECHO_TYPO_FORBIDDEN_CHARS and char not in unaligned_b
+                for char in unaligned_a
+            ):
+                valid_gaps = False
+                break
+            span_blocks.append(block)
+            covered += block.size
+            if block.size > max_block:
+                max_block = block.size
+        if not valid_gaps:
+            continue
+        last = span_blocks[-1]
+        trailing_gap = len(prefix_compact) - (last.a + last.size)
+        if trailing_gap > (1 if allow_trailing_typo else 0):
+            continue
+        if trailing_gap == 1 and (
+            last.b + last.size + 1 > len(spoken)
+            or prefix_compact[-1] in _ECHO_PREFIX_TRAILING_FORBIDDEN_CHARS
+        ):
+            continue
+        if max_block >= 3 and covered / len(prefix_compact) >= _ECHO_PREFIX_FUZZY_COVERAGE:
+            fuzzy_ends.append(last.b + last.size + trailing_gap)
+    return fuzzy_ends
+
+
+def _tail_continues_spoken_echo(tail_compact: str, spoken: str, prefix_ends: list[int]) -> bool:
+    """True when ``tail_compact`` itself continues the assistant text after the prefix."""
+
+    for end in prefix_ends:
+        window = spoken[max(0, end - 1) : end + len(tail_compact) + 4]
+        if tail_compact in window:
+            return True
+    return False
+
+
+def _single_char_tail_replaces_spoken_char(
+    tail_compact: str,
+    prefix_ends: list[int],
+    clause_ends: set[int],
+    *,
+    punctuated: bool,
+) -> bool:
+    """True when a 1-char stop like 「停」 likely replaces a mid-clause homophone (e.g. 凉亭→凉停)."""
+
+    if len(tail_compact) != 1:
+        return False
+    for end in prefix_ends:
+        if end not in clause_ends and (not punctuated or (end + 1) in clause_ends):
+            return True
+    return False
+
+
+def _longest_trailing_lexical_stop(raw: str) -> tuple[int, str, str] | None:
+    """Return ``(idx, tail, tail_compact)`` for the longest trailing control phrase."""
+
+    for idx in range(1, len(raw)):
+        if raw[idx] in _CLAUSE_BOUNDARY_CHARS:
+            continue
+        tail = raw[idx:].strip()
+        tail_compact = _compact(tail)
+        if tail_compact and len(tail_compact) <= 6 and lexical_playback_control_only(tail):
+            return idx, tail, tail_compact
+    return None
+
+
+def extract_playback_stop_after_echo(text: str, playback_text: str) -> str | None:
+    """Recover a trailing stop command glued behind leaked playback echo.
+
+    Full-duplex AEC (build 39 ``AEC_MODE_FD_HIGH_PERF``) preserves double-talk
+    onsets but can occasionally concatenate a few seconds of assistant echo
+    ahead of the owner's stop word in one ASR final (e.g.
+    「霸王龙大概12米长。停一下。」).  When the whole utterance is not verbatim
+    echo, the user-side tail carries no question or keep-playing signal, the
+    longest trailing control phrase is not negated or a continuation/homophone
+    replacement of ``playback_text``, and the prefix aligns as echo up to the
+    command boundary, return the trailing lexical stop.
+    """
+
+    raw = text.strip()
+    if not raw or not playback_text or lexical_playback_control_only(raw):
+        return None
+    recent_raw = playback_text[-_PLAYBACK_ECHO_PREFIX_WINDOW_CHARS:]
+    script_spoken = spoken_prefix_for_display(playback_text.strip())
+    raw_windows = (
+        (recent_raw, script_spoken[-_PLAYBACK_ECHO_PREFIX_WINDOW_CHARS:])
+        if script_spoken
+        else (recent_raw,)
     )
-    return match.size / len(heard) >= _FUZZY_ECHO_COVERAGE
+    spoken_windows = [
+        (window, spoken, clause_ends)
+        for window in raw_windows
+        for spoken, clause_ends in (_compact_with_clause_ends(window),)
+        if spoken
+    ]
+    if not spoken_windows:
+        return None
+    raw_compact = _compact(raw)
+    if any(raw_compact in spoken for _, spoken, _ in spoken_windows):
+        return None
+    # Pick the longest trailing control phrase once; if its context rejects it
+    # (e.g. 「不想暂停」「不能先安静」), never chop into a shorter sub-suffix.
+    candidate = _longest_trailing_lexical_stop(raw)
+    if candidate is None:
+        return None
+    idx, tail, tail_compact = candidate
+    if _candidate_has_question_signal(tail) or any(phrase in tail for phrase in _KEEP_PLAYING):
+        return None
+    prefix_raw = raw[:idx]
+    punctuated = bool(prefix_raw) and prefix_raw[-1] in _CLAUSE_BOUNDARY_CHARS
+    prefix_compact = _compact(prefix_raw)
+    if len(prefix_compact) < 3 or prefix_compact.endswith(_ECHO_PREFIX_STOP_NEGATORS):
+        return None
+    boundary_text = prefix_compact[-3:] + tail_compact
+    if any(phrase in boundary_text and phrase not in prefix_compact for phrase in _KEEP_PLAYING):
+        return None
+    if not punctuated:
+        if tail_compact in _UNPUNCTUATED_SOFT_STOPS:
+            return None
+        if prefix_compact.endswith(_UNPUNCTUATED_DEGREE_PREFIXES):
+            return None
+        glued = prefix_compact[-1:] + tail_compact
+        if any(glued in spoken for _, spoken, _ in spoken_windows):
+            return None
+    prefix_has_qmark = any(punctuation in prefix_raw for punctuation in "？?")
+    matched_any = False
+    for raw_window, spoken, clause_ends in spoken_windows:
+        if prefix_has_qmark and not any(punctuation in raw_window for punctuation in "？?"):
+            continue
+        if any(phrase in prefix_compact and phrase not in spoken for phrase in _KEEP_PLAYING):
+            continue
+        ends = _match_playback_echo_prefix_ends(
+            prefix_compact, spoken, allow_trailing_typo=punctuated
+        )
+        if not ends:
+            continue
+        if _tail_continues_spoken_echo(tail_compact, spoken, ends):
+            return None
+        if _single_char_tail_replaces_spoken_char(
+            tail_compact, ends, clause_ends, punctuated=punctuated
+        ):
+            return None
+        matched_any = True
+    return tail if matched_any else None
+
+
+def resolve_playback_stop_text(text: str, *, playback_text: str) -> str | None:
+    """Return the pure lexical stop text directly or after stripping echo."""
+
+    cleaned = text.strip()
+    if not cleaned:
+        return None
+    if lexical_playback_control_only(cleaned):
+        return cleaned
+    return extract_playback_stop_after_echo(cleaned, playback_text)
 
 
 _CONTENT_INQUIRY_MARKERS = (
