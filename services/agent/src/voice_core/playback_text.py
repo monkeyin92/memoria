@@ -217,19 +217,25 @@ def playback_stop_is_echo_for_line(text: str, current_line: str) -> bool:
     return compact in line or ("停" in compact and "停" in line)
 
 
-def _compact_with_clause_ends(raw_window: str) -> tuple[str, set[int]]:
-    """Compact ``raw_window`` and record compact offsets that end a spoken clause."""
+def _compact_with_boundaries(raw_window: str) -> tuple[str, set[int], set[int]]:
+    """Compact ``raw_window`` and record compact offsets at clause and sentence boundaries."""
 
     chars: list[str] = []
     clause_ends: set[int] = set()
+    sentence_ends: set[int] = set()
     for char in raw_window:
         if char.isalnum():
             chars.append(char)
         elif char in _CLAUSE_BOUNDARY_CHARS and chars:
-            clause_ends.add(len(chars))
+            offset = len(chars)
+            clause_ends.add(offset)
+            if char in _SENTENCE_BOUNDARY_CHARS:
+                sentence_ends.add(offset)
     if chars:
-        clause_ends.add(len(chars))
-    return "".join(chars), clause_ends
+        offset = len(chars)
+        clause_ends.add(offset)
+        sentence_ends.add(offset)
+    return "".join(chars), clause_ends, sentence_ends
 
 
 def _match_playback_echo_prefix_ends(
@@ -410,15 +416,15 @@ def extract_playback_stop_after_echo(text: str, playback_text: str) -> str | Non
         else (recent_raw,)
     )
     spoken_windows = [
-        (window, spoken, clause_ends)
+        (window, spoken, clause_ends, sentence_ends)
         for window in raw_windows
-        for spoken, clause_ends in (_compact_with_clause_ends(window),)
+        for spoken, clause_ends, sentence_ends in (_compact_with_boundaries(window),)
         if spoken
     ]
     if not spoken_windows:
         return None
     raw_compact = _compact(raw)
-    if any(raw_compact in spoken for _, spoken, _ in spoken_windows):
+    if any(raw_compact in spoken for _, spoken, _, _ in spoken_windows):
         return None
     # Pick the longest trailing control phrase once; if its context rejects it
     # (e.g. 「不想暂停」「不能先安静」), never chop into a shorter sub-suffix.
@@ -452,11 +458,11 @@ def extract_playback_stop_after_echo(text: str, playback_text: str) -> str | Non
         ):
             return None
         glued = prefix_compact[-1:] + tail_compact
-        if any(glued in spoken for _, spoken, _ in spoken_windows):
+        if any(glued in spoken for _, spoken, _, _ in spoken_windows):
             return None
     prefix_has_qmark = any(punctuation in prefix_raw for punctuation in "？?")
     matched_any = False
-    for raw_window, spoken, clause_ends in spoken_windows:
+    for raw_window, spoken, clause_ends, sentence_ends in spoken_windows:
         if prefix_has_qmark and not any(punctuation in raw_window for punctuation in "？?"):
             continue
         if any(phrase in prefix_compact and phrase not in spoken for phrase in _KEEP_PLAYING):
@@ -466,7 +472,7 @@ def extract_playback_stop_after_echo(text: str, playback_text: str) -> str | Non
         )
         if not ends:
             continue
-        if needs_sentence_boundary and not any(end in clause_ends for end in ends):
+        if needs_sentence_boundary and not any(end in sentence_ends for end in ends):
             continue
         if _tail_continues_spoken_echo(
             tail_compact, spoken, ends, clause_ends, punctuated=punctuated

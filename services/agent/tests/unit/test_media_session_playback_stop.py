@@ -2103,6 +2103,12 @@ async def test_polite_closing_question_during_story_still_checks_close_classifie
             "小兔子摇摇头说不用停。",
             None,
         ),
+        # Negative: spoken comma after 「不用」 promoted to period by ASR before misheard 「听」->「停」
+        (
+            "小兔子摆摆手说不用。停！",
+            "小兔子摆摆手说不用，听！那是什么声音？",
+            None,
+        ),
         # Negative: genuine user question or novel inquiry ending with stop word
         (
             "霸王龙大概十二米长为什么这么安静？",
@@ -2558,4 +2564,21 @@ async def test_echoed_sentence_ending_in_buyong_does_not_block_separate_stop_sen
         _device_identity("echoed-buyong-separate-stop"),
         script,
         opening="小兔子摇摇头说不用。它接着往前走。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_spoken_comma_after_buyong_promoted_to_period_does_not_stop_on_misheard_ting() -> None:
+    """ASR promoting 「不用，听！」 into 「不用。停！」 must remain echo, never stop playback."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text="小兔子摆摆手说不用。停！")
+        await harness.assert_story_still_playing(story)
+        assert harness.story.reply_calls == 1
+
+    await _run_story(
+        _device_identity("comma-promoted-buyong-misheard-ting"),
+        script,
+        opening="小兔子摆摆手说不用，听！那是什么声音？",
     )
