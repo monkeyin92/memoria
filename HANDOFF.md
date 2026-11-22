@@ -14,6 +14,27 @@
 - **生产主机（2026-10-05 起）**：整套服务 01:33–01:40（CST）从旧机 122.51.108.140 迁到 110.42.235.198（原 pocketSparks 生产机，与 hr-tracker、MySQL 等共用，40 GB 盘、3.7 GiB 内存）；ssh 别名 `memoria-prod` 指新机，旧机别名 `memoria-prod-old`（旧机 10-06 到期，到期后别名和 known_hosts 条目可删）。Control API 绑 `127.0.0.1:18791`（hr-tracker 占 8791），由 `MEMORIA_CONTROL_API_PORT` 参数化。对外域名是 `aginice.cn`（你 10-05 说「域名换成aginice.cn这个域名，之前那个不用了」；证书到 2027-01-02，**2026-12-19 前换证**；`aigcnice.com` 仍解析到旧机，旧机到期后失效，已定不做桥、不动 DNS）。客户端当时已切完（之后的版本见下面「设备固件」「小程序体验版」两条）：小程序体验版 `0.2.20261005.3`，固件 build 24，机器人只连 `aginice.cn:8443`。详见「2026-10-05 服务迁移到 110.42.235.198」「2026-10-05 域名切换到 aginice.cn」两节。
 - **产品定位（2026-10-04 起）**：聚焦儿童青少年（陪伴、关怀、教学导师）；老年人与年轻人方向先删去，不进工程队列、验收与对外叙事（README「产品定位」已改写）；代码里已有的长辈、成人服务模式暂留、不再投入，是否清理另行决定；更早各节里的老年相关记录是当时的历史收据，不改。
 
+## 2026-11-22 Agent `20261122-r02-gap-bargein-hotwords-v1` 切流、固件 `build 38` 单设备 OTA 与 R02 `c + d + a` 真机复测
+
+- **线上 bridge 切流**（仅 `voice-core-media-bridge`，`control-api` / `media-edge` 未动）：
+  - 基于生产快速通道谱系 `9fc0f8c8` 移植 PR #614（`asr_failover` gap 切片安全修复 + `content_barge_in` 跳过语义结束判定）与 PR #616（Volc ASR v3 `request.corpus.context` 内联 11 个停播/告别/唤醒热词 + 可选 `VOLC_ASR_FORCE_TO_SPEECH_MS`），提交 `d88fd19d`、tag `20261122-r02-gap-bargein-hotwords-v1`。
+  - 本机门禁全过（`ruff`、`module-budget` 33/33、`mypy --strict` 214 files、全量 agent/deploy pytest 4,000+ passed）；经 `scripts/deploy_agent_component.sh --cutover`（`--allow-scope-drift` 仅放行既有 `infra/voices/fixed_safety/`）切流 `PASS`，线上容器运行 `memoria-agent:20261122-r02-gap-bargein-hotwords-v1`（`sha256:e7a921a5d59f...`，`healthy`，`restarts=0`），回滚锚点 `memoria-agent:rollback-20261122-r02-gap-bargein-hotwords-v1-pre`。容器内实测 `VolcASRConfig.from_env()` 已加载 11 个默认内联热词、`force_to_speech_ms=None`、`end_window_ms=550`。
+- **固件 `build 38` 单设备 OTA**（PR #615 自适应 VAD 噪底 `VadNoiseFloor`，`MEMORIA_FIRMWARE_BUILD=38`，`2.4.2+m38`，`ELF b2caeaeb2`，`3,405,776 B`，`sha256 423bffa298f3c03f5dd06c1ab1a8a13d9d9c2044ac7e4190175af1c43d180f48`）：
+  - 仅上传单设备指针 `devices/dev_atk_a4cb8fd6095c.json`，全局 `current.json` 保持 `build 21` 未动。
+  - 真机 OTA 收据 `outputs/acceptance/ota-build38-20261122-0534/ota-serial.log`：47 s 下载 100%、Ed25519 验签写入 `ota_0` 并软重启，确认 **`Firmware build 38 confirmed`** 进入 `idle`（`ota_1` 保留 `build 37`）。
+- **R02 `c + d` 真机复测**（`outputs/acceptance/r02-cd-build38-20261122-0548/`，音量 30）：
+  - **Suite `d`（危机不可打断）：`PASS`（5/5 全过）** — 相对 `build 37`（4/5，`t005-crisis-05` `no_reply`）已恢复；5/5 均在播音中命中单字「停。」但正确拦下继续播完，0 误停播，5/5 播后安静。
+  - **Suite `c`（内容抢答）：两项延迟大幅达标，次数 8/10（门禁 >= 9）**：
+    - 停播延迟 P90：`3.56 s` → **`0.62 s`**（门禁 `<= 1.0 s`，**PASS**）；新问题首字延迟 P90：`5.38 s` → **`1.63 s`**（门禁 `<= 2.0 s`，**PASS**）；所有内容抢答回合 `bridge-c.log` 均录得 **`close_ms=0`**。
+    - 未停播的 `t008`/`t009` 属测试窗口偏短（上轮回复在 5.8 s 抢答词开始播时仅剩 `3.11 s` / `4.41 s`，在问句说完前原回复已自然 `playback_completed`）；`t004` 在句首「等一下，」（1.92 s）即触发 `media_voice_stop` 提前停播。
+- **R02 `a`（停播词 8 × 10 = 80 轮）真机复测**（`outputs/acceptance/r02-a-build38-20261122-0705/`，音量 30；此前 `0603` 轮次撞上设备免打扰时段 `quiet hours -> 06:00-07:00` 已作废归档）：
+  - **整体稳定性与时延大涨**：**80/80 全部回复（`no_reply=0`）**、0 `ERROR`/Traceback、**0 `reply_resumed`**、**0 `unverified`**（对比 `11-17` 基线 5 次 `reply_resumed`、1 次 `unverified`、1 次丢轮）；40/40 命中停播全部干净静音；**所有 7 个命中词的 P90 全部 `<= 0.8 s` 达标**（`停。` `1.27 s -> 0.13 s`、`别说了。` `1.64 s -> 0.16 s`、`不要说了。` `1.10 s -> 0.26 s`、`好了好了。` `0.78 s`、`够了。` `0.20 s`、`安静。` `0.61 s -> 0.03 s`、`等一下。` `0.40 s -> 0.18 s`）。
+  - **召回仍未过门禁（40/80 = 50.0%，`Suite a: FAIL`）与精准根因**：
+    - 逐词命中：`停。` 7/10、`停一下。` 0/10、`别说了。` 6/10、`不要说了。` 6/10、`好了好了。` 7/10、`够了。` 2/10、`安静。` 5/10、`等一下。` 7/10。
+    - `bridge-a.log` 实证：**`停一下。` 10/10 全部被 Volc 识别出但吞掉首字「停」，全部落成 `asr_text=3:一下。`**（`reason=not_stop_word`）；另 1 次 `好了好了。` 落成 `啦好啦。`、1 次落成 `好。`；其余 28 次为双讲叠音下 Volc 未产出 final（以 0.74 s 短词 `够了。` 8/10 漏召回最突出）。
+- **`build 38` 自适应噪底核验**：`c + d + a` 累计 2,333 条 `vad.idle` 在安静房内 `ambient` `p50=0.0001 / p90=0.0003 / max=0.0008`，`floor` 100% 稳态锁定 `0.0030` 未漂移。
+- **未验证边界**：`build 38` 在高稳态背景噪声（`-40 dBFS`）下的自适应抬高实测、以及 R02 `b`（6 × 10 backchannel 防误打断）尚未在本组合上复测；测试板当前运行 `build 38 (slot=ota_0)`，`ota_1` 保留 `build 37`，全局 OTA `current.json` 仍为 `build 21`。
+
 ## 2026-11-21 产品固件 `build 37` 单设备 OTA、卡 5 soak 全绿 PASS 与 `vad.start handoff` 真机闭环验证
 
 - **单设备 OTA 发布与升级**（`MEMORIA_FIRMWARE_BUILD=37`，`2.4.2+m37`，`ELF 0de37a2dc`，`3,405,120 B`，`sha256 d6b3b3df3e3bcb4fbd9a4d4e1722429b3ad68180b0b02234c8a4e5e425cd32b6`，干净产品镜像不含 `--bench`/`--keep-awake`）：
