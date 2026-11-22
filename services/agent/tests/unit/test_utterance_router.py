@@ -21,7 +21,20 @@ from services.agent.src.orchestration.utterance_router import (
     ("text", "duration_ms", "intent", "backchannel"),
     [
         ("停一下", 200, UtteranceIntent.INTERRUPT_COMMAND, False),
+        ("好啦", 200, UtteranceIntent.INTERRUPT_COMMAND, False),
+        ("好啦好啦", 300, UtteranceIntent.INTERRUPT_COMMAND, False),
+        ("你，好啦，闭嘴", 400, UtteranceIntent.INTERRUPT_COMMAND, False),
+        ("好啦，你闭嘴", 400, UtteranceIntent.INTERRUPT_COMMAND, False),
+        ("好啦，你别说了", 400, UtteranceIntent.INTERRUPT_COMMAND, False),
+        ("你别说了，暂停", 400, UtteranceIntent.INTERRUPT_COMMAND, False),
+        ("麻烦别说了", 400, UtteranceIntent.INTERRUPT_COMMAND, False),
+        ("拜托安静", 400, UtteranceIntent.INTERRUPT_COMMAND, False),
+        ("等一下，怎么暂停？", 400, UtteranceIntent.INTERRUPT_THEN_CHAT, False),
+        ("别说了，怎么暂停？", 400, UtteranceIntent.INTERRUPT_THEN_CHAT, False),
+        ("好啦，我换个话题", 400, UtteranceIntent.INTERRUPT_THEN_CHAT, False),
         ("等一下我想问天气", 200, UtteranceIntent.INTERRUPT_THEN_CHAT, False),
+        ("太好啦！", 300, UtteranceIntent.CHAT, False),
+        ("太好了！", 300, UtteranceIntent.CHAT, False),
         ("嗯", 300, UtteranceIntent.CHAT, True),
         ("嗯", 1_200, UtteranceIntent.CHAT, False),
         ("天气", 300, UtteranceIntent.CHAT, False),
@@ -37,6 +50,9 @@ def test_playback_route_reuses_router_semantics(
 
     assert route.utterance.intent is intent
     assert route.backchannel is backchannel
+    if intent is UtteranceIntent.CHAT:
+        assert route.utterance.should_interrupt is False
+        assert route.utterance.speaker_gate_override is False
 
 _INTERRUPTION_CORPUS = json.loads(
     (

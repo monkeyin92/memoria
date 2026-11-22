@@ -190,7 +190,7 @@ async def test_connect_sends_configuration_before_any_audio(mode: bool | None) -
         first = parse_frame(conn.sent[0])
         assert first.message_type == FULL_CLIENT_REQUEST
         assert first.sequence == 1
-        assert first.payload["request"]["enable_nonstream"] is (mode is True)
+        assert first.payload["request"]["enable_nonstream"] is (mode is not False)
         assert first.payload["request"]["model_name"] == "bigmodel"
         assert first.payload["audio"]["rate"] == 16_000
     finally:
@@ -424,6 +424,7 @@ def test_config_hotwords_and_force_to_speech_env_overrides_and_opt_out(
         VolcASRConfig(
             app_id="app",
             access_token="token",
+            enable_nonstream=False,
             hotwords=tuple(f"热词{i}" for i in range(60)),
         )
     assert "exceed bidirectional streaming budget" in caplog.text
@@ -470,11 +471,93 @@ def test_header_matches_the_documented_layout() -> None:
     assert struct.unpack(">i", raw[4:8])[0] == 1
 
 
-def test_second_pass_defaults_off_with_explicit_opt_in() -> None:
-    assert VolcASRConfig(app_id="app", access_token="token").enable_nonstream is False
-    assert VolcASRConfig.from_env({}).enable_nonstream is False
+def test_second_pass_defaults_on_with_explicit_opt_out() -> None:
+    assert VolcASRConfig(app_id="app", access_token="token").enable_nonstream is True
+    assert VolcASRConfig.from_env({}).enable_nonstream is True
     assert VolcASRConfig.from_env({"VOLC_ASR_ENABLE_NONSTREAM": "true"}).enable_nonstream is True
     assert VolcASRConfig.from_env({"VOLC_ASR_ENABLE_NONSTREAM": "false"}).enable_nonstream is False
+    # Disabling hotwords without an explicit override keeps single-pass default
+    # so short "停" avoids no-hotword second-pass drift ("停" -> "行").
+    assert VolcASRConfig(app_id="app", access_token="token", hotwords=()).enable_nonstream is False
+    assert (
+        VolcASRConfig(
+            app_id="app", access_token="token", hotwords=(), enable_nonstream=True
+        ).enable_nonstream
+        is True
+    )
+    assert VolcASRConfig.from_env({"VOLC_ASR_HOTWORDS": "off"}).enable_nonstream is False
+    assert (
+        VolcASRConfig.from_env(
+            {
+                "VOLC_ASR_HOTWORDS": "off",
+                "VOLC_ASR_BOOSTING_TABLE_ID": "1eee65f3-d583-43ee-8d31-df64b7a36bf0",
+            }
+        ).enable_nonstream
+        is True
+    )
+    assert (
+        VolcASRConfig.from_env(
+            {"VOLC_ASR_HOTWORDS": "off", "VOLC_ASR_ENABLE_NONSTREAM": "true"}
+        ).enable_nonstream
+        is True
+    )
+    # Legacy /sauc/bigmodel does not support two-pass recognition.
+    legacy_direct = VolcASRConfig(
+        app_id="app",
+        access_token="token",
+        ws_url="wss://openspeech.bytedance.com/api/v3/sauc/bigmodel",
+    )
+    assert legacy_direct.enable_nonstream is False
+    legacy = VolcASRConfig.from_env(
+        {"VOLC_ASR_WS_URL": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"}
+    )
+    assert legacy.enable_nonstream is False
+    with pytest.raises(ValueError, match="bigmodel_async"):
+        VolcASRConfig(
+            app_id="app",
+            access_token="token",
+            ws_url="wss://openspeech.bytedance.com/api/v3/sauc/bigmodel",
+            enable_nonstream=True,
+        )
+    with pytest.raises(ValueError, match="bigmodel_async"):
+        VolcASRConfig.from_env(
+            {
+                "VOLC_ASR_WS_URL": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel",
+                "VOLC_ASR_ENABLE_NONSTREAM": "true",
+            }
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("env", "expected_nonstream"),
+    [
+        ({"VOLC_ASR_HOTWORDS": "off"}, False),
+        ({"VOLC_ASR_HOTWORDS": "off", "VOLC_ASR_ENABLE_NONSTREAM": "true"}, True),
+    ],
+)
+async def test_session_wire_nonstream_flag_follows_hotword_opt_out_and_override(
+    env: dict[str, str],
+    expected_nonstream: bool,
+) -> None:
+    conn = FakeVolcConnection()
+    cfg = VolcASRConfig.from_env(
+        {
+            "VOLC_ASR_APP_ID": "app",
+            "VOLC_ASR_ACCESS_TOKEN": "token",
+            "VOLC_ASR_RESOURCE_ID": "resource",
+            **env,
+        }
+    )
+    cfg.connector = _one_connection(conn)
+    session = VolcASRSession(cfg)
+    try:
+        await session.connect()
+        frame = parse_frame(conn.sent[0])
+        assert frame.payload["request"]["enable_nonstream"] is expected_nonstream
+        assert "corpus" not in frame.payload["request"]
+    finally:
+        await session.aclose()
 
 
 @pytest.mark.asyncio
