@@ -491,8 +491,11 @@ def test_resume_strips_a_stop_phrase_but_not_a_noun_that_starts_with_stop() -> N
     assert not is_resume_command_only("继续？")
     assert not is_resume_command_only("继续吗？好吗？")
     assert not is_resume_command_only("别继续好吗？")
+    assert not is_resume_command_only("别 继续好吗？")
     assert not is_resume_command_only("不要继续好吗？")
     assert not is_resume_command_only("不继续")
+    assert not is_resume_command_only("暂停一下，继续不继续")
+    assert not is_resume_command_only("继续，别继续，好吗？")
 
 
 @pytest.mark.parametrize(
@@ -590,6 +593,7 @@ def test_embedded_colloquial_stop_in_question_does_not_get_explicit_interrupt() 
         "谁别再讲了？",
         "不用讲了吗？",
         "不用讲了，吗？",
+        "不用再讲了吗我问一下",
         "不用讲了？",
         "你不要再说了？",
         "你不要再说了吗？",

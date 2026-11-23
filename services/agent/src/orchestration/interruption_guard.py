@@ -436,7 +436,9 @@ def _explicit_stop_blocked_as_question(text: str, hit: _StopHit) -> bool:
         after_ma = core_norm[hit_norm_end + 1 :]
         between_hit_and_ma = core_text[after_hit : core_positions[hit_norm_end]]
         if not any(ch in '“"\'‘「『' for ch in between_hit_and_ma) and (
-            not after_ma or _strip_non_question_trailing_particles(after_ma) == ""
+            not between_hit_and_ma.strip()
+            or not after_ma
+            or _strip_non_question_trailing_particles(after_ma) == ""
         ):
             return True
     clause_end = len(core_text)
@@ -1124,18 +1126,23 @@ def is_resume_command_only(text: str) -> bool:
     )
     if resume_start < 0:
         return False
-    if (
-        resume_start > 0
-        and core_positions[resume_start - 1] + 1 == core_positions[resume_start]
-        and core_norm[:resume_start].endswith(_STOP_NEGATORS)
-    ):
-        return False
+    if resume_start > 0 and core_norm[:resume_start].endswith(_STOP_NEGATORS):
+        gap = core_text[core_positions[resume_start - 1] + 1 : core_positions[resume_start]]
+        if not gap.strip():
+            return False
     if core_norm.endswith("吗") or _strip_non_question_trailing_particles(core_norm) is None:
         return False
     resume_tail = core_text[core_positions[resume_start] :]
     if "?" in resume_tail or "？" in resume_tail:
         return False
-    remainder = core_norm
+    remainder_norm = core_norm
+    if (
+        resume_start == 1
+        and core_norm[0] == "不"
+        and core_text[core_positions[0] + 1 : core_positions[1]].strip()
+    ):
+        remainder_norm = core_norm[1:]
+    remainder = remainder_norm
     for command in sorted(_RESUME_COMMANDS, key=len, reverse=True):
         remainder = remainder.replace(command, "")
     remainder = _strip_stop_spans(remainder)
@@ -1144,7 +1151,7 @@ def is_resume_command_only(text: str) -> bool:
     for filler in sorted(_CONTROL_ACK_FILLERS, key=len, reverse=True):
         remainder = remainder.replace(filler, "")
     rem = normalize_short(remainder)
-    if rem in {"吗", "呢"}:
+    if rem in {"吗", "呢", "不", "别", "没"}:
         return False
     return len(rem) <= 1
 
