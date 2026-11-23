@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-11-19T02:48:56+00:00",
+  "captured_at": "2026-11-23T04:36:36+00:00",
   "components": [
     {
       "compose_chain": "/opt/memoria/releases/20261029-plan-head-start-v1/docker-compose.production.yml,/opt/memoria/component-releases/20261118-bind-offer-only-v1/pre-cutover-control.override.yml,/opt/memoria/component-releases/20261118-bind-offer-only-v1/control-component.override.yml",
@@ -68,7 +68,7 @@
       }
     },
     {
-      "compose_chain": "/opt/memoria/releases/20261029-plan-head-start-v1/docker-compose.production.yml,/opt/memoria/component-releases/20261119-post-safety-repeat-v1/pre-cutover-live.override.yml,/opt/memoria/component-releases/20261119-post-safety-repeat-v1/agent-component.override.yml",
+      "compose_chain": "/opt/memoria/releases/20261029-plan-head-start-v1/docker-compose.production.yml,/opt/memoria/component-releases/20261123-r02-echo-bargein-v1/pre-cutover-live.override.yml,/opt/memoria/component-releases/20261123-r02-echo-bargein-v1/agent-component.override.yml",
       "container": "memoria-voice-core-media-bridge-1",
       "effective_flags": {
         "MEMORIA_RELEASE_COMMIT": "unknown",
@@ -79,16 +79,16 @@
         "TTS_PROVIDER": "doubao"
       },
       "health": "healthy",
-      "image_id": "sha256:c686c535cb8baef99d2a95932d4cb4d7e901a7f9ceb40a98f2216dcb7c8a6bf4",
+      "image_id": "sha256:63c7a4e568fb796c380e86c18a9dda9d0a52cb6f1ce65245a9f6689ce455dcc5",
       "image_id_complete": true,
-      "image_ref": "memoria-agent:20261119-post-safety-repeat-v1",
-      "override_path": "/opt/memoria/component-releases/20261119-post-safety-repeat-v1/agent-component.override.yml",
-      "override_sha256": "0361956f32789e6c36288783000045ca59021350db5ee8ba30d2b7402a7dc4e9",
+      "image_ref": "memoria-agent:20261123-r02-echo-bargein-v1",
+      "override_path": "/opt/memoria/component-releases/20261123-r02-echo-bargein-v1/agent-component.override.yml",
+      "override_sha256": "1fa1a815c0e8c2ac75abbd91588ad3aa7287028a0badc35262d4d773bbbc2760",
       "registry_digest": "unknown",
       "restarts": 0,
-      "revision_commit": "9fc0f8c8ce57a4ebdc8a9f5381faae9d5a168a93",
+      "revision_commit": "ee3a6c87da03e7efda6bf226addcfa6ae3c89638",
       "role": "voice-core-media-bridge",
-      "started_at": "2026-11-19T02:45:40.26835019Z",
+      "started_at": "2026-11-23T02:09:56.211527433Z",
       "status": {
         "code": "unknown",
         "enabled": "unknown",
@@ -190,7 +190,7 @@
       {
         "method": "agent-component.rollback.override.yml",
         "role": "voice-core-media-bridge",
-        "target": "memoria-agent:rollback-20261119-post-safety-repeat-v1-pre"
+        "target": "memoria-agent:rollback-20261123-r02-echo-bargein-v1-pre"
       },
       {
         "method": "release_ops.rollback",
