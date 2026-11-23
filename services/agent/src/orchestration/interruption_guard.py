@@ -158,19 +158,35 @@ _STOP_LEXICON: tuple[_StopLexeme, ...] = (
     _PrefixStop("我不想听了"),
     _PrefixStop("不要说了"),
     _PrefixStop("不要说啦"),
+    _PrefixStop("不要再说了"),
+    _PrefixStop("不要再说啦"),
     _PrefixStop("不用说了"),
+    _PrefixStop("不用说啦"),
     _PrefixStop("不用再说了"),
+    _PrefixStop("不用再说啦"),
     _PrefixStop("不要讲了"),
     _PrefixStop("不要讲啦"),
+    _PrefixStop("不要再讲了"),
+    _PrefixStop("不要再讲啦"),
+    _PrefixStop("不用讲了"),
+    _PrefixStop("不用讲啦"),
+    _PrefixStop("不用再讲了"),
+    _PrefixStop("不用再讲啦"),
     _PrefixStop("别说了"),
     _PrefixStop("别说啦"),
+    _PrefixStop("别再说了"),
+    _PrefixStop("别再说啦"),
     _PrefixStop("别讲了"),
     _PrefixStop("别讲啦"),
+    _PrefixStop("别再讲了"),
+    _PrefixStop("别再讲啦"),
     _PrefixStop("不讲了"),
     _PrefixStop("不听了"),
     _PrefixStop("停一下"),
+    _PrefixStop("停一停"),
     _PrefixStop("停下", glued_followers=("来",)),
     _ExactStop("停下来"),
+    _PrefixStop("暂停一下"),
     _PrefixStop("暂停"),
     _PrefixStop("安静"),
     _PrefixStop("闭嘴"),
@@ -377,7 +393,19 @@ def is_backchannel(text: str, *, duration_ms: int) -> bool:
     return t in BACKCHANNEL_WHITELIST
 
 
+_QUOTED_LEAD_RE = re.compile(r'^\s*(?:“[^”]+”|"[^"]+"|\'[^\']+\'|‘[^’]+’|「[^」]+」|『[^』]+』)')
+
+
+def _is_quoted_mention_with_content(text: str) -> bool:
+    match = _QUOTED_LEAD_RE.match(text)
+    if match is None:
+        return False
+    return bool(_compact_interrupt_text(text[match.end() :]))
+
+
 def is_explicit_interrupt(text: str) -> bool:
+    if _is_quoted_mention_with_content(text):
+        return False
     return (
         _match_stop(_normalize_stop_text(text), allow_embedded_soft=False) is not None
         or _interrupt_prefix(text) is not None
@@ -563,6 +591,12 @@ def _match_stop(
             )
         )
         is not None
+        if not (
+            start > 0
+            and isinstance(span[0], (_PrefixStop, _ExactStop))
+            and span[0].phrase in _NON_QUESTION_COLLOQUIAL_STOPS
+            and stripped[:start] not in _STOP_ADDRESS_PREFIXES
+        )
     ]
     return max(hits, key=lambda hit: hit.end - hit.start, default=None)
 
@@ -655,13 +689,15 @@ def _leading_stop_command(text: str) -> tuple[_StopLexeme | str, int] | None:
     span = _stop_span_at(text, 0)
     if span is not None:
         return span
+    if text.startswith("停下来"):
+        return _ExactStop("停下来"), len("停下来")
     run_end = _leading_stop_run(text)
     if run_end is not None:
         return text[:run_end], run_end
     return None
 
 
-def _peel_addressed_command(candidate: str) -> tuple[_StopLexeme | str, str] | None:
+def _peel_addressed_command(candidate: str) -> tuple[_StopLexeme | str, int, int, str] | None:
     """Peel a vocative/polite/intent lead-in before a stop lexeme.
 
     Only stop lexemes (not general ``INTERRUPT_PREFIXES`` like 「不是」「不对」)
@@ -672,7 +708,9 @@ def _peel_addressed_command(candidate: str) -> tuple[_StopLexeme | str, str] | N
     for address in _STOP_ADDRESS_PREFIXES:
         if not candidate.startswith(address):
             continue
-        after_address = _strip_leading_interrupt_fillers(candidate[len(address) :])
+        after_raw = candidate[len(address) :]
+        after_address = _strip_leading_interrupt_fillers(after_raw)
+        cmd_start = len(address) + (len(after_raw) - len(after_address))
         addressed = _leading_stop_command(after_address)
         if addressed is None:
             continue
@@ -680,32 +718,49 @@ def _peel_addressed_command(candidate: str) -> tuple[_StopLexeme | str, str] | N
         rest = after_address[end:]
         if isinstance(command, _PrefixStop) and _is_soft_stop(command) and not rest:
             continue
-        return command, rest
+        return command, cmd_start, cmd_start + end, rest
     return None
 
 
-def _peel_commands(normalized: str) -> tuple[list[_StopLexeme | str], str]:
-    commands: list[_StopLexeme | str] = []
-    remainder = normalized
-    while True:
-        candidate = _strip_leading_interrupt_fillers(remainder)
-        command = _leading_command(candidate)
-        if command is not None:
-            commands.append(command[0])
-            remainder = candidate[command[1] :]
+def _peel_commands_with_spans(
+    normalized: str,
+) -> tuple[list[tuple[_StopLexeme | str, int, int, bool]], str]:
+    peeled: list[tuple[_StopLexeme | str, int, int, bool]] = []
+    offset = 0
+    total = len(normalized)
+    while offset < total:
+        remaining = normalized[offset:]
+        candidate = _strip_leading_interrupt_fillers(remaining)
+        offset += len(remaining) - len(candidate)
+        stop_command = _leading_stop_command(candidate)
+        if stop_command is not None:
+            peeled.append((stop_command[0], offset, offset + stop_command[1], False))
+            offset += stop_command[1]
             continue
         addressed = _peel_addressed_command(candidate)
-        if addressed is None:
-            return commands, remainder
-        commands.append(addressed[0])
-        remainder = addressed[1]
+        if addressed is not None:
+            command, rel_start, rel_end, rest = addressed
+            peeled.append((command, offset + rel_start, offset + rel_end, True))
+            offset = total - len(rest)
+            continue
+        prefix = _interrupt_prefix(candidate)
+        if prefix is None:
+            return peeled, normalized[offset:]
+        peeled.append((prefix, offset, offset + len(prefix), False))
+        offset += len(prefix)
+    return peeled, ""
+
+
+def _peel_commands(normalized: str) -> tuple[list[_StopLexeme | str], str]:
+    peeled, remainder = _peel_commands_with_spans(normalized)
+    return [command for command, _, _, _ in peeled], remainder
 
 
 def interrupt_ack_phrase(text: str) -> str | None:
     t = normalize_short(text)
     if not t:
         return _YIELD_ACK
-    if _match_stop(_normalize_stop_text(text)) is not None:
+    if is_stop_command_only(text) or _match_stop(_normalize_stop_text(text)) is not None:
         return None
     if is_completion_ack_only(t) or any(phrase in t for phrase in _STOP_TALKING_PHRASES):
         return _QUIET_ACK
@@ -767,19 +822,105 @@ def _strip_trailing_control_particles(text: str) -> str:
 
 _IMPERATIVE_ONLY_EXACT_STOPS = frozenset({"不要说", "不要说啊", "不要说呀", "不要说吧", "不要说嘛"})
 _NON_QUESTION_COLLOQUIAL_STOPS = frozenset(
-    {"不要说啦", "不用说了", "不用再说了", "不要讲啦", "别说啦", "别讲啦"}
+    {
+        "不要说啦",
+        "不要再说了",
+        "不要再说啦",
+        "不用说了",
+        "不用说啦",
+        "不用再说了",
+        "不用再说啦",
+        "不要讲啦",
+        "不要再讲了",
+        "不要再讲啦",
+        "不用讲了",
+        "不用讲啦",
+        "不用再讲了",
+        "不用再讲啦",
+        "别说啦",
+        "别再说了",
+        "别再说啦",
+        "别讲啦",
+        "别再讲了",
+        "别再讲啦",
+        "暂停一下",
+        "停一停",
+    }
 )
 
 
+def _strip_non_question_trailing_particles(text: str) -> str | None:
+    remainder = text
+    while remainder:
+        if remainder.endswith("吗"):
+            return None
+        particle = next(
+            (
+                candidate
+                for candidate in sorted(
+                    _TRAILING_CONTROL_PARTICLES,
+                    key=len,
+                    reverse=True,
+                )
+                if candidate != "吗" and remainder.endswith(candidate)
+            ),
+            None,
+        )
+        if particle is None:
+            break
+        remainder = remainder[: -len(particle)]
+    return remainder
+
+
+def _normalized_text_with_positions(text: str) -> tuple[str, list[int]]:
+    chars: list[str] = []
+    positions: list[int] = []
+    for index, char in enumerate(text):
+        if _INTERRUPT_PUNCTUATION.fullmatch(char):
+            continue
+        chars.append(char.lower())
+        positions.append(index)
+    return "".join(chars), positions
+
+
+def _strip_one_polite_question_suffix(
+    text: str,
+    normalized: str,
+    positions: list[int],
+) -> tuple[str, str, list[int]]:
+    for suffix in ("可以吗", "好吗"):
+        if normalized.endswith(suffix):
+            cut = len(normalized) - len(suffix)
+            orig_cut = positions[cut]
+            return text[:orig_cut], normalized[:cut], positions[:cut]
+    return text, normalized, positions
+
+
 def _commands_blocked_by_question_mark(
-    text: str, raw_normalized: str, commands: list[_StopLexeme | str]
+    core_text: str,
+    positions: list[int],
+    peeled: list[tuple[_StopLexeme | str, int, int, bool]],
 ) -> bool:
-    if ("?" not in text and "？" not in text) or raw_normalized.endswith(("好吗", "可以吗")):
+    if "?" not in core_text and "？" not in core_text:
         return False
-    return any(
-        isinstance(cmd, _PrefixStop) and cmd.phrase in _NON_QUESTION_COLLOQUIAL_STOPS
-        for cmd in commands
-    )
+    last_idx = len(peeled) - 1
+    for idx, (cmd, cmd_start, cmd_end, addressed) in enumerate(peeled):
+        is_guarded_colloquial = (
+            isinstance(cmd, (_PrefixStop, _ExactStop))
+            and cmd.phrase in _NON_QUESTION_COLLOQUIAL_STOPS
+        )
+        if not (addressed or is_guarded_colloquial):
+            continue
+        orig_start = positions[cmd_start] if cmd_start < len(positions) else 0
+        orig_end = (
+            len(core_text)
+            if idx == last_idx or cmd_end >= len(positions)
+            else positions[cmd_end]
+        )
+        clause = core_text[orig_start:orig_end]
+        if "?" in clause or "？" in clause:
+            return True
+    return False
 
 
 def _peel_command_only_sequence(text: str) -> list[_StopLexeme | str] | None:
@@ -793,35 +934,41 @@ def _peel_command_only_sequence(text: str) -> list[_StopLexeme | str] | None:
     question (so 「你不要说吗？」 and 「你不用说了？」 stay in chat).
     """
 
-    raw_normalized = _normalize_stop_text(text)
-    if raw_normalized.endswith("吗") and not raw_normalized.endswith(("好吗", "可以吗")):
+    full_norm, full_positions = _normalized_text_with_positions(text)
+    core_text, raw_normalized, positions = _strip_one_polite_question_suffix(
+        text, full_norm, full_positions
+    )
+    if not raw_normalized or raw_normalized.endswith("吗"):
         return None
     if (
         raw_normalized in _IMPERATIVE_ONLY_EXACT_STOPS
-        and "?" not in text
-        and "？" not in text
+        and "?" not in core_text
+        and "？" not in core_text
     ):
         return [_ExactStop("不要说")]
-    stripped = _strip_trailing_control_particles(raw_normalized)
+    stripped = _strip_non_question_trailing_particles(raw_normalized)
+    if stripped is None:
+        return None
     if stripped:
-        commands, remainder = _peel_commands(stripped)
+        peeled, remainder = _peel_commands_with_spans(stripped)
         if (
-            commands
-            and not _strip_trailing_control_particles(remainder)
-            and not _commands_blocked_by_question_mark(text, raw_normalized, commands)
+            peeled
+            and _strip_non_question_trailing_particles(remainder) == ""
+            and not _commands_blocked_by_question_mark(core_text, positions, peeled)
         ):
-            return commands
+            return [command for command, _, _, _ in peeled]
     if raw_normalized != stripped:
-        commands, remainder = _peel_commands(raw_normalized)
+        peeled, remainder = _peel_commands_with_spans(raw_normalized)
         if (
-            commands
-            and not _strip_trailing_control_particles(remainder)
+            peeled
+            and _strip_non_question_trailing_particles(remainder) == ""
             and any(
-                isinstance(cmd, _PrefixStop) and not _is_soft_stop(cmd) for cmd in commands
+                isinstance(cmd, _PrefixStop) and not _is_soft_stop(cmd)
+                for cmd, _, _, _ in peeled
             )
-            and not _commands_blocked_by_question_mark(text, raw_normalized, commands)
+            and not _commands_blocked_by_question_mark(core_text, positions, peeled)
         ):
-            return commands
+            return [command for command, _, _, _ in peeled]
     return None
 
 
@@ -856,7 +1003,9 @@ def is_stop_command_only(text: str) -> bool:
         if isinstance(command, _PrefixStop) and command.phrase in _SOFT_STOP_PHRASES:
             continue
         if isinstance(command, str):
-            if command not in _STOP_PREFIX_COMMANDS:
+            if command not in _STOP_PREFIX_COMMANDS and not all(
+                char in _STOP_CHARACTERS for char in command
+            ):
                 return False
             strong = True
             continue

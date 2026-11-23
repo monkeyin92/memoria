@@ -480,3 +480,101 @@ def test_stop_phrase_with_a_request_interrupts_without_dropping_the_request() ->
 def test_resume_strips_a_stop_phrase_but_not_a_noun_that_starts_with_stop() -> None:
     assert is_resume_command_only("暂停。继续")
     assert not is_resume_command_only("停车，继续")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "不要再说了",
+        "不要再说啦",
+        "不用说啦",
+        "不用再说啦",
+        "不要再讲了",
+        "不要再讲啦",
+        "不用讲了",
+        "不用讲啦",
+        "不用再讲了",
+        "不用再讲啦",
+        "别再说了",
+        "别再说啦",
+        "别再讲了",
+        "别再讲啦",
+        "先停一下",
+        "你先停一下",
+        "你先停一下！",
+        "先停下来",
+        "你先停下来",
+        "先别说了",
+        "你先别说了",
+        "暂停一下",
+        "停一停",
+        "停一停，停一停！",
+        "停一停，停下来！",
+        "停下来，停一停！",
+        "你先停一停",
+        "你先，嗯？停一下！",
+        "不用讲了，嗯？停一停！",
+        "停，别说了",
+        "先停，别说了",
+        "啊？别说啦！",
+        "啊？别再 说啦！",
+        "嗯？不要再说了！",
+        "啊？暂停一下！",
+        "不用再说了好吗？",
+        "不要说啦，好 吗？",
+        "不要说啦，好吗……",
+        "暂停一下好吗？",
+        "你先停一下，可以吗？",
+    ],
+)
+def test_symmetric_colloquial_stops_and_filler_qmark_commands_stop_cleanly(text: str) -> None:
+    assert is_interrupt_command_only(text), text
+    assert is_stop_command_only(text), text
+    assert interrupt_ack_phrase(text) is None, text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "你先停一下？",
+        "你先停下来？",
+        "你不要再说了？",
+        "你不要再说了吗？",
+        "你不要再说了吗",
+        "不用讲了吗？",
+        "不用讲了吗，好吧",
+        "不用讲了吗？可以吗？",
+        "不用讲了？可以吗？",
+        "不用讲了，好吧？",
+        "不用再讲啦？",
+        "别再说了吗",
+        "别再讲了？",
+        "暂停一下？",
+        "你想停一停？",
+        "啊？别说啦？",
+        "小兔子停一停",
+        "停下来看了看",
+        "先停车",
+        "你先停电了",
+    ],
+)
+def test_question_colloquial_stops_and_embedded_nouns_stay_in_chat(text: str) -> None:
+    assert not is_interrupt_command_only(text), text
+    assert not is_stop_command_only(text), text
+
+
+def test_embedded_colloquial_stop_in_question_does_not_get_explicit_interrupt() -> None:
+    for text in (
+        "谁不用讲了？",
+        "谁不要再说了？",
+        "谁别再讲了？",
+        "“不用讲了”是什么意思？",
+        "「不要再说了」是什么词？",
+        "小兔子停一停",
+        "停下来看了看",
+        "猫停一停",
+    ):
+        assert not is_explicit_interrupt(text), text
+    assert is_explicit_interrupt("别再讲了，我想问恐龙吃什么")
+    assert not is_interrupt_command_only("别再讲了，我想问恐龙吃什么")
+
