@@ -2769,3 +2769,87 @@ async def test_statement_echo_with_haha_keeps_playing_unlike_question_with_haha(
         script,
         opening="小兔子住在山上。",
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "heard",
+    [
+        "不要再说了。",
+        "不用再讲啦。",
+        "别再说了。",
+        "先停一下。",
+        "你先停下来。",
+        "暂停一下。",
+        "停一停，停一停！",
+        "停一停，停下来！",
+        "停下来，停一停！",
+        "你先，嗯？停一下！",
+        "不用讲了，嗯？停一停！",
+        "不用再讲了！嗯？",
+        "不要说啦，好 吗？",
+        "不要说啦，好吗……",
+        "啊？别说啦！",
+        "啊？别再 说啦！",
+        "嗯？不要再说了！",
+    ],
+)
+async def test_symmetric_colloquial_stops_and_filler_qmark_stop_without_resuming(
+    heard: str,
+) -> None:
+    """Symmetric colloquial stops and filler-only question marks must cancel without replying."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text=heard)
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+        await asyncio.sleep(0.15)
+        assert harness.story.reply_calls == 1
+
+    await _run_story(
+        _device_identity(f"colloquial-stop-sym-{len(heard)}-{abs(hash(heard)) % 1000}"),
+        script,
+        opening="大熊猫是咱们中国的国宝，黑白配特别可爱。",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "heard",
+    [
+        "你先停一下？",
+        "你不要再说了？",
+        "你不要再说了吗？",
+        "不用讲了吗，好吧",
+        "不用讲了吗？可以吗？",
+        "暂停一下？",
+        "暂停一下啊？",
+        "谁不用讲了？",
+        "“不用讲了”是什么意思？",
+    ],
+)
+async def test_question_colloquial_stops_barge_in_and_produce_second_reply(
+    heard: str,
+) -> None:
+    """Question-phrased colloquial stops must actually answer (reply_calls == 2)."""
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        await harness.audio_frames(20, final_text=heard)
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert _user_turn_texts(harness.context)[-1] == heard
+
+    await _run_story(
+        _device_identity(f"colloquial-q-reply-{len(heard)}-{abs(hash(heard)) % 1000}"),
+        script,
+        opening="大熊猫是咱们中国的国宝，黑白配特别可爱。",
+    )
+
+
+def test_topic_switch_inquiry_keeps_semantic_close_fast_path() -> None:
+    from services.agent.src.voice_core.playback_text import (
+        content_barge_in_skips_semantic_close,
+    )
+
+    assert content_barge_in_skips_semantic_close("别再说大熊猫了，告诉我恐龙吃什么？") is True
