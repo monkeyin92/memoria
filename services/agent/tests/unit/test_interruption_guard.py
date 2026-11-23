@@ -479,7 +479,10 @@ def test_stop_phrase_with_a_request_interrupts_without_dropping_the_request() ->
 
 def test_resume_strips_a_stop_phrase_but_not_a_noun_that_starts_with_stop() -> None:
     assert is_resume_command_only("暂停。继续")
+    assert is_resume_command_only("暂停一下，继续")
     assert not is_resume_command_only("停车，继续")
+    assert not is_resume_command_only("暂停一下，继续吗？")
+    assert not is_resume_command_only("暂停一下，继续吗")
 
 
 @pytest.mark.parametrize(
@@ -514,6 +517,7 @@ def test_resume_strips_a_stop_phrase_but_not_a_noun_that_starts_with_stop() -> N
         "你先停一停",
         "你先，嗯？停一下！",
         "不用讲了，嗯？停一停！",
+        "不用再讲了！嗯？",
         "停，别说了",
         "先停，别说了",
         "啊？别说啦！",
@@ -546,6 +550,8 @@ def test_symmetric_colloquial_stops_and_filler_qmark_commands_stop_cleanly(text:
         "不用讲了吗？可以吗？",
         "不用讲了？可以吗？",
         "不用讲了，好吧？",
+        "不用再讲了？嗯！",
+        "去İstanbul和İzmir好吗？",
         "不用再讲啦？",
         "别再说了吗",
         "别再讲了？",
@@ -568,6 +574,14 @@ def test_embedded_colloquial_stop_in_question_does_not_get_explicit_interrupt() 
         "谁不用讲了？",
         "谁不要再说了？",
         "谁别再讲了？",
+        "不用讲了吗？",
+        "不用讲了？",
+        "你不要再说了？",
+        "你不要再说了吗？",
+        "不用讲了吗，好吧",
+        "不用讲了，好吧？",
+        "不用讲了吗？可以吗？",
+        "暂停一下？",
         "“不用讲了”是什么意思？",
         "「不要再说了」是什么词？",
         "小兔子停一停",
@@ -575,6 +589,13 @@ def test_embedded_colloquial_stop_in_question_does_not_get_explicit_interrupt() 
         "猫停一停",
     ):
         assert not is_explicit_interrupt(text), text
-    assert is_explicit_interrupt("别再讲了，我想问恐龙吃什么")
+    for text in (
+        "别再讲了，我想问恐龙吃什么",
+        "别再讲了，我想问恐龙吃什么？",
+        "不用再说了好吗？",
+        "不用再讲了！嗯？",
+    ):
+        assert is_explicit_interrupt(text), text
     assert not is_interrupt_command_only("别再讲了，我想问恐龙吃什么")
+    assert not is_interrupt_command_only("别再讲了，我想问恐龙吃什么？")
 

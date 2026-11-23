@@ -2786,6 +2786,7 @@ async def test_statement_echo_with_haha_keeps_playing_unlike_question_with_haha(
         "停下来，停一停！",
         "你先，嗯？停一下！",
         "不用讲了，嗯？停一停！",
+        "不用再讲了！嗯？",
         "不要说啦，好 吗？",
         "不要说啦，好吗……",
         "啊？别说啦！",

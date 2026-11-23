@@ -403,14 +403,50 @@ def _is_quoted_mention_with_content(text: str) -> bool:
     return bool(_compact_interrupt_text(text[match.end() :]))
 
 
+def _explicit_stop_blocked_as_question(text: str, hit: _StopHit) -> bool:
+    if not (
+        isinstance(hit.lexeme, (_PrefixStop, _ExactStop))
+        and hit.lexeme.phrase in _NON_QUESTION_COLLOQUIAL_STOPS
+    ):
+        return False
+    full_norm, full_positions = _normalized_text_with_positions(text)
+    core_text, core_norm, core_positions = _strip_one_polite_question_suffix(
+        text, full_norm, full_positions
+    )
+    if not core_norm:
+        return True
+    stripped = _strip_leading_interrupt_fillers(full_norm)
+    lead_fillers = len(full_norm) - len(stripped)
+    hit_norm_start = lead_fillers + hit.start
+    hit_norm_end = lead_fillers + hit.end
+    if hit_norm_end > len(core_norm):
+        return False
+    if hit_norm_end < len(core_norm) and core_norm[hit_norm_end] == "吗":
+        return True
+    orig_start = core_positions[hit_norm_start]
+    orig_end = core_positions[hit_norm_end] if hit_norm_end < len(core_positions) else len(core_text)
+    clause = core_text[orig_start:orig_end]
+    if "?" in clause or "？" in clause:
+        return True
+    tail_norm = core_norm[hit_norm_end:]
+    if tail_norm:
+        stripped_tail = _strip_non_question_trailing_particles(tail_norm)
+        if stripped_tail is None:
+            return True
+        if stripped_tail == "" and (
+            "?" in core_text[orig_start:] or "？" in core_text[orig_start:]
+        ):
+            return True
+    return False
+
+
 def is_explicit_interrupt(text: str) -> bool:
     if _is_quoted_mention_with_content(text):
         return False
-    return (
-        _match_stop(_normalize_stop_text(text), allow_embedded_soft=False) is not None
-        or _interrupt_prefix(text) is not None
-        or is_completion_ack_only(text)
-    )
+    stop_hit = _match_stop(_normalize_stop_text(text), allow_embedded_soft=False)
+    if stop_hit is not None and not _explicit_stop_blocked_as_question(text, stop_hit):
+        return True
+    return _interrupt_prefix(text) is not None or is_completion_ack_only(text)
 
 
 def is_completion_ack_only(text: str) -> bool:
@@ -724,14 +760,17 @@ def _peel_addressed_command(candidate: str) -> tuple[_StopLexeme | str, int, int
 
 def _peel_commands_with_spans(
     normalized: str,
-) -> tuple[list[tuple[_StopLexeme | str, int, int, bool]], str]:
+) -> tuple[list[tuple[_StopLexeme | str, int, int, bool]], str, int | None]:
     peeled: list[tuple[_StopLexeme | str, int, int, bool]] = []
     offset = 0
     total = len(normalized)
     while offset < total:
         remaining = normalized[offset:]
         candidate = _strip_leading_interrupt_fillers(remaining)
-        offset += len(remaining) - len(candidate)
+        filler_len = len(remaining) - len(candidate)
+        if not candidate:
+            return peeled, "", offset if filler_len else None
+        offset += filler_len
         stop_command = _leading_stop_command(candidate)
         if stop_command is not None:
             peeled.append((stop_command[0], offset, offset + stop_command[1], False))
@@ -745,14 +784,14 @@ def _peel_commands_with_spans(
             continue
         prefix = _interrupt_prefix(candidate)
         if prefix is None:
-            return peeled, normalized[offset:]
+            return peeled, normalized[offset:], None
         peeled.append((prefix, offset, offset + len(prefix), False))
         offset += len(prefix)
-    return peeled, ""
+    return peeled, "", None
 
 
 def _peel_commands(normalized: str) -> tuple[list[_StopLexeme | str], str]:
-    peeled, remainder = _peel_commands_with_spans(normalized)
+    peeled, remainder, _ = _peel_commands_with_spans(normalized)
     return [command for command, _, _, _ in peeled], remainder
 
 
@@ -878,8 +917,9 @@ def _normalized_text_with_positions(text: str) -> tuple[str, list[int]]:
     for index, char in enumerate(text):
         if _INTERRUPT_PUNCTUATION.fullmatch(char):
             continue
-        chars.append(char.lower())
-        positions.append(index)
+        folded = char.casefold()
+        chars.append(folded)
+        positions.extend([index] * len(folded))
     return "".join(chars), positions
 
 
@@ -900,6 +940,8 @@ def _commands_blocked_by_question_mark(
     core_text: str,
     positions: list[int],
     peeled: list[tuple[_StopLexeme | str, int, int, bool]],
+    *,
+    trailing_filler_start: int | None = None,
 ) -> bool:
     if "?" not in core_text and "？" not in core_text:
         return False
@@ -912,11 +954,15 @@ def _commands_blocked_by_question_mark(
         if not (addressed or is_guarded_colloquial):
             continue
         orig_start = positions[cmd_start] if cmd_start < len(positions) else 0
-        orig_end = (
-            len(core_text)
-            if idx == last_idx or cmd_end >= len(positions)
-            else positions[cmd_end]
-        )
+        if idx == last_idx:
+            orig_end = (
+                positions[trailing_filler_start]
+                if trailing_filler_start is not None
+                and trailing_filler_start < len(positions)
+                else len(core_text)
+            )
+        else:
+            orig_end = positions[cmd_end] if cmd_end < len(positions) else len(core_text)
         clause = core_text[orig_start:orig_end]
         if "?" in clause or "？" in clause:
             return True
@@ -950,15 +996,22 @@ def _peel_command_only_sequence(text: str) -> list[_StopLexeme | str] | None:
     if stripped is None:
         return None
     if stripped:
-        peeled, remainder = _peel_commands_with_spans(stripped)
+        peeled, remainder, trailing_filler_start = _peel_commands_with_spans(stripped)
         if (
             peeled
             and _strip_non_question_trailing_particles(remainder) == ""
-            and not _commands_blocked_by_question_mark(core_text, positions, peeled)
+            and not _commands_blocked_by_question_mark(
+                core_text,
+                positions,
+                peeled,
+                trailing_filler_start=(
+                    trailing_filler_start if stripped == raw_normalized else None
+                ),
+            )
         ):
             return [command for command, _, _, _ in peeled]
     if raw_normalized != stripped:
-        peeled, remainder = _peel_commands_with_spans(raw_normalized)
+        peeled, remainder, trailing_filler_start = _peel_commands_with_spans(raw_normalized)
         if (
             peeled
             and _strip_non_question_trailing_particles(remainder) == ""
@@ -966,7 +1019,12 @@ def _peel_command_only_sequence(text: str) -> list[_StopLexeme | str] | None:
                 isinstance(cmd, _PrefixStop) and not _is_soft_stop(cmd)
                 for cmd, _, _, _ in peeled
             )
-            and not _commands_blocked_by_question_mark(core_text, positions, peeled)
+            and not _commands_blocked_by_question_mark(
+                core_text,
+                positions,
+                peeled,
+                trailing_filler_start=trailing_filler_start,
+            )
         ):
             return [command for command, _, _, _ in peeled]
     return None
@@ -1024,6 +1082,11 @@ def is_resume_command_only(text: str) -> bool:
     normalized = normalize_short(text)
     if not normalized or not any(command in normalized for command in _RESUME_COMMANDS):
         return False
+    if (
+        ("?" in text or "？" in text or normalized.endswith("吗"))
+        and not normalized.endswith(("好吗", "可以吗"))
+    ):
+        return False
     remainder = normalized
     for command in sorted(_RESUME_COMMANDS, key=len, reverse=True):
         remainder = remainder.replace(command, "")
@@ -1032,7 +1095,10 @@ def is_resume_command_only(text: str) -> bool:
         remainder = remainder.replace(interrupt, "")
     for filler in sorted(_CONTROL_ACK_FILLERS, key=len, reverse=True):
         remainder = remainder.replace(filler, "")
-    return len(normalize_short(remainder)) <= 1
+    rem = normalize_short(remainder)
+    if rem in {"吗", "呢"}:
+        return False
+    return len(rem) <= 1
 
 
 def count_cjk_chars(text: str) -> int:
