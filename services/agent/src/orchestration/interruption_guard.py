@@ -403,6 +403,10 @@ def _is_quoted_mention_with_content(text: str) -> bool:
     return bool(_compact_interrupt_text(text[match.end() :]))
 
 
+_CLAUSE_BREAK_PUNCT = "，,。！？.!?；;\n"
+_SENTENCE_END_PUNCT = "。！!；;\n"
+
+
 def _explicit_stop_blocked_as_question(text: str, hit: _StopHit) -> bool:
     if not (
         isinstance(hit.lexeme, (_PrefixStop, _ExactStop))
@@ -421,22 +425,29 @@ def _explicit_stop_blocked_as_question(text: str, hit: _StopHit) -> bool:
     hit_norm_end = lead_fillers + hit.end
     if hit_norm_end > len(core_norm):
         return False
-    if hit_norm_end < len(core_norm) and core_norm[hit_norm_end] == "吗":
-        return True
     orig_start = core_positions[hit_norm_start]
-    orig_end = core_positions[hit_norm_end] if hit_norm_end < len(core_positions) else len(core_text)
-    clause = core_text[orig_start:orig_end]
-    if "?" in clause or "？" in clause:
+    after_hit = core_positions[hit_norm_end - 1] + 1
+    clause_end = len(core_text)
+    for index in range(after_hit, len(core_text)):
+        if core_text[index] in _CLAUSE_BREAK_PUNCT:
+            clause_end = index + 1
+            break
+    clause_raw = core_text[orig_start:clause_end]
+    if "?" in clause_raw or "？" in clause_raw:
         return True
-    tail_norm = core_norm[hit_norm_end:]
-    if tail_norm:
-        stripped_tail = _strip_non_question_trailing_particles(tail_norm)
-        if stripped_tail is None:
-            return True
-        if stripped_tail == "" and (
-            "?" in core_text[orig_start:] or "？" in core_text[orig_start:]
-        ):
-            return True
+    clause_tail_norm = _normalize_stop_text(core_text[after_hit:clause_end])
+    if clause_tail_norm and (
+        clause_tail_norm.endswith("吗")
+        or _strip_non_question_trailing_particles(clause_tail_norm) is None
+    ):
+        return True
+    rest_raw = core_text[clause_end:]
+    if rest_raw:
+        rest_norm = _normalize_stop_text(rest_raw)
+        if rest_norm:
+            stripped_rest = _strip_non_question_trailing_particles(rest_norm)
+            if stripped_rest == "" and ("?" in rest_raw or "？" in rest_raw):
+                return True
     return False
 
 
@@ -955,12 +966,18 @@ def _commands_blocked_by_question_mark(
             continue
         orig_start = positions[cmd_start] if cmd_start < len(positions) else 0
         if idx == last_idx:
-            orig_end = (
-                positions[trailing_filler_start]
-                if trailing_filler_start is not None
+            orig_end = len(core_text)
+            if (
+                trailing_filler_start is not None
                 and trailing_filler_start < len(positions)
-                else len(core_text)
-            )
+                and cmd_end > 0
+                and cmd_end - 1 < len(positions)
+            ):
+                separator = core_text[
+                    positions[cmd_end - 1] + 1 : positions[trailing_filler_start]
+                ]
+                if any(char in _SENTENCE_END_PUNCT for char in separator):
+                    orig_end = positions[trailing_filler_start]
         else:
             orig_end = positions[cmd_end] if cmd_end < len(positions) else len(core_text)
         clause = core_text[orig_start:orig_end]
@@ -1079,18 +1096,31 @@ def is_resume_command_only(text: str) -> bool:
     resume command must remain chat instead of being swallowed as control.
     """
 
-    normalized = normalize_short(text)
-    if not normalized or not any(command in normalized for command in _RESUME_COMMANDS):
+    full_norm, full_positions = _normalized_text_with_positions(text)
+    core_text, core_norm, core_positions = _strip_one_polite_question_suffix(
+        text, full_norm, full_positions
+    )
+    if not core_norm:
         return False
-    if (
-        ("?" in text or "？" in text or normalized.endswith("吗"))
-        and not normalized.endswith(("好吗", "可以吗"))
-    ):
+    resume_start = min(
+        (
+            pos
+            for command in _RESUME_COMMANDS
+            if (pos := core_norm.find(command)) >= 0
+        ),
+        default=-1,
+    )
+    if resume_start < 0:
         return False
-    remainder = normalized
+    if core_norm.endswith("吗") or _strip_non_question_trailing_particles(core_norm) is None:
+        return False
+    resume_tail = core_text[core_positions[resume_start] :]
+    if "?" in resume_tail or "？" in resume_tail:
+        return False
+    remainder = core_norm
     for command in sorted(_RESUME_COMMANDS, key=len, reverse=True):
         remainder = remainder.replace(command, "")
-    remainder = _strip_stop_spans(_normalize_stop_text(remainder))
+    remainder = _strip_stop_spans(remainder)
     for interrupt in sorted(INTERRUPT_PREFIXES, key=len, reverse=True):
         remainder = remainder.replace(interrupt, "")
     for filler in sorted(_CONTROL_ACK_FILLERS, key=len, reverse=True):

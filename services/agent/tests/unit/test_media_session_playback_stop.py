@@ -2824,6 +2824,7 @@ async def test_symmetric_colloquial_stops_and_filler_qmark_stop_without_resuming
         "不用讲了吗，好吧",
         "不用讲了吗？可以吗？",
         "暂停一下？",
+        "暂停一下啊？",
         "谁不用讲了？",
         "“不用讲了”是什么意思？",
     ],
