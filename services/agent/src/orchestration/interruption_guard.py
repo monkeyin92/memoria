@@ -1137,11 +1137,17 @@ def is_resume_command_only(text: str) -> bool:
         return False
     remainder_norm = core_norm
     if (
-        resume_start == 1
-        and core_norm[0] == "不"
-        and core_text[core_positions[0] + 1 : core_positions[1]].strip()
+        resume_start > 0
+        and core_norm[resume_start - 1] == "不"
+        and core_text[core_positions[resume_start - 1] + 1 : core_positions[resume_start]].strip()
+        and (
+            resume_start == 1
+            or core_text[
+                core_positions[resume_start - 2] + 1 : core_positions[resume_start - 1]
+            ].strip()
+        )
     ):
-        remainder_norm = core_norm[1:]
+        remainder_norm = core_norm[: resume_start - 1] + core_norm[resume_start:]
     remainder = remainder_norm
     for command in sorted(_RESUME_COMMANDS, key=len, reverse=True):
         remainder = remainder.replace(command, "")
@@ -1151,9 +1157,9 @@ def is_resume_command_only(text: str) -> bool:
     for filler in sorted(_CONTROL_ACK_FILLERS, key=len, reverse=True):
         remainder = remainder.replace(filler, "")
     rem = normalize_short(remainder)
-    if rem in {"吗", "呢", "不", "别", "没"}:
+    if "呢" in rem:
         return False
-    return len(rem) <= 1
+    return _strip_non_question_trailing_particles(rem) == ""
 
 
 def count_cjk_chars(text: str) -> int:
