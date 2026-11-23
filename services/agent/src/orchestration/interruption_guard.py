@@ -766,6 +766,20 @@ def _strip_trailing_control_particles(text: str) -> str:
 
 
 _IMPERATIVE_ONLY_EXACT_STOPS = frozenset({"不要说", "不要说啊", "不要说呀", "不要说吧", "不要说嘛"})
+_NON_QUESTION_COLLOQUIAL_STOPS = frozenset(
+    {"不要说啦", "不用说了", "不用再说了", "不要讲啦", "别说啦", "别讲啦"}
+)
+
+
+def _commands_blocked_by_question_mark(
+    text: str, raw_normalized: str, commands: list[_StopLexeme | str]
+) -> bool:
+    if ("?" not in text and "？" not in text) or raw_normalized.endswith(("好吗", "可以吗")):
+        return False
+    return any(
+        isinstance(cmd, _PrefixStop) and cmd.phrase in _NON_QUESTION_COLLOQUIAL_STOPS
+        for cmd in commands
+    )
 
 
 def _peel_command_only_sequence(text: str) -> list[_StopLexeme | str] | None:
@@ -776,7 +790,7 @@ def _peel_command_only_sequence(text: str) -> list[_StopLexeme | str] | None:
     Only when that finds no full match do we retry raw normalized text for
     non-soft lexemes that inherently end in a particle (「别说啦」「不要说啦」),
     and accept bare imperative 「不要说」 only when it is not phrased as a
-    question (so 「你不要说吗？」 stays in chat).
+    question (so 「你不要说吗？」 and 「你不用说了？」 stay in chat).
     """
 
     raw_normalized = _normalize_stop_text(text)
@@ -791,7 +805,11 @@ def _peel_command_only_sequence(text: str) -> list[_StopLexeme | str] | None:
     stripped = _strip_trailing_control_particles(raw_normalized)
     if stripped:
         commands, remainder = _peel_commands(stripped)
-        if commands and not _strip_trailing_control_particles(remainder):
+        if (
+            commands
+            and not _strip_trailing_control_particles(remainder)
+            and not _commands_blocked_by_question_mark(text, raw_normalized, commands)
+        ):
             return commands
     if raw_normalized != stripped:
         commands, remainder = _peel_commands(raw_normalized)
@@ -801,6 +819,7 @@ def _peel_command_only_sequence(text: str) -> list[_StopLexeme | str] | None:
             and any(
                 isinstance(cmd, _PrefixStop) and not _is_soft_stop(cmd) for cmd in commands
             )
+            and not _commands_blocked_by_question_mark(text, raw_normalized, commands)
         ):
             return commands
     return None

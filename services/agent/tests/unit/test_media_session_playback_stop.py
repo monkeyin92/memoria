@@ -2700,7 +2700,11 @@ async def test_reasking_earlier_question_in_long_story_is_not_swallowed_by_echo_
         ("大熊猫是咱们中国的国宝，黑白配特别可爱。", "你不要说吗？"),
         ("大熊猫是咱们中国的国宝，黑白配特别可爱。", "你不用说了吗？"),
         ("大熊猫是咱们中国的国宝，黑白配特别可爱。", "你不用说了吗"),
+        ("大熊猫是咱们中国的国宝，黑白配特别可爱。", "你不用说了？"),
         ("小兔子住在山上。", "小兔子住在山上？哈哈。"),
+        ("小兔子住在山上。你知道吗？", "小兔子住在山上？哈哈。"),
+        ("白雪公主走进了森林。", "白雪公主后来呢？"),
+        ("小兔子差点回到家了。", "小兔子回到家了，是吗？"),
     ],
 )
 async def test_hahajing_and_buyao_shuo_question_barge_in_and_answer(
@@ -2712,7 +2716,14 @@ async def test_hahajing_and_buyao_shuo_question_barge_in_and_answer(
     async def script(harness: _StoryHarness) -> None:
         await harness.start_story()
         await harness.audio_frames(20, final_text=heard)
-        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        await harness.wait_for(lambda: _user_turn_texts(harness.context)[-1] == heard)
+        await harness.wait_for(
+            lambda: (
+                harness.story.reply_calls == 2
+                or harness.context.output.reply_task is None
+                or harness.context.output.reply_task.done()
+            )
+        )
         assert _user_turn_texts(harness.context)[-1] == heard
 
     await _run_story(

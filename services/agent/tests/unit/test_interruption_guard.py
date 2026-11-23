@@ -58,6 +58,8 @@ def test_explicit_interrupt_prefixes() -> None:
         "不要说。",
         "不要说啦。",
         "不用说了。",
+        "你不用说了。",
+        "不用说了好吗？",
         "不用再说了。",
         "别说啦。",
         "不要讲啦。",
@@ -76,6 +78,9 @@ def test_explicit_interrupt_prefixes() -> None:
         "你不用说了吗？",
         "你不用说了吗",
         "不用说了吗？",
+        "你不用说了？",
+        "不用说了？",
+        "你别说啦？",
     ):
         assert not is_interrupt_command_only(non_stop), non_stop
         assert not is_stop_command_only(non_stop), non_stop

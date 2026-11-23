@@ -74,6 +74,8 @@ _PLAYBACK_TRAILING_BACKCHANNELS = tuple(
     )
 )
 _BACKCHANNEL_GLUED_BLOCKERS = ("不", "没", "别", "很", "太", "真", "挺", "更", "最", "可", "就", "才", "还", "也", "都")
+_DELIMITER_REQUIRED_TRAILING_BACKCHANNELS = frozenset({"后来呢", "然后呢", "是吗", "是啊", "是呀"})
+_HARMLESS_ECHO_DROPPED_CHARS = frozenset("有的是地得了着呀啊呢吧啦嘛么也还就都")
 _BACKCHANNEL_STRIP_CHARS = "，。！？、,.!?;；:：…~～\"'“”‘’（）() \t\r\n　"
 _BACKCHANNEL_TRIM_KEEP_QMARK = _BACKCHANNEL_STRIP_CHARS.replace("？", "").replace("?", "")
 _PLAYBACK_ECHO_BACKCHANNEL_WINDOW_CHARS = 96
@@ -696,6 +698,8 @@ def _peel_backchannel_edges_for_echo(raw: str) -> tuple[str, bool] | None:
                 matched = True
                 break
             if not punct:
+                if token in _DELIMITER_REQUIRED_TRAILING_BACKCHANNELS:
+                    continue
                 if len(token) == 1 and len(before_compact) < 4:
                     continue
                 if before_compact.endswith(_BACKCHANNEL_GLUED_BLOCKERS) and (
@@ -810,7 +814,7 @@ def _core_aligns_without_substitutions(core: str, spoken: str) -> bool:
         ).get_matching_blocks()
         if block.size > 0
     ]
-    max_span = len(norm_core) + 2
+    max_span = len(norm_core) + 1
     for start_idx, first in enumerate(blocks):
         if first.a != 0:
             continue
@@ -824,7 +828,7 @@ def _core_aligns_without_substitutions(core: str, spoken: str) -> bool:
                 valid = False
                 break
             skipped = norm_spoken[last.b + last.size : block.b]
-            if any(char.isdigit() or char in _ECHO_TYPO_FORBIDDEN_CHARS for char in skipped):
+            if len(skipped) != 1 or skipped not in _HARMLESS_ECHO_DROPPED_CHARS:
                 valid = False
                 break
             covered += block.size
@@ -835,6 +839,31 @@ def _core_aligns_without_substitutions(core: str, spoken: str) -> bool:
             and _digit_boundaries_intact(norm_core, norm_spoken, first.b, last.b + last.size)
         ):
             return True
+    return False
+
+
+def _compact_with_qmark_offsets(raw_window: str) -> tuple[str, set[int]]:
+    """Compact ``raw_window`` and record compact offsets followed by a question mark."""
+
+    chars: list[str] = []
+    qmark_offsets: set[int] = set()
+    for char in raw_window:
+        if char.isalnum():
+            chars.append(char)
+        elif char in "？?" and chars:
+            qmark_offsets.add(len(chars))
+    return "".join(chars), qmark_offsets
+
+
+def _exact_span_carries_qmark(core_compact: str, spoken: str, qmark_offsets: set[int]) -> bool:
+    """True when an exact occurrence of ``core_compact`` in ``spoken`` owns a question mark."""
+
+    pos = spoken.find(core_compact)
+    while pos != -1:
+        end = pos + len(core_compact)
+        if any(pos < offset <= end for offset in qmark_offsets):
+            return True
+        pos = spoken.find(core_compact, pos + 1)
     return False
 
 
@@ -886,12 +915,13 @@ def playback_text_is_echo_with_backchannel(text: str, playback_text: str) -> boo
     core_has_qmark = any(punctuation in core_raw for punctuation in "？?")
     core_has_question = _candidate_has_question_signal(core_raw)
     for raw_window in raw_windows:
-        spoken = _compact(raw_window)
+        spoken, qmark_offsets = _compact_with_qmark_offsets(raw_window)
         if not spoken:
             continue
-        if core_has_qmark and not any(punctuation in raw_window for punctuation in "？?"):
-            continue
-        if core_has_question and core_compact not in spoken:
+        if core_has_qmark:
+            if not _exact_span_carries_qmark(core_compact, spoken, qmark_offsets):
+                continue
+        elif core_has_question and core_compact not in spoken:
             continue
         if len(core_compact) == 2:
             if (
