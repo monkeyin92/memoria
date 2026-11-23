@@ -484,6 +484,7 @@ def test_resume_strips_a_stop_phrase_but_not_a_noun_that_starts_with_stop() -> N
     assert is_resume_command_only("继续可以吗？")
     assert is_resume_command_only("暂停一下，继续好吗？")
     assert is_resume_command_only("嗯？继续。")
+    assert is_resume_command_only("不，继续")
     assert not is_resume_command_only("停车，继续")
     assert not is_resume_command_only("暂停一下，继续吗？")
     assert not is_resume_command_only("暂停一下，继续吗")
@@ -568,6 +569,7 @@ def test_symmetric_colloquial_stops_and_filler_qmark_commands_stop_cleanly(text:
         "别再讲了？",
         "暂停一下？",
         "暂停一下啊？",
+        "暂停一下...嗯？",
         "你想停一停？",
         "啊？别说啦？",
         "小兔子停一停",
@@ -607,6 +609,7 @@ def test_embedded_colloquial_stop_in_question_does_not_get_explicit_interrupt() 
         "别再讲了，我想问恐龙吃什么",
         "别再讲了，我想问恐龙吃什么？",
         "暂停一下！你听得见吗？",
+        "暂停一下，“吗”和“呢”有什么区别？",
         "不用再说了好吗？",
         "不用再讲了！嗯？",
     ):

@@ -404,7 +404,12 @@ def _is_quoted_mention_with_content(text: str) -> bool:
 
 
 _CLAUSE_BREAK_PUNCT = "，,。！？.!?；;\n"
-_SENTENCE_END_PUNCT = "。！.!；;\n"
+
+
+def _has_sentence_end_punct(separator: str) -> bool:
+    return any(char in "。！!；;\n" for char in separator) or (
+        "." in separator and ".." not in separator
+    )
 
 
 def _explicit_stop_blocked_as_question(text: str, hit: _StopHit) -> bool:
@@ -425,10 +430,15 @@ def _explicit_stop_blocked_as_question(text: str, hit: _StopHit) -> bool:
     hit_norm_end = lead_fillers + hit.end
     if hit_norm_end > len(core_norm):
         return False
-    if hit_norm_end < len(core_norm) and core_norm[hit_norm_end] == "吗":
-        return True
     orig_start = core_positions[hit_norm_start]
     after_hit = core_positions[hit_norm_end - 1] + 1
+    if hit_norm_end < len(core_norm) and core_norm[hit_norm_end] == "吗":
+        after_ma = core_norm[hit_norm_end + 1 :]
+        between_hit_and_ma = core_text[after_hit : core_positions[hit_norm_end]]
+        if not any(ch in '“"\'‘「『' for ch in between_hit_and_ma) and (
+            not after_ma or _strip_non_question_trailing_particles(after_ma) == ""
+        ):
+            return True
     clause_end = len(core_text)
     for index in range(after_hit, len(core_text)):
         if core_text[index] in _CLAUSE_BREAK_PUNCT:
@@ -978,7 +988,7 @@ def _commands_blocked_by_question_mark(
                 separator = core_text[
                     positions[cmd_end - 1] + 1 : positions[trailing_filler_start]
                 ]
-                if any(char in _SENTENCE_END_PUNCT for char in separator):
+                if _has_sentence_end_punct(separator):
                     orig_end = positions[trailing_filler_start]
         else:
             orig_end = positions[cmd_end] if cmd_end < len(positions) else len(core_text)
@@ -1114,7 +1124,11 @@ def is_resume_command_only(text: str) -> bool:
     )
     if resume_start < 0:
         return False
-    if core_norm[:resume_start].endswith(_STOP_NEGATORS):
+    if (
+        resume_start > 0
+        and core_positions[resume_start - 1] + 1 == core_positions[resume_start]
+        and core_norm[:resume_start].endswith(_STOP_NEGATORS)
+    ):
         return False
     if core_norm.endswith("吗") or _strip_non_question_trailing_particles(core_norm) is None:
         return False
@@ -1130,7 +1144,7 @@ def is_resume_command_only(text: str) -> bool:
     for filler in sorted(_CONTROL_ACK_FILLERS, key=len, reverse=True):
         remainder = remainder.replace(filler, "")
     rem = normalize_short(remainder)
-    if rem in {"吗", "呢", "不", "别", "没"}:
+    if rem in {"吗", "呢"}:
         return False
     return len(rem) <= 1
 
