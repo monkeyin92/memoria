@@ -885,32 +885,11 @@ def _strip_trailing_control_particles(text: str) -> str:
 
 
 _IMPERATIVE_ONLY_EXACT_STOPS = frozenset({"不要说", "不要说啊", "不要说呀", "不要说吧", "不要说嘛"})
-_NON_QUESTION_COLLOQUIAL_STOPS = frozenset(
-    {
-        "不要说啦",
-        "不要再说了",
-        "不要再说啦",
-        "不用说了",
-        "不用说啦",
-        "不用再说了",
-        "不用再说啦",
-        "不要讲啦",
-        "不要再讲了",
-        "不要再讲啦",
-        "不用讲了",
-        "不用讲啦",
-        "不用再讲了",
-        "不用再讲啦",
-        "别说啦",
-        "别再说了",
-        "别再说啦",
-        "别讲啦",
-        "别再讲了",
-        "别再讲啦",
-        "暂停一下",
-        "停一停",
-    }
-)
+_NON_QUESTION_COLLOQUIAL_STOPS = frozenset({
+    "不要说啦", "不要再说了", "不要再说啦", "不用说了", "不用说啦", "不用再说了", "不用再说啦",
+    "不要讲啦", "不要再讲了", "不要再讲啦", "不用讲了", "不用讲啦", "不用再讲了", "不用再讲啦",
+    "别说啦", "别再说了", "别再说啦", "别讲啦", "别再讲了", "别再讲啦", "暂停一下", "停一停",
+})
 
 
 def _strip_non_question_trailing_particles(text: str) -> str | None:
@@ -1102,6 +1081,9 @@ def is_stop_command_only(text: str) -> bool:
     return strong
 
 
+_RESUME_COLLOQUIAL_PARTICLES = frozenset({"呗", "喽", "咯", "咧", "哇", "哈", "哒", "哟"})
+
+
 def is_resume_command_only(text: str) -> bool:
     """True for a resume command, including a leaked control ack/pause prefix.
 
@@ -1159,6 +1141,8 @@ def is_resume_command_only(text: str) -> bool:
     rem = normalize_short(remainder)
     if "呢" in rem:
         return False
+    while rem and rem[-1] in _RESUME_COLLOQUIAL_PARTICLES:
+        rem = rem[:-1]
     return _strip_non_question_trailing_particles(rem) == ""
 
 

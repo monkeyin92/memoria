@@ -486,6 +486,8 @@ def test_resume_strips_a_stop_phrase_but_not_a_noun_that_starts_with_stop() -> N
     assert is_resume_command_only("嗯？继续。")
     assert is_resume_command_only("不，继续")
     assert is_resume_command_only("不，继续吧")
+    assert is_resume_command_only("继续呗")
+    assert is_resume_command_only("继续喽")
     assert is_resume_command_only("嗯，不，继续")
     assert not is_resume_command_only("不，继续等")
     assert not is_resume_command_only("不，继续听")
