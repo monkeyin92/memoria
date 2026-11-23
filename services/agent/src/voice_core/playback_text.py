@@ -46,6 +46,52 @@ _BACKCHANNEL_FILLERS = tuple(
         reverse=True,
     )
 )
+_PLAYBACK_TRAILING_BACKCHANNELS = tuple(
+    sorted(
+        (
+            *_BACKCHANNEL_FILLERS,
+            "哈哈",
+            "哈哈哈",
+            "哈哈哈哈",
+            "呵呵",
+            "嘿嘿",
+            "嘻嘻",
+            "是吗",
+            "是啊",
+            "是呀",
+            "然后呢",
+            "后来呢",
+            "哦哦",
+            "嗯哪",
+            "好哒",
+            "好呀",
+            "好呢",
+            "对哒",
+        ),
+        key=len,
+        reverse=True,
+    )
+)
+_BACKCHANNEL_GLUED_BLOCKERS = ("不", "没", "别", "很", "太", "真", "挺", "更", "最", "可", "就", "才", "还", "也", "都")
+_DELIMITER_REQUIRED_TRAILING_BACKCHANNELS = frozenset({"后来呢", "然后呢", "是吗", "是啊", "是呀"})
+_HARMLESS_ECHO_DROPPED_CHARS = frozenset("有的是地得了着呀啊呢吧啦嘛么也还就都")
+_BACKCHANNEL_STRIP_CHARS = "，。！？、,.!?;；:：…~～\"'“”‘’（）() \t\r\n　"
+_BACKCHANNEL_TRIM_KEEP_QMARK = _BACKCHANNEL_STRIP_CHARS.replace("？", "").replace("?", "")
+_PLAYBACK_ECHO_BACKCHANNEL_WINDOW_CHARS = 96
+_ZH_DIGIT_MAP = {
+    "零": 0,
+    "〇": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
 _CONTENT_MARKERS = (
     "等一下",
     "等等",
@@ -613,7 +659,289 @@ def content_barge_in_skips_semantic_close(text: str) -> bool:
     return any(marker in text for marker in _CONTENT_INQUIRY_MARKERS)
 
 
-def content_barge_in_wanted(text: str, *, playback_text: str = "") -> bool:
+def _peel_backchannel_edges_for_echo(raw: str) -> tuple[str, bool] | None:
+    """Peel leading/trailing backchannels around a candidate echo core.
+
+    Trailing backchannels (e.g. 「然后呢？」「是吗？」「哈哈。」「对呀」) are
+    peeled when punctuated or safely separable from the preceding clause;
+    leading backchannels require an explicit clause/space delimiter so normal
+    words (e.g. 「好朋友」「然后我就…」) are never chopped.
+    """
+
+    cur = raw.strip()
+    if not cur:
+        return None
+    peeled = False
+    punctuated = False
+    while cur:
+        trimmed = cur.rstrip(_BACKCHANNEL_STRIP_CHARS)
+        if not trimmed:
+            cur = ""
+            break
+        matched = False
+        for token in _PLAYBACK_TRAILING_BACKCHANNELS:
+            if not trimmed.endswith(token):
+                continue
+            before = trimmed[: -len(token)]
+            if not before:
+                cur = ""
+                peeled = True
+                matched = True
+                break
+            punct = before[-1] in _CLAUSE_BOUNDARY_CHARS
+            before_compact = _compact(before)
+            if not before_compact:
+                cur = ""
+                peeled = True
+                punctuated = punctuated or punct
+                matched = True
+                break
+            if not punct:
+                if token in _DELIMITER_REQUIRED_TRAILING_BACKCHANNELS:
+                    continue
+                if len(token) == 1 and len(before_compact) < 4:
+                    continue
+                if before_compact.endswith(_BACKCHANNEL_GLUED_BLOCKERS) and (
+                    len(token) == 1 or token.startswith(("是", "对", "好", "行"))
+                ):
+                    continue
+            cur = before.rstrip(_BACKCHANNEL_TRIM_KEEP_QMARK)
+            peeled = True
+            punctuated = punctuated or punct
+            matched = True
+            break
+        if not matched:
+            break
+    while cur:
+        trimmed = cur.lstrip(_BACKCHANNEL_STRIP_CHARS)
+        if not trimmed:
+            cur = ""
+            break
+        matched = False
+        for token in _PLAYBACK_TRAILING_BACKCHANNELS:
+            if not trimmed.startswith(token):
+                continue
+            after = trimmed[len(token) :]
+            if not after:
+                cur = ""
+                peeled = True
+                matched = True
+                break
+            if after[0] not in _CLAUSE_BOUNDARY_CHARS:
+                continue
+            cur = after.lstrip(_BACKCHANNEL_STRIP_CHARS)
+            peeled = True
+            punctuated = True
+            matched = True
+            break
+        if not matched:
+            break
+    if not peeled:
+        return None
+    return cur, punctuated
+
+
+def _normalize_echo_numerals(text: str) -> str:
+    """Normalize small Chinese numerals (0–99) to Arabic digits for exact echo checks."""
+
+    out: list[str] = []
+    idx = 0
+    length = len(text)
+    while idx < length:
+        char = text[idx]
+        if char == "十":
+            if idx + 1 < length and text[idx + 1] in _ZH_DIGIT_MAP:
+                out.append(str(10 + _ZH_DIGIT_MAP[text[idx + 1]]))
+                idx += 2
+            else:
+                out.append("10")
+                idx += 1
+            continue
+        if char in _ZH_DIGIT_MAP:
+            val = _ZH_DIGIT_MAP[char]
+            if idx + 1 < length and text[idx + 1] == "十":
+                if idx + 2 < length and text[idx + 2] in _ZH_DIGIT_MAP:
+                    out.append(str(val * 10 + _ZH_DIGIT_MAP[text[idx + 2]]))
+                    idx += 3
+                else:
+                    out.append(str(val * 10))
+                    idx += 2
+                continue
+            out.append(str(val))
+            idx += 1
+            continue
+        out.append(char)
+        idx += 1
+    return "".join(out)
+
+
+def _digit_boundaries_intact(norm_core: str, norm_spoken: str, start: int, end: int) -> bool:
+    """True when matching ``norm_core`` at ``norm_spoken[start:end]`` does not split a number."""
+
+    if norm_core[0].isdigit() and start > 0 and norm_spoken[start - 1].isdigit():
+        return False
+    if norm_core[-1].isdigit() and end < len(norm_spoken) and norm_spoken[end].isdigit():
+        return False
+    return True
+
+
+def _core_aligns_without_substitutions(core: str, spoken: str) -> bool:
+    """True when ``core`` is a verbatim or safe deletion-only subsequence of ``spoken``.
+
+    Allows known numeral rewrites (「十二」 vs 「12」) and up to 2 harmless
+    dropped chars inside one tight span of ``spoken`` (e.g. ASR dropping 「有」
+    in 「霸王龙大概有十二米长」), while forbidding ANY substituted character,
+    ANY dropped negation/polarity char (e.g. 「不喜欢→喜欢」), and ANY partial
+    numeric match (e.g. 「12→2」).
+    """
+
+    norm_core = _normalize_echo_numerals(core)
+    norm_spoken = _normalize_echo_numerals(spoken)
+    if not norm_core or not norm_spoken:
+        return False
+    pos = norm_spoken.find(norm_core)
+    while pos != -1:
+        if _digit_boundaries_intact(norm_core, norm_spoken, pos, pos + len(norm_core)):
+            return True
+        pos = norm_spoken.find(norm_core, pos + 1)
+    if len(norm_core) < 6:
+        return False
+    blocks = [
+        block
+        for block in SequenceMatcher(
+            None, norm_core, norm_spoken, autojunk=False
+        ).get_matching_blocks()
+        if block.size > 0
+    ]
+    max_span = len(norm_core) + 1
+    for start_idx, first in enumerate(blocks):
+        if first.a != 0:
+            continue
+        covered = first.size
+        last = first
+        valid = True
+        for block in blocks[start_idx + 1 :]:
+            if (block.b + block.size) - first.b > max_span:
+                break
+            if block.a != last.a + last.size:
+                valid = False
+                break
+            skipped = norm_spoken[last.b + last.size : block.b]
+            if len(skipped) != 1 or skipped not in _HARMLESS_ECHO_DROPPED_CHARS:
+                valid = False
+                break
+            covered += block.size
+            last = block
+        if (
+            valid
+            and covered == len(norm_core)
+            and _digit_boundaries_intact(norm_core, norm_spoken, first.b, last.b + last.size)
+        ):
+            return True
+    return False
+
+
+def _compact_with_qmark_offsets(raw_window: str) -> tuple[str, set[int]]:
+    """Compact ``raw_window`` and record compact offsets followed by a question mark."""
+
+    chars: list[str] = []
+    qmark_offsets: set[int] = set()
+    for char in raw_window:
+        if char.isalnum():
+            chars.append(char)
+        elif char in "？?" and chars:
+            qmark_offsets.add(len(chars))
+    return "".join(chars), qmark_offsets
+
+
+def _exact_span_carries_qmark(core_compact: str, spoken: str, qmark_offsets: set[int]) -> bool:
+    """True when an exact occurrence of ``core_compact`` in ``spoken`` owns a question mark."""
+
+    pos = spoken.find(core_compact)
+    while pos != -1:
+        end = pos + len(core_compact)
+        if any(pos < offset <= end for offset in qmark_offsets):
+            return True
+        pos = spoken.find(core_compact, pos + 1)
+    return False
+
+
+def playback_echo_window_near_line(
+    assistant_text: str,
+    current_line: str,
+    *,
+    max_chars: int = _PLAYBACK_ECHO_BACKCHANNEL_WINDOW_CHARS,
+) -> str:
+    """Return a bounded slice of ``assistant_text`` anchored at a unique ``current_line``."""
+
+    if not assistant_text:
+        return current_line
+    needle = current_line.strip()
+    if needle:
+        first = assistant_text.find(needle)
+        last = assistant_text.rfind(needle)
+        if first != -1:
+            # Ambiguous repeated line: do not guess a future occurrence.
+            if first != last:
+                return current_line
+            end = first + len(needle)
+            return assistant_text[max(0, end - max_chars) : end]
+    return assistant_text[-max_chars:]
+
+
+def playback_text_is_echo_with_backchannel(text: str, playback_text: str) -> bool:
+    """True when ``text`` is purely backchannels or leaked playback echo + backchannel(s)."""
+
+    raw = text.strip()
+    if not raw:
+        return False
+    peeled = _peel_backchannel_edges_for_echo(raw)
+    if peeled is None:
+        return False
+    core_raw, core_punctuated = peeled
+    core_compact = _compact(core_raw)
+    if not core_compact:
+        return True
+    if not playback_text:
+        return False
+    recent_raw = playback_text[-_PLAYBACK_ECHO_BACKCHANNEL_WINDOW_CHARS:]
+    script_spoken = spoken_prefix_for_display(playback_text.strip())
+    raw_windows = (
+        (recent_raw, script_spoken[-_PLAYBACK_ECHO_BACKCHANNEL_WINDOW_CHARS:])
+        if script_spoken
+        else (recent_raw,)
+    )
+    core_has_qmark = any(punctuation in core_raw for punctuation in "？?")
+    core_has_question = _candidate_has_question_signal(core_raw)
+    for raw_window in raw_windows:
+        spoken, qmark_offsets = _compact_with_qmark_offsets(raw_window)
+        if not spoken:
+            continue
+        if core_has_qmark:
+            if not _exact_span_carries_qmark(core_compact, spoken, qmark_offsets):
+                continue
+        elif core_has_question and core_compact not in spoken:
+            continue
+        if len(core_compact) == 2:
+            if (
+                core_punctuated
+                and core_compact in spoken
+                and core_compact not in _CONTENT_INQUIRY_MARKERS
+                and core_compact not in _CONTENT_MARKERS
+            ):
+                return True
+            continue
+        if len(core_compact) >= 3 and _core_aligns_without_substitutions(core_compact, spoken):
+            return True
+    return False
+
+
+def content_barge_in_wanted(
+    text: str,
+    *,
+    playback_text: str = "",
+    echo_window_text: str = "",
+) -> bool:
     """True when words heard over playback are the owner's next question.
 
     A backchannel alone (「嗯」「对」「好」) is agreement, never a stop.  What is left after
@@ -626,6 +954,8 @@ def content_barge_in_wanted(text: str, *, playback_text: str = "") -> bool:
     if not remainder:
         return False
     if playback_text and playback_text_is_echo(text, playback_text):
+        return False
+    if playback_text_is_echo_with_backchannel(text, echo_window_text or playback_text):
         return False
     if count_cjk_chars(remainder) >= _CONTENT_MIN_CJK:
         return True

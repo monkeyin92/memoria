@@ -157,9 +157,15 @@ _STOP_LEXICON: tuple[_StopLexeme, ...] = (
     _CharRunStop("停"),
     _PrefixStop("我不想听了"),
     _PrefixStop("不要说了"),
+    _PrefixStop("不要说啦"),
+    _PrefixStop("不用说了"),
+    _PrefixStop("不用再说了"),
     _PrefixStop("不要讲了"),
+    _PrefixStop("不要讲啦"),
     _PrefixStop("别说了"),
+    _PrefixStop("别说啦"),
     _PrefixStop("别讲了"),
+    _PrefixStop("别讲啦"),
     _PrefixStop("不讲了"),
     _PrefixStop("不听了"),
     _PrefixStop("停一下"),
@@ -759,6 +765,66 @@ def _strip_trailing_control_particles(text: str) -> str:
     return remainder
 
 
+_IMPERATIVE_ONLY_EXACT_STOPS = frozenset({"不要说", "不要说啊", "不要说呀", "不要说吧", "不要说嘛"})
+_NON_QUESTION_COLLOQUIAL_STOPS = frozenset(
+    {"不要说啦", "不用说了", "不用再说了", "不要讲啦", "别说啦", "别讲啦"}
+)
+
+
+def _commands_blocked_by_question_mark(
+    text: str, raw_normalized: str, commands: list[_StopLexeme | str]
+) -> bool:
+    if ("?" not in text and "？" not in text) or raw_normalized.endswith(("好吗", "可以吗")):
+        return False
+    return any(
+        isinstance(cmd, _PrefixStop) and cmd.phrase in _NON_QUESTION_COLLOQUIAL_STOPS
+        for cmd in commands
+    )
+
+
+def _peel_command_only_sequence(text: str) -> list[_StopLexeme | str] | None:
+    """Peel a pure stop/wait command sequence, preserving particle-ending hard stops.
+
+    Stripping trailing control particles first keeps exact/char-run stops
+    (「停吧」「停下来吧」) and addressed soft-stop guards (「你好了吗」) intact.
+    Only when that finds no full match do we retry raw normalized text for
+    non-soft lexemes that inherently end in a particle (「别说啦」「不要说啦」),
+    and accept bare imperative 「不要说」 only when it is not phrased as a
+    question (so 「你不要说吗？」 and 「你不用说了？」 stay in chat).
+    """
+
+    raw_normalized = _normalize_stop_text(text)
+    if raw_normalized.endswith("吗") and not raw_normalized.endswith(("好吗", "可以吗")):
+        return None
+    if (
+        raw_normalized in _IMPERATIVE_ONLY_EXACT_STOPS
+        and "?" not in text
+        and "？" not in text
+    ):
+        return [_ExactStop("不要说")]
+    stripped = _strip_trailing_control_particles(raw_normalized)
+    if stripped:
+        commands, remainder = _peel_commands(stripped)
+        if (
+            commands
+            and not _strip_trailing_control_particles(remainder)
+            and not _commands_blocked_by_question_mark(text, raw_normalized, commands)
+        ):
+            return commands
+    if raw_normalized != stripped:
+        commands, remainder = _peel_commands(raw_normalized)
+        if (
+            commands
+            and not _strip_trailing_control_particles(remainder)
+            and any(
+                isinstance(cmd, _PrefixStop) and not _is_soft_stop(cmd) for cmd in commands
+            )
+            and not _commands_blocked_by_question_mark(text, raw_normalized, commands)
+        ):
+            return commands
+    return None
+
+
 def is_interrupt_command_only(text: str) -> bool:
     """True when the utterance is only stop/wait commands (no real question).
 
@@ -770,11 +836,7 @@ def is_interrupt_command_only(text: str) -> bool:
     """
     if is_completion_ack_only(text):
         return True
-    # 「停下来吧」「停啦」: the particle belongs to the command, so strip it
-    # before peeling (「停下来」 is an exact stop, not a prefix).
-    normalized = _strip_trailing_control_particles(_normalize_stop_text(text))
-    commands, remainder = _peel_commands(normalized)
-    return bool(commands) and not _strip_trailing_control_particles(remainder)
+    return _peel_command_only_sequence(text) is not None
 
 
 def is_stop_command_only(text: str) -> bool:
@@ -786,9 +848,8 @@ def is_stop_command_only(text: str) -> bool:
     that yield the floor and must not cut it.
     """
 
-    normalized = _strip_trailing_control_particles(_normalize_stop_text(text))
-    commands, remainder = _peel_commands(normalized)
-    if not commands or _strip_trailing_control_particles(remainder):
+    commands = _peel_command_only_sequence(text)
+    if not commands:
         return False
     strong = False
     for command in commands:

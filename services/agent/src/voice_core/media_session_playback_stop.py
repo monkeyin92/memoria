@@ -59,6 +59,7 @@ from services.agent.src.voice_core.playback_text import (
     _ms_after,
     content_barge_in_wanted,
     followup_utterance_looks_complete,
+    playback_echo_window_near_line,
     playback_followup_grace_s,
     playback_stop_is_echo_for_line,
     playback_text_is_echo,
@@ -159,7 +160,7 @@ class MediaPlaybackStopMixin:
             line = playback.playing_text(fence)
             if line is not None:
                 return str(line)
-        return context.output.assistant_text[-_PLAYBACK_STOP_ECHO_TAIL_CHARS:]
+        return str(getattr(context.output, "assistant_text", ""))[-_PLAYBACK_STOP_ECHO_TAIL_CHARS:]
 
     @staticmethod
     def _reply_can_still_be_stopped(context: _MediaVoiceSession) -> bool:
@@ -219,34 +220,35 @@ class MediaPlaybackStopMixin:
         return playback_stop_is_echo_for_line(text, line)
 
     @staticmethod
+    def _playback_barge_wanted(context: _MediaVoiceSession, text: str) -> bool:
+        line = MediaPlaybackStopMixin._playback_current_line(context)
+        window = playback_echo_window_near_line(str(getattr(context.output, "assistant_text", "")), line)
+        return content_barge_in_wanted(text, playback_text=line, echo_window_text=window)
+
+    @staticmethod
     def _resolve_stop_text(context: _MediaVoiceSession, text: str) -> str | None:
-        return resolve_playback_stop_text(
-            text, playback_text=str(getattr(context.output, "assistant_text", ""))
-        )
+        spoken = str(getattr(context.output, "assistant_text", ""))
+        return resolve_playback_stop_text(text, playback_text=spoken)
 
     @staticmethod
     def _playback_echo_for_guard(
         context: _MediaVoiceSession, raw_text: str, stop_text: str | None
     ) -> bool:
         if stop_text is not None:
-            if stop_text != raw_text:
-                return False
-            return MediaPlaybackStopMixin._playback_stop_is_echo(context, stop_text)
+            return (
+                stop_text == raw_text
+                and MediaPlaybackStopMixin._playback_stop_is_echo(context, stop_text)
+            )
         return MediaPlaybackStopMixin._playback_text_is_echo(context, raw_text)
 
     def _playback_stop_diagnosis(self, context: _MediaVoiceSession, result: ASRResult) -> str:
-        """Why a final could or could not be a spoken stop, without its text.
-
-        2026-10-01 (voice soak on DeepSeek): the owner's 「别说了」 reached the ASR
-        26–31 dB above the reply's echo and a 3–4 character final followed, yet
-        no stop ran and nothing was logged; every guard returned silently.
-        """
+        """Why a final could or could not be a spoken stop, without its text."""
 
         try:
             text = result.text.strip()
             stop_text = self._resolve_stop_text(context, text)
             pending, start = context.pending, result.capture_start_sample
-            barge = content_barge_in_wanted(text, playback_text=self._playback_current_line(context))
+            barge = self._playback_barge_wanted(context, text)
             return (
                 f"stop_word={stop_text is not None} content_barge_in={barge} "
                 f"guard={self._playback_input_guard_reason(context, result)} "
@@ -1088,7 +1090,7 @@ class MediaPlaybackStopMixin:
             not stop_word
             and not result.rescue_synthesized
             and self._reply_can_still_be_stopped(context)
-            and content_barge_in_wanted(text, playback_text=self._playback_current_line(context))
+            and self._playback_barge_wanted(context, text)
             and not self._playback_text_is_echo(context, text)
             and self._playback_input_guard_reason(context, result) is None
         )
@@ -1154,10 +1156,8 @@ class MediaPlaybackStopMixin:
         logger.info(
             "media early playback-stop endpoint session=%s start=%s endpoint=%s "
             "text_len=%s source=%s replaced_empty_endpoint=%s %s",
-            context.identity.session_id,
-            start,
-            endpoint, len(text),
-            source, replaced_endpoint, diagnosis,
+            context.identity.session_id, start, endpoint, len(text), source,
+            replaced_endpoint, diagnosis,
         )
         self._schedule_turn_commit(context)
 
