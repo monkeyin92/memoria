@@ -54,6 +54,31 @@ def test_explicit_interrupt_prefixes() -> None:
     assert is_stop_command_only("你别说了，暂停")
     assert is_interrupt_command_only("麻烦别说了")
     assert is_stop_command_only("麻烦别说了")
+    for colloquial in (
+        "不要说。",
+        "不要说啦。",
+        "不用说了。",
+        "不用再说了。",
+        "别说啦。",
+        "不要讲啦。",
+        "别讲啦。",
+    ):
+        assert is_interrupt_command_only(colloquial), colloquial
+        assert is_stop_command_only(colloquial), colloquial
+    for non_stop in (
+        "不要说谎",
+        "不要说这个",
+        "不要说啦，我想问个问题",
+        "妈妈说不要说脏话",
+        "你不要说吗？",
+        "不要说吗？",
+        "你不要说吗",
+        "你不用说了吗？",
+        "你不用说了吗",
+        "不用说了吗？",
+    ):
+        assert not is_interrupt_command_only(non_stop), non_stop
+        assert not is_stop_command_only(non_stop), non_stop
     assert is_interrupt_command_only("拜托安静")
     assert is_stop_command_only("拜托安静")
     assert is_interrupt_command_only("帮我暂停")

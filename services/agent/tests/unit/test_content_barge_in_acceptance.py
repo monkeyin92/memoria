@@ -80,6 +80,58 @@ def test_non_exact_playback_echo_with_trailing_backchannel_is_not_content_barge_
     )
 
 
+@pytest.mark.parametrize(
+    ("heard", "reply"),
+    [
+        # Build 39 Suite B live reproducer: 15-char echo + 「然后呢？」 (20 chars total)
+        ("大熊猫是咱们中国的国宝。黑白配 然后呢？", "大熊猫是咱们中国的国宝，黑白配特别可爱。"),
+        ("阳光。哈哈。", "阳光里有各种颜色，蓝光散射最明显。"),
+        ("长颈鹿。是吗？", "长颈鹿的脖子特别长，能吃到树顶的叶子。"),
+        ("霸王龙大概12米长。然后呢？", "霸王龙大概有十二米长，是白垩纪最厉害的肉食恐龙。"),
+        ("霸王龙大概12米长。是吗？", "霸王龙大概有十二米长，是白垩纪最厉害的肉食恐龙。"),
+        ("哈哈。大熊猫是咱们中国的国宝。", "大熊猫是咱们中国的国宝，黑白配特别可爱。"),
+        ("是吗？大熊猫是咱们中国的国宝。", "大熊猫是咱们中国的国宝，黑白配特别可爱。"),
+        ("对呀。大熊猫是咱们中国的国宝。然后呢？", "大熊猫是咱们中国的国宝，黑白配特别可爱。"),
+        ("小兔子说，这是什么？是吗？", "小兔子说，这是什么？然后往前跑。"),
+        ("哈哈哈哈。", "今天天气真好。"),
+        ("嗯，是吗？", "今天天气真好。"),
+        ("哈哈，然后呢？", "今天天气真好。"),
+    ],
+)
+def test_leaked_echo_with_backchannel_tail_or_lead_is_not_content_barge_in(
+    heard: str,
+    reply: str,
+) -> None:
+    assert not content_barge_in_wanted(heard, playback_text=reply), heard
+
+
+@pytest.mark.parametrize(
+    ("heard", "reply"),
+    [
+        ("大熊猫是咱们中国的国宝。等一下，我想问云是怎么变出来的？", "大熊猫是咱们中国的国宝，黑白配特别可爱。"),
+        ("这只小熊不喜欢吃蜂蜜，是吗？", "这只小熊喜欢吃蜂蜜。"),
+        ("大熊猫每天都只吃竹子，是吗？", "今天天气很好，适合去公园玩。"),
+        ("小兔子说，这是什么？是吗？", "小兔子说，这是胡萝卜。"),
+        ("嗯，大熊猫喜欢吃竹子吗？", "大熊猫喜欢吃竹子。"),
+        ("嗯，大熊猫喜欢吃竹子吗", "大熊猫喜欢吃竹子。"),
+        ("大熊猫喜欢吃竹子，不对呀。", "大熊猫喜欢吃竹子。"),
+        ("森林里的小动物很可爱，是吗？", "森林里的小动物藏在草里。"),
+        ("小鹿的脖子很短，是吗？", "小鹿的脖子很长。"),
+        ("小兔子住在山上？哈哈。", "小兔子住在山上。"),
+        ("这只小熊喜欢吃蜂蜜，是吗？", "这只小熊不喜欢吃蜂蜜。"),
+        ("霸王龙大概有二米长，是吗？", "霸王龙大概有十二米长。"),
+        ("哈哈镜呢", "长颈鹿的脖子特别长，能吃到树顶的叶子。"),
+        ("熊猫，可爱吗？", "大熊猫住在四川。"),
+        ("然后呢？那明天会下雨吗？", "今天天气真好。"),
+    ],
+)
+def test_real_question_or_correction_around_backchannel_stays_content_barge_in(
+    heard: str,
+    reply: str,
+) -> None:
+    assert content_barge_in_wanted(heard, playback_text=reply), heard
+
+
 def test_short_candidate_from_long_reply_is_echo() -> None:
     reply = "今天的故事里小兔子在森林里唱歌遇见了狐狸，还一起回家吃晚饭。故事最后大家都睡着了，森林恢复了安静的夜晚，月亮升起来了。"
     candidate = reply[:16]

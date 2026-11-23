@@ -2582,3 +2582,179 @@ async def test_spoken_comma_after_buyong_promoted_to_period_does_not_stop_on_mis
         script,
         opening="小兔子摆摆手说不用，听！那是什么声音？",
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("opening", "heard"),
+    [
+        ("大熊猫是咱们中国的国宝，黑白配特别可爱。", "大熊猫是咱们中国的国宝。黑白配 然后呢？"),
+        ("阳光里有各种颜色，蓝光散射最明显。", "阳光。哈哈。"),
+        ("长颈鹿的脖子特别长，能吃到树顶的叶子。", "长颈鹿。是吗？"),
+        ("霸王龙大概有十二米长，是白垩纪最厉害的肉食恐龙。", "霸王龙大概12米长。然后呢？"),
+        ("大熊猫是咱们中国的国宝，黑白配特别可爱。", "哈哈。大熊猫是咱们中国的国宝。"),
+    ],
+)
+async def test_leaked_echo_combined_with_backchannel_keeps_story_playing(
+    opening: str,
+    heard: str,
+) -> None:
+    """Build 39 Suite B: <echo> + backchannel (哈哈/是吗？/然后呢？) must never false-stop."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text=heard)
+        await harness.assert_story_still_playing(story)
+        assert harness.story.reply_calls == 1
+
+    await _run_story(
+        _device_identity(f"echo-backchannel-{len(heard)}"),
+        script,
+        opening=opening,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("heard", ["不要说。", "不要说啦。", "不用说了。", "别说啦。"])
+async def test_colloquial_buyao_shuo_stop_variants_silence_without_resuming_reply(
+    heard: str,
+) -> None:
+    """Short ASR variants of 「不要说了。」 must silence playback instead of starting a reply."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text=heard)
+        await harness.wait_for(lambda: bool(harness.cancel_effects()))
+        harness.assert_story_stopped_session_open(story)
+        assert harness.story.reply_calls == 1
+        assert _user_turn_texts(harness.context) == ["给我讲个故事"]
+
+    await _run_story(
+        _device_identity(f"colloquial-stop-{len(heard)}"),
+        script,
+        opening="大熊猫是咱们中国的国宝，黑白配特别可爱。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_negation_correction_ending_with_shima_still_barges_in_and_answers() -> None:
+    """「这只小熊不喜欢吃蜂蜜，是吗？」 must barge in and answer, never be dropped as echo."""
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        await harness.audio_frames(20, final_text="这只小熊不喜欢吃蜂蜜，是吗？")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert _user_turn_texts(harness.context)[-1] == "这只小熊不喜欢吃蜂蜜，是吗？"
+
+    await _run_story(
+        _device_identity("negation-shima-barge-in"),
+        script,
+        opening="这只小熊喜欢吃蜂蜜，它每天早上都会跑到树林里找甜甜的蜂窝。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_antonym_confirmation_question_is_not_dropped_as_fuzzy_echo() -> None:
+    """「小鹿的脖子很短，是吗？」 over 「小鹿的脖子很长。」 must answer, never drop as echo."""
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        await harness.audio_frames(20, final_text="小鹿的脖子很短，是吗？")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert _user_turn_texts(harness.context)[-1] == "小鹿的脖子很短，是吗？"
+
+    await _run_story(
+        _device_identity("antonym-shima-barge-in"),
+        script,
+        opening="小鹿的脖子很长，能轻松够到高处的嫩叶。",
+    )
+
+
+@pytest.mark.asyncio
+async def test_reasking_earlier_question_in_long_story_is_not_swallowed_by_echo_window() -> None:
+    """Re-asking a question spoken 200+ chars earlier in a long story must barge in and answer."""
+
+    earlier = "小兔子为什么住在山上？"
+    filler = "后来小兔子穿过松树林，跨过小溪流，遇见了采蘑菇的小松鼠和唱歌的百灵鸟，大家一起分享了甜滋滋的浆果和松子。" * 4
+    current = "他们终于走到了森林的尽头。"
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        harness.context.output.assistant_text = earlier + filler + current
+        await harness.audio_frames(20, final_text=earlier)
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert _user_turn_texts(harness.context)[-1] == earlier
+
+    await _run_story(
+        _device_identity("reask-earlier-long-story"),
+        script,
+        opening=current,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("opening", "heard"),
+    [
+        ("长颈鹿的脖子特别长，能吃到树顶的叶子。", "哈哈镜呢"),
+        ("大熊猫是咱们中国的国宝，黑白配特别可爱。", "你不要说吗？"),
+        ("大熊猫是咱们中国的国宝，黑白配特别可爱。", "你不用说了吗？"),
+        ("大熊猫是咱们中国的国宝，黑白配特别可爱。", "你不用说了吗"),
+        ("小兔子住在山上。", "小兔子住在山上？哈哈。"),
+    ],
+)
+async def test_hahajing_and_buyao_shuo_question_barge_in_and_answer(
+    opening: str,
+    heard: str,
+) -> None:
+    """「哈哈镜呢」「你不要说吗？」「你不用说了吗？」「小兔子住在山上？哈哈。」 must answer."""
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        await harness.audio_frames(20, final_text=heard)
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert _user_turn_texts(harness.context)[-1] == heard
+
+    await _run_story(
+        _device_identity(f"barge-protect-{len(heard)}-{abs(hash(heard)) % 1000}"),
+        script,
+        opening=opening,
+    )
+
+
+@pytest.mark.asyncio
+async def test_repeated_current_line_does_not_anchor_echo_window_to_future_question() -> None:
+    """Ambiguous repeated line must fall back to current_line instead of pulling future lines."""
+
+    repeated = "他们继续往前走。"
+    future_q = "小兔子为什么住在山上？"
+
+    async def script(harness: _StoryHarness) -> None:
+        await harness.start_story()
+        harness.context.output.assistant_text = repeated + future_q + repeated
+        await harness.audio_frames(20, final_text="小兔子为什么住在山上，是吗？")
+        await harness.wait_for(lambda: harness.story.reply_calls == 2)
+        assert _user_turn_texts(harness.context)[-1] == "小兔子为什么住在山上，是吗？"
+
+    await _run_story(
+        _device_identity("repeated-line-no-future-anchor"),
+        script,
+        opening=repeated,
+    )
+
+
+@pytest.mark.asyncio
+async def test_statement_echo_with_haha_keeps_playing_unlike_question_with_haha() -> None:
+    """Paired control: 「小兔子住在山上。哈哈。」 stays echo while 「小兔子住在山上？哈哈。」 answers."""
+
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(20, final_text="小兔子住在山上。哈哈。")
+        await harness.assert_story_still_playing(story)
+        assert harness.story.reply_calls == 1
+
+    await _run_story(
+        _device_identity("statement-echo-haha-pair"),
+        script,
+        opening="小兔子住在山上。",
+    )
