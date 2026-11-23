@@ -9,10 +9,34 @@
 
 ## 当前生产快照
 
-**权威当前运行清单**（整栈 + overlay 混合、回滚锚点、未知项）：[`docs/ops/current-runtime-inventory.json`](docs/ops/current-runtime-inventory.json)。用法与比对见 [`docs/ops/runtime-inventory.md`](docs/ops/runtime-inventory.md)。本文件下面的日期节是历史收据，不再当作「当前线上」第二真相源。2026-11-04 入库的清单是 `handoff_reconstruction`；2026-11-10 15:49 CST、2026-11-11 08:08 CST 与 2026-11-17 15:30 CST 三次按授权在主机上做只读 `live_capture`，control-api、bridge、media-edge 的镜像、镜像 ID、revision、health、restarts、override 与回滚锚点以该文件为准。固件与小程序段不是主机可见项，仍沿用 2026-11-04 的交接记录，文件的 `unknowns` 已注明。本地捕获命令与 Mac 同步步骤见该 how-to。
+**权威当前运行清单**（整栈 + overlay 混合、回滚锚点、未知项）：[`docs/ops/current-runtime-inventory.json`](docs/ops/current-runtime-inventory.json)。用法与比对见 [`docs/ops/runtime-inventory.md`](docs/ops/runtime-inventory.md)。本文件下面的日期节是历史收据，不再当作「当前线上」第二真相源。2026-11-04 入库的清单是 `handoff_reconstruction`；2026-11-10 15:49 CST、2026-11-11 08:08 CST、2026-11-17 15:30 CST、2026-11-19 10:48 CST 与 2026-11-23 12:36 CST 五次按授权在主机上做只读 `live_capture`，control-api、bridge、media-edge 的镜像、镜像 ID、revision、health、restarts、override 与回滚锚点以该文件为准。固件与小程序段不是主机可见项，仍沿用 2026-11-04 的交接记录，文件的 `unknowns` 已注明。本地捕获命令与 Mac 同步步骤见该 how-to。
 
 - **生产主机（2026-10-05 起）**：整套服务 01:33–01:40（CST）从旧机 122.51.108.140 迁到 110.42.235.198（原 pocketSparks 生产机，与 hr-tracker、MySQL 等共用，40 GB 盘、3.7 GiB 内存）；ssh 别名 `memoria-prod` 指新机，旧机别名 `memoria-prod-old`（旧机 10-06 到期，到期后别名和 known_hosts 条目可删）。Control API 绑 `127.0.0.1:18791`（hr-tracker 占 8791），由 `MEMORIA_CONTROL_API_PORT` 参数化。对外域名是 `aginice.cn`（你 10-05 说「域名换成aginice.cn这个域名，之前那个不用了」；证书到 2027-01-02，**2026-12-19 前换证**；`aigcnice.com` 仍解析到旧机，旧机到期后失效，已定不做桥、不动 DNS）。客户端当时已切完（之后的版本见下面「设备固件」「小程序体验版」两条）：小程序体验版 `0.2.20261005.3`，固件 build 24，机器人只连 `aginice.cn:8443`。详见「2026-10-05 服务迁移到 110.42.235.198」「2026-10-05 域名切换到 aginice.cn」两节。
 - **产品定位（2026-10-04 起）**：聚焦儿童青少年（陪伴、关怀、教学导师）；老年人与年轻人方向先删去，不进工程队列、验收与对外叙事（README「产品定位」已改写）；代码里已有的长辈、成人服务模式暂留、不再投入，是否清理另行决定；更早各节里的老年相关记录是当时的历史收据，不改。
+
+## 2026-11-22 至 2026-11-23 R02 停播召回与双讲优化全链收据（bridge `20261123-r02-echo-bargein-v1` 已切流，PR #622 已合 main 未上线）
+
+- **合入 main 的 5 个 PR**：
+  - **PR #618**（`f05557d4`）：Volc ASR 默认启用 two-pass（`enable_nonstream=True`）+ 内联热词 + 接收 `好啦好啦` 停播变体。
+  - **PR #619**（`73c1f7e1`）：`memoria-esp-vocat` 切 `AEC_MODE_FD_HIGH_PERF` 并升固件版本至 `build 39`（`2.4.2+m39`，`3,405,776 B`，`sha256 cb127042c24ab0c0e68556f32071b08fad29608d777bb34ff47ca73db425b566`）。
+  - **PR #620**（`0124dfbd`）：在词法停播路由前剥离播报期泄漏回声前缀。
+  - **PR #621**（`53f12aba`）：拦截泄漏回声与附和词误触发 `content_barge_in`，补齐口语短停播变体（`不要说/啦`、`不用说了`、`不要讲啦` 等）。
+  - **PR #622**（`24230d6d`，**已合 main，尚未上线**）：对称补全口语停播词（`不要再说了/啦`、`不用再说啦`、`不用讲了/啦`、`别再说了/啦`、`暂停一下`、`停一停` 等）、分句作用域问号与裸「吗」守卫、及 `is_resume_command_only` 边界收紧；经两轮跨厂商审查（GPT-6.2 Astra）与 Devin Review 清零、CI 全绿合并。
+- **线上生产快照（2026-11-23 12:36 CST `live_capture`）**：
+  - **`voice-core-media-bridge`**（2026-11-23 10:10 CST 切流）：运行 `memoria-agent:20261123-r02-echo-bargein-v1`（`sha256:63c7a4e568fb796c380e86c18a9dda9d0a52cb6f1ce65245a9f6689ce455dcc5`，`revision_commit=ee3a6c87da03e7efda6bf226addcfa6ae3c89638`，含 PR `#618 + #620 + #621`，**不含 `#622`**；`healthy`，`restarts=0`），回滚锚点 `memoria-agent:rollback-20261123-r02-echo-bargein-v1-pre`。本机 4 项门禁全过（`ruff`、`module-budget` 33/33、`mypy --strict` 214 files、4,000+ agent/deploy pytest）；`--allow-scope-drift` 仅放行既有 `infra/voices/fixed_safety/`。
+  - **`control-api`**（`memoria-control-api:20261118-bind-offer-only-v1`，`healthy`，`restarts=0`）与 **`media-edge`**（`memoria-media-edge:20261115-endpoint-v2`，`healthy`，`restarts=0`）未动。
+  - **固件与 OTA**：全局 `current.json` 保持 `build 21`（`2.4.2+m21`）未动；单测试机 `dev_atk_a4cb8fd6095c` 当前运行签名 `build 38`（`ota_0`/`ota_1`）；已签名 `build 39` 留存于主机 `/var/lib/memoria/firmware-releases/memoria-esp-vocat/39/`（此前单设备升级收据见 `outputs/acceptance/ota-build39-20261122-1652/`）。
+- **四轮 R02 真机收据（音量 30，均为本地 git-ignored 目录）**：
+  1. `outputs/acceptance/r02-abcd-nonstream-haola-20261122-1429/`（`build 38` + `#618`）：Suite `b` **PASS (60/60)**、Suite `d` **PASS (5/5)**；Suite `a` **FAIL**（61/80，`停。`/`好了好了。`/`安静。`/`等一下。` 4 词全 10/10 PASS，`停一下。` 0/10 全落 `3:一下。`，`不要说了。` 3/10 且 3 `reply_resumed`）；Suite `c` **FAIL**（8/10，stop P90 `1.43 s`，first syllable P90 `2.66 s`）。
+  2. `outputs/acceptance/r02-abcd-build39-20261122-1646/`（`build 39` + `#618`）：Suite `b` **PASS (60/60)**、Suite `d` **PASS (5/5)**；Suite `c` 抢答命中升至 **10/10**（P90 `1.47 s` / `2.72 s`）；Suite `a` 67/79（`不要说了。` 9 轮），但暴露回声前缀泄漏导致 21 次 `reply_resumed`。
+  3. `outputs/acceptance/r02-abcd-build39-echostrip-20261123-0118/`（`build 39` + `#620`）：Suite `d` **PASS (5/5)**；Suite `a` 55/80（`reply_resumed` 从 21 降到仅 `不要说了。` 4 次，其余 7 词 0 `reply_resumed`，`停一下。` 0/10 中 9/10 落 `3:一下。`）；Suite `b` **FAIL**（`哈哈。` 2、`是吗？` 4、`然后呢？` 4 共 10 次误停播，`对。` 9/10）；Suite `c` **FAIL**（6/10，stop P90 `0.62 s`、first syllable P90 `2.08 s`）。
+  4. `outputs/acceptance/r02-ba-build38-echostrip-20261123-0736/`（单机退回 `build 38` + `#620`，随后按用户要求暂停真机外放）：Suite `b` 恢复 **PASS (60/60)**；Suite `a` 跑至部分轮次中止（`停一下。` 实测 1/10，`t020` 命中）。
+- **离线取证结论（零外放、零触设备）**：
+  - **`停一下。→ 一下。` 非固件回归、非播音期 VAD pre-roll**：4 轮真 `stop_word` 召回分别为 `1429` 0/10、`1646` 1/10（另 4 次为 `#620` 前回声泄漏假 `content_barge_in`）、`0118` 0/10、`0736` 1/10；已排除素材 WAV（0 ms 前导静音，首音「停」`-33.6 dBFS` vs「一下」`-10.3 dBFS`）、Mac `afplay` 裁剪、云端 DTLN 丢字与固件播音期门控（`memoria_protocol.cc` 播音期逐帧连续上行），且历史对照 `outputs/acceptance/r02-a-probe-fd-only-20261122-1313/`（同 `AEC(FD_HIGH_PERF)+NS+VAD`、高 ~1.5 dB）曾录得 3/3 `4:停一下。`；根因为双讲叠音下 `AEC(NLP)+NS` 对 `-33.6 dBFS` 轻声起音「停」的临界声学 SNR 损耗。
+  - **`0118` `不要说了。` 4 次 `reply_resumed`（`t031/t035/t037/t039`）**：均为 `text_len=4..5`、`content_barge_in=True`（因「不要」落入 `_CONTENT_MARKERS` 的短停播口语变体），已由 PR `#621`（已上线）与 PR `#622`（已合 main）覆盖。
+- **未验证边界与下次恢复起点**：
+  - 真机外放当前暂停；PR `#621`（已上线）与 PR `#622`（已合 main 未上线）均**尚未经真机验收**，不可宣称 R02 通过。Notion R02 卡片与每日任务看板已同步交接状态（状态仍为「进行中」）。
+  - 下次恢复真机窗口时：① 确认是否先将 PR `#622`（`24230d6d`）组件切流上线（或先直接验证当前线上的 `#621`）；② 单设备 `dev_atk_a4cb8fd6095c` 切回主机已存签名 `build 39`；③ 在同一候选版本上按 **`b → a → c → d`** 跑完 R02（优先验证 `build 39` 下 Suite `b` 是否回到 60/60、`不要说了。` 4 次 `reply_resumed` 是否归零）；④ 固件定版后再独立跑 Safety 20-turn 与长时 Soak。
 
 ## 2026-11-22 Agent `20261122-r02-gap-bargein-hotwords-v1` 切流、固件 `build 38` 单设备 OTA 与 R02 `c + d + a` 真机复测
 
