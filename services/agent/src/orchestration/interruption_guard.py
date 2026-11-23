@@ -404,7 +404,7 @@ def _is_quoted_mention_with_content(text: str) -> bool:
 
 
 _CLAUSE_BREAK_PUNCT = "，,。！？.!?；;\n"
-_SENTENCE_END_PUNCT = "。！!；;\n"
+_SENTENCE_END_PUNCT = "。！.!；;\n"
 
 
 def _explicit_stop_blocked_as_question(text: str, hit: _StopHit) -> bool:
@@ -425,6 +425,8 @@ def _explicit_stop_blocked_as_question(text: str, hit: _StopHit) -> bool:
     hit_norm_end = lead_fillers + hit.end
     if hit_norm_end > len(core_norm):
         return False
+    if hit_norm_end < len(core_norm) and core_norm[hit_norm_end] == "吗":
+        return True
     orig_start = core_positions[hit_norm_start]
     after_hit = core_positions[hit_norm_end - 1] + 1
     clause_end = len(core_text)
@@ -1112,6 +1114,8 @@ def is_resume_command_only(text: str) -> bool:
     )
     if resume_start < 0:
         return False
+    if core_norm[:resume_start].endswith(_STOP_NEGATORS):
+        return False
     if core_norm.endswith("吗") or _strip_non_question_trailing_particles(core_norm) is None:
         return False
     resume_tail = core_text[core_positions[resume_start] :]
@@ -1126,7 +1130,7 @@ def is_resume_command_only(text: str) -> bool:
     for filler in sorted(_CONTROL_ACK_FILLERS, key=len, reverse=True):
         remainder = remainder.replace(filler, "")
     rem = normalize_short(remainder)
-    if rem in {"吗", "呢"}:
+    if rem in {"吗", "呢", "不", "别", "没"}:
         return False
     return len(rem) <= 1
 
