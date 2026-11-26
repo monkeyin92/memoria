@@ -93,14 +93,14 @@ async def test_unbind_releases_the_fleet_binding(
     assert after.certificate_id == CERTIFICATE_ID
 
 
-class _FailingLayerPurge:
-    async def purge_both_layers(self, *, subject_id: str) -> None:
+class _FailingSubjectErasure:
+    async def erase_subject(self, *, subject_id: str) -> None:
         del subject_id
-        raise RuntimeError("child layer purge unavailable in test")
+        raise RuntimeError("subject memory erasure unavailable in test")
 
 
 @pytest.mark.asyncio
-async def test_unbind_reports_a_failed_child_layer_purge_and_still_clears_identity(
+async def test_unbind_reports_pending_erasure_then_retries_before_redacting_identity(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     from services.identity.service import REDACTED_DISPLAY_NAME
@@ -109,7 +109,9 @@ async def test_unbind_reports_a_failed_child_layer_purge_and_still_clears_identi
     key = Ed25519PrivateKey.generate()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         owner, child_id = await _bound_child_device(client, app, key)
-        app.state.child_layer_store = _FailingLayerPurge()
+        deletion = app.state.subject_deletion
+        original_scope = deletion._memory_scope
+        deletion._memory_scope = _FailingSubjectErasure()
         unbound = await client.post(
             f"/v1/devices/{DEVICE_ID}/binding/unbind",
             headers={"Authorization": f"Bearer {owner['access_token']}"},
@@ -117,15 +119,22 @@ async def test_unbind_reports_a_failed_child_layer_purge_and_still_clears_identi
         )
         assert unbound.status_code == 200, unbound.text
         body = unbound.json()
-        # A failed layer purge is reported, and the identity row is still
-        # cleared: the name never outlives the binding.
         assert body["child_layers_purged"] == "pending"
-        assert body["identity_cleared"] == "completed"
+        assert body["identity_cleared"] == "pending"
+        assert body["subject_deletion"] == "pending"
+        child = await app.state.identity_service.get_person(
+            child_id, actor_person_id=str(owner["user_id"])
+        )
+        assert child.display_name != REDACTED_DISPLAY_NAME
+        assert child.status == "disabled"
+        deletion._memory_scope = original_scope
+        assert await deletion.retry_pending_deletions() == 1
         child = await app.state.identity_service.get_person(
             child_id, actor_person_id=str(owner["user_id"])
         )
         assert child.display_name == REDACTED_DISPLAY_NAME
         assert child.status == "disabled"
+        assert await app.state.identity_store.pending_subject_releases() == ()
 
 
 async def _layer_counts(

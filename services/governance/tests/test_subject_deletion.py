@@ -35,6 +35,7 @@ class _Archive:
     owner_events: set[str] = field(default_factory=lambda: {"e1", "e2"})
     subject_events: set[str] = field(default_factory=lambda: {"crisis-1"})
     calls: list[str] = field(default_factory=list)
+    delete_targets: list[tuple[str, str | None]] = field(default_factory=list)
     fail_delete_once: bool = False
     vectors: int = 0
     deleted_events: int = 0
@@ -62,6 +63,7 @@ class _Archive:
             self.fail_delete_once = False
             raise RuntimeError("database went away")
         self.calls.append(f"delete:{account_id}")
+        self.delete_targets.append((account_id, subject_id))
         target = self.owner_events if account_id == "parent" else self.subject_events
         removed = len(target & set(event_ids))
         target -= set(event_ids)
@@ -152,8 +154,8 @@ def _service(tmp_path: Path, **overrides: Any) -> tuple[SubjectDeletionService, 
     }
     parts.update(overrides)
 
-    async def terminate(subject_id: str) -> int:
-        parts["sessions"].append(subject_id)
+    async def terminate(scope: SubjectScope) -> int:
+        parts["sessions"].append(scope)
         return 1
 
     async def purge(subject_id: str) -> int:
@@ -189,10 +191,11 @@ async def test_deletes_only_the_subject_and_proves_it(tmp_path: Path) -> None:
     result = await service.delete_subject(SCOPE)
 
     assert result["status"] == "completed"
-    assert parts["sessions"] == ["child"]
+    assert parts["sessions"] == [SCOPE]
     # Tutor evidence (archived without subject_id) joins the owner-side set.
     assert result["deleted_counts"]["lineage.owner_events"] == 3
     assert result["deleted_counts"]["archive.objects"] == 1
+    assert parts["archive"].delete_targets == [("parent", "child"), ("child", None)]
     assert parts["archive"].owner_events == set()
     assert parts["archive"].subject_events == set()
     assert parts["corpus"] == ["child"]
@@ -214,13 +217,20 @@ async def test_a_failed_store_resumes_from_its_checkpoint(tmp_path: Path) -> Non
         await service.delete_subject(SCOPE)
     # Fenced while incomplete: new evidence for the child is refused.
     assert service.is_subject_deleting(account_id="parent", subject_id="child") is True
+    assert service.is_subject_deleting(account_id="other-parent", subject_id="child") is False
+    assert service.is_subject_deleting(account_id="parent", subject_id="sibling") is False
+    assert parts["sessions"] == [SCOPE]
+    assert parts["chat_usage"] == []
 
     assert await service.retry_pending_deletions() == 1
     # Lineage was captured once and reused, sessions were not closed twice.
     assert archive.calls.count("subject_event_ids") == 1
-    assert parts["sessions"] == ["child"]
+    assert parts["sessions"] == [SCOPE]
     assert parts["chat_usage"] == ["child"]
+    assert archive.delete_targets == [("parent", "child"), ("child", None)]
     assert archive.owner_events == set()
+    assert archive.subject_events == set()
+    assert service.is_subject_deleting(account_id="parent", subject_id="child") is False
 
 
 @pytest.mark.asyncio

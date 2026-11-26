@@ -723,9 +723,9 @@ async def test_response_plan_short_circuits_identity_and_prohibited_requests(
 
     assert all(response.status_code == 200 for response in identity_responses)
     assert [response.json()["direct_text"] for response in identity_responses] == [
-        "我是小助手，不是真人，可以陪你聊天、讲故事。你今天想聊什么呀？",
-        "我是小助手，不是真人，可以陪你聊天、讲故事。你今天想聊什么呀？",
-        "我是小助手，不是真人，可以陪你聊天、讲故事。你今天想聊什么呀？",
+        "我是茉莉，一个会聊天的小机器人，不是真人哦。你叫什么名字呀？",
+        "我叫茉莉，是个小机器人，不是真人。你可以叫我茉莉，今天想玩点什么呀？",
+        "我不是真人，我是机器人茉莉。我可以陪你聊天、讲故事，你想先聊什么呀？",
         "我是 AI，没有喜欢的感觉，不过我会认真听你说话。你今天想聊点什么呀？",
     ]
     assert "没有个人名字" in identity_responses[0].json()["instructions"]

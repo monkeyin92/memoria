@@ -13,6 +13,7 @@ from services.archive.domain import EvidenceEvent
 from services.archive.memory_domain import MemorySearchQuery
 from services.archive.memory_extractor import RuleBasedMemoryExtractor
 from services.archive.postgres_memory_catalog import PostgresMemoryCatalog
+from services.control_api.app.governance_wiring import install_subject_deletion
 from services.control_api.app.main import create_app
 from services.control_api.tests.test_bound_subject_binding import (
     _bind,
@@ -23,6 +24,7 @@ from services.control_api.tests.test_bound_subject_binding import (
 from services.control_api.tests.test_guardian_child_memories import _grant_memory
 from services.guardian.child_memory import DialogueSummary
 from services.memory_scope.child_layers import ChildLayerStore
+from services.memory_scope.subject_erasure import PostgresSubjectMemoryScope
 from testing import app_store
 
 CHILD_TEXT = "我喜欢蓝色。"
@@ -198,8 +200,9 @@ async def test_unbind_deletes_the_childs_vector_without_a_data_switch(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("still_served", [False, True])
 async def test_unbind_purging_subject_data_deletes_the_childs_vector(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, still_served: bool
 ) -> None:
     _configure(monkeypatch, tmp_path)
     app = create_app()
@@ -207,6 +210,10 @@ async def test_unbind_purging_subject_data_deletes_the_childs_vector(
         owner_id, child_id, headers = await _bound_child(
             client, app, "vector-purge-owner", "device-vector-purge"
         )
+        if still_served:
+            from services.identity.tests.test_postgres_revoke_classify import bind
+
+            await bind(app.state.identity_service, child_id, owner=owner_id, now=datetime.now(UTC))
         claim_id = await _seed_child_vector(app, owner_id, child_id)
         settings = app.state.settings
         layers = ChildLayerStore(
@@ -215,6 +222,19 @@ async def test_unbind_purging_subject_data_deletes_the_childs_vector(
         )
         await layers.initialize()
         app.state.child_layer_store = layers
+        memory_scope = PostgresSubjectMemoryScope(
+            settings.memory_maintenance_database_url.get_secret_value()
+        )
+        app.state.subject_memory_scope = memory_scope
+        # Offline create_app omits the production MemoryScope lifespan wiring.
+        install_subject_deletion(
+            app,
+            settings,
+            guardian_store=app.state.guardian_store,
+            archive_object_store=app.state.archive_object_store,
+            corpus_retention_service=app.state.corpus_retention_service,
+            session_terminator=app.state.session_terminator,
+        )
         try:
             record = await layers.write_summary(
                 DialogueSummary(
@@ -247,6 +267,18 @@ async def test_unbind_purging_subject_data_deletes_the_childs_vector(
             )
 
             assert unbound.status_code == 200, unbound.text
+            if still_served:
+                assert unbound.json()["subject_deletion"] == "retained_still_served"
+                assert _vector_count(owner_id, claim_id) == 1
+                assert app_store.fetch_all(
+                    "", "SELECT record_id FROM memory_records WHERE record_id = ?",
+                    (record.record_id,),
+                ) == [(record.record_id,)]
+                assert app_store.fetch_all(
+                    "", "SELECT subject_id FROM identity_subject_releases WHERE subject_id = ?",
+                    (child_id,),
+                ) == []
+                return
             assert unbound.json()["subject_deletion"] == "completed"
             assert _vector_count(owner_id, claim_id) == 0
             events = app_store.fetch_all(
@@ -262,7 +294,15 @@ async def test_unbind_purging_subject_data_deletes_the_childs_vector(
                 (record.record_id,),
             )
             assert records == []
+            releases = app_store.fetch_all(
+                "",
+                "SELECT reason, completed_at IS NOT NULL FROM identity_subject_releases"
+                " WHERE account_id = ? AND subject_id = ?",
+                (owner_id, child_id),
+            )
+            assert releases == [("unbind", True)]
         finally:
+            await memory_scope.close()
             await layers.close()
 
 

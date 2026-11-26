@@ -243,8 +243,8 @@ def _service(tmp_path: Path, **overrides: Any) -> tuple[SubjectDeletionService, 
     }
     parts.update(overrides)
 
-    async def terminate(subject_id: str) -> int:
-        parts["sessions"].append(subject_id)
+    async def terminate(scope: SubjectScope) -> int:
+        parts["sessions"].append(scope.subject_id)
         return 1
 
     async def purge(subject_id: str) -> int:

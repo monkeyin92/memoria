@@ -495,7 +495,7 @@ async def test_revoke_unbind_preserves_history(
     revoked = await service.revoke_binding(
         device_id="dev-revoke", actor_person_id=owner, reason="device_lost", now=now
     )
-    assert revoked.status == "revoked"
+    assert revoked.binding.status == "revoked"
     assert await service.get_active_manifest("dev-revoke", now=now) is None
     versions = await service.list_binding_versions("dev-revoke")
     assert len(versions) == 1
