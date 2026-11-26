@@ -55,10 +55,11 @@ class DuplexRuntimeShutdownMixin:
         return asyncio.get_running_loop().create_task(_closed_noop(), name=name)
 
     async def drain_background_tasks(self) -> None:
-        for task in tuple(self._background_tasks):
+        tasks = tuple(task for task in self._background_tasks if task is not asyncio.current_task())
+        for task in tasks:
             task.cancel()
-        if self._background_tasks:
-            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def drain_durable_tasks(self) -> None:
         durable = tuple(self._durable_tasks)

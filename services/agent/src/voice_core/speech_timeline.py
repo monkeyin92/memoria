@@ -146,6 +146,7 @@ class ASRResult:
     # own timeline replacement identity so it cannot erase the accepted
     # prefix.
     timeline_segment_id: str | None = None
+    provider_task_start_sample: int | None = None
 
     def __post_init__(self) -> None:
         if self.stream_epoch < 1:
@@ -164,6 +165,10 @@ class ASRResult:
             raise ValueError("capture_start_sample must be non-negative")
         if self.capture_end_sample <= self.capture_start_sample:
             raise ValueError("capture_end_sample must be greater than start")
+        if self.provider_task_start_sample is not None and not (
+            0 <= self.provider_task_start_sample <= self.capture_start_sample
+        ):
+            raise ValueError("provider task must start at or before the result")
         if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
             raise ValueError("confidence must be between 0 and 1")
         if self.provider_begin_ms is not None and self.provider_begin_ms < 0:

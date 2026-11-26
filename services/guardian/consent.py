@@ -5,7 +5,9 @@ from __future__ import annotations
 import inspect
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Literal
 
 from services.archive.domain import (
     EvidenceEvent,
@@ -23,7 +25,16 @@ from services.guardian.domain import (
     same_person_consent_grant_request,
 )
 
-ConsentRevocationHook = Callable[[str, ConsentKind], Awaitable[None] | None]
+
+@dataclass(frozen=True, slots=True)
+class ConsentRevocation:
+    subject_person_id: str
+    grantor_person_id: str
+    kind: ConsentKind
+    scope: Literal["minor_account", "bound_subject"]
+
+
+ConsentRevocationHook = Callable[[ConsentRevocation], Awaitable[None] | None]
 
 
 class GuardianConsentService:
@@ -122,7 +133,7 @@ class GuardianConsentService:
             revocation_evidence_event_id=evidence_event_id,
         )
         if self._on_revoked is not None:
-            result = self._on_revoked(link.minor_user_id, revoked.consent_kind)
+            result = self._on_revoked(ConsentRevocation(link.minor_user_id, guardian_user_id, revoked.consent_kind, "minor_account"))
             if inspect.isawaitable(result):
                 await result
         await self._archive.record(
@@ -276,7 +287,7 @@ class GuardianConsentService:
         )
         if self._on_revoked is not None:
             result = self._on_revoked(
-                revoked.subject_person_id, revoked.consent_kind
+                ConsentRevocation(revoked.subject_person_id, grantor_person_id, revoked.consent_kind, "bound_subject")
             )
             if inspect.isawaitable(result):
                 await result

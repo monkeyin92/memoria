@@ -16,6 +16,7 @@ from services.agent.src.orchestration.interruption_guard import (
     count_cjk_chars,
     is_conversation_close_only,
 )
+from services.agent.src.voice_core.semantic_completeness import is_semantically_complete
 from services.common.fixed_safety_scripts import spoken_prefix_for_display
 
 # UtteranceRouter rule 4 (pure stop / completion acknowledgement) reports this
@@ -1077,7 +1078,7 @@ def followup_utterance_looks_complete(text: str) -> bool:
         return True
     if any(compact.endswith(suffix) for suffix in _FOLLOWUP_INCOMPLETE_SUFFIXES):
         return False
-    return len(compact) >= 6
+    return len(compact) >= 6 or is_semantically_complete(text)
 
 
 def _compact(text: str) -> str:

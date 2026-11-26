@@ -22,7 +22,11 @@ from services.agent.src.daily_chat import DailyChatClient, build_daily_chat_clie
 from services.agent.src.duplex_runtime import DuplexRuntime
 from services.agent.src.generation_output_policy import frozen_companion_clone_permitted
 from services.agent.src.live_lookup_wiring import install_live_lookup_semantic_resolver
-from services.agent.src.mode_policy_client import ModePolicyClient, ModePolicyClientConfig
+from services.agent.src.mode_policy_client import (
+    ModePolicyClient,
+    ModePolicyClientConfig,
+    RuntimeSessionTerminated,
+)
 from services.agent.src.observability.metrics import GLOBAL_METRICS
 from services.agent.src.orchestration.handlers import (
     LanguageModelRequest,
@@ -341,7 +345,11 @@ class ProductionMediaSessionFactory:
                 timeout_s=settings.interaction_policy_timeout_s,
             )
         )
-        policy = await client.fetch(session_id=runtime.session_id)
+        try:
+            policy = await client.fetch(session_id=runtime.session_id)
+        except RuntimeSessionTerminated:
+            await client.aclose()
+            raise
         expected_profile_version = (
             runtime.orchestrator.runtime_profiles.expected_device_profile_version
         )

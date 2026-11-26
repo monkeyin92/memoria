@@ -147,29 +147,35 @@ async def sync_bound_subject_authority(
     deployments have no Session Runtime) there is nothing to mirror.
     """
 
-    capabilities = _BOUND_SUBJECT_CAPABILITIES.get(consent_kind)
-    service = cast(
-        BoundSubjectConsentService | None,
-        getattr(request.app.state, "bound_subject_consent", None),
+    await sync_person_consent_authority(
+        identity=getattr(request.app.state, "identity_service", None),
+        service=getattr(request.app.state, "bound_subject_consent", None),
+        actor_id=user.user_id, subject_person_id=subject_person_id,
+        consent_kind=consent_kind, granted=granted, source_key=source_key,
     )
-    identity = getattr(request.app.state, "identity_service", None)
-    if capabilities is None or service is None or not isinstance(identity, IdentityService):
+
+
+async def sync_person_consent_authority(*, identity: IdentityService | None,
+    service: BoundSubjectConsentService | None, actor_id: str, subject_person_id: str,
+    consent_kind: str, granted: bool, source_key: str) -> None:
+    capabilities = _BOUND_SUBJECT_CAPABILITIES.get(consent_kind)
+    if capabilities is None or service is None or identity is None:
         return
     manifests = await identity.list_active_manifests_for_person(
         subject_person_id,
-        actor_person_id=user.user_id,
+        actor_person_id=actor_id,
     )
     for manifest in manifests:
         if (
             manifest.declared_mode != "parent_for_child"
-            or manifest.account_owner_id != user.user_id
+            or manifest.account_owner_id != actor_id
             or subject_person_id not in manifest.primary_subject_ids
         ):
             continue
         if granted:
             await service.grant(
                 BoundSubjectGrant(
-                    actor_person_id=user.user_id,
+                    actor_person_id=actor_id,
                     subject_person_id=subject_person_id,
                     binding_id=manifest.binding_id,
                     kind="guardian",
@@ -179,7 +185,7 @@ async def sync_bound_subject_authority(
             )
         else:
             await service.revoke(
-                actor_person_id=user.user_id,
+                actor_person_id=actor_id,
                 subject_person_id=subject_person_id,
                 binding_id=manifest.binding_id,
                 capabilities=capabilities,

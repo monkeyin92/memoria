@@ -137,8 +137,10 @@ async def test_bridge_stamps_versions_and_never_emits_shadow_observations() -> N
     assert await bridge.emit_event("bridge-versions", "marker", {})
     state_event = await call.read()
     assert state_event.client.type == "assistant_state"
+    assert state_event.client.sequence > 0
     marker_event = await call.read()
     assert marker_event.client.type == "marker"
+    assert marker_event.client.sequence > state_event.client.sequence
 
     await requests.put(None)
     assert await call.read() is grpc.aio.EOF

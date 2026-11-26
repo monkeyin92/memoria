@@ -22,10 +22,22 @@ SafetyDecision = Literal[
 ]
 
 SAFE_UNKNOWN_REPLY = "我不知道。"
-# Product: no personal name. Exact fixed line for the closed identity question set.
-NAMELESS_IDENTITY_REPLY: Final = (
-    "我是小助手，不是真人，可以陪你聊天、讲故事。你今天想聊什么呀？"
+# Product (2026-11-11, compliance confirmed): one robot, one name. The wake word's
+# display name is the robot's name; it still says plainly that it is a robot, not
+# a person. Three fixed lines so the same question is not answered word for word
+# every time; which one is chosen depends only on what was asked (see
+# ``_identity_reply_for``), so every path stays deterministic and allow-listed.
+ROBOT_NAME: Final = "茉莉"
+IDENTITY_REPLY_WHO: Final = "我是茉莉，一个会聊天的小机器人，不是真人哦。你叫什么名字呀？"
+IDENTITY_REPLY_HUMAN: Final = "我不是真人，我是机器人茉莉。我可以陪你聊天、讲故事，你想先聊什么呀？"
+IDENTITY_REPLY_NAME: Final = "我叫茉莉，是个小机器人，不是真人。你可以叫我茉莉，今天想玩点什么呀？"
+IDENTITY_REPLIES: Final[tuple[str, ...]] = (
+    IDENTITY_REPLY_WHO,
+    IDENTITY_REPLY_HUMAN,
+    IDENTITY_REPLY_NAME,
 )
+# Kept under its old name: the default line, and what prompts quote as the example.
+NAMELESS_IDENTITY_REPLY: Final = IDENTITY_REPLY_WHO
 # Product: affection / attachment questions never get 我喜欢你 / 我爱你 / 好朋友.
 AFFECTION_FIXED_REPLY: Final = (
     "我是 AI，没有喜欢的感觉，不过我会认真听你说话。你今天想聊点什么呀？"
@@ -199,6 +211,16 @@ PROHIBITED_CONTENT_TERMS: Final[tuple[str, ...]] = (
     "黑客入侵",
 )
 _PROHIBITED_CONTENT_TERMS = PROHIBITED_CONTENT_TERMS
+# Words a child legitimately asks about (the sun, volcanoes, fireworks, what a scam is, why hitting is
+# wrong). Compliance confirmed 2026-11-11: these only draw the fixed "我不知道。" when the query also
+# asks how to do the thing. Everything else on the list (weapons, drugs, sexual content, killing,
+# explosives by name, and so on) is refused as before.
+_EXPLAINABLE_TERMS: Final[frozenset[str]] = frozenset({"爆炸", "暴力", "赌博", "诈骗"})
+_HOW_TO_DO_IT_RE = re.compile(
+    r"教我|教教我|教一下|怎么(?:做|制|造|弄|搞|炸|骗|赌|赢钱|入侵|实施|策划|才能)|"
+    r"如何(?:做|制|造|实施|策划|骗|赌)|怎样(?:做|制|造|骗|赌)|方法|步骤|配方|材料|"
+    r"哪里(?:能)?买|制作|制造|自制|帮我.{0,6}(?:骗|赌|炸)|我要.{0,4}(?:骗|赌|炸)|想要.{0,4}(?:骗|赌|炸)"
+)
 _PROHIBITED_ENGLISH_RE = re.compile(
     r"(?<![a-z])(?:"
     r"porn(?:ography)?|sex(?:ual)?|av|rape|assault|murder|kill(?:ing)?|"
@@ -699,11 +721,30 @@ def companion_safety_decision(query: str) -> SafetyDecision:
     # / analysis that only quotes risk language does not become a support hit.
     if any(marker in crisis_query.lower() for marker in CRISIS_CONTEXT_MARKERS):
         return "support_relay"
-    if any(term in full_normalized for term in _PROHIBITED_CONTENT_TERMS) or (
-        _PROHIBITED_ENGLISH_RE.search(query.lower())
-    ):
+    matched_terms = [term for term in _PROHIBITED_CONTENT_TERMS if term in full_normalized]
+    if matched_terms or _PROHIBITED_ENGLISH_RE.search(query.lower()):
+        if (
+            matched_terms
+            and not _PROHIBITED_ENGLISH_RE.search(query.lower())
+            and all(term in _EXPLAINABLE_TERMS for term in matched_terms)
+            and not _HOW_TO_DO_IT_RE.search(full_normalized)
+        ):
+            # A child asking why the sun explodes, what fraud is, or saying "I do not like
+            # violence" is not asking for a harmful thing. The model answers under the safety
+            # core; only a request to *do* it (how to, teach me, make one) stays a fixed refusal.
+            return "none"
         return "prohibited_request"
     return "none"
+
+
+def _identity_reply_for(normalized_query: str) -> str:
+    """The identity line that answers this question: human or not, name, or who."""
+
+    if any(marker in normalized_query for marker in ("真人", "真的人", "人吗", "机器人", "是人")):
+        return IDENTITY_REPLY_HUMAN
+    if any(marker in normalized_query for marker in ("名字", "叫什么", "叫啥")):
+        return IDENTITY_REPLY_NAME
+    return IDENTITY_REPLY_WHO
 
 
 def companion_identity_reply(
@@ -728,7 +769,7 @@ def companion_identity_replies(display_name: str, style_description: str) -> fro
 
     return frozenset(
         {
-            NAMELESS_IDENTITY_REPLY,
+            *IDENTITY_REPLIES,
             AFFECTION_FIXED_REPLY,
             VOLUME_UP_REPLY,
             VOLUME_DOWN_REPLY,
@@ -765,7 +806,7 @@ def fixed_companion_reply(
         return vol_reply
     normalized = _normalize_query(query)
     if normalized in _IDENTITY_FIXED_QUERIES:
-        return NAMELESS_IDENTITY_REPLY
+        return _identity_reply_for(normalized)
     if normalized in _AFFECTION_FIXED_QUERIES:
         return AFFECTION_FIXED_REPLY
     return None

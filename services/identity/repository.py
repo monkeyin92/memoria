@@ -23,6 +23,7 @@ from services.identity.domain import (
     RelationshipStatus,
     TransferIntent,
 )
+from services.identity.subject_release import BindingRevocation
 
 
 @dataclass(frozen=True)
@@ -299,6 +300,17 @@ class IdentityStore(Protocol):
         *,
         scope: str = "api",
     ) -> tuple[DeviceBinding, ...]: ...
+
+    async def revoke_binding(self, binding_id: str, *, at: datetime, actor_person_id: str,
+                             audit_event: AuditEvent | None = None, outbox_event: OutboxEvent | None = None) -> BindingRevocation: ...
+
+    async def prepare_account_subject_erasure(self, account_id: str) -> tuple[str, ...]: ...
+
+    async def pending_subject_releases(self, *, limit: int = 100) -> tuple[tuple[str, str], ...]: ...
+
+    async def complete_subject_release(self, account_id: str, subject_id: str) -> None: ...
+
+    async def released_subject_identity_absent(self, account_id: str, subject_id: str) -> bool: ...
 
     async def transition_binding(
         self,

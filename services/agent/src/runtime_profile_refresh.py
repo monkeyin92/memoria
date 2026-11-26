@@ -19,7 +19,10 @@ from services.agent.src.identity_state import (
     drain_epoch_rotation,
     invalidate_identity_epochs,
 )
-from services.agent.src.mode_policy_client import mode_policy_after_identity_rotation
+from services.agent.src.mode_policy_client import (
+    RuntimeSessionTerminated,
+    mode_policy_after_identity_rotation,
+)
 from services.agent.src.runtime_profile import VerifiedRuntimeProfile
 
 if TYPE_CHECKING:
@@ -41,6 +44,7 @@ class DuplexRuntimeProfileRefreshMixin:
         # Shared state owned by the DuplexRuntime dataclass.
         orchestrator: Orchestrator
         session_id: str
+        _closed: bool
         RUNTIME_PROFILE_REFRESH_TIMEOUT_S: float
         _generation_records: GenerationRecords
         _mode_policy: ModePolicy
@@ -61,6 +65,8 @@ class DuplexRuntimeProfileRefreshMixin:
         _interaction_context_prefetch_key: tuple[int, str] | None
         _interaction_warm_epoch: int | None
         _interaction_delegated_fences: set[GenerationFence]
+
+        async def close(self) -> None: ...
 
         # Core runtime members consumed by this mixin.
         @property
@@ -196,6 +202,8 @@ class DuplexRuntimeProfileRefreshMixin:
         self._runtime_profile_refresher = refresher
 
     async def refresh_runtime_profile(self) -> VerifiedRuntimeProfile | None:
+        if self._closed:
+            raise RuntimeSessionTerminated("session_closed")
         if self._runtime_profile_refresher is None:
             self.degrade_runtime_profile()
             return None
@@ -203,6 +211,9 @@ class DuplexRuntimeProfileRefreshMixin:
             verified = await asyncio.wait_for(
                 self._runtime_profile_refresher(), timeout=self.RUNTIME_PROFILE_REFRESH_TIMEOUT_S
             )
+        except RuntimeSessionTerminated:
+            await self.close()
+            raise
         except TimeoutError:
             self.orchestrator.metrics.inc_runtime_profile_refresh_failure("timeout")
             logger.warning(

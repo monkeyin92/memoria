@@ -2819,6 +2819,8 @@ async def test_symmetric_colloquial_stops_and_filler_qmark_stop_without_resuming
     "heard",
     [
         "你先停一下？",
+        "你先停一下。",
+        "你先停一下",
         "你不要再说了？",
         "你不要再说了吗？",
         "不用讲了吗，好吧",

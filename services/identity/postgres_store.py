@@ -32,6 +32,7 @@ from services.identity.domain import (
 from services.identity.postgres_bindings import (
     PostgresIdentityBindingMixin,
     _insert_binding,
+    _lock_binding_subjects,
 )
 from services.identity.postgres_helpers import _timestamp
 from services.identity.postgres_relationships import (
@@ -119,10 +120,6 @@ class PostgresIdentityStore(
         actor_person_id: str | None = None,
         scope: str = "api",
     ) -> PersonSubject:
-        # Person creation is registration: it runs as the dedicated
-        # registration role through the SECURITY DEFINER port so a forged
-        # app.identity_scope GUC can never grant the API role the ability to
-        # create persons (the API role has no INSERT grant on identity_persons).
         # The port is an atomic compare-or-insert: it persists person + audit
         # + outbox atomically with fixed action/topic and derived event ids,
         # and an exact canonical replay returns the persisted DB row while any
@@ -599,6 +596,7 @@ class PostgresIdentityStore(
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                     binding.device_id,
                 )
+                await _lock_binding_subjects(connection, binding, previous_binding_id)
                 stored = await connection.fetchrow(
                     "SELECT * FROM identity_transfer_intents WHERE transfer_id = $1",
                     intent.transfer_id,
@@ -693,18 +691,12 @@ class PostgresIdentityStore(
                 return replace(binding, binding_version=version)
 
     async def append_audit(self, event: AuditEvent) -> None:
-        # The generic audit port is gone: audit rows are synthesized by the
-        # mutation triggers with fixed actions.  There is no standalone
-        # append path for the API role (fail closed).
         raise RuntimeError(
             "PostgresIdentityStore.append_audit is not available: audit rows "
             "are synthesized by the business mutation triggers"
         )
 
     async def enqueue_outbox(self, event: OutboxEvent) -> None:
-        # The generic outbox port is gone: outbox events are synthesized by
-        # the mutation triggers.  There is no standalone enqueue path for the
-        # API role (fail closed).
         raise RuntimeError(
             "PostgresIdentityStore.enqueue_outbox is not available: outbox "
             "events are synthesized by the business mutation triggers"

@@ -259,3 +259,4 @@ class _Connection:
     outgoing: _PriorityOutgoing
     closed: bool = False
     close_notified: bool = False
+    client_sequence: int = 0

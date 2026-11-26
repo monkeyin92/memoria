@@ -199,13 +199,15 @@ class PostgresMemorySearchMixin:
                     ),
                 )
             )
+        parameters.append(query.distinct_facts)
+        distinct_index = len(parameters)
         parameters.append(query.limit)
         pool = await self._ready_pool()
         async with pool.acquire() as connection, connection.transaction():
             await self._scope(connection, query.account_id)
             rows = await connection.fetch(
                 f"""
-                {semantic_cte}
+                {semantic_cte + "," if semantic_cte else "WITH"} eligible AS (
                 SELECT document.*, claim.value AS claim_value,
                        {score_expression} AS score,
                        ARRAY(
@@ -221,6 +223,33 @@ class PostgresMemorySearchMixin:
                  AND claim.account_id = document.account_id
                 {semantic_join}
                 WHERE {" AND ".join(clauses)}
+                ), distinct_projections AS (
+                    SELECT eligible.*,
+                           row_number() OVER (
+                               PARTITION BY source_event_id, source_event_ids, title,
+                                   split_part(body, E'\n[retrieval-context]', 1),
+                                   domain_category, sensitivity, valid_from, valid_to,
+                                   CASE WHEN kind = 'claim' THEN item_id::text ELSE '' END
+                               ORDER BY CASE status WHEN 'confirmed' THEN 0 ELSE 1 END,
+                                        score DESC, observed_at DESC, document_id
+                           ) AS projection_rank
+                    FROM eligible
+                    WHERE NOT ${distinct_index}::boolean OR kind = 'claim' OR NOT EXISTS (
+                        SELECT 1 FROM eligible fact
+                        WHERE fact.kind = 'claim'
+                          AND fact.source_event_id = eligible.source_event_id
+                          AND fact.source_event_ids = eligible.source_event_ids
+                          AND fact.title = eligible.title
+                          AND fact.claim_value = split_part(eligible.body, E'\n[retrieval-context]', 1)
+                          AND fact.domain_category = eligible.domain_category
+                          AND fact.sensitivity = eligible.sensitivity
+                          AND fact.status = eligible.status
+                          AND fact.valid_from IS NOT DISTINCT FROM eligible.valid_from
+                          AND fact.valid_to IS NOT DISTINCT FROM eligible.valid_to
+                    )
+                )
+                SELECT * FROM distinct_projections document
+                WHERE NOT ${distinct_index}::boolean OR projection_rank = 1
                 ORDER BY CASE document.status WHEN 'confirmed' THEN 0 ELSE 1 END,
                          score DESC, document.observed_at DESC, document.document_id
                 LIMIT ${len(parameters)}
@@ -230,7 +259,6 @@ class PostgresMemorySearchMixin:
         items = tuple(self._search_item(row) for row in rows)
         self._schedule_claim_vector_backfill(account_id=query.account_id, items=items)
         return MemorySearchResult(items=items)
-
 
     @staticmethod
     def _search_item(row: asyncpg.Record) -> MemorySearchItem:

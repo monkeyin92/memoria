@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import httpx
 import pytest
 from services.agent.src.duplex_runtime import DuplexRuntime
+from services.agent.src.providers.domestic_weather import DomesticWeather, QWeatherConfig
 from services.agent.src.reply_pipeline import ReplyPipeline
 from services.common.realtime_information import (
     ASK_WEATHER_CITY_REPLY,
@@ -131,3 +133,27 @@ async def test_a_follow_up_without_any_source_speaks_the_weather_fallback() -> N
     assert await _say(runtime, pipeline, "杭州") == WEATHER_LOOKUP_UNAVAILABLE_REPLY
     assert await _say(runtime, pipeline, "那明天呢") == WEATHER_LOOKUP_UNAVAILABLE_REPLY
     await runtime.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("day", "offset"), [("明天", 1), ("后天", 2), ("大后天", 3)])
+async def test_followup_uses_the_requested_day_in_the_actual_weather_reply(
+    day: str, offset: int,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/geo/v2/city/lookup":
+            return httpx.Response(200, json={"code": "200", "location": [{"name": "杭州", "adm1": "浙江省", "id": "101210101", "country": "中国"}]})
+        return httpx.Response(200, json={"code": "200", "daily": [{"textDay": "晴", "tempMin": str(i), "tempMax": str(i + 10)} for i in range(7)]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        weather = DomesticWeather(QWeatherConfig(api_key="test-key", api_host="abcd.re.qweatherapi.com"), client=client)
+        runtime, pipeline = _session("weather-followup-offset", weather)
+        try:
+            assert await _say(runtime, pipeline, "杭州今天天气") == "杭州今天晴，0到10度。"
+            assert await _say(runtime, pipeline, f"那{day}呢") == f"杭州{day}晴，{offset}到{offset + 10}度。"
+            assert requests[-1].url.path == f"/v7/weather/{'7d' if offset == 3 else '3d'}"
+        finally:
+            await runtime.close()

@@ -23,6 +23,7 @@ from services.agent.src.mode_policy_client import (
     ModePolicy,
     ModePolicyClient,
     ModePolicyClientConfig,
+    RuntimeSessionTerminated,
 )
 from services.agent.src.runtime_profile import VerifiedRuntimeProfile
 from services.agent.src.transactional_effect_commit import (
@@ -59,7 +60,11 @@ async def install_runtime_policy_clients(
                 timeout_s=settings.interaction_policy_timeout_s,
             )
         )
-        policy = await mode_client.fetch(session_id=session_id)
+        try:
+            policy = await mode_client.fetch(session_id=session_id)
+        except RuntimeSessionTerminated:
+            await mode_client.aclose()
+            raise
         runtime.set_mode_policy(policy)
 
         async def refresh_profile() -> VerifiedRuntimeProfile | None:

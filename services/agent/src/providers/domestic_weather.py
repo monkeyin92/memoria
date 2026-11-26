@@ -21,11 +21,12 @@ _MAX_FORECAST_DAYS = 7
 _SLOW_LOOKUP_MS = 5000
 _WEATHER_MARKERS = ("天气", "天气预报")
 _WEATHER_DAY_OFFSETS = (
+    ("大后天", 3),
     ("后天", 2),
     ("明天", 1),
     ("今天", 0),
 )
-_DAY_LABELS = ("今天", "明天", "后天")
+_DAY_LABELS = ("今天", "明天", "后天", "大后天")
 _RANGE_MARKERS = ("未来", "接下来", "接下去", "后面", "往后", "今后")
 _RANGE_MARKER_RE = re.compile("|".join(_RANGE_MARKERS))
 _RANGE_RE = re.compile(

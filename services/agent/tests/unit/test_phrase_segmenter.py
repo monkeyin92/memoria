@@ -92,3 +92,14 @@ def test_d08_streaming_first_phrase_hard_wait_cut_at_4_chars() -> None:
     emitted = seg.push_token("听", now_ns=t0 + 260_000_000)
     assert [s.text for s in emitted] == ["我们在听"]
 
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("[caring]先休息。", "先休息。"),
+        ("可以[happy]聊聊。", "可以聊聊。"),
+        ("保留[普通说明]。", "保留[普通说明]。"),
+    ],
+)
+def test_tts_only_strips_whitelisted_bare_controls(text, expected):
+    assert normalize_for_tts(text) == (expected, expected)

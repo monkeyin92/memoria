@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from services.agent.src.live_lookup_router import keyword_requires_live_media_lookup
 from services.agent.src.orchestration.prosody import speech_plan_for_turn
 from services.common.companion_response_safety import fixed_companion_reply
@@ -80,6 +81,71 @@ def test_extract_story_ip_generic_regex() -> None:
     assert extract_story_ip("给我讲个哪吒的故事吧") == "哪吒"
     assert extract_story_ip("我想听白雪公主的故事") == "白雪公主"
     assert extract_story_ip("我想听孙悟空的故事") == "孙悟空"
+
+
+@pytest.mark.parametrize("query", [
+    "给我讲一个海底探险的长故事，里面要有小海龟和发光的鱼。",
+    "我想听一个原创故事。",
+    "编一个月球探险的故事，里面有会跳舞的石头。",
+    "自创一个彩虹城的故事。",
+])
+def test_original_story_brief_does_not_become_an_external_ip(query: str) -> None:
+    assert extract_story_ip(query) is None
+
+
+def test_original_story_detection_preserves_named_source_grounding() -> None:
+    assert extract_story_ip("编一个小猪佩奇的故事，里面要有小海龟。") == "小猪佩奇"
+    assert extract_story_ip("不要编故事，我想听葫芦兄弟的故事。") == "葫芦兄弟"
+
+
+def test_original_cast_brief_does_not_replay_an_unrelated_local_story() -> None:
+    assert match_local_story("编一个月亮探险的故事，里面有会跳舞的石头。") is None
+
+
+@pytest.mark.parametrize("query", [
+    "我想听葫芦兄弟的故事，不要自编。",
+    "我想听葫芦兄弟的故事，里面有七个兄弟。",
+    "我想听葫芦兄弟的故事，里面要有七个兄弟，不要瞎编。",
+    "我想听葫芦兄弟的故事，里面要有七个兄弟。",
+    "我想听葫芦兄弟的故事，禁止自编。",
+    "我想听葫芦兄弟的故事，不要随便自编。",
+    "我想听葫芦兄弟的故事，不可以自编。",
+    "我想听葫芦兄弟的故事，然后再编一个新故事。",
+])
+def test_existing_source_and_negated_creation_keep_grounding(query: str) -> None:
+    assert extract_story_ip(query) == "葫芦兄弟"
+    assert keyword_requires_live_media_lookup(query) is True
+
+
+def test_existing_local_plot_description_keeps_local_source() -> None:
+    assert match_local_story("我想听月亮不着急的故事，里面有小兔子。") == "story_02"
+    assert match_local_story("我想听月亮不着急的故事，里面要有小兔子。") == "story_02"
+    assert match_local_story("我想听月亮不着急的故事，不要随便自编。") == "story_02"
+
+
+@pytest.mark.parametrize("query", [
+    "给我讲一个原创的月亮探险故事，不要用官方角色。",
+    "给我讲一个原创故事，名叫《月亮探险》，里面有会跳舞的石头。",
+    "编一个故事给我听，名字叫《蓝色的梦》。",
+    "编一个故事给我听，叫《蓝色的梦》。",
+    "给我讲一个原创的故事。",
+])
+def test_original_brief_can_reject_canon_or_name_its_own_title(query: str) -> None:
+    assert extract_story_ip(query) is None
+    assert match_local_story(query) is None
+
+
+def test_quoted_source_is_not_a_self_named_original_title() -> None:
+    assert extract_story_ip("我想听《葫芦兄弟》的故事，里面要有七个兄弟。") == "葫芦兄弟"
+    assert extract_story_ip("给我讲《葫芦兄弟》原著的故事，里面要有七个兄弟。") == "葫芦兄弟"
+    assert keyword_requires_live_media_lookup("给我讲《葫芦兄弟》原著的故事，里面要有七个兄弟。") is True
+    assert extract_story_ip("我想听《月亮不着急》的故事，里面要有小兔子。") is None
+    assert match_local_story("我想听《月亮不着急》的故事，里面要有小兔子。") == "story_02"
+    assert extract_story_ip("把《蓝色的梦》这几个字翻译成英语。") is None
+    assert keyword_requires_live_media_lookup("把《蓝色的梦》这几个字翻译成英语。") is False
+    assert keyword_requires_live_media_lookup("把《蓝色的梦》这个故事名翻译成英语并读出来。") is False
+    assert keyword_requires_live_media_lookup("帮我读《蓝色的梦》这个故事的标题。") is False
+    assert keyword_requires_live_media_lookup("不讲《蓝色的梦》这个故事，只翻译名字。") is False
 
 
 def test_extract_story_ip_excludes_common_story_words_and_local_titles() -> None:

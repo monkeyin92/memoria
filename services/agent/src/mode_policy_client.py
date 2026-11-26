@@ -430,6 +430,10 @@ class ModePolicyClientConfig:
             raise ValueError("interaction policy timeout must be positive")
 
 
+class RuntimeSessionTerminated(RuntimeError):
+    """Control explicitly terminated this session; retry cannot restore it."""
+
+
 class ModePolicyClient:
     """Fetch once at session start; failures intentionally return no authority."""
 
@@ -453,6 +457,11 @@ class ModePolicyClient:
                 json={"session_id": session_id},
                 timeout=self._config.timeout_s,
             )
+            if response.status_code == 410:
+                payload = response.json()
+                detail = payload.get("detail", payload) if isinstance(payload, dict) else None
+                if isinstance(detail, dict) and detail.get("code") == "session_terminated":
+                    raise RuntimeSessionTerminated(str(detail.get("reason") or "session_terminated"))
             if response.status_code != 200:
                 return ModePolicy.unavailable(f"http_{response.status_code}")
             payload = response.json()

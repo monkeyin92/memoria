@@ -337,18 +337,14 @@ def get_claim(
         raise _http_error(error) from error
 
 
-@router.get(
-    "/v1/device-activations/{device_id}", response_model=ActivationStatusResponse
-)
+@router.get("/v1/device-activations/{device_id}", response_model=ActivationStatusResponse)
 def get_activation_status(
     device_id: str,
     request: Request,
     user: Annotated[AuthenticatedUser, Depends(require_authenticated_user)],
 ) -> dict[str, object]:
     try:
-        return _service(request).get_activation_status(
-            actor_id=user.user_id, device_id=device_id
-        )
+        return _service(request).get_activation_status(actor_id=user.user_id, device_id=device_id)
     except OnboardingError as error:
         raise _http_error(error) from error
 
@@ -470,10 +466,17 @@ async def get_device_display_profile(
             )
             # Tap-only product; coerce any legacy keyword settings rows.
             profile = replace(profile, wake_mode="button", quiet_hours=quiet_hours)
-    return profile.to_wire()
+    from services.control_api.app.firmware_update import observe_authenticated, tracker_for
+
+    await observe_authenticated(request, device_id)
+    wire = profile.to_wire()
+    _, update = tracker_for(request).read(device_id)
+    if update and update["state"] not in {"failed", "succeeded"}:
+        wire["firmware_check"] = {"request_id": update["request_id"]}
+    return wire
 
 
-def _current_firmware(request: Request) -> FirmwareRelease | None:
+def _current_firmware(request: Request, device_id: str | None = None) -> FirmwareRelease | None:
     releases = getattr(request.app.state, "firmware_releases", None)
     if not isinstance(releases, FirmwareReleaseDirectory):
         settings = getattr(request.app.state, "settings", None)
@@ -482,11 +485,13 @@ def _current_firmware(request: Request) -> FirmwareRelease | None:
         releases = release_directory_for(settings.memoria_db_path)
         request.app.state.firmware_releases = releases  # keeps the hash cache
     try:
-        return releases.current()
+        return releases.current(device_id=device_id)
     except (InvalidFirmwareRelease, OSError, ValueError) as exc:
-        # A broken publication must not brick polling devices; offer nothing.
+        # A corrupt device offer never falls back to a global publication.
         logger.error("firmware release unavailable: %s", exc)
-        return None
+        raise HTTPException(
+            status_code=503, detail={"code": "firmware_release_unavailable"}, headers=_NO_STORE
+        ) from exc
 
 
 async def _authenticate_firmware_request(
@@ -539,9 +544,13 @@ async def get_device_firmware_release(
         device_signature=device_signature,
         path=release_path(device_id),
     )
-    release = await asyncio.to_thread(_current_firmware, request)
+    from services.control_api.app.firmware_update import observe_authenticated, tracker_for
+
+    await observe_authenticated(request, device_id)
+    release = await asyncio.to_thread(_current_firmware, request, device_id)
     if release is None:
         return Response(status_code=status.HTTP_204_NO_CONTENT, headers=_NO_STORE)
+    tracker_for(request).event(device_id, "checking")
     return JSONResponse(content=release.document, headers=_NO_STORE)
 
 
@@ -561,13 +570,17 @@ async def get_device_firmware_image(
         device_signature=device_signature,
         path=image_path(device_id, build),
     )
-    release = await asyncio.to_thread(_current_firmware, request)
+    from services.control_api.app.firmware_update import observe_authenticated, tracker_for
+
+    await observe_authenticated(request, device_id)
+    release = await asyncio.to_thread(_current_firmware, request, device_id)
     if release is None or release.build != build:
         raise HTTPException(
             status_code=404,
             detail={"code": "firmware_release_not_found"},
             headers=_NO_STORE,
         )
+    tracker_for(request).event(device_id, "downloading")
     return FileResponse(
         release.image,
         media_type="application/octet-stream",

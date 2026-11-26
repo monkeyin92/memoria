@@ -32,6 +32,7 @@ _EXTENDED_HINTS = (
     "逐步",
     "一步一步",
     "长一点",
+    "长故事",
     "多讲一点",
     "解释原因",
     "为什么",
@@ -152,9 +153,62 @@ def response_depth_for(
     return ResponseDepthPolicy(depth=depth, instruction=instructions[depth])
 
 
+def _small_count(value: str) -> int:
+    digits = dict(zip("一二三四五六七八九", range(1, 10), strict=True)) | {"两": 2}
+    if value.isdecimal():
+        return int(value)
+    if "十" in value:
+        tens, units = value.split("十", 1)
+        return digits.get(tens, 1) * 10 + digits.get(units, 0)
+    return digits.get(value, 0)
+
+
+def spoken_reply_budget_instruction(max_chars: int, max_sentences: int, *, query: str = "") -> str:
+    scope = ""
+    story = re.search(r"(?:给我讲|讲一个|讲个|编一个|编个|自创|想听|要听).{0,32}(?:故事|童话)", query)
+    no_story = re.search(r"(?:不要|不用|别|不想)(?:给我)?(?:讲|编|听)[^。！？!?，,；;]{0,32}(?:故事|童话)", query)
+    if story and not no_story and max_sentences <= 10:
+        story_sentences = min(6, max(1, max_sentences - 1))
+        scope += (
+            f"【这轮故事必须讲完】这次先讲一个完整短故事，正文最多{story_sentences}句短话，对话也算句数。"
+            "第一句交代主角和地点，只安排一个小困难，最后一句必须解决困难、回到安全处。"
+            "不要长篇承诺，不在结尾增加新危险，不留下主角遇险的悬念。"
+        )
+    count = r"(?P<count>[一二三四五六七八九十两\d]{1,3})"
+    scope_query = re.sub(r"\s+", "", query)
+    per_group = re.search(
+        r"每一?(?P<unit>个|颗|项|种|位|本|条|类)(?P<noun>(?:(?!每)[一-龥a-zA-Z]){0,8}?)"
+        r"(?:都|只|要|各|分别|至少)?(?:讲|说|写|用|介绍|解释|回答|描述)?" + count + r"句", scope_query,
+    )
+    # Bind to the corresponding topic, not a recipient or an intervening group.
+    groups = list(re.finditer(
+        count + re.escape(per_group["unit"] + per_group["noun"]), scope_query[:per_group.start()],
+    )) if per_group else []
+    if groups and per_group:
+        requested, each = _small_count(groups[-1]["count"]), _small_count(per_group["count"])
+        if requested > 0 and requested * each > max_sentences:
+            selected = min(requested, max(1, max_sentences - 1), max(1, (max_chars - 12) // 12))
+            coverage = f"全部{selected}项" if selected == requested else f"前{selected}项"
+            scope += (
+                f"【必须先缩减承诺】用户要求{requested}项各{each}句，超出本轮范围。"
+                f"开头明确这次先讲{coverage}、每项一句；随后逐项讲完{coverage}，每句不超过20字。"
+                f"不要再承诺每项{each}句，不加长铺垫或结尾反问。"
+            )
+    return (
+        f"【本轮口语范围】正文最多{max_chars}字、{max_sentences}句；在这个范围内讲完整。"
+        "多部分问题先覆盖每个要点，再补细节，不要只讲前几项就结束。"
+        "要求的篇幅或句数放不下时，开头简短说明这次缩减的范围，不承诺未讲出的内容。"
+        "使用短句和熟悉的词，不堆术语和长铺垫；结尾自然收住，不朗读这些限制。"
+        "知识解释优先用具体例子讲特点，不按专业分类名罗列；新名词要马上用日常话解释。"
+        "要求原创时明确是新编的故事，不冒充某部作品的原版剧情。"
+        + scope
+    )
+
+
 __all__ = [
     "SHORT_REPLY_AUDIENCES",
     "ResponseDepth",
     "ResponseDepthPolicy",
     "response_depth_for",
+    "spoken_reply_budget_instruction",
 ]

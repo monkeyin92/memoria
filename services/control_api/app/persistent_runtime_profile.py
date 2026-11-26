@@ -14,6 +14,10 @@ from typing import Any, cast
 from fastapi import HTTPException, Request
 
 from services.common.failure_log import failure_log
+from services.consent.bound_subject import MINOR_SESSION_CAPABILITIES
+from services.session_runtime.errors import PersistentSessionDenied, PersistentSessionTerminated
+from services.session_runtime.issue_authority import ProfileConsentWithdrawn
+from services.session_runtime.postgres_store import SessionRuntimeConflict
 from services.session_runtime.service import (
     PersistentSessionNotFound,
     PersistentSessionUnavailable,
@@ -52,7 +56,22 @@ async def current_persistent_runtime_profile(
             session_id=session_id,
             now=datetime.now(UTC),
         )
-    except (PersistentSessionNotFound, PersistentSessionUnavailable) as exc:
+    except ProfileConsentWithdrawn as exc:
+        if set(exc.withdrawn) & set(MINOR_SESSION_CAPABILITIES):
+            try:
+                await runtime_service.close_session(actor_id=actor_id, session_id=session_id, reason_code="consent_withdrawn", now=datetime.now(UTC))
+            except (PersistentSessionUnavailable, PersistentSessionDenied, PersistentSessionNotFound, SessionRuntimeConflict):
+                logger.warning("consent withdrawn; session authority close remains pending session_id=%s", session_id)
+            raise HTTPException(status_code=410, detail={"code": "session_terminated", "reason": "consent_withdrawn"}) from exc
+        raise HTTPException(status_code=503, detail={"code": "session_profile_consent_changed"}) from exc
+    except PersistentSessionTerminated as exc:
+        raise HTTPException(status_code=410, detail={"code": "session_terminated", "reason": "binding_revoked"}) from exc
+    except PersistentSessionNotFound as exc:
+        state = await runtime_service.session_state(actor_id=actor_id, session_id=session_id)
+        if state in {"closed", "failed"}:
+            raise HTTPException(status_code=410, detail={"code": "session_terminated", "reason": state}) from exc
+        raise HTTPException(status_code=503, detail={"code": "session_runtime_authority_unavailable"}) from exc
+    except PersistentSessionUnavailable as exc:
         logger.warning(
             "persistent Runtime Profile unavailable session_id=%s %s", session_id, failure_log(exc)
         )

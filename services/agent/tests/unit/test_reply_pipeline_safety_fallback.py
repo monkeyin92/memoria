@@ -35,7 +35,7 @@ from services.agent.tests.unit.runtime_state_helpers import (
 )
 from services.common.companion_response_safety import (
     AFTER_FIXED_SAFETY_SESSION_INSTRUCTION,
-    NAMELESS_IDENTITY_REPLY,
+    IDENTITY_REPLY_NAME,
 )
 from services.common.crisis_policy import route_crisis
 from services.common.fixed_safety_scripts import (
@@ -656,7 +656,7 @@ async def test_identity_follow_up_after_crisis_keeps_the_fixed_identity_line() -
         )
     ]
     heard = _heard(spoken)
-    assert heard == NAMELESS_IDENTITY_REPLY
+    assert heard == IDENTITY_REPLY_NAME
     assert CRISIS_SELF_ESCALATION_SCRIPT.display not in heard
     assert "刚才的事别担心" not in heard
     await runtime.close()

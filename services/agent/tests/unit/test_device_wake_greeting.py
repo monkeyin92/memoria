@@ -62,6 +62,24 @@ def test_night_weekday_can_use_period_greeting() -> None:
     assert phrases & {"这么晚还醒着，我在。", "夜深了，我在。", "哎呀，好困呀。"}
 
 
+@pytest.mark.parametrize("hour", [5, 8, 12, 17, 21])
+@pytest.mark.parametrize("day", [9, 12])
+@pytest.mark.parametrize("style", ["starlight", "taoxi", "mianmian", "axu", "xuanmo", "zhiyao", "yanxi"])
+def test_daytime_wake_never_acts_sleepy(hour: int, day: int, style: str) -> None:
+    phrases = _phrases(
+        "daytime-sleepy",
+        now=_now(f"2026-09-{day:02d}T{hour:02d}:00:00"),
+        companion_style_id=style,
+        weather_label="rain",
+        hours_since_last_wake=24,
+    )
+    assert "哎呀，好困呀。" not in phrases
+
+
+def test_sleepy_greeting_remains_available_at_night() -> None:
+    assert "哎呀，好困呀。" in _phrases("night-sleepy", now=_now("2026-09-09T23:00:00"))
+
+
 def test_weekend_can_use_weekend_greeting() -> None:
     now = _now("2026-09-05T10:00:00")
     phrases = _phrases("weekend", now=now)

@@ -231,3 +231,32 @@ async def test_stream_reply_strips_tag_and_binds_plan() -> None:
     assert plan.assistant_emotion == "happy"
     assert "回复情绪轻快" in plan.tts_instruction
     await runtime.close()
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("[caring]你好。", "你好。"),
+        ("你好[happy]呀。", "你好呀。"),
+        ("[普通说明]你好。", "[普通说明]你好。"),
+    ],
+)
+def test_bare_tags_across_every_stream_split(text, expected):
+    from services.agent.src.orchestration.assistant_emotion import (
+        AssistantEmotionFilter,
+    )
+
+    for index in range(len(text) + 1):
+        filter_ = AssistantEmotionFilter()
+        output = (
+            "".join(filter_.feed(chunk) or "" for chunk in (text[:index], text[index:]))
+            + filter_.flush()
+        )
+        assert output == expected
+
+
+def test_incomplete_non_control_bracket_text_survives_flush():
+    from services.agent.src.orchestration.assistant_emotion import AssistantEmotionFilter
+
+    filter_ = AssistantEmotionFilter()
+    assert (filter_.feed("正文[ca") or "") + filter_.flush() == "正文[ca"

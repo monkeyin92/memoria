@@ -603,7 +603,8 @@ def test_agent_component_release_is_commit_bound_thin_and_rollback_safe() -> Non
     assert '"$live_source_digest" == "$rollback_source_digest"' in deploy
     assert "docker commit --pause=true" not in deploy
     assert 'agent-component.rollback.override.yml' in deploy
-    assert '"${previous_args[@]}" --file "$rollback_override"' in deploy
+    assert '--file "$base_file" --file "$rollback_override"' in deploy
+    assert "previous_args" not in deploy
     assert 'rollback_image="memoria-agent:rollback-${release_tag}-pre"' in deploy
     assert 'image: "$rollback_image"' in deploy
     assert deploy.count('image: "$rollback_image"') == 1

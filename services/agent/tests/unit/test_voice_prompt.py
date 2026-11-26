@@ -27,9 +27,9 @@ def test_voice_prompt_does_not_turn_self_harm_disclosure_into_unknown_refusal() 
     assert "不能回答“我不知道。”" in VOICE_SYSTEM_PROMPT
 
 
-def test_voice_prompt_is_nameless_and_redirects_preference_questions() -> None:
-    assert "没有个人名字" in VOICE_SYSTEM_PROMPT
-    assert "自称只用「我」" in VOICE_SYSTEM_PROMPT
+def test_voice_prompt_names_the_robot_and_redirects_preference_questions() -> None:
+    assert "你的名字叫茉莉" in VOICE_SYSTEM_PROMPT
+    assert "自称用「我」或「茉莉」" in VOICE_SYSTEM_PROMPT
     assert NAMELESS_IDENTITY_REPLY in VOICE_SYSTEM_PROMPT
     assert "固定清单外" in VOICE_SYSTEM_PROMPT
     assert "必须明确说你是 AI、不是真人" in VOICE_SYSTEM_PROMPT

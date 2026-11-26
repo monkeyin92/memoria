@@ -209,7 +209,7 @@ async def test_five_day_span_uses_the_seven_day_endpoint() -> None:
 
     assert reply == (
         "南京未来五天：今天多云，15到24度；明天多云，15到24度；后天多云，15到24度；"
-        "第四天多云，15到24度；第五天多云，15到24度。"
+        "大后天多云，15到24度；第五天多云，15到24度。"
     )
     assert requests[1].url.path == "/v7/weather/7d"
 
@@ -222,7 +222,7 @@ async def test_seven_day_span_is_the_longest_spoken_range() -> None:
 
     assert reply == (
         "上海未来七天：今天多云，15到24度；明天多云，15到24度；后天多云，15到24度；"
-        "第四天多云，15到24度；第五天多云，15到24度；第六天多云，15到24度；"
+        "大后天多云，15到24度；第五天多云，15到24度；第六天多云，15到24度；"
         "第七天多云，15到24度。"
     )
     assert requests[1].url.path == "/v7/weather/7d"
@@ -411,3 +411,16 @@ async def test_success_log_records_the_window_and_not_the_utterance(
     assert elapsed.isdigit()
     assert "小明" not in caplog.text
     assert "南京" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("day", "offset", "endpoint"), [("明天", 1, "3d"), ("后天", 2, "3d"), ("大后天", 3, "7d")])
+async def test_relative_day_selects_the_forecast_row_and_spoken_label(
+    day: str, offset: int, endpoint: str,
+) -> None:
+    requests: list[httpx.Request] = []
+    daily = [{"textDay": "晴", "tempMin": str(i), "tempMax": str(i + 10)} for i in range(7)]
+    weather = _weather(requests, daily=daily)
+
+    assert await weather.resolve(query=f"杭州{day}天气") == f"杭州{day}晴，{offset}到{offset + 10}度。"
+    assert requests[-1].url.path == f"/v7/weather/{endpoint}"
