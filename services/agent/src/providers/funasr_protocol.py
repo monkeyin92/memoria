@@ -106,6 +106,7 @@ def sentence_to_asr_result(
         confidence=confidence,
         provider_begin_ms=provider_begin_ms,
         provider_end_ms=provider_end_ms,
+        provider_task_start_sample=sample_offset,
         stream_epoch=stream_epoch,
         word_timings=word_timings,
         rescue_synthesized=sentence.rescue_synthesized,

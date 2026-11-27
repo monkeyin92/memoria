@@ -135,19 +135,27 @@ public:
         completed_ = exact;
     }
 
-    bool Listening(uint32_t current, uint64_t now_ms) {
-        const bool exact = completed_;
+    void Interrupted(uint32_t current) {
         Completed(false);
-        listen_pending_ = exact;
-        listening_ms_ = now_ms;
-        return TryArm(current, now_ms);
+        interrupted_epoch_ = current & 1U ? current : 0;
     }
 
-    bool TryArm(uint32_t current, uint64_t now_ms) {
+    bool Listening(uint32_t current, uint64_t now_ms, bool playback_idle) {
+        const bool exact = completed_ && playback_idle;
+        const bool continuing_speech = interrupted_epoch_ != 0 && interrupted_epoch_ == current;
+        Completed(false);
+        interrupted_epoch_ = continuing_speech ? current : 0;
+        listening_ms_ = now_ms;
+        listen_pending_ = exact || continuing_speech;
+        return TryArm(current, now_ms, playback_idle);
+    }
+
+    bool TryArm(uint32_t current, uint64_t now_ms, bool playback_idle) {
         if (!listen_pending_) return false;
-        if (now_ms - listening_ms_ > 250) {
-            listen_pending_ = false;
-        } else if (current & 1U) {
+        if (now_ms - listening_ms_ > 250 ||
+            (interrupted_epoch_ != 0 && current != interrupted_epoch_)) {
+            Completed(false);
+        } else if (playback_idle && (current & 1U)) {
             listen_pending_ = false;
             epoch_ = current;
             return true;
@@ -168,7 +176,7 @@ public:
         if (rms < floor) {
             quiet_ = true;
             first_loud_ = false;
-        } else if (quiet_) {
+        } else if (quiet_ || interrupted_epoch_ != 0) {
             if (first_loud_ && produced_ms - first_loud_ms_ <= 40) {
                 Completed(false);
                 return true;
@@ -188,6 +196,7 @@ private:
     bool quiet_ = false;
     bool first_loud_ = false;
     uint32_t epoch_ = 0;
+    uint32_t interrupted_epoch_ = 0;
     uint64_t listening_ms_ = 0;
     uint64_t first_loud_ms_ = 0;
 };

@@ -28,6 +28,8 @@ from services.agent.src.providers.funasr_protocol import (
     sentence_to_asr_result,
 )
 from services.agent.src.providers.funasr_stt import FunASRConfig, FunASRSession
+from services.agent.src.voice_core.asr_stream_supervisor import ASRStreamSupervisor
+from services.agent.src.voice_core.speech_timeline import ASRResult
 
 
 def _pcm(samples: int = 1600, amplitude: int = 200) -> bytes:
@@ -1254,6 +1256,7 @@ async def test_backup_slices_by_real_sample_ranges_after_uplink_packet_gap() -> 
     )
     assert mapped.capture_start_sample == vad_start
     assert mapped.capture_end_sample == vad_start + 4800
+    assert mapped.provider_task_start_sample == base
 
 
 @pytest.mark.asyncio
@@ -1430,16 +1433,18 @@ async def test_mid_segment_recovery_then_backup_avoids_double_sample_offset() ->
     await session.rotate_task(require_consumed=False)
 
     finals = [
-        e.sentence
+        (e.task_id, e.sentence)
         for e in _drain(session.events)
         if e.event == "result-generated" and e.sentence is not None
     ]
     assert len(finals) == 1
-    assert finals[0].text == "二次兜底"
-    assert finals[0].begin_ms == 0
-    assert finals[0].end_ms == 100
+    task_id, sentence = finals[0]
+    assert task_id == "volc-rec-2"
+    assert sentence.text == "二次兜底"
+    assert sentence.begin_ms == 0
+    assert sentence.end_ms == 100
     mapped = sentence_to_asr_result(
-        finals[0],
+        sentence,
         task_epoch=session.task_epoch,
         sample_rate=16_000,
         revision=1,
@@ -1447,6 +1452,17 @@ async def test_mid_segment_recovery_then_backup_avoids_double_sample_offset() ->
         sample_offset=session.task_sample_origin,
     )
     assert (mapped.capture_start_sample, mapped.capture_end_sample) == (33_600, 35_200)
+    assert mapped.provider_task_start_sample == vad_start
+
+    supervisor = ASRStreamSupervisor()
+    first_task = supervisor.start_task()
+    assert supervisor.record_audio(start_sample=0, frame_samples=35_200)
+    prior = ASRResult(first_task, "previous", 1, 0, 1600, "二次", True)
+    assert supervisor.accept_result(prior, session_id="recovered-backup").accepted is not None
+    supervisor.mark_committed(1600)
+    accepted = supervisor.accept_result(mapped, session_id="recovered-backup").accepted
+    assert accepted is not None
+    assert accepted.text == "二次兜底"
 
 
 @pytest.mark.asyncio

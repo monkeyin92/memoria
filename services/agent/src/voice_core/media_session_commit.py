@@ -229,7 +229,7 @@ class MediaSessionCommitMixin(MediaSessionCommitRecoveryMixin):
         ) -> None: ...
 
         async def _stop_reply_for_voice_command(
-            self, context: _MediaVoiceSession, text: str, *, cause: str = ...
+            self, context: _MediaVoiceSession, text: str, *, cause: str = ..., event_source: str = ...
         ) -> bool: ...
 
     async def accept_asr_result(self, session_id: str, result: ASRResult) -> bool:
@@ -1106,7 +1106,7 @@ class MediaSessionCommitMixin(MediaSessionCommitRecoveryMixin):
             return None, reason or "user_turn_rejected"
         if content_barge_in:
             if await self._stop_reply_for_voice_command(
-                context, text, cause=CONTENT_BARGE_IN_CAUSE
+                context, text, cause=CONTENT_BARGE_IN_CAUSE, event_source=CONTENT_BARGE_IN_CAUSE
             ):
                 # Accepted turn owns the floor; keep answer unqueued behind speech.
                 context.runtime.open_assistant_floor(cause=CONTENT_BARGE_IN_CAUSE)
