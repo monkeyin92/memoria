@@ -26,7 +26,9 @@ import logging
 import os
 import re
 from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -47,6 +49,8 @@ from services.agent.src.voice_core.media_session import (
     MediaSessionResources,
     MediaVoiceCoreRegistry,
 )
+from services.agent.src.voice_core.media_session_projection import MediaSessionProjectionMixin
+from services.agent.src.voice_core.playback_ledger import PlaybackLedger
 from services.agent.src.voice_core.speech_timeline import ASRResult
 from services.agent.tests.unit.media_session_support import (
     FakeMediaProvider,
@@ -355,8 +359,11 @@ class _Harness:
 
         await self._report_playback(media_pb2.PLAYBACK_EVENT_TYPE_PROGRESS)
 
-    async def _report_playback(self, event_type: Any) -> None:
-        frame = self.last("audio")
+    async def _report_playback(
+        self, event_type: Any, frame: Any = None, *, approximate: bool = False
+    ) -> None:
+        if frame is None:
+            frame = self.last("audio")
         await self.send(
             media_pb2.MediaToCore(
                 playback=media_pb2.PlaybackProgress(
@@ -369,6 +376,7 @@ class _Harness:
                     tool_epoch=frame.tool_epoch,
                     session_epoch=frame.session_epoch,
                     event_type=event_type,
+                    approximate=approximate,
                 )
             )
         )
@@ -621,8 +629,9 @@ class _DelegatingProvider(_ScriptedProvider):
 class _FarewellProvider(_ScriptedProvider):
     """Scripted provider whose output seam speaks whatever phrase it is given."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, pcm: bytes = _REPLY_PCM) -> None:
         super().__init__()
+        self.pcm = pcm
         self.output_texts: list[str] = []
 
     def generate_output(
@@ -666,13 +675,16 @@ class _FarewellProvider(_ScriptedProvider):
         self.output_texts.append(text)
 
         async def chunks() -> AsyncIterator[MediaReplyChunk]:
-            yield MediaReplyChunk(
-                pcm_s16le=_REPLY_PCM,
-                source_start_sample=source_start_sample,
-                text=text,
-                first=True,
-                final=True,
-            )
+            frame_bytes = 960
+            for offset in range(0, len(self.pcm), frame_bytes):
+                last = offset + frame_bytes >= len(self.pcm)
+                yield MediaReplyChunk(
+                    pcm_s16le=self.pcm[offset : offset + frame_bytes],
+                    source_start_sample=source_start_sample + offset // 2,
+                    text=text if last else "",
+                    first=offset == 0,
+                    final=last,
+                )
 
         return chunks()
 
@@ -814,6 +826,147 @@ async def test_farewell_speaks_the_approved_line_without_an_llm_turn() -> None:
         assert harness.last("state").reason == "conversation_end_explicit"
     finally:
         await harness.close()
+
+
+class _FarewellPoll:
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.now = 0.0
+        self.waiting = asyncio.Event()
+        self.release = asyncio.Event()
+        module = "services.agent.src.voice_core.media_session_projection"
+        monkeypatch.setattr(f"{module}._farewell_clock", lambda: self.now)
+        monkeypatch.setattr(f"{module}._farewell_poll_sleep", self.sleep)
+
+    async def sleep(self, delay: float) -> None:
+        assert delay == 0.02
+        self.waiting.set()
+        await self.release.wait()
+        self.release.clear()
+
+    async def wait(self) -> None:
+        await asyncio.wait_for(self.waiting.wait(), timeout=3)
+
+    def step(self, now: float) -> None:
+        assert self.waiting.is_set()
+        self.now = now
+        self.waiting.clear()
+        self.release.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("completion", "approximate"),
+    [("ended", False), ("ended", True), ("stall", False), ("error", False), ("cap", True)],
+)
+async def test_farewell_waits_for_progress_and_respects_playback_boundaries(
+    monkeypatch: pytest.MonkeyPatch,
+    completion: str,
+    approximate: bool,
+) -> None:
+    poll = _FarewellPoll(monkeypatch)
+    provider = _FarewellProvider(pcm=_REPLY_PCM * 27)
+    harness = _Harness(_device_identity("farewell-slow-playback"), provider)
+    await harness.start()
+    try:
+        baseline = await _start_past_wake_sample(harness)
+        await harness.utterance("好的，再见", frames=25)
+        await harness.wait_for(lambda: harness.count("audio") >= baseline + 9)
+        frames = [
+            message.audio for message in harness.outputs
+            if message.WhichOneof("event") == "audio"
+        ][baseline:]
+        context = harness.registry.session_state(harness.identity.session_id)
+        assert context is not None
+        owner = context.output.output_owner
+        assert owner is not None
+        fence = owner.fence
+        playback = context.output.playback
+
+        async def progress(now: float, frame_index: int | None = None) -> None:
+            if frame_index is not None:
+                frame = frames[frame_index]
+                await harness._report_playback(
+                    media_pb2.PLAYBACK_EVENT_TYPE_PROGRESS,
+                    frame,
+                    approximate=approximate,
+                )
+                assert playback.completion_sample_end(fence) == (
+                    frame.source_start_sample + frame.frame_samples
+                )
+                if approximate:
+                    assert playback.rendered_sample_end(fence) == 0
+            poll.step(now)
+            await poll.wait()
+            assert harness.count("state", _is_closed_state) == 0
+
+        await poll.wait()
+        # The initial poll may have run before output admission. Observe the
+        # owner at virtual t=0 before testing progress or terminal events.
+        await progress(0.0)
+        if completion == "ended":
+            await progress(3.0, 0)
+            await progress(6.0)
+            await progress(7.5, 1)
+            await progress(11.0)
+            await harness._report_playback(
+                media_pb2.PLAYBACK_EVENT_TYPE_ENDED, approximate=approximate
+            )
+            poll.step(11.0)
+        elif completion == "stall":
+            await progress(1.0, 0)
+            await progress(4.0, 0)
+            poll.step(6.0)
+        elif completion == "error":
+            await harness._report_playback(media_pb2.PLAYBACK_EVENT_TYPE_ERROR, frames[0])
+            poll.step(0.0)
+        else:
+            assert completion == "cap"
+            await progress(3.0, 0)
+            await progress(7.0, 1)
+            await progress(11.0, 2)
+            await harness._report_playback(
+                media_pb2.PLAYBACK_EVENT_TYPE_PROGRESS, frames[3], approximate=approximate
+            )
+            poll.step(12.0)
+
+        await harness.wait_for(lambda: harness.count("state", _is_closed_state) == 1)
+        assert harness.last("state").reason == "conversation_end_explicit"
+        if approximate:
+            assert all(
+                not delivery["actual_heard"]
+                for delivery in harness.deliveries
+                if delivery["generation_id"] == fence.generation_id
+            )
+    finally:
+        await harness.close()
+
+
+@pytest.mark.asyncio
+async def test_farewell_wait_exits_when_its_owner_fence_is_replaced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    poll = _FarewellPoll(monkeypatch)
+    fence = GenerationFence("farewell-fence", 1, 1, 0, session_epoch=1)
+    playback = PlaybackLedger()
+    playback.start(fence)
+    owner = SimpleNamespace(
+        fence=fence, intent=SimpleNamespace(tts_source=FAREWELL_STANDBY_PHRASE)
+    )
+    context = SimpleNamespace(
+        closed=False, standby_requested=False,
+        output=SimpleNamespace(output_owner=owner, playback=playback),
+    )
+    task = asyncio.create_task(MediaSessionProjectionMixin()._await_farewell_playback(context))
+    try:
+        await poll.wait()
+        owner.fence = replace(fence, session_epoch=2)
+        playback.start(owner.fence)
+        poll.step(0.0)
+        await asyncio.wait_for(task, timeout=1)
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.asyncio

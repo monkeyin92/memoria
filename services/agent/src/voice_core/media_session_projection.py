@@ -8,7 +8,7 @@ import inspect
 import logging
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, assert_never
 
 from services.agent.src.agent_voice_profile import generation_tts_voice_can_bind
@@ -89,12 +89,13 @@ _LIVE_LOOKUP_FILLER_ACK_REPEAT_S = 5.0
 _LIVE_LOOKUP_FILLER_GRACE_S = 1.5
 # A farewell must reach the child quickly (2 s product budget) and the device
 # must report the end of its playback before standby closes the conversation.
-# The owner wait ends at START_GRACE if synthesis never starts; the playback
-# cap starts when the farewell owner appears, covering 2.78 s of audio plus a
-# cold first packet measured at 0.82 s.  A fixed safety script is bounded by
-# its own speaking watchdog, not by a local farewell timer.
+# If the farewell never acquires the output slot, the start grace bounds the
+# wait. After admission, the timeout measures time without playback progress.
 _FAREWELL_PLAYBACK_START_GRACE_S = 2.5
-_FAREWELL_PLAYBACK_CAP_S = 5.0
+_FAREWELL_PLAYBACK_STALL_S = 5.0
+_FAREWELL_PLAYBACK_MAX_WAIT_S = 12.0
+_farewell_clock: Callable[[], float] = time.monotonic
+_farewell_poll_sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
 media_pb2: Any = _media_pb2
 
 
@@ -789,28 +790,38 @@ class MediaSessionProjectionMixin:
     async def _await_farewell_playback(self, context: _MediaVoiceSession) -> None:
         """Return once the device reports the farewell's own playback ended."""
 
-        loop = asyncio.get_running_loop()
-        entered = loop.time()
-        owner_seen_at: float | None = None
+        entered = _farewell_clock()
+        tracked_fence: GenerationFence | None = None
+        owner_started_at = last_progress_at = entered
+        last_playback_sample = 0
         while True:
             if context.closed or context.standby_requested:
                 return
+            now = _farewell_clock()
             owner = context.output.output_owner
             if owner is not None and (
                 str(getattr(owner.intent, "tts_source", "")) == FAREWELL_STANDBY_PHRASE
             ):
-                if owner_seen_at is None:
-                    # The cap covers playback, not a cold synthesis wait.
-                    owner_seen_at = loop.time()
-                if context.output.playback.terminal_received(owner.fence):
+                if tracked_fence is None:
+                    tracked_fence = owner.fence
+                    owner_started_at = last_progress_at = now
+                if not tracked_fence.matches(owner.fence):
                     return
-                if loop.time() - owner_seen_at >= _FAREWELL_PLAYBACK_CAP_S:
+                if context.output.playback.terminal_received(tracked_fence):
                     return
-            elif owner_seen_at is not None:
+                if now - owner_started_at >= _FAREWELL_PLAYBACK_MAX_WAIT_S:
+                    return
+                playback_sample = context.output.playback.completion_sample_end(tracked_fence)
+                if playback_sample > last_playback_sample:
+                    last_progress_at = now
+                    last_playback_sample = playback_sample
+                if now - last_progress_at >= _FAREWELL_PLAYBACK_STALL_S:
+                    return
+            elif tracked_fence is not None:
                 return
-            elif loop.time() - entered >= _FAREWELL_PLAYBACK_START_GRACE_S:
+            elif now - entered >= _FAREWELL_PLAYBACK_START_GRACE_S:
                 return
-            await asyncio.sleep(0.02)
+            await _farewell_poll_sleep(0.02)
 
     def _resume_capped_output(self, context: _MediaVoiceSession) -> None:
         """Speak a queued answer once the floor cap closes with no pending turn.

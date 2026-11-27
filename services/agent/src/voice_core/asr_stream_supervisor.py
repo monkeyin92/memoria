@@ -118,7 +118,7 @@ class ASRStreamSupervisor:
         default_factory=dict,
         init=False,
     )
-    _committed_turn_texts: list[str] = field(default_factory=list, init=False)
+    _committed_turn_texts: dict[str, tuple[int, str]] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
         if self.sample_rate <= 0 or self.reconnect_audio_ms <= 0 or self.max_result_history <= 0:
@@ -172,17 +172,15 @@ class ASRStreamSupervisor:
                     and start_sample < self.last_committed_sample
                     and end_sample > previous
                 ):
-                    normalized = self._alnum_chars(cleaned)
-                    if normalized and not any(
-                        self._alnum_chars(previous_text) == normalized
-                        for previous_text in self._committed_turn_texts
-                    ):
-                        self._committed_turn_texts.append(cleaned)
+                    normalized = "".join(self._alnum_chars(cleaned))
+                    if normalized:
+                        previous_end, _ = self._committed_turn_texts.pop(normalized, (0, ""))
+                        self._committed_turn_texts[normalized] = (max(previous_end, end_sample), cleaned)
             # A long provider final can replay more than eight earlier clauses.
             # Keep a bounded set of distinct committed spines so text outside a
             # short recent window cannot leak into the next safety decision.
             while len(self._committed_turn_texts) > 64:
-                self._committed_turn_texts.pop(0)
+                self._committed_turn_texts.pop(next(iter(self._committed_turn_texts)))
         self.timeline.commit_range(
             stream_epoch=self.stream_epoch,
             start_sample=0,
@@ -278,19 +276,25 @@ class ASRStreamSupervisor:
 
         Dense victim→other handoffs can emit a longer final whose sample range
         already clears the watermark while ``.text`` still prepends the victim
-        line. Leave only the new clause so crisis classification sees one turn.
+        line. Only clauses whose audio can belong to the provider task can be
+        replayed this way.
         """
 
         text = result.text
-        prefixes = list(self._committed_turn_texts)
+        task_start = result.provider_task_start_sample
+        prefixes = [
+            prior
+            for _, (end_sample, prior) in sorted(
+                self._committed_turn_texts.items(),
+                key=lambda entry: len(entry[0]),
+                reverse=True,
+            )
+            if task_start is None or end_sample > task_start
+        ]
         changed = True
         while changed and prefixes:
             changed = False
-            for prior in sorted(
-                prefixes,
-                key=lambda item: len(self._alnum_chars(item)),
-                reverse=True,
-            ):
+            for prior in prefixes:
                 tail = self._tail_after_alnum_prefix(text, prior)
                 # Exact repeats of a committed clause (tail "") must stay —
                 # same words on a new turn are legitimate (warmup regression).

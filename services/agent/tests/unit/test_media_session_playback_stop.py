@@ -29,6 +29,7 @@ from services.agent.src.voice_core.media_protocol import (
     SessionIdentity,
 )
 from services.agent.src.voice_core.media_session import MediaReplyChunk
+from services.agent.src.voice_core.playback_text import CONTENT_BARGE_IN_CAUSE
 from services.agent.src.voice_core.speech_timeline import ASRResult
 from services.agent.tests.unit.media_session_support import (
     _accept_media_asr_decision,
@@ -1889,6 +1890,30 @@ async def test_question_content_barge_in_stops_reply_without_waiting_on_close_cl
             blocked.set()
 
     await _run_story(_device_identity("fast-question-barge-in"), script)
+
+
+@pytest.mark.asyncio
+async def test_content_barge_in_cancels_replacement_with_content_reason_and_replies() -> None:
+    async def script(harness: _StoryHarness) -> None:
+        story = await harness.start_story()
+        await harness.audio_frames(
+            20, final_text="等一下，我想问另一个问题，云是怎么变出来的？"
+        )
+        await harness.wait_for(
+            lambda: harness.count("audio", lambda frame: frame.turn_id > story.turn_id) > 0
+        )
+        assert harness.story.reply_calls == 2
+        [terminal] = [
+            message.generation
+            for message in harness.outputs
+            if message.WhichOneof("event") == "generation"
+            and message.generation.generation_id == story.generation_id + 1
+            and message.generation.action == media_pb2.GENERATION_ACTION_CANCEL
+        ]
+        assert terminal.turn_id == story.turn_id
+        assert terminal.reason == CONTENT_BARGE_IN_CAUSE
+
+    await _run_story(_device_identity("content-barge-in-replacement-reason"), script)
 
 
 @pytest.mark.asyncio

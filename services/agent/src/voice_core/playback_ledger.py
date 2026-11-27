@@ -301,7 +301,7 @@ class PlaybackLedger:
         """
 
         received_end = self._received_sample_end.get(fence, 0)
-        if received_end <= 0 or self._completion_sample_end.get(fence, 0) < received_end:
+        if received_end <= 0 or self.completion_sample_end(fence) < received_end:
             return False
         spans = self._spans.get(fence, ())
         return all(span.acknowledged for span in spans)
@@ -322,7 +322,12 @@ class PlaybackLedger:
         """Return true when the watermark covers all registered audio."""
 
         received_end = self._received_sample_end.get(fence, 0)
-        return received_end > 0 and self._completion_sample_end.get(fence, 0) >= received_end
+        return received_end > 0 and self.completion_sample_end(fence) >= received_end
+
+    def completion_sample_end(self, fence: GenerationFence) -> int:
+        """Return the accepted transport watermark, including approximate progress."""
+
+        return self._completion_sample_end.get(fence, 0)
 
     def terminal_received(self, fence: GenerationFence) -> bool:
         return fence in self._terminal_received

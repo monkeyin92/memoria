@@ -68,11 +68,16 @@ int main() {
         if (std::strncmp(line, "complete ", 9) == 0) {
             handoff.Completed(std::atoi(line + 9) != 0);
             std::puts("complete");
+        } else if (std::strncmp(line, "stop ", 5) == 0) {
+            handoff.Interrupted(static_cast<uint32_t>(std::strtoul(line + 5, nullptr, 10)));
+            std::puts("stop");
         } else if (std::strncmp(line, "listen ", 7) == 0 || std::strncmp(line, "arming ", 7) == 0) {
             unsigned epoch;
             unsigned long long now;
-            if (std::sscanf(line + 7, "%u %llu", &epoch, &now) != 2) return 2;
-            const bool armed = line[0] == 'l' ? handoff.Listening(epoch, now) : handoff.TryArm(epoch, now);
+            int idle = 1;
+            if (std::sscanf(line + 7, "%u %llu %d", &epoch, &now, &idle) < 2) return 2;
+            const bool armed = line[0] == 'l' ? handoff.Listening(epoch, now, idle != 0)
+                                              : handoff.TryArm(epoch, now, idle != 0);
             std::puts(armed ? "armed" : "idle");
         } else if (std::strncmp(line, "packet ", 7) == 0) {
             int eligible;
@@ -280,6 +285,48 @@ def test_closed_changed_afe_or_expired_handoff_cannot_reopen(tool: pathlib.Path,
 def test_only_normal_end_with_live_playback_speech_arms(tool: pathlib.Path, complete: int,
                                                        current: int) -> None:
     assert _run(tool, f"complete {complete}", f"listen {current} 900") == ["complete", "idle"]
+
+
+def test_spoken_stop_recovers_continuing_speech_after_the_output_has_settled(
+    tool: pathlib.Path,
+) -> None:
+    assert _run(
+        tool, "stop 7", "listen 7 1000", "packet 1 1230 1240 0.008",
+        "packet 1 1250 1260 0.008", "packet 1 1270 1280 0.008",
+        "packet 1 1290 1300 0.008",
+    ) == ["stop", "armed", "ignore", "ignore", "report", "ignore"]
+
+
+@pytest.mark.parametrize(("at_stop", "at_listening"), [(6, 7), (7, 8), (7, 9)])
+def test_spoken_stop_handoff_requires_the_same_live_afe_epoch(
+    tool: pathlib.Path, at_stop: int, at_listening: int,
+) -> None:
+    assert _run(tool, f"stop {at_stop}", f"listen {at_listening} 1000") == ["stop", "idle"]
+
+
+@pytest.mark.parametrize(("ready_ms", "result"), [(1060, "armed"), (1260, "idle")])
+def test_spoken_stop_waits_briefly_for_inflight_audio_to_drain(
+    tool: pathlib.Path, ready_ms: int, result: str,
+) -> None:
+    assert _run(
+        tool, "stop 7", "listen 7 1000 0", "arming 7 1030 0", f"arming 7 {ready_ms} 1",
+    ) == ["stop", "idle", "idle", result]
+
+
+def test_normal_cancellation_clears_spoken_stop_handoff(tool: pathlib.Path) -> None:
+    assert _run(
+        tool, "stop 7", "complete 0", "listen 7 1000", "arming 7 1060 1",
+    ) == ["stop", "complete", "idle", "idle"]
+
+
+@pytest.mark.parametrize("changed_epoch", [8, 9])
+def test_spoken_stop_epoch_change_while_draining_clears_handoff(
+    tool: pathlib.Path, changed_epoch: int,
+) -> None:
+    assert _run(
+        tool, "stop 7", "listen 7 1000 0", f"arming {changed_epoch} 1030 0",
+        "arming 7 1060 1",
+    ) == ["stop", "idle", "idle", "idle"]
 
 
 @pytest.mark.parametrize("published,expected", [(1020, "armed"), (1260, "idle")])

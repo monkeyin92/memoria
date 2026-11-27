@@ -2391,7 +2391,6 @@ bool MemoriaProtocol::HandleGenerationPauseResume(const cJSON* root,
 bool MemoriaProtocol::HandleGenerationTerminal(const cJSON* root,
                                                const GenerationFence& fence,
                                                bool cancelled) {
-    (void)root;
     if (!fence.valid()) {
         return false;
     }
@@ -2407,7 +2406,13 @@ bool MemoriaProtocol::HandleGenerationTerminal(const cJSON* root,
         return true;
     }
     if (cancelled) {
-        vad_handoff_.Completed(false);
+        std::string reason;
+        if (playback_active_ && accepted_frames_ == 0 && !vad_active_ &&
+            GetString(root, "reason", &reason, 64) && reason == "voice_stop_command") {
+            vad_handoff_.Interrupted(afe_vad_epoch.load());
+        } else {
+            vad_handoff_.Completed(false);
+        }
         // generation.cancelled is never a normal completion. Finalize the
         // receipt state first so the atomic queue flush below cannot emit a
         // second terminal receipt through its drain callback, then close the
@@ -3358,9 +3363,9 @@ void MemoriaProtocol::NotifyPlaybackListening() {
     std::lock_guard<std::recursive_mutex> state_lock(playback_state_mutex_);
     const uint32_t epoch = afe_vad_epoch.load();
     if (protocol_version_ != kProtocolVersionV2 || playback_active_ || g_listening_closed.load() ||
-        !is_playback_idle_ || !is_playback_idle_()) {
+        !is_playback_idle_) {
         vad_handoff_.Completed(false);
-    } else if (vad_handoff_.Listening(epoch, DeviceMonotonicMs())) {
+    } else if (vad_handoff_.Listening(epoch, DeviceMonotonicMs(), is_playback_idle_())) {
         ESP_LOGI(kTag, "vad.handoff armed epoch=%lu", static_cast<unsigned long>(epoch));
     }
 }
@@ -3374,7 +3379,7 @@ void MemoriaProtocol::TrackUplinkVadFrame(float packet_rms, uint64_t produced_ms
     const float floor = vad_noise_floor_.EffectiveFloor(ConfiguredVadStartRmsFloor(), now_ms);
     if (vad_handoff_.pending()) {
         const uint32_t epoch = afe_vad_epoch.load();
-        if (vad_handoff_.TryArm(epoch, now_ms)) {
+        if (vad_handoff_.TryArm(epoch, now_ms, CanRecoverVad(epoch))) {
             ESP_LOGI(kTag, "vad.handoff armed epoch=%lu late=1", static_cast<unsigned long>(epoch));
         }
     }

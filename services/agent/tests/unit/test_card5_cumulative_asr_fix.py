@@ -19,6 +19,7 @@ clauses by text and turned "救命，有人打我，快帮帮我。" into "快�
 
 from __future__ import annotations
 
+from services.agent.src.providers.funasr_protocol import FunASRSentence, sentence_to_asr_result
 from services.agent.src.voice_core.asr_stream_supervisor import (
     ASRAcceptDecision,
     ASRDecisionReason,
@@ -107,6 +108,27 @@ def test_new_turn_text_commits_intact() -> None:
     decision = supervisor.accept_result(fresh, session_id=_SESSION)
 
     assert decision.accepted == fresh
+
+
+def test_fresh_provider_task_keeps_the_subject_of_a_repeated_question() -> None:
+    supervisor = _supervisor()
+    assert supervisor.accept_result(
+        _final("earlier-cloud", 1, 4_885_760, 4_943_552, "云"),
+        session_id=_SESSION,
+    ).accepted is not None
+    supervisor.mark_committed(4_948_480)
+    question = "云是怎么变出来的？"
+    fresh = sentence_to_asr_result(
+        FunASRSentence(1, question, 240, 3732, True, False, ()),
+        sample_offset=5_614_400,
+        stream_epoch=_STREAM,
+        task_epoch=5,
+    )
+
+    decision = supervisor.accept_result(fresh, session_id=_SESSION)
+
+    assert decision.accepted is not None
+    assert decision.accepted.text == question
 
 
 def test_legitimate_exact_repeat_preserved() -> None:

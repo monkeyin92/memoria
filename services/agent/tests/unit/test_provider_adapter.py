@@ -1033,6 +1033,8 @@ async def test_existing_provider_adapter_keeps_late_final_on_old_lazy_task_origi
 
     assert [(item.text, item.task_epoch, item.capture_start_sample, item.capture_end_sample)
             for item in results] == [("迟到旧任务", 1, 0, 320)]
+    assert asr.task_sample_origin == 320
+    assert results[0].provider_task_start_sample == 0
 
 
 @pytest.mark.asyncio

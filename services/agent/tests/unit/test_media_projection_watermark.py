@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from services.agent.src.providers.funasr_protocol import FunASRSentence, sentence_to_asr_result
 from services.agent.src.voice_core.asr_stream_supervisor import (
     ASRDecisionReason,
     ASRStreamSupervisor,
@@ -100,6 +101,31 @@ def test_post_watermark_exact_repeat_of_committed_text_is_kept() -> None:
     assert decision.reason is ASRDecisionReason.ACCEPTED
     assert decision.accepted is not None
     assert decision.accepted.text == _OTHER
+
+
+@pytest.mark.parametrize("task_origin,replayed", [(1_600, False), (0, True)])
+def test_post_watermark_final_only_peels_a_prefix_available_to_the_provider(
+    task_origin: int, replayed: bool,
+) -> None:
+    supervisor = ASRStreamSupervisor()
+    first_task = supervisor.start_task()
+    assert supervisor.record_audio(start_sample=0, frame_samples=9_600)
+    prior = ASRResult(first_task, "earlier", 1, 0, 1_600, "停", True)
+    assert supervisor.accept_result(prior, session_id="session")
+    supervisor.mark_committed(1_600)
+
+    sentence = FunASRSentence(
+        sentence_id=2, text="停一下", begin_ms=(3_200 - task_origin) // 16,
+        end_ms=(4_800 - task_origin) // 16, sentence_end=True, heartbeat=False, words=(),
+    )
+    final = sentence_to_asr_result(
+        sentence, task_epoch=supervisor.start_task(), sample_offset=task_origin,
+    )
+    decision = supervisor.accept_result(final, session_id="session")
+
+    assert decision.accepted is not None
+    assert decision.accepted.text == ("一下" if replayed else "停一下")
+    assert decision.accepted.capture_start_sample == 3_200
 
 
 def test_post_watermark_final_peels_committed_clauses_beyond_short_history() -> None:
