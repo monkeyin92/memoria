@@ -996,6 +996,8 @@ def _peel_command_only_sequence(text: str) -> list[_StopLexeme | str] | None:
     )
     if not raw_normalized or raw_normalized.endswith("吗"):
         return None
+    if full_norm == "你先停一下" and not any(mark in core_text for mark in "！!"):
+        return None
     if (
         raw_normalized in _IMPERATIVE_ONLY_EXACT_STOPS
         and "?" not in core_text
