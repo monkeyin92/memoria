@@ -522,7 +522,6 @@ def test_resume_strips_a_stop_phrase_but_not_a_noun_that_starts_with_stop() -> N
         "别再讲了",
         "别再讲啦",
         "先停一下",
-        "你先停一下",
         "你先停一下！",
         "先停下来",
         "你先停下来",
@@ -561,6 +560,8 @@ def test_symmetric_colloquial_stops_and_filler_qmark_commands_stop_cleanly(text:
 @pytest.mark.parametrize(
     "text",
     [
+        "你先停一下",
+        "你先停一下。",
         "你先停一下？",
         "你先停下来？",
         "你不要再说了？",

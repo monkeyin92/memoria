@@ -2804,6 +2804,8 @@ async def test_statement_echo_with_haha_keeps_playing_unlike_question_with_haha(
         "不用再讲啦。",
         "别再说了。",
         "先停一下。",
+        "停一下",
+        "你先停一下！",
         "你先停下来。",
         "暂停一下。",
         "停一停，停一停！",
@@ -2843,6 +2845,7 @@ async def test_symmetric_colloquial_stops_and_filler_qmark_stop_without_resuming
 @pytest.mark.parametrize(
     "heard",
     [
+        "你先停一下",
         "你先停一下？",
         "你不要再说了？",
         "你不要再说了吗？",
